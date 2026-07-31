@@ -75,7 +75,10 @@ Contains `DomainCount` sequential domain records:
 * `Name` (`byte[NameLen]`): UTF-8 string (e.g. `"user"`, `"group"`).
 
 ### Part B: Relation Directory Table (Section Byte Pointers)
-Contains `RelationCount` relation metadata descriptors. Each descriptor explicitly specifies absolute file offsets to allow clients to `mmap` specific sections independently:
+Contains `RelationCount` relation metadata descriptors. Each descriptor is exactly **109 bytes packed** (`impulse_relation_directory_entry_t`) and explicitly specifies absolute file offsets to allow clients to `mmap` specific sections independently:
+
+> [!NOTE]
+> **Normative Rule for Generator Tooling**: `EncodingType` (`uint8_t`) specifies the primary CSR matrix decoder enum (`0x00`..`0x08`). Generator tooling MUST also set Bit `EncodingType` (`1ULL << EncodingType`) in `SectionFeatures` to ensure instant bitwise feature compatibility checking (`(SectionFeatures & ~supported_flags) != 0`).
 
 | Field Name | Type | Size | Description |
 | :--- | :--- | :--- | :--- |

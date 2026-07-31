@@ -131,11 +131,11 @@ typedef struct impulse_relation_directory_entry {
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(impulse_snapshot_header_t) == 4096, "impulse_snapshot_header_t size must be 4096 bytes");
 _Static_assert(sizeof(impulse_domain_catalog_entry_header_t) == 5, "impulse_domain_catalog_entry_header_t size must be 5 bytes");
-_Static_assert(sizeof(impulse_relation_directory_entry_t) == 121, "impulse_relation_directory_entry_t size must be 121 bytes");
+_Static_assert(sizeof(impulse_relation_directory_entry_t) == 109, "impulse_relation_directory_entry_t size must be 109 bytes");
 #elif defined(__cplusplus) && __cplusplus >= 201103L
 static_assert(sizeof(impulse_snapshot_header_t) == 4096, "impulse_snapshot_header_t size must be 4096 bytes");
 static_assert(sizeof(impulse_domain_catalog_entry_header_t) == 5, "impulse_domain_catalog_entry_header_t size must be 5 bytes");
-static_assert(sizeof(impulse_relation_directory_entry_t) == 121, "impulse_relation_directory_entry_t size must be 121 bytes");
+static_assert(sizeof(impulse_relation_directory_entry_t) == 109, "impulse_relation_directory_entry_t size must be 109 bytes");
 #endif
 
 // Opaque Handle Definitions
