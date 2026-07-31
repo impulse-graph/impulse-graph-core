@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.impulse.graph</groupId>
+        <artifactId>impulse-java-parent</artifactId>
+        <version>2.3.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>impulse-core</artifactId>
+    <name>Impulse Graph Engine - Pure In-Memory Core</name>
+    <description>Pure Java 25 FFM off-heap CSR graph engine with zero external runtime dependencies</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.impulse.graph</groupId>
+            <artifactId>impulse-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Test Dependencies Only -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

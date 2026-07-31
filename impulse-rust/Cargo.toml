@@ -1,0 +1,12 @@
+[package]
+name = "impulse-graph"
+version = "2.3.0"
+edition = "2021"
+description = "Impulse Graph Engine Core Crate"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+memmap2 = "0.9"
