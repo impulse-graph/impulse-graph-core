@@ -138,6 +138,22 @@ static_assert(sizeof(impulse_domain_catalog_entry_header_t) == 5, "impulse_domai
 static_assert(sizeof(impulse_relation_directory_entry_t) == 109, "impulse_relation_directory_entry_t size must be 109 bytes");
 #endif
 
+#if defined(_WIN32) || defined(__CYGWIN__)
+  #if defined(IMPULSE_BUILDING_DLL)
+    #define IMPULSE_API __declspec(dllexport)
+  #elif defined(IMPULSE_USING_DLL)
+    #define IMPULSE_API __declspec(dllimport)
+  #else
+    #define IMPULSE_API
+  #endif
+#else
+  #if defined(__GNUC__) && __GNUC__ >= 4
+    #define IMPULSE_API __attribute__ ((visibility ("default")))
+  #else
+    #define IMPULSE_API
+  #endif
+#endif
+
 // Opaque Handle Definitions
 typedef struct impulse_snapshot impulse_snapshot_t;
 typedef struct impulse_graph impulse_graph_t;
@@ -145,19 +161,19 @@ typedef struct impulse_query impulse_query_t;
 typedef struct impulse_writer impulse_writer_t;
 
 // Snapshot Reader C-ABI API
-impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status);
-void impulse_snapshot_close(impulse_snapshot_t* snapshot);
-bool impulse_snapshot_is_reachable(
+IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status);
+IMPULSE_API void impulse_snapshot_close(impulse_snapshot_t* snapshot);
+IMPULSE_API bool impulse_snapshot_is_reachable(
     const impulse_snapshot_t* snapshot,
     uint16_t src_domain, uint32_t src_id,
     uint16_t tgt_domain, uint32_t tgt_id
 );
-const char* impulse_get_last_error(void);
+IMPULSE_API const char* impulse_get_last_error(void);
 
 // Snapshot Generator / Writer C-ABI API (For Third-Party Tooling)
-impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features);
-impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name);
-impulse_status_t impulse_writer_add_relation(
+IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features);
+IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name);
+IMPULSE_API impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
     uint16_t tgt_domain_id,
@@ -168,8 +184,8 @@ impulse_status_t impulse_writer_add_relation(
     const void* row_offsets_data, uint64_t row_offsets_bytes,
     const void* col_indices_data, uint64_t col_indices_bytes
 );
-impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
-void impulse_writer_destroy(impulse_writer_t* writer);
+IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
+IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
 
 #ifdef __cplusplus
 }
