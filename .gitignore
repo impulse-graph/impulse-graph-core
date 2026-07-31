@@ -1,0 +1,63 @@
+# OS / System
+.DS_Store
+Thumbs.db
+
+# IDE & Editor Settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Java & Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+
+# C / C++ / CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+cmake-build-*/
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+*.exe
+
+# Rust / Cargo
+/target/
+
+# Go
+bin/
+
+# Python & AI/ML
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+env/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / TypeScript / MkDocs
+node_modules/
+dist/
+site/
+
+# Binary test outputs
+*.bin
+*.imps
