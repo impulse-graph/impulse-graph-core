@@ -1,0 +1,15 @@
+{
+  "name": "impulse-graph",
+  "version": "2.4.0",
+  "description": "Impulse Graph Engine Node.js & Bun Zero-Copy C-ABI Native Binding",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "license": "Apache-2.0"
+}
