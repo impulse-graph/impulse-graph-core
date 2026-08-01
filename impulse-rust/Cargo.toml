@@ -1,12 +1,12 @@
 [package]
 name = "impulse-graph"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
-description = "Impulse Graph Engine Core Crate"
+description = "Impulse Graph Engine Core Crate (Spec v2.4)"
 license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-memmap2 = "0.9"
+# Zero third-party dependencies per AGENTS.md §3.2
