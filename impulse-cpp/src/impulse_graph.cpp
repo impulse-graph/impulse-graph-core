@@ -46,8 +46,19 @@ struct impulse_writer {
     std::vector<impulse_relation_entry> relations;
 };
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <algorithm>
+
 struct impulse_snapshot {
     std::string snapshot_path;
+    int fd = -1;
+    void* mmap_ptr = nullptr;
+    size_t mmap_size = 0;
+    impulse_snapshot_header_t header;
+    std::vector<impulse_relation_directory_entry_t> relations;
 };
 
 extern "C" {
@@ -59,16 +70,33 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
 
-    std::ifstream ifs(file_path, std::ios::binary);
-    if (!ifs.is_open()) {
+    int fd = open(file_path, O_RDONLY);
+    if (fd < 0) {
         g_last_error = "Failed to open snapshot file: " + std::string(file_path);
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
         return nullptr;
     }
 
-    impulse_snapshot_header_t hdr;
-    ifs.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
-    if (ifs.gcount() < static_cast<std::streamsize>(sizeof(hdr)) || hdr.magic != IMPULSE_MAGIC) {
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
+        close(fd);
+        g_last_error = "Corrupted file size";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+
+    void* ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        close(fd);
+        g_last_error = "mmap failed for snapshot file";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+
+    const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(ptr);
+    if (hdr->magic != IMPULSE_MAGIC) {
+        munmap(ptr, st.st_size);
+        close(fd);
         g_last_error = "Corrupted or invalid snapshot header magic bytes";
         if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
         return nullptr;
@@ -76,14 +104,112 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
     auto* snap = new impulse_snapshot();
     snap->snapshot_path = file_path;
+    snap->fd = fd;
+    snap->mmap_ptr = ptr;
+    snap->mmap_size = st.st_size;
+    std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
+
+    // Parse relation directory table if present
+    uint64_t data_off = hdr->data_offset;
+    if (data_off < snap->mmap_size && hdr->relation_count > 0) {
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(ptr);
+        // Skip Domain Catalog
+        size_t cur = data_off;
+        for (uint16_t d = 0; d < hdr->domain_count && cur + sizeof(impulse_domain_catalog_entry_header_t) <= snap->mmap_size; ++d) {
+            const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
+            cur += sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
+        }
+        // 64-byte align to relation directory
+        size_t rem = cur % 64;
+        if (rem != 0) cur += (64 - rem);
+
+        for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
+            impulse_relation_directory_entry_t entry;
+            std::memcpy(&entry, base + cur, sizeof(entry));
+            snap->relations.push_back(entry);
+            cur += sizeof(entry);
+        }
+    }
+
     if (out_status) *out_status = IMPULSE_OK;
     return snap;
 }
 
 void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
     if (snapshot) {
+        if (snapshot->mmap_ptr && snapshot->mmap_ptr != MAP_FAILED) {
+            munmap(snapshot->mmap_ptr, snapshot->mmap_size);
+        }
+        if (snapshot->fd >= 0) {
+            close(snapshot->fd);
+        }
         delete snapshot;
     }
+}
+
+uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
+    return snapshot ? snapshot->header.domain_count : 0;
+}
+
+uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot) {
+    return snapshot ? static_cast<uint16_t>(snapshot->relations.size()) : 0;
+}
+
+impulse_status_t impulse_snapshot_get_relation_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index,
+    impulse_relation_directory_entry_t* out_entry
+) {
+    if (!snapshot || !out_entry || index >= snapshot->relations.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    *out_entry = snapshot->relations[index];
+    return IMPULSE_OK;
+}
+
+const void* impulse_snapshot_get_buffer(
+    const impulse_snapshot_t* snapshot,
+    uint64_t offset,
+    uint64_t size
+) {
+    if (!snapshot || !snapshot->mmap_ptr || offset + size > snapshot->mmap_size) {
+        return nullptr;
+    }
+    return reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + offset;
+}
+
+bool impulse_snapshot_is_reachable(
+    const impulse_snapshot_t* snapshot,
+    uint16_t src_domain, uint32_t src_id,
+    uint16_t tgt_domain, uint32_t tgt_id
+) {
+    if (!snapshot || !snapshot->mmap_ptr) return false;
+
+    for (const auto& rel : snapshot->relations) {
+        if (rel.src_domain_id == src_domain && rel.tgt_domain_id == tgt_domain) {
+            if (src_id >= rel.node_count) return false;
+
+            if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->mmap_size ||
+                rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->mmap_size) {
+                return false;
+            }
+
+            const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
+            const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
+            const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
+
+            uint32_t start_idx = row_offsets[src_id];
+            uint32_t end_idx = row_offsets[src_id + 1];
+
+            for (uint32_t i = start_idx; i < end_idx; ++i) {
+                if (col_indices[i] == tgt_id) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    return false;
 }
 
 bool impulse_relation_has_edge(
@@ -93,16 +219,102 @@ bool impulse_relation_has_edge(
     const char* tgt_domain,
     uint64_t tgt_id
 ) {
-    (void)graph;
-    (void)src_domain;
-    (void)src_id;
-    (void)tgt_domain;
-    (void)tgt_id;
+    (void)graph; (void)src_domain; (void)src_id; (void)tgt_domain; (void)tgt_id;
     return true;
 }
 
 const char* impulse_get_last_error(void) {
     return g_last_error.c_str();
+}
+
+struct pcg32_fast {
+    uint64_t state;
+    uint64_t inc;
+    pcg32_fast(uint64_t initstate, uint64_t initseq) {
+        state = 0U;
+        inc = (initseq << 1u) | 1u;
+        next();
+        state += initstate;
+        next();
+    }
+    inline uint32_t next() {
+        uint64_t oldstate = state;
+        state = oldstate * 6364136223846793005ULL + inc;
+        uint32_t xorshifted = static_cast<uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
+        uint32_t rot = static_cast<uint32_t>(oldstate >> 59u);
+        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+    }
+    inline uint32_t bounded(uint32_t bound) {
+        if (bound == 0) return 0;
+        uint32_t threshold = -bound % bound;
+        for (;;) {
+            uint32_t r = next();
+            if (r >= threshold) return r % bound;
+        }
+    }
+};
+
+impulse_status_t impulse_snapshot_sample_neighbors(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t* src_nodes,
+    size_t num_nodes,
+    int k_samples,
+    uint64_t seed,
+    uint32_t* out_src,
+    uint32_t* out_tgt,
+    size_t* out_count
+) {
+    if (!snapshot || !snapshot->mmap_ptr || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
+        g_last_error = "Invalid snapshot, relation index, or NULL buffer pointer";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    const auto& rel = snapshot->relations[relation_index];
+    if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->mmap_size ||
+        rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->mmap_size) {
+        g_last_error = "Relation directory offset out of bounds";
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
+    const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
+    const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
+
+    uint64_t num_offsets = rel.node_count + 1;
+    uint64_t num_edges = rel.edge_count;
+
+    pcg32_fast rng(seed, 54);
+    size_t written = 0;
+
+    for (size_t i = 0; i < num_nodes; ++i) {
+        uint32_t u = src_nodes[i];
+        if (u + 1 >= num_offsets) continue;
+
+        uint32_t start_off = row_offsets[u];
+        uint32_t end_off = row_offsets[u + 1];
+        if (end_off > num_edges || start_off >= end_off) continue;
+
+        uint32_t deg = end_off - start_off;
+
+        if (k_samples < 0 || static_cast<uint32_t>(k_samples) >= deg) {
+            for (uint32_t idx = start_off; idx < end_off; ++idx) {
+                if (out_src) out_src[written] = u;
+                if (out_tgt) out_tgt[written] = col_indices[idx];
+                written++;
+            }
+        } else {
+            for (int k = 0; k < k_samples; ++k) {
+                uint32_t pick = start_off + rng.bounded(deg);
+                if (out_src) out_src[written] = u;
+                if (out_tgt) out_tgt[written] = col_indices[pick];
+                written++;
+            }
+        }
+    }
+
+    *out_count = written;
+    return IMPULSE_OK;
 }
 
 impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {

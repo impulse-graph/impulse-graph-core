@@ -187,6 +187,33 @@ IMPULSE_API impulse_status_t impulse_writer_add_relation(
 IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
 
+// Extended Snapshot Inspection & Zero-Copy Access
+IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index,
+    impulse_relation_directory_entry_t* out_entry
+);
+IMPULSE_API const void* impulse_snapshot_get_buffer(
+    const impulse_snapshot_t* snapshot,
+    uint64_t offset,
+    uint64_t size
+);
+
+// High-performance Zero-Copy C-ABI Neighborhood Sampler
+IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t* src_nodes,
+    size_t num_nodes,
+    int k_samples,
+    uint64_t seed,
+    uint32_t* out_src,
+    uint32_t* out_tgt,
+    size_t* out_count
+);
+
 #ifdef __cplusplus
 }
 #endif
