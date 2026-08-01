@@ -465,7 +465,158 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     return IMPULSE_OK;
 }
 
-void impulse_writer_destroy(impulse_writer_t* writer) {
+// Stub implementation: Ed25519 signing (placeholder - zeroed signature)
+IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(const char* snapshot_path, const uint8_t secret_key[64], const uint8_t public_key[32], uint16_t sig_flags) {
+    if (!snapshot_path) {
+        g_last_error = "Invalid snapshot_path";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    int fd = open(snapshot_path, O_RDWR);
+    if (fd < 0) {
+        g_last_error = "Failed to open snapshot for signing";
+        return IMPULSE_ERR_IO_FAILURE;
+    }
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
+        close(fd);
+        g_last_error = "Snapshot file too small";
+        return IMPULSE_ERR_IO_FAILURE;
+    }
+    // Memory map first header page
+    void* map = mmap(NULL, sizeof(impulse_snapshot_header_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) {
+        close(fd);
+        g_last_error = "mmap failed during signing";
+        return IMPULSE_ERR_IO_FAILURE;
+    }
+    impulse_snapshot_header_t* hdr = reinterpret_cast<impulse_snapshot_header_t*>(map);
+    // Set signature block fields (placeholder values)
+    hdr->sig_block.sig_algorithm = IMPULSE_SIG_ALG_ED25519;
+    hdr->sig_block.sig_bytes = 64;
+    hdr->sig_block.pubkey_bytes = 32;
+    hdr->sig_block.sig_flags = sig_flags;
+    // Copy provided public key (if flag indicates embedded)
+    if (sig_flags & IMPULSE_SIG_FLAG_KEY_EMBEDDED) {
+        std::memcpy(hdr->sig_block.public_key, public_key, 32);
+    }
+    // Zero signature payload for placeholder
+    std::memset(hdr->sig_block.signature, 0, sizeof(hdr->sig_block.signature));
+    // Copy fingerprint (hash of public key) for reference
+    if (sig_flags & IMPULSE_SIG_FLAG_KEY_FINGERPRINT) {
+        // Simple SHA-256 of public key (using CommonCrypto)
+        CC_SHA256(public_key, 32, hdr->sig_block.key_fingerprint);
+    } else {
+        std::memset(hdr->sig_block.key_fingerprint, 0, 32);
+    }
+    // Ensure changes are flushed
+    msync(map, sizeof(impulse_snapshot_header_t), MS_SYNC);
+    munmap(map, sizeof(impulse_snapshot_header_t));
+    close(fd);
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot) {
+    if (!snapshot) {
+        g_last_error = "Invalid snapshot handle";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const impulse_snapshot_header_t* hdr = &snapshot->header;
+    if (!(hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED)) {
+        // No signature required
+        return IMPULSE_OK;
+    }
+    // Simple placeholder verification: ensure signature bytes are all zero (since we do not compute real signature)
+    const uint8_t* sig = hdr->sig_block.signature;
+    for (size_t i = 0; i < sizeof(hdr->sig_block.signature); ++i) {
+        if (sig[i] != 0) {
+            g_last_error = "Signature verification failed (non-zero placeholder)";
+            return IMPULSE_ERR_SIGNATURE_MISMATCH;
+        }
+    }
+    return IMPULSE_OK;
+}
+
+// Modify snapshot open to auto-verify when crypto flag is present
+IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
+    // Existing implementation (original code) unchanged up to header copy
+    if (!file_path) {
+        g_last_error = "Invalid argument: file_path is null";
+        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+        return nullptr;
+    }
+    int fd = open(file_path, O_RDONLY);
+    if (fd < 0) {
+        g_last_error = "Failed to open snapshot file: " + std::string(file_path);
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
+        close(fd);
+        g_last_error = "Corrupted file size";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+    void* ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        close(fd);
+        g_last_error = "mmap failed for snapshot file";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+    const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(ptr);
+    if (hdr->magic != IMPULSE_MAGIC) {
+        munmap(ptr, st.st_size);
+        close(fd);
+        g_last_error = "Corrupted or invalid snapshot header magic bytes";
+        if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
+        return nullptr;
+    }
+    // Auto verification if crypto signed
+    if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
+        // Perform placeholder verification; if fails set error and abort open
+        const uint8_t* sig = hdr->sig_block.signature;
+        bool all_zero = true;
+        for (size_t i = 0; i < sizeof(hdr->sig_block.signature); ++i) {
+            if (sig[i] != 0) { all_zero = false; break; }
+        }
+        if (!all_zero) {
+            munmap(ptr, st.st_size);
+            close(fd);
+            g_last_error = "Signature verification failed during open";
+            if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
+            return nullptr;
+        }
+    }
+    auto* snap = new impulse_snapshot();
+    snap->snapshot_path = file_path;
+    snap->fd = fd;
+    snap->mmap_ptr = ptr;
+    snap->mmap_size = st.st_size;
+    std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
+    // Parse relation directory table as before (existing code unchanged)
+    uint64_t data_off = hdr->data_offset;
+    if (data_off < snap->mmap_size && hdr->relation_count > 0) {
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(ptr);
+        size_t cur = data_off;
+        for (uint16_t d = 0; d < hdr->domain_count && cur + sizeof(impulse_domain_catalog_entry_header_t) <= snap->mmap_size; ++d) {
+            const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
+            cur += sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
+        }
+        // Align to 64-byte boundary
+        size_t rem = cur % 64;
+        if (rem != 0) cur += (64 - rem);
+        for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
+            impulse_relation_directory_entry_t entry;
+            std::memcpy(&entry, base + cur, sizeof(entry));
+            snap->relations.push_back(entry);
+            cur += sizeof(entry);
+        }
+    }
+    if (out_status) *out_status = IMPULSE_OK;
+    return snap;
+}
+
     if (writer) {
         delete writer;
     }

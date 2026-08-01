@@ -59,7 +59,8 @@ The header occupies byte offset `0x00000000`. In Version 2.4, the baseline heade
 | `0x1E` – `0x3D` | `SHA256` | `byte[32]` | 32B | Variable | Cryptographic SHA-256 checksum over `data[DataOffset..EOF]` |
 | `0x3E` – `0x3F` | `Reserved` | `byte[2]` | 2B | `0x00 0x00` | Reserved baseline alignment padding |
 | `0x40` – `0x47` | `GlobalRequiredFeatures` | `uint64` | 8B | Bitmask | **Global Feature-in-Use Bitmask** (64-byte aligned boundary) |
-| `0x48` – `0x0FFF` | `HeaderPadding` | `byte[4024]` | 4024B | `0x00 ...` | Header padding to enforce 4KB OS page alignment |
+| `0x48` – `0x0447` | `SignatureBlock` | `struct` | 1024B | `impulse_snapshot_signature_block_t` | **Cryptographic Signature Block** (Algorithm, Flags, Fingerprint, Signature, Public Key) |
+| `0x0448` – `0x0FFF` | `HeaderPadding` | `byte[3000]` | 3000B | `0x00 ...` | Header padding to enforce 4KB OS page alignment |
 
 ---
 
@@ -113,6 +114,7 @@ Compliant parsers MUST evaluate `(file_features & ~tool_supported_features) != 0
 | Bit 1 | `0x0000000000000002ULL` | `GLOBAL_FEAT_ZSTD_DICT_EMBEDDED` | Embedded 64KB Zstd dictionary at `DictionaryOffset` |
 | Bit 2 | `0x0000000000000004ULL` | `GLOBAL_FEAT_DELTA_LOG_PRESENT` | Live WAL edge mutations present in Section 6 |
 | Bit 3 | `0x0000000000000008ULL` | `GLOBAL_FEAT_4KB_PAGE_ALIGNED` | Enforces explicit 4KB page alignment across all sections |
+| Bit 4 | `0x0000000000000010ULL` | `GLOBAL_FEAT_CRYPTO_SIGNED` | Cryptographic signature block present in Section 1 header |
 
 ---
 

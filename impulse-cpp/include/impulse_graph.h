@@ -53,7 +53,32 @@ typedef enum impulse_status {
 #define IMPULSE_GLOBAL_FEAT_64BIT_NODES        (1ULL << 0)
 #define IMPULSE_GLOBAL_FEAT_ZSTD_DICT_EMBEDDED (1ULL << 1)
 #define IMPULSE_GLOBAL_FEAT_DELTA_LOG_PRESENT  (1ULL << 2)
-#define IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED   (1ULL << 3)
+#define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED (1ULL << 4)
+
+// Signature Algorithm Enum
+typedef enum impulse_sig_algorithm {
+    IMPULSE_SIG_ALG_NONE = 0,
+    IMPULSE_SIG_ALG_ED25519 = 1,
+    IMPULSE_SIG_ALG_ECDSA_P256 = 2,
+    IMPULSE_SIG_ALG_RSA4096 = 3
+} impulse_sig_algorithm_t;
+
+// Signature Flags Bitmask
+#define IMPULSE_SIG_FLAG_ENFORCED        (1ULL << 0)
+#define IMPULSE_SIG_FLAG_KEY_EMBEDDED    (1ULL << 1)
+#define IMPULSE_SIG_FLAG_KEY_FINGERPRINT (1ULL << 2)
+
+// Cryptographic Signature Block (1024 bytes)
+typedef struct impulse_snapshot_signature_block {
+    uint16_t sig_algorithm;   // Algorithm enum
+    uint16_t sig_bytes;       // Length of signature payload
+    uint16_t pubkey_bytes;    // Length of embedded public key
+    uint16_t sig_flags;       // Bitmask flags
+    uint8_t  key_fingerprint[32]; // SHA-256 fingerprint / KMS ID
+    uint8_t  signature[64];   // Signature payload (max size for Ed25519)
+    uint8_t  public_key[32];  // Embedded public key (for Ed25519)
+    uint8_t  reserved[848];   // Reserved for future use / PQC signatures
+} impulse_snapshot_signature_block_t;
 
 // Section 3 CSR Relation Topology Encoding Bitmask Flags (Bits 0..8)
 // Generator Rule: Must match 1ULL << EncodingType
@@ -95,7 +120,8 @@ typedef struct impulse_snapshot_header {
     uint8_t  sha256_checksum[32];      // 0x1E..0x3D: SHA256 payload checksum
     uint8_t  reserved[2];              // 0x3E..0x3F: Alignment padding
     uint64_t global_required_features; // 0x40..0x47: Global Feature-in-Use Bitmask
-    uint8_t  header_padding[4024];     // 0x48..0x0FFF: 4KB page alignment padding
+    impulse_snapshot_signature_block_t sig_block; // 0x48..0x447: Cryptographic Signature Block
+    uint8_t  header_padding[3000];     // 0x448..0x0FFF: Padding to enforce 4KB alignment
 } impulse_snapshot_header_t;
 
 // Section 2 Part A: Domain Catalog Record Fixed Header
@@ -185,7 +211,9 @@ IMPULSE_API impulse_status_t impulse_writer_add_relation(
     const void* col_indices_data, uint64_t col_indices_bytes
 );
 IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
-IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
+IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(const char* snapshot_path, const uint8_t secret_key[64], const uint8_t public_key[32], uint16_t sig_flags);
+IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot);
+
 
 // Extended Snapshot Inspection & Zero-Copy Access
 IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
