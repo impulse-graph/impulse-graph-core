@@ -46,14 +46,17 @@ typedef enum impulse_status {
     IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE= 4,
     IMPULSE_ERR_CORRUPT_CHECKSUM           = 5,
     IMPULSE_ERR_IO_FAILURE                 = 6,
-    IMPULSE_ERR_INVALID_ARGUMENT           = 7
+    IMPULSE_ERR_INVALID_ARGUMENT           = 7,
+    IMPULSE_ERR_SIGNATURE_MISMATCH         = 8,
+    IMPULSE_ERR_BUFFER_OVERFLOW            = 9
 } impulse_status_t;
 
 // Global Feature Flags (Header Offset 0x40..0x47)
 #define IMPULSE_GLOBAL_FEAT_64BIT_NODES        (1ULL << 0)
 #define IMPULSE_GLOBAL_FEAT_ZSTD_DICT_EMBEDDED (1ULL << 1)
 #define IMPULSE_GLOBAL_FEAT_DELTA_LOG_PRESENT  (1ULL << 2)
-#define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED (1ULL << 4)
+#define IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED   (1ULL << 3)
+#define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED      (1ULL << 4)
 
 // Signature Algorithm Enum
 typedef enum impulse_sig_algorithm {
@@ -77,7 +80,7 @@ typedef struct impulse_snapshot_signature_block {
     uint8_t  key_fingerprint[32]; // SHA-256 fingerprint / KMS ID
     uint8_t  signature[64];   // Signature payload (max size for Ed25519)
     uint8_t  public_key[32];  // Embedded public key (for Ed25519)
-    uint8_t  reserved[848];   // Reserved for future use / PQC signatures
+    uint8_t  reserved[888];   // Reserved for future use / PQC signatures
 } impulse_snapshot_signature_block_t;
 
 // Section 3 CSR Relation Topology Encoding Bitmask Flags (Bits 0..8)
@@ -211,6 +214,7 @@ IMPULSE_API impulse_status_t impulse_writer_add_relation(
     const void* col_indices_data, uint64_t col_indices_bytes
 );
 IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
+IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
 IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(const char* snapshot_path, const uint8_t secret_key[64], const uint8_t public_key[32], uint16_t sig_flags);
 IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot);
 
@@ -239,6 +243,7 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
     uint64_t seed,
     uint32_t* out_src,
     uint32_t* out_tgt,
+    size_t out_capacity,
     size_t* out_count
 );
 

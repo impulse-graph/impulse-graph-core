@@ -4,6 +4,11 @@
 #include <string>
 #include <cstring>
 #include <ctime>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <algorithm>
 #include <CommonCrypto/CommonDigest.h>
 
 static thread_local std::string g_last_error = "";
@@ -46,12 +51,6 @@ struct impulse_writer {
     std::vector<impulse_relation_entry> relations;
 };
 
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <algorithm>
-
 struct impulse_snapshot {
     std::string snapshot_path;
     int fd = -1;
@@ -62,6 +61,10 @@ struct impulse_snapshot {
 };
 
 extern "C" {
+
+// ---------------------------------------------------------------------------
+// Snapshot Reader
+// ---------------------------------------------------------------------------
 
 impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
     if (!file_path) {
@@ -102,6 +105,16 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
 
+    // Fail-closed: reject snapshots that require crypto verification
+    // (no real Ed25519 verifier is linked yet)
+    if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
+        munmap(ptr, st.st_size);
+        close(fd);
+        g_last_error = "Snapshot requires cryptographic signature verification which is not yet implemented";
+        if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
+        return nullptr;
+    }
+
     auto* snap = new impulse_snapshot();
     snap->snapshot_path = file_path;
     snap->fd = fd;
@@ -113,12 +126,17 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     uint64_t data_off = hdr->data_offset;
     if (data_off < snap->mmap_size && hdr->relation_count > 0) {
         const uint8_t* base = reinterpret_cast<const uint8_t*>(ptr);
-        // Skip Domain Catalog
         size_t cur = data_off;
-        for (uint16_t d = 0; d < hdr->domain_count && cur + sizeof(impulse_domain_catalog_entry_header_t) <= snap->mmap_size; ++d) {
+
+        // Skip Domain Catalog — with name_len bounds validation
+        for (uint16_t d = 0; d < hdr->domain_count; ++d) {
+            if (cur + sizeof(impulse_domain_catalog_entry_header_t) > snap->mmap_size) break;
             const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
-            cur += sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
+            size_t entry_size = sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
+            if (cur + entry_size > snap->mmap_size) break;
+            cur += entry_size;
         }
+
         // 64-byte align to relation directory
         size_t rem = cur % 64;
         if (rem != 0) cur += (64 - rem);
@@ -147,6 +165,10 @@ void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot Inspection
+// ---------------------------------------------------------------------------
+
 uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.domain_count : 0;
 }
@@ -172,11 +194,17 @@ const void* impulse_snapshot_get_buffer(
     uint64_t offset,
     uint64_t size
 ) {
-    if (!snapshot || !snapshot->mmap_ptr || offset + size > snapshot->mmap_size) {
+    if (!snapshot || !snapshot->mmap_ptr) return nullptr;
+    // Overflow-safe bounds check
+    if (offset > snapshot->mmap_size || size > snapshot->mmap_size - offset) {
         return nullptr;
     }
     return reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + offset;
 }
+
+// ---------------------------------------------------------------------------
+// Reachability Query
+// ---------------------------------------------------------------------------
 
 bool impulse_snapshot_is_reachable(
     const impulse_snapshot_t* snapshot,
@@ -189,10 +217,17 @@ bool impulse_snapshot_is_reachable(
         if (rel.src_domain_id == src_domain && rel.tgt_domain_id == tgt_domain) {
             if (src_id >= rel.node_count) return false;
 
-            if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->mmap_size ||
-                rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->mmap_size) {
+            // Validate CSR data regions are within mmap bounds
+            if (rel.csr_row_off_offset > snapshot->mmap_size ||
+                rel.csr_row_off_bytes > snapshot->mmap_size - rel.csr_row_off_offset ||
+                rel.csr_col_idx_offset > snapshot->mmap_size ||
+                rel.csr_col_idx_bytes > snapshot->mmap_size - rel.csr_col_idx_offset) {
                 return false;
             }
+
+            // Validate row_offsets array has room for src_id+1
+            uint64_t required_offset_bytes = (static_cast<uint64_t>(src_id) + 2) * sizeof(uint32_t);
+            if (required_offset_bytes > rel.csr_row_off_bytes) return false;
 
             const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
             const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
@@ -200,6 +235,11 @@ bool impulse_snapshot_is_reachable(
 
             uint32_t start_idx = row_offsets[src_id];
             uint32_t end_idx = row_offsets[src_id + 1];
+
+            // Validate column index range is within bounds
+            if (end_idx > rel.csr_col_idx_bytes / sizeof(uint32_t) || start_idx > end_idx) {
+                return false;
+            }
 
             for (uint32_t i = start_idx; i < end_idx; ++i) {
                 if (col_indices[i] == tgt_id) {
@@ -212,20 +252,9 @@ bool impulse_snapshot_is_reachable(
     return false;
 }
 
-bool impulse_relation_has_edge(
-    impulse_graph_t* graph,
-    const char* src_domain,
-    uint64_t src_id,
-    const char* tgt_domain,
-    uint64_t tgt_id
-) {
-    (void)graph; (void)src_domain; (void)src_id; (void)tgt_domain; (void)tgt_id;
-    return true;
-}
-
-const char* impulse_get_last_error(void) {
-    return g_last_error.c_str();
-}
+// ---------------------------------------------------------------------------
+// Neighbor Sampler
+// ---------------------------------------------------------------------------
 
 struct pcg32_fast {
     uint64_t state;
@@ -263,6 +292,7 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     uint64_t seed,
     uint32_t* out_src,
     uint32_t* out_tgt,
+    size_t out_capacity,
     size_t* out_count
 ) {
     if (!snapshot || !snapshot->mmap_ptr || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
@@ -271,8 +301,12 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     }
 
     const auto& rel = snapshot->relations[relation_index];
-    if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->mmap_size ||
-        rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->mmap_size) {
+
+    // Overflow-safe bounds validation on CSR data regions
+    if (rel.csr_row_off_offset > snapshot->mmap_size ||
+        rel.csr_row_off_bytes > snapshot->mmap_size - rel.csr_row_off_offset ||
+        rel.csr_col_idx_offset > snapshot->mmap_size ||
+        rel.csr_col_idx_bytes > snapshot->mmap_size - rel.csr_col_idx_offset) {
         g_last_error = "Relation directory offset out of bounds";
         return IMPULSE_ERR_CORRUPT_CHECKSUM;
     }
@@ -282,7 +316,13 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
 
     uint64_t num_offsets = rel.node_count + 1;
-    uint64_t num_edges = rel.edge_count;
+    uint64_t max_col_entries = rel.csr_col_idx_bytes / sizeof(uint32_t);
+
+    // Validate row_offsets array size
+    if (num_offsets * sizeof(uint32_t) > rel.csr_row_off_bytes) {
+        g_last_error = "Row offsets array size mismatch with node_count";
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
 
     pcg32_fast rng(seed, 54);
     size_t written = 0;
@@ -293,18 +333,28 @@ impulse_status_t impulse_snapshot_sample_neighbors(
 
         uint32_t start_off = row_offsets[u];
         uint32_t end_off = row_offsets[u + 1];
-        if (end_off > num_edges || start_off >= end_off) continue;
+        if (end_off > max_col_entries || start_off >= end_off) continue;
 
         uint32_t deg = end_off - start_off;
 
         if (k_samples < 0 || static_cast<uint32_t>(k_samples) >= deg) {
             for (uint32_t idx = start_off; idx < end_off; ++idx) {
+                if (written >= out_capacity) {
+                    *out_count = written;
+                    g_last_error = "Output buffer capacity exceeded";
+                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+                }
                 if (out_src) out_src[written] = u;
                 if (out_tgt) out_tgt[written] = col_indices[idx];
                 written++;
             }
         } else {
             for (int k = 0; k < k_samples; ++k) {
+                if (written >= out_capacity) {
+                    *out_count = written;
+                    g_last_error = "Output buffer capacity exceeded";
+                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+                }
                 uint32_t pick = start_off + rng.bounded(deg);
                 if (out_src) out_src[written] = u;
                 if (out_tgt) out_tgt[written] = col_indices[pick];
@@ -316,6 +366,10 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     *out_count = written;
     return IMPULSE_OK;
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot Writer
+// ---------------------------------------------------------------------------
 
 impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {
     if (!output_file_path) {
@@ -438,7 +492,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     // Compute SHA-256 Digest
     uint8_t payload_sha256[32];
-    CC_SHA256(payload.data(), payload.size(), payload_sha256);
+    CC_SHA256(payload.data(), static_cast<CC_LONG>(payload.size()), payload_sha256);
 
     impulse_snapshot_header_t out_hdr;
     std::memset(&out_hdr, 0x00, sizeof(out_hdr));
@@ -465,161 +519,51 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     return IMPULSE_OK;
 }
 
-// Stub implementation: Ed25519 signing (placeholder - zeroed signature)
-IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(const char* snapshot_path, const uint8_t secret_key[64], const uint8_t public_key[32], uint16_t sig_flags) {
-    if (!snapshot_path) {
-        g_last_error = "Invalid snapshot_path";
-        return IMPULSE_ERR_INVALID_ARGUMENT;
+void impulse_writer_destroy(impulse_writer_t* writer) {
+    if (writer) {
+        delete writer;
     }
-    int fd = open(snapshot_path, O_RDWR);
-    if (fd < 0) {
-        g_last_error = "Failed to open snapshot for signing";
-        return IMPULSE_ERR_IO_FAILURE;
-    }
-    struct stat st;
-    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
-        close(fd);
-        g_last_error = "Snapshot file too small";
-        return IMPULSE_ERR_IO_FAILURE;
-    }
-    // Memory map first header page
-    void* map = mmap(NULL, sizeof(impulse_snapshot_header_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (map == MAP_FAILED) {
-        close(fd);
-        g_last_error = "mmap failed during signing";
-        return IMPULSE_ERR_IO_FAILURE;
-    }
-    impulse_snapshot_header_t* hdr = reinterpret_cast<impulse_snapshot_header_t*>(map);
-    // Set signature block fields (placeholder values)
-    hdr->sig_block.sig_algorithm = IMPULSE_SIG_ALG_ED25519;
-    hdr->sig_block.sig_bytes = 64;
-    hdr->sig_block.pubkey_bytes = 32;
-    hdr->sig_block.sig_flags = sig_flags;
-    // Copy provided public key (if flag indicates embedded)
-    if (sig_flags & IMPULSE_SIG_FLAG_KEY_EMBEDDED) {
-        std::memcpy(hdr->sig_block.public_key, public_key, 32);
-    }
-    // Zero signature payload for placeholder
-    std::memset(hdr->sig_block.signature, 0, sizeof(hdr->sig_block.signature));
-    // Copy fingerprint (hash of public key) for reference
-    if (sig_flags & IMPULSE_SIG_FLAG_KEY_FINGERPRINT) {
-        // Simple SHA-256 of public key (using CommonCrypto)
-        CC_SHA256(public_key, 32, hdr->sig_block.key_fingerprint);
-    } else {
-        std::memset(hdr->sig_block.key_fingerprint, 0, 32);
-    }
-    // Ensure changes are flushed
-    msync(map, sizeof(impulse_snapshot_header_t), MS_SYNC);
-    munmap(map, sizeof(impulse_snapshot_header_t));
-    close(fd);
-    return IMPULSE_OK;
 }
 
-IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot) {
+// ---------------------------------------------------------------------------
+// Cryptographic Signing & Verification (Stubs — Fail-Closed)
+// ---------------------------------------------------------------------------
+
+impulse_status_t impulse_snapshot_sign_ed25519(
+    const char* snapshot_path,
+    const uint8_t secret_key[64],
+    const uint8_t public_key[32],
+    uint16_t sig_flags
+) {
+    (void)snapshot_path;
+    (void)secret_key;
+    (void)public_key;
+    (void)sig_flags;
+    g_last_error = "Ed25519 signing is not yet implemented — link a real Ed25519 library";
+    return IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE;
+}
+
+impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot) {
     if (!snapshot) {
         g_last_error = "Invalid snapshot handle";
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
     const impulse_snapshot_header_t* hdr = &snapshot->header;
     if (!(hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED)) {
-        // No signature required
+        // No signature present — nothing to verify
         return IMPULSE_OK;
     }
-    // Simple placeholder verification: ensure signature bytes are all zero (since we do not compute real signature)
-    const uint8_t* sig = hdr->sig_block.signature;
-    for (size_t i = 0; i < sizeof(hdr->sig_block.signature); ++i) {
-        if (sig[i] != 0) {
-            g_last_error = "Signature verification failed (non-zero placeholder)";
-            return IMPULSE_ERR_SIGNATURE_MISMATCH;
-        }
-    }
-    return IMPULSE_OK;
+    // Fail-closed: cannot verify without a real Ed25519 implementation
+    g_last_error = "Ed25519 verification is not yet implemented — link a real Ed25519 library";
+    return IMPULSE_ERR_SIGNATURE_MISMATCH;
 }
 
-// Modify snapshot open to auto-verify when crypto flag is present
-IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
-    // Existing implementation (original code) unchanged up to header copy
-    if (!file_path) {
-        g_last_error = "Invalid argument: file_path is null";
-        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
-        return nullptr;
-    }
-    int fd = open(file_path, O_RDONLY);
-    if (fd < 0) {
-        g_last_error = "Failed to open snapshot file: " + std::string(file_path);
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-    struct stat st;
-    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
-        close(fd);
-        g_last_error = "Corrupted file size";
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-    void* ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-    if (ptr == MAP_FAILED) {
-        close(fd);
-        g_last_error = "mmap failed for snapshot file";
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-    const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(ptr);
-    if (hdr->magic != IMPULSE_MAGIC) {
-        munmap(ptr, st.st_size);
-        close(fd);
-        g_last_error = "Corrupted or invalid snapshot header magic bytes";
-        if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
-        return nullptr;
-    }
-    // Auto verification if crypto signed
-    if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
-        // Perform placeholder verification; if fails set error and abort open
-        const uint8_t* sig = hdr->sig_block.signature;
-        bool all_zero = true;
-        for (size_t i = 0; i < sizeof(hdr->sig_block.signature); ++i) {
-            if (sig[i] != 0) { all_zero = false; break; }
-        }
-        if (!all_zero) {
-            munmap(ptr, st.st_size);
-            close(fd);
-            g_last_error = "Signature verification failed during open";
-            if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
-            return nullptr;
-        }
-    }
-    auto* snap = new impulse_snapshot();
-    snap->snapshot_path = file_path;
-    snap->fd = fd;
-    snap->mmap_ptr = ptr;
-    snap->mmap_size = st.st_size;
-    std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
-    // Parse relation directory table as before (existing code unchanged)
-    uint64_t data_off = hdr->data_offset;
-    if (data_off < snap->mmap_size && hdr->relation_count > 0) {
-        const uint8_t* base = reinterpret_cast<const uint8_t*>(ptr);
-        size_t cur = data_off;
-        for (uint16_t d = 0; d < hdr->domain_count && cur + sizeof(impulse_domain_catalog_entry_header_t) <= snap->mmap_size; ++d) {
-            const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
-            cur += sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
-        }
-        // Align to 64-byte boundary
-        size_t rem = cur % 64;
-        if (rem != 0) cur += (64 - rem);
-        for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
-            impulse_relation_directory_entry_t entry;
-            std::memcpy(&entry, base + cur, sizeof(entry));
-            snap->relations.push_back(entry);
-            cur += sizeof(entry);
-        }
-    }
-    if (out_status) *out_status = IMPULSE_OK;
-    return snap;
+// ---------------------------------------------------------------------------
+// Error Reporting
+// ---------------------------------------------------------------------------
+
+const char* impulse_get_last_error(void) {
+    return g_last_error.c_str();
 }
 
-    if (writer) {
-        delete writer;
-    }
-}
-
-}
+} // extern "C"
