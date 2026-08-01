@@ -1,31 +1,107 @@
 #include "impulse_graph.h"
-#include <fstream>
-#include <vector>
-#include <string>
+#include "impulse_sha256.h"
+
+#include <algorithm>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <algorithm>
-#include <CommonCrypto/CommonDigest.h>
+#include <fstream>
+#include <new>
+#include <string>
+#include <vector>
 
-static thread_local std::string g_last_error = "";
+// Platform I/O abstraction
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+#else
+  #include <fcntl.h>
+  #include <sys/mman.h>
+  #include <sys/stat.h>
+  #include <unistd.h>
+#endif
 
-static void align64(std::vector<uint8_t>& buf) {
+// ---------------------------------------------------------------------------
+// Internal implementation details — anonymous namespace prevents symbol export
+// ---------------------------------------------------------------------------
+namespace {
+
+thread_local std::string g_last_error;
+
+// RAII guard for POSIX file descriptors
+struct FdGuard {
+    int fd;
+    explicit FdGuard(int f) : fd(f) {}
+    ~FdGuard() {
+#ifndef _WIN32
+        if (fd >= 0) ::close(fd);
+#endif
+    }
+    int release() { int f = fd; fd = -1; return f; }
+    FdGuard(const FdGuard&) = delete;
+    FdGuard& operator=(const FdGuard&) = delete;
+};
+
+// RAII guard for mmap regions
+struct MmapGuard {
+    void* ptr;
+    size_t size;
+    MmapGuard(void* p, size_t s) : ptr(p), size(s) {}
+    ~MmapGuard() {
+#ifndef _WIN32
+        if (ptr && ptr != MAP_FAILED) ::munmap(ptr, size);
+#endif
+    }
+    void* release() { void* p = ptr; ptr = nullptr; return p; }
+    MmapGuard(const MmapGuard&) = delete;
+    MmapGuard& operator=(const MmapGuard&) = delete;
+};
+
+void align64(std::vector<uint8_t>& buf) {
     size_t rem = buf.size() % 64;
     if (rem != 0) {
-        buf.insert(buf.end(), 64 - rem, 0x00);
+        buf.resize(buf.size() + (64 - rem), 0x00);
     }
 }
 
-static void align4096(std::vector<uint8_t>& buf) {
+void align4096(std::vector<uint8_t>& buf) {
     size_t rem = buf.size() % 4096;
     if (rem != 0) {
-        buf.insert(buf.end(), 4096 - rem, 0x00);
+        buf.resize(buf.size() + (4096 - rem), 0x00);
     }
 }
+
+struct pcg32_fast {
+    uint64_t state;
+    uint64_t inc;
+    pcg32_fast(uint64_t initstate, uint64_t initseq) {
+        state = 0U;
+        inc = (initseq << 1u) | 1u;
+        next();
+        state += initstate;
+        next();
+    }
+    inline uint32_t next() {
+        uint64_t oldstate = state;
+        state = oldstate * 6364136223846793005ULL + inc;
+        uint32_t xorshifted = static_cast<uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
+        uint32_t rot = static_cast<uint32_t>(oldstate >> 59u);
+        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+    }
+    inline uint32_t bounded(uint32_t bound) {
+        if (bound == 0) return 0;
+        uint32_t threshold = -bound % bound;
+        for (;;) {
+            uint32_t r = next();
+            if (r >= threshold) return r % bound;
+        }
+    }
+};
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// Internal C++ types behind opaque C handles
+// ---------------------------------------------------------------------------
 
 struct impulse_domain_entry {
     uint16_t domain_id;
@@ -66,101 +142,113 @@ extern "C" {
 // Snapshot Reader
 // ---------------------------------------------------------------------------
 
-impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
-    if (!file_path) {
-        g_last_error = "Invalid argument: file_path is null";
-        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
-        return nullptr;
-    }
-
-    int fd = open(file_path, O_RDONLY);
-    if (fd < 0) {
-        g_last_error = "Failed to open snapshot file: " + std::string(file_path);
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-
-    struct stat st;
-    if (fstat(fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
-        close(fd);
-        g_last_error = "Corrupted file size";
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-
-    void* ptr = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-    if (ptr == MAP_FAILED) {
-        close(fd);
-        g_last_error = "mmap failed for snapshot file";
-        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
-        return nullptr;
-    }
-
-    const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(ptr);
-    if (hdr->magic != IMPULSE_MAGIC) {
-        munmap(ptr, st.st_size);
-        close(fd);
-        g_last_error = "Corrupted or invalid snapshot header magic bytes";
-        if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
-        return nullptr;
-    }
-
-    // Fail-closed: reject snapshots that require crypto verification
-    // (no real Ed25519 verifier is linked yet)
-    if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
-        munmap(ptr, st.st_size);
-        close(fd);
-        g_last_error = "Snapshot requires cryptographic signature verification which is not yet implemented";
-        if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
-        return nullptr;
-    }
-
-    auto* snap = new impulse_snapshot();
-    snap->snapshot_path = file_path;
-    snap->fd = fd;
-    snap->mmap_ptr = ptr;
-    snap->mmap_size = st.st_size;
-    std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
-
-    // Parse relation directory table if present
-    uint64_t data_off = hdr->data_offset;
-    if (data_off < snap->mmap_size && hdr->relation_count > 0) {
-        const uint8_t* base = reinterpret_cast<const uint8_t*>(ptr);
-        size_t cur = data_off;
-
-        // Skip Domain Catalog — with name_len bounds validation
-        for (uint16_t d = 0; d < hdr->domain_count; ++d) {
-            if (cur + sizeof(impulse_domain_catalog_entry_header_t) > snap->mmap_size) break;
-            const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
-            size_t entry_size = sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
-            if (cur + entry_size > snap->mmap_size) break;
-            cur += entry_size;
+IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
+    try {
+        if (!file_path) {
+            g_last_error = "Invalid argument: file_path is null";
+            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+            return nullptr;
         }
 
-        // 64-byte align to relation directory
-        size_t rem = cur % 64;
-        if (rem != 0) cur += (64 - rem);
-
-        for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
-            impulse_relation_directory_entry_t entry;
-            std::memcpy(&entry, base + cur, sizeof(entry));
-            snap->relations.push_back(entry);
-            cur += sizeof(entry);
+#ifdef _WIN32
+        // TODO: Implement Windows CreateFileMapping / MapViewOfFile path
+        g_last_error = "Windows mmap not yet implemented";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+#else
+        FdGuard fd_guard(::open(file_path, O_RDONLY));
+        if (fd_guard.fd < 0) {
+            g_last_error = "Failed to open snapshot file: " + std::string(file_path);
+            if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+            return nullptr;
         }
-    }
 
-    if (out_status) *out_status = IMPULSE_OK;
-    return snap;
+        struct stat st;
+        if (::fstat(fd_guard.fd, &st) < 0 || st.st_size < static_cast<off_t>(sizeof(impulse_snapshot_header_t))) {
+            g_last_error = "Corrupted file size";
+            if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+            return nullptr;
+        }
+
+        MmapGuard mmap_guard(
+            ::mmap(NULL, static_cast<size_t>(st.st_size), PROT_READ, MAP_SHARED, fd_guard.fd, 0),
+            static_cast<size_t>(st.st_size)
+        );
+        if (mmap_guard.ptr == MAP_FAILED) {
+            g_last_error = "mmap failed for snapshot file";
+            if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+            return nullptr;
+        }
+
+        const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(mmap_guard.ptr);
+        if (hdr->magic != IMPULSE_MAGIC) {
+            g_last_error = "Corrupted or invalid snapshot header magic bytes";
+            if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
+            return nullptr;
+        }
+
+        // Fail-closed: reject snapshots that require crypto verification
+        // (no real Ed25519 verifier is linked yet)
+        if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
+            g_last_error = "Snapshot requires cryptographic signature verification which is not yet implemented";
+            if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
+            return nullptr;
+        }
+
+        auto* snap = new impulse_snapshot();
+        snap->snapshot_path = file_path;
+        snap->fd = fd_guard.release();
+        snap->mmap_ptr = mmap_guard.release();
+        snap->mmap_size = static_cast<size_t>(st.st_size);
+        std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
+
+        // Parse relation directory table if present
+        uint64_t data_off = hdr->data_offset;
+        if (data_off < snap->mmap_size && hdr->relation_count > 0) {
+            const uint8_t* base = reinterpret_cast<const uint8_t*>(snap->mmap_ptr);
+            size_t cur = static_cast<size_t>(data_off);
+
+            // Skip Domain Catalog — with name_len bounds validation
+            for (uint16_t d = 0; d < hdr->domain_count; ++d) {
+                if (cur + sizeof(impulse_domain_catalog_entry_header_t) > snap->mmap_size) break;
+                const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
+                size_t entry_size = sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
+                if (cur + entry_size > snap->mmap_size) break;
+                cur += entry_size;
+            }
+
+            // 64-byte align to relation directory
+            size_t rem = cur % 64;
+            if (rem != 0) cur += (64 - rem);
+
+            for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
+                impulse_relation_directory_entry_t entry;
+                std::memcpy(&entry, base + cur, sizeof(entry));
+                snap->relations.push_back(entry);
+                cur += sizeof(entry);
+            }
+        }
+
+        if (out_status) *out_status = IMPULSE_OK;
+        return snap;
+#endif
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_snapshot_open: ") + e.what();
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
 }
 
-void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
+IMPULSE_API void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
     if (snapshot) {
+#ifndef _WIN32
         if (snapshot->mmap_ptr && snapshot->mmap_ptr != MAP_FAILED) {
-            munmap(snapshot->mmap_ptr, snapshot->mmap_size);
+            ::munmap(snapshot->mmap_ptr, snapshot->mmap_size);
         }
         if (snapshot->fd >= 0) {
-            close(snapshot->fd);
+            ::close(snapshot->fd);
         }
+#endif
         delete snapshot;
     }
 }
@@ -169,15 +257,15 @@ void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
 // Snapshot Inspection
 // ---------------------------------------------------------------------------
 
-uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
+IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.domain_count : 0;
 }
 
-uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot) {
+IMPULSE_API uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? static_cast<uint16_t>(snapshot->relations.size()) : 0;
 }
 
-impulse_status_t impulse_snapshot_get_relation_entry(
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_entry(
     const impulse_snapshot_t* snapshot,
     uint16_t index,
     impulse_relation_directory_entry_t* out_entry
@@ -189,7 +277,7 @@ impulse_status_t impulse_snapshot_get_relation_entry(
     return IMPULSE_OK;
 }
 
-const void* impulse_snapshot_get_buffer(
+IMPULSE_API const void* impulse_snapshot_get_buffer(
     const impulse_snapshot_t* snapshot,
     uint64_t offset,
     uint64_t size
@@ -206,7 +294,7 @@ const void* impulse_snapshot_get_buffer(
 // Reachability Query
 // ---------------------------------------------------------------------------
 
-bool impulse_snapshot_is_reachable(
+IMPULSE_API bool impulse_snapshot_is_reachable(
     const impulse_snapshot_t* snapshot,
     uint16_t src_domain, uint32_t src_id,
     uint16_t tgt_domain, uint32_t tgt_id
@@ -217,7 +305,7 @@ bool impulse_snapshot_is_reachable(
         if (rel.src_domain_id == src_domain && rel.tgt_domain_id == tgt_domain) {
             if (src_id >= rel.node_count) return false;
 
-            // Validate CSR data regions are within mmap bounds
+            // Validate CSR data regions are within mmap bounds (overflow-safe)
             if (rel.csr_row_off_offset > snapshot->mmap_size ||
                 rel.csr_row_off_bytes > snapshot->mmap_size - rel.csr_row_off_offset ||
                 rel.csr_col_idx_offset > snapshot->mmap_size ||
@@ -225,7 +313,7 @@ bool impulse_snapshot_is_reachable(
                 return false;
             }
 
-            // Validate row_offsets array has room for src_id+1
+            // Validate row_offsets array has room for row_offsets[src_id+1]
             uint64_t required_offset_bytes = (static_cast<uint64_t>(src_id) + 2) * sizeof(uint32_t);
             if (required_offset_bytes > rel.csr_row_off_bytes) return false;
 
@@ -256,34 +344,7 @@ bool impulse_snapshot_is_reachable(
 // Neighbor Sampler
 // ---------------------------------------------------------------------------
 
-struct pcg32_fast {
-    uint64_t state;
-    uint64_t inc;
-    pcg32_fast(uint64_t initstate, uint64_t initseq) {
-        state = 0U;
-        inc = (initseq << 1u) | 1u;
-        next();
-        state += initstate;
-        next();
-    }
-    inline uint32_t next() {
-        uint64_t oldstate = state;
-        state = oldstate * 6364136223846793005ULL + inc;
-        uint32_t xorshifted = static_cast<uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
-        uint32_t rot = static_cast<uint32_t>(oldstate >> 59u);
-        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
-    }
-    inline uint32_t bounded(uint32_t bound) {
-        if (bound == 0) return 0;
-        uint32_t threshold = -bound % bound;
-        for (;;) {
-            uint32_t r = next();
-            if (r >= threshold) return r % bound;
-        }
-    }
-};
-
-impulse_status_t impulse_snapshot_sample_neighbors(
+IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
     const uint32_t* src_nodes,
@@ -295,103 +356,118 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     size_t out_capacity,
     size_t* out_count
 ) {
-    if (!snapshot || !snapshot->mmap_ptr || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
-        g_last_error = "Invalid snapshot, relation index, or NULL buffer pointer";
-        return IMPULSE_ERR_INVALID_ARGUMENT;
-    }
+    try {
+        if (!snapshot || !snapshot->mmap_ptr || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
+            g_last_error = "Invalid snapshot, relation index, or NULL buffer pointer";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
 
-    const auto& rel = snapshot->relations[relation_index];
+        const auto& rel = snapshot->relations[relation_index];
 
-    // Overflow-safe bounds validation on CSR data regions
-    if (rel.csr_row_off_offset > snapshot->mmap_size ||
-        rel.csr_row_off_bytes > snapshot->mmap_size - rel.csr_row_off_offset ||
-        rel.csr_col_idx_offset > snapshot->mmap_size ||
-        rel.csr_col_idx_bytes > snapshot->mmap_size - rel.csr_col_idx_offset) {
-        g_last_error = "Relation directory offset out of bounds";
-        return IMPULSE_ERR_CORRUPT_CHECKSUM;
-    }
+        // Overflow-safe bounds validation on CSR data regions
+        if (rel.csr_row_off_offset > snapshot->mmap_size ||
+            rel.csr_row_off_bytes > snapshot->mmap_size - rel.csr_row_off_offset ||
+            rel.csr_col_idx_offset > snapshot->mmap_size ||
+            rel.csr_col_idx_bytes > snapshot->mmap_size - rel.csr_col_idx_offset) {
+            g_last_error = "Relation directory offset out of bounds";
+            return IMPULSE_ERR_CORRUPT_CHECKSUM;
+        }
 
-    const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
-    const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
-    const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
+        const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
+        const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
 
-    uint64_t num_offsets = rel.node_count + 1;
-    uint64_t max_col_entries = rel.csr_col_idx_bytes / sizeof(uint32_t);
+        uint64_t num_offsets = rel.node_count + 1;
+        uint64_t max_col_entries = rel.csr_col_idx_bytes / sizeof(uint32_t);
 
-    // Validate row_offsets array size
-    if (num_offsets * sizeof(uint32_t) > rel.csr_row_off_bytes) {
-        g_last_error = "Row offsets array size mismatch with node_count";
-        return IMPULSE_ERR_CORRUPT_CHECKSUM;
-    }
+        // Validate row_offsets array size
+        if (num_offsets * sizeof(uint32_t) > rel.csr_row_off_bytes) {
+            g_last_error = "Row offsets array size mismatch with node_count";
+            return IMPULSE_ERR_CORRUPT_CHECKSUM;
+        }
 
-    pcg32_fast rng(seed, 54);
-    size_t written = 0;
+        pcg32_fast rng(seed, 54);
+        size_t written = 0;
 
-    for (size_t i = 0; i < num_nodes; ++i) {
-        uint32_t u = src_nodes[i];
-        if (u + 1 >= num_offsets) continue;
+        for (size_t i = 0; i < num_nodes; ++i) {
+            uint32_t u = src_nodes[i];
+            if (u + 1 >= num_offsets) continue;
 
-        uint32_t start_off = row_offsets[u];
-        uint32_t end_off = row_offsets[u + 1];
-        if (end_off > max_col_entries || start_off >= end_off) continue;
+            uint32_t start_off = row_offsets[u];
+            uint32_t end_off = row_offsets[u + 1];
+            if (end_off > max_col_entries || start_off >= end_off) continue;
 
-        uint32_t deg = end_off - start_off;
+            uint32_t deg = end_off - start_off;
 
-        if (k_samples < 0 || static_cast<uint32_t>(k_samples) >= deg) {
-            for (uint32_t idx = start_off; idx < end_off; ++idx) {
-                if (written >= out_capacity) {
-                    *out_count = written;
-                    g_last_error = "Output buffer capacity exceeded";
-                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+            if (k_samples < 0 || static_cast<uint32_t>(k_samples) >= deg) {
+                for (uint32_t idx = start_off; idx < end_off; ++idx) {
+                    if (written >= out_capacity) {
+                        *out_count = written;
+                        g_last_error = "Output buffer capacity exceeded";
+                        return IMPULSE_ERR_BUFFER_OVERFLOW;
+                    }
+                    if (out_src) out_src[written] = u;
+                    if (out_tgt) out_tgt[written] = col_indices[idx];
+                    written++;
                 }
-                if (out_src) out_src[written] = u;
-                if (out_tgt) out_tgt[written] = col_indices[idx];
-                written++;
-            }
-        } else {
-            for (int k = 0; k < k_samples; ++k) {
-                if (written >= out_capacity) {
-                    *out_count = written;
-                    g_last_error = "Output buffer capacity exceeded";
-                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+            } else {
+                for (int k = 0; k < k_samples; ++k) {
+                    if (written >= out_capacity) {
+                        *out_count = written;
+                        g_last_error = "Output buffer capacity exceeded";
+                        return IMPULSE_ERR_BUFFER_OVERFLOW;
+                    }
+                    uint32_t pick = start_off + rng.bounded(deg);
+                    if (out_src) out_src[written] = u;
+                    if (out_tgt) out_tgt[written] = col_indices[pick];
+                    written++;
                 }
-                uint32_t pick = start_off + rng.bounded(deg);
-                if (out_src) out_src[written] = u;
-                if (out_tgt) out_tgt[written] = col_indices[pick];
-                written++;
             }
         }
-    }
 
-    *out_count = written;
-    return IMPULSE_OK;
+        *out_count = written;
+        return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_snapshot_sample_neighbors: ") + e.what();
+        return IMPULSE_ERR_IO_FAILURE;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Snapshot Writer
 // ---------------------------------------------------------------------------
 
-impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {
-    if (!output_file_path) {
-        g_last_error = "Output file path cannot be null";
+IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {
+    try {
+        if (!output_file_path) {
+            g_last_error = "Output file path cannot be null";
+            return nullptr;
+        }
+        auto* writer = new impulse_writer();
+        writer->output_path = output_file_path;
+        writer->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED;
+        return writer;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_writer_create: ") + e.what();
         return nullptr;
     }
-    auto* writer = new impulse_writer();
-    writer->output_path = output_file_path;
-    writer->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED;
-    return writer;
 }
 
-impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
-    if (!writer || !name) {
-        g_last_error = "Invalid writer or domain name";
-        return IMPULSE_ERR_INVALID_ARGUMENT;
+IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
+    try {
+        if (!writer || !name) {
+            g_last_error = "Invalid writer or domain name";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+        writer->domains.push_back({domain_id, key_type, std::string(name)});
+        return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_writer_add_domain: ") + e.what();
+        return IMPULSE_ERR_IO_FAILURE;
     }
-    writer->domains.push_back({domain_id, key_type, std::string(name)});
-    return IMPULSE_OK;
 }
 
-impulse_status_t impulse_writer_add_relation(
+IMPULSE_API impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
     uint16_t tgt_domain_id,
@@ -402,134 +478,156 @@ impulse_status_t impulse_writer_add_relation(
     const void* row_offsets_data, uint64_t row_offsets_bytes,
     const void* col_indices_data, uint64_t col_indices_bytes
 ) {
-    if (!writer || (!row_offsets_data && row_offsets_bytes > 0) || (!col_indices_data && col_indices_bytes > 0)) {
-        g_last_error = "Invalid writer or buffer pointers";
-        return IMPULSE_ERR_INVALID_ARGUMENT;
-    }
+    try {
+        if (!writer || (!row_offsets_data && row_offsets_bytes > 0) || (!col_indices_data && col_indices_bytes > 0)) {
+            g_last_error = "Invalid writer or buffer pointers";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
 
-    impulse_relation_entry rel;
-    rel.src_domain_id = src_domain_id;
-    rel.tgt_domain_id = tgt_domain_id;
-    rel.encoding_type = encoding_type;
-    rel.node_count = node_count;
-    rel.edge_count = edge_count;
-    rel.section_features = section_features | (1ULL << encoding_type);
+        impulse_relation_entry rel;
+        rel.src_domain_id = src_domain_id;
+        rel.tgt_domain_id = tgt_domain_id;
+        rel.encoding_type = encoding_type;
+        rel.node_count = node_count;
+        rel.edge_count = edge_count;
+        rel.section_features = section_features | (1ULL << encoding_type);
 
-    if (row_offsets_data && row_offsets_bytes > 0) {
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(row_offsets_data);
-        rel.row_offsets_data.assign(ptr, ptr + row_offsets_bytes);
-    }
-    if (col_indices_data && col_indices_bytes > 0) {
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(col_indices_data);
-        rel.col_indices_data.assign(ptr, ptr + col_indices_bytes);
-    }
+        if (row_offsets_data && row_offsets_bytes > 0) {
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(row_offsets_data);
+            rel.row_offsets_data.assign(ptr, ptr + row_offsets_bytes);
+        }
+        if (col_indices_data && col_indices_bytes > 0) {
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(col_indices_data);
+            rel.col_indices_data.assign(ptr, ptr + col_indices_bytes);
+        }
 
-    writer->relations.push_back(std::move(rel));
-    return IMPULSE_OK;
-}
-
-impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
-    if (!writer) {
-        g_last_error = "Null writer pointer";
-        return IMPULSE_ERR_INVALID_ARGUMENT;
-    }
-
-    std::vector<uint8_t> payload;
-
-    // Section 2 Part A: Domain Catalog
-    for (const auto& dom : writer->domains) {
-        impulse_domain_catalog_entry_header_t dhdr;
-        dhdr.domain_id = dom.domain_id;
-        dhdr.key_type = dom.key_type;
-        dhdr.name_len = static_cast<uint16_t>(dom.name.size());
-
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&dhdr);
-        payload.insert(payload.end(), ptr, ptr + sizeof(dhdr));
-        payload.insert(payload.end(), dom.name.begin(), dom.name.end());
-    }
-    align64(payload);
-
-    // Section 2 Part B: Relation Directory Table
-    size_t directory_start_offset = payload.size();
-    std::vector<impulse_relation_directory_entry_t> dir_table(writer->relations.size());
-
-    size_t dir_bytes = writer->relations.size() * sizeof(impulse_relation_directory_entry_t);
-    payload.insert(payload.end(), dir_bytes, 0x00);
-    align64(payload);
-
-    uint64_t base_file_offset = IMPULSE_DEFAULT_DATA_OFFSET;
-
-    for (size_t i = 0; i < writer->relations.size(); ++i) {
-        const auto& rel = writer->relations[i];
-        auto& entry = dir_table[i];
-
-        entry.src_domain_id = rel.src_domain_id;
-        entry.tgt_domain_id = rel.tgt_domain_id;
-        entry.encoding_type = rel.encoding_type;
-        entry.node_count = rel.node_count;
-        entry.edge_count = rel.edge_count;
-        entry.section_features = rel.section_features;
-
-        // RowOffsets Stream
-        align64(payload);
-        entry.csr_row_off_offset = base_file_offset + payload.size();
-        entry.csr_row_off_bytes = rel.row_offsets_data.size();
-        payload.insert(payload.end(), rel.row_offsets_data.begin(), rel.row_offsets_data.end());
-
-        // ColumnIndices Stream
-        align64(payload);
-        entry.csr_col_idx_offset = base_file_offset + payload.size();
-        entry.csr_col_idx_bytes = rel.col_indices_data.size();
-        payload.insert(payload.end(), rel.col_indices_data.begin(), rel.col_indices_data.end());
-
-        entry.id_map_offset = 0; entry.id_map_bytes = 0;
-        entry.dto_lookup_offset = 0; entry.dto_lookup_bytes = 0;
-        entry.delta_log_offset = 0; entry.delta_log_bytes = 0;
-    }
-
-    std::memcpy(payload.data() + directory_start_offset, dir_table.data(), dir_bytes);
-    align4096(payload);
-
-    // Compute SHA-256 Digest
-    uint8_t payload_sha256[32];
-    CC_SHA256(payload.data(), static_cast<CC_LONG>(payload.size()), payload_sha256);
-
-    impulse_snapshot_header_t out_hdr;
-    std::memset(&out_hdr, 0x00, sizeof(out_hdr));
-    out_hdr.magic = IMPULSE_MAGIC;
-    out_hdr.version = IMPULSE_VERSION_MAJOR;
-    out_hdr.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
-    out_hdr.domain_count = static_cast<uint16_t>(writer->domains.size());
-    out_hdr.relation_count = static_cast<uint16_t>(writer->relations.size());
-    out_hdr.kafka_offset = 0;
-    out_hdr.timestamp_ms = static_cast<uint64_t>(std::time(nullptr) * 1000ULL);
-    std::memcpy(out_hdr.sha256_checksum, payload_sha256, 32);
-    out_hdr.global_required_features = writer->global_features;
-
-    std::ofstream ofs(writer->output_path, std::ios::binary);
-    if (!ofs.is_open()) {
-        g_last_error = "Failed to create output snapshot file: " + writer->output_path;
+        writer->relations.push_back(std::move(rel));
+        return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_writer_add_relation: ") + e.what();
         return IMPULSE_ERR_IO_FAILURE;
     }
-
-    ofs.write(reinterpret_cast<const char*>(&out_hdr), sizeof(out_hdr));
-    ofs.write(reinterpret_cast<const char*>(payload.data()), payload.size());
-    ofs.close();
-
-    return IMPULSE_OK;
 }
 
-void impulse_writer_destroy(impulse_writer_t* writer) {
-    if (writer) {
-        delete writer;
+IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
+    try {
+        if (!writer) {
+            g_last_error = "Null writer pointer";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+
+        std::vector<uint8_t> payload;
+
+        // Section 2 Part A: Domain Catalog
+        for (const auto& dom : writer->domains) {
+            impulse_domain_catalog_entry_header_t dhdr;
+            dhdr.domain_id = dom.domain_id;
+            dhdr.key_type = dom.key_type;
+            dhdr.name_len = static_cast<uint16_t>(dom.name.size());
+
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&dhdr);
+            payload.insert(payload.end(), ptr, ptr + sizeof(dhdr));
+            payload.insert(payload.end(), dom.name.begin(), dom.name.end());
+        }
+        align64(payload);
+
+        // Section 2 Part B: Relation Directory Table
+        size_t directory_start_offset = payload.size();
+        std::vector<impulse_relation_directory_entry_t> dir_table(writer->relations.size());
+
+        size_t dir_bytes = writer->relations.size() * sizeof(impulse_relation_directory_entry_t);
+        payload.insert(payload.end(), dir_bytes, 0x00);
+        align64(payload);
+
+        uint64_t base_file_offset = IMPULSE_DEFAULT_DATA_OFFSET;
+
+        for (size_t i = 0; i < writer->relations.size(); ++i) {
+            const auto& rel = writer->relations[i];
+            auto& entry = dir_table[i];
+
+            entry.src_domain_id = rel.src_domain_id;
+            entry.tgt_domain_id = rel.tgt_domain_id;
+            entry.encoding_type = rel.encoding_type;
+            entry.node_count = rel.node_count;
+            entry.edge_count = rel.edge_count;
+            entry.section_features = rel.section_features;
+
+            // RowOffsets Stream
+            align64(payload);
+            entry.csr_row_off_offset = base_file_offset + payload.size();
+            entry.csr_row_off_bytes = rel.row_offsets_data.size();
+            payload.insert(payload.end(), rel.row_offsets_data.begin(), rel.row_offsets_data.end());
+
+            // ColumnIndices Stream
+            align64(payload);
+            entry.csr_col_idx_offset = base_file_offset + payload.size();
+            entry.csr_col_idx_bytes = rel.col_indices_data.size();
+            payload.insert(payload.end(), rel.col_indices_data.begin(), rel.col_indices_data.end());
+
+            entry.id_map_offset = 0; entry.id_map_bytes = 0;
+            entry.dto_lookup_offset = 0; entry.dto_lookup_bytes = 0;
+            entry.delta_log_offset = 0; entry.delta_log_bytes = 0;
+        }
+
+        std::memcpy(payload.data() + directory_start_offset, dir_table.data(), dir_bytes);
+        align4096(payload);
+
+        // Compute SHA-256 Digest (portable implementation)
+        uint8_t payload_sha256[32];
+        impulse_sha256(payload.data(), payload.size(), payload_sha256);
+
+        impulse_snapshot_header_t out_hdr;
+        std::memset(&out_hdr, 0x00, sizeof(out_hdr));
+        out_hdr.magic = IMPULSE_MAGIC;
+        out_hdr.version = (IMPULSE_VERSION_MAJOR << 8) | IMPULSE_VERSION_MINOR;
+        out_hdr.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
+        out_hdr.domain_count = static_cast<uint16_t>(writer->domains.size());
+        out_hdr.relation_count = static_cast<uint16_t>(writer->relations.size());
+        out_hdr.kafka_offset = 0;
+        out_hdr.timestamp_ms = static_cast<uint64_t>(std::time(nullptr)) * 1000ULL;
+        std::memcpy(out_hdr.sha256_checksum, payload_sha256, 32);
+        out_hdr.global_required_features = writer->global_features;
+
+        std::ofstream ofs(writer->output_path, std::ios::binary);
+        if (!ofs.is_open()) {
+            g_last_error = "Failed to create output snapshot file: " + writer->output_path;
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        ofs.write(reinterpret_cast<const char*>(&out_hdr), sizeof(out_hdr));
+        if (!ofs.good()) {
+            g_last_error = "Failed to write snapshot header: " + writer->output_path;
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        ofs.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+        if (!ofs.good()) {
+            g_last_error = "Failed to write snapshot payload: " + writer->output_path;
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        ofs.close();
+        if (ofs.fail()) {
+            g_last_error = "Failed to flush/close snapshot file: " + writer->output_path;
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_writer_finalize: ") + e.what();
+        return IMPULSE_ERR_IO_FAILURE;
     }
+}
+
+IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer) {
+    delete writer;
 }
 
 // ---------------------------------------------------------------------------
 // Cryptographic Signing & Verification (Stubs — Fail-Closed)
 // ---------------------------------------------------------------------------
 
-impulse_status_t impulse_snapshot_sign_ed25519(
+IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(
     const char* snapshot_path,
     const uint8_t secret_key[64],
     const uint8_t public_key[32],
@@ -543,7 +641,7 @@ impulse_status_t impulse_snapshot_sign_ed25519(
     return IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE;
 }
 
-impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot) {
+IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot) {
     if (!snapshot) {
         g_last_error = "Invalid snapshot handle";
         return IMPULSE_ERR_INVALID_ARGUMENT;
@@ -562,7 +660,7 @@ impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snaps
 // Error Reporting
 // ---------------------------------------------------------------------------
 
-const char* impulse_get_last_error(void) {
+IMPULSE_API const char* impulse_get_last_error(void) {
     return g_last_error.c_str();
 }
 
