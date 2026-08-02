@@ -326,6 +326,38 @@ impl SnapshotReader {
         Ok(&col_indices[start_idx..end_idx])
     }
 
+    /// Access zero-copy CSR row offsets array slice for a relation
+    pub fn get_row_offsets(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
+        if relation_index >= self.relations.len() {
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let rel = &self.relations[relation_index];
+        let offsets_buf = self.get_buffer(rel.csr_offsets_pos, rel.csr_offsets_size)?;
+        let row_offsets: &[u32] = unsafe {
+            std::slice::from_raw_parts(
+                offsets_buf.as_ptr() as *const u32,
+                offsets_buf.len() / 4,
+            )
+        };
+        Ok(row_offsets)
+    }
+
+    /// Access zero-copy CSR column targets array slice for a relation
+    pub fn get_col_indices(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
+        if relation_index >= self.relations.len() {
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let rel = &self.relations[relation_index];
+        let targets_buf = self.get_buffer(rel.csr_targets_pos, rel.csr_targets_size)?;
+        let col_indices: &[u32] = unsafe {
+            std::slice::from_raw_parts(
+                targets_buf.as_ptr() as *const u32,
+                targets_buf.len() / 4,
+            )
+        };
+        Ok(col_indices)
+    }
+
     /// Read Fixed Node Property (AoS or SoA math)
     pub fn get_node_property(
         &self,

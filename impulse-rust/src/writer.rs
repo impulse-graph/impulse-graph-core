@@ -32,6 +32,7 @@ pub struct WriterRelation {
     pub row_offsets: Vec<u32>,
     pub col_indices: Vec<u32>,
     pub fixed_props: Option<PropertyBlock>,
+    pub include_csc: bool,
 }
 
 pub struct SnapshotWriter {
@@ -93,6 +94,31 @@ impl SnapshotWriter {
             row_offsets,
             col_indices,
             fixed_props: None,
+            include_csc: false,
+        });
+    }
+
+    pub fn add_relation_with_csc(
+        &mut self,
+        src_domain_id: u16,
+        tgt_domain_id: u16,
+        encoding_type: EncodingType,
+        node_count: u64,
+        edge_count: u64,
+        row_offsets: Vec<u32>,
+        col_indices: Vec<u32>,
+        include_csc: bool,
+    ) {
+        self.relations.push(WriterRelation {
+            src_domain_id,
+            tgt_domain_id,
+            encoding_type,
+            node_count,
+            edge_count,
+            row_offsets,
+            col_indices,
+            fixed_props: None,
+            include_csc,
         });
     }
 
@@ -242,6 +268,71 @@ impl SnapshotWriter {
             entry.csr_targets_size = targets_raw.len() as u64;
             payload.extend_from_slice(targets_raw);
 
+            let mut aux_entries: Vec<AuxSectionEntry> = Vec::new();
+
+            if rel.include_csc && rel.node_count > 0 {
+                let tgt_n = rel.node_count as usize;
+                let mut csc_degrees = vec![0u32; tgt_n + 1];
+                for &tgt in &rel.col_indices {
+                    if (tgt as usize) < tgt_n {
+                        csc_degrees[tgt as usize + 1] += 1;
+                    }
+                }
+                let mut csc_offsets = vec![0u32; tgt_n + 1];
+                for i in 0..tgt_n {
+                    csc_offsets[i + 1] = csc_offsets[i] + csc_degrees[i + 1];
+                }
+                let mut csc_targets = vec![0u32; rel.col_indices.len()];
+                let mut cur_offsets = csc_offsets.clone();
+                for src in 0..rel.node_count as u32 {
+                    let start = rel.row_offsets[src as usize] as usize;
+                    let end = rel.row_offsets[(src + 1) as usize] as usize;
+                    for &tgt in &rel.col_indices[start..end] {
+                        if (tgt as usize) < tgt_n {
+                            let pos = cur_offsets[tgt as usize] as usize;
+                            csc_targets[pos] = src;
+                            cur_offsets[tgt as usize] += 1;
+                        }
+                    }
+                }
+
+                Self::align_buffer(&mut payload, 64);
+                let csc_off_pos = base_offset + payload.len() as u64;
+                let csc_off_raw: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        csc_offsets.as_ptr() as *const u8,
+                        csc_offsets.len() * 4,
+                    )
+                };
+                payload.extend_from_slice(csc_off_raw);
+
+                aux_entries.push(AuxSectionEntry {
+                    section_type: AuxSectionType::CscOffsets as u16,
+                    flags: 0,
+                    reserved: 0,
+                    offset: csc_off_pos,
+                    size: csc_off_raw.len() as u64,
+                });
+
+                Self::align_buffer(&mut payload, 64);
+                let csc_tgt_pos = base_offset + payload.len() as u64;
+                let csc_tgt_raw: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        csc_targets.as_ptr() as *const u8,
+                        csc_targets.len() * 4,
+                    )
+                };
+                payload.extend_from_slice(csc_tgt_raw);
+
+                aux_entries.push(AuxSectionEntry {
+                    section_type: AuxSectionType::CscTargets as u16,
+                    flags: 0,
+                    reserved: 0,
+                    offset: csc_tgt_pos,
+                    size: csc_tgt_raw.len() as u64,
+                });
+            }
+
             // Write Edge Properties if present
             if let Some(ref props) = rel.fixed_props {
                 Self::align_buffer(&mut payload, 64);
@@ -249,24 +340,26 @@ impl SnapshotWriter {
                 let prop_bytes = Self::encode_prop_block(props, rel.edge_count);
                 payload.extend_from_slice(&prop_bytes);
 
-                Self::align_buffer(&mut payload, 64);
-                entry.aux_sections_pos = base_offset + payload.len() as u64;
-
-                let aux_entry = AuxSectionEntry {
+                aux_entries.push(AuxSectionEntry {
                     section_type: AuxSectionType::EdgePropsFixed as u16,
                     flags: 0,
                     reserved: 0,
                     offset: prop_sec_offset,
                     size: prop_bytes.len() as u64,
-                };
-                entry.aux_sections_size = std::mem::size_of::<AuxSectionEntry>() as u64;
+                });
+            }
+
+            if !aux_entries.is_empty() {
+                Self::align_buffer(&mut payload, 64);
+                entry.aux_sections_pos = base_offset + payload.len() as u64;
 
                 let aux_bytes = unsafe {
                     std::slice::from_raw_parts(
-                        &aux_entry as *const AuxSectionEntry as *const u8,
-                        std::mem::size_of::<AuxSectionEntry>(),
+                        aux_entries.as_ptr() as *const u8,
+                        aux_entries.len() * std::mem::size_of::<AuxSectionEntry>(),
                     )
                 };
+                entry.aux_sections_size = aux_bytes.len() as u64;
                 payload.extend_from_slice(aux_bytes);
             }
 
