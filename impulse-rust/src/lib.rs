@@ -149,4 +149,49 @@ mod tests {
         // Cleanup
         let _ = fs::remove_file(TEST_SNAPSHOT);
     }
+
+    #[test]
+    fn test_all_30_spec_v2_4_test_vectors() {
+        let spec_dir = std::path::Path::new("/Users/jesse/impulse/impulse-graph-spec/test-vectors");
+        assert!(spec_dir.exists(), "Test vectors directory must exist");
+
+        let entries = fs::read_dir(spec_dir).unwrap();
+        let mut count = 0;
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                let imps_file = path.join("snapshot.imps");
+                let manifest_file = path.join("manifest.json");
+                if imps_file.exists() && manifest_file.exists() {
+                    let folder_name = path.file_name().unwrap().to_str().unwrap();
+                    let manifest_content = fs::read_to_string(&manifest_file).unwrap();
+                    let is_rejection = manifest_content.contains("\"REJECT_") || manifest_content.contains("\"corrupt_") || !manifest_content.contains("\"SUCCESS\"");
+
+                    if is_rejection {
+                        let result = SnapshotReader::open(&imps_file).and_then(|r| {
+                            for idx in 0..r.relation_count() {
+                                r.get_row_offsets(idx)?;
+                                r.get_col_indices(idx)?;
+                            }
+                            Ok(())
+                        });
+                        assert!(result.is_err(), "Vector {} should be REJECTED", folder_name);
+                    } else {
+                        let result = SnapshotReader::open(&imps_file);
+                        assert!(result.is_ok(), "Vector {} should LOAD cleanly", folder_name);
+                        let reader = result.unwrap();
+                        assert_eq!(reader.header().magic(), IMPULSE_MAGIC);
+                        assert_eq!(reader.header().version(), IMPULSE_VERSION_PACKED);
+                        for idx in 0..reader.relation_count() {
+                            assert!(reader.get_row_offsets(idx).is_ok());
+                            assert!(reader.get_col_indices(idx).is_ok());
+                        }
+                    }
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 30, "Should test exactly 30 test vector folders");
+    }
 }

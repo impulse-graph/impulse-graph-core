@@ -165,6 +165,7 @@ impl AuxSectionType {
 pub const IMPULSE_FEAT_WIDE_NODE_IDS: u64 = 1 << 0;
 pub const IMPULSE_FEAT_SECTION_DIRECTORY: u64 = 1 << 1;
 pub const IMPULSE_FEAT_SIGNED_ENFORCED: u64 = 1 << 2;
+pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 3;
 
 pub const IMPULSE_COMPAT_PAGE_ALIGNED: u64 = 1 << 0;
 pub const IMPULSE_COMPAT_SIGNED: u64 = 1 << 1;

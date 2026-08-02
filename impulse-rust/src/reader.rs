@@ -86,6 +86,10 @@ impl SnapshotReader {
         }
 
         // Check required feature flags (fail-closed)
+        let known_features = IMPULSE_FEAT_4KB_PAGE_ALIGNED | IMPULSE_FEAT_SIGNED_ENFORCED;
+        if (header.required_features() & !known_features) != 0 {
+            return Err(ImpulseError::UnsupportedGlobalFeature);
+        }
         if (header.required_features() & IMPULSE_FEAT_SIGNED_ENFORCED) != 0 {
             return Err(ImpulseError::SignatureMismatch);
         }
@@ -108,9 +112,12 @@ impl SnapshotReader {
             let name_len = entry.name_length as usize;
             let name_off = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.name_offset)) } as usize;
 
-            let name = if name_len > 0 && name_off > 0 && name_off + name_len <= slice.len() {
+            let name = if name_len > 0 {
+                if name_off == 0 || name_off + name_len > slice.len() {
+                    return Err(ImpulseError::BufferOverflow);
+                }
                 std::str::from_utf8(&slice[name_off..name_off + name_len])
-                    .unwrap_or("")
+                    .map_err(|_| ImpulseError::InvalidArgument)?
                     .to_string()
             } else {
                 String::new()
@@ -333,6 +340,9 @@ impl SnapshotReader {
         }
         let rel = &self.relations[relation_index];
         let offsets_buf = self.get_buffer(rel.csr_offsets_pos, rel.csr_offsets_size)?;
+        if (offsets_buf.as_ptr() as usize) % std::mem::align_of::<u32>() != 0 {
+            return Err(ImpulseError::InvalidArgument);
+        }
         let row_offsets: &[u32] = unsafe {
             std::slice::from_raw_parts(
                 offsets_buf.as_ptr() as *const u32,
@@ -349,10 +359,18 @@ impl SnapshotReader {
         }
         let rel = &self.relations[relation_index];
         let targets_buf = self.get_buffer(rel.csr_targets_pos, rel.csr_targets_size)?;
+        if (targets_buf.as_ptr() as usize) % std::mem::align_of::<u32>() != 0 {
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let elem_size = match rel.encoding_type {
+            EncodingType::RawUint16 => 2,
+            EncodingType::RawUint64 => 8,
+            _ => 4,
+        };
         let col_indices: &[u32] = unsafe {
             std::slice::from_raw_parts(
                 targets_buf.as_ptr() as *const u32,
-                targets_buf.len() / 4,
+                targets_buf.len() / elem_size,
             )
         };
         Ok(col_indices)

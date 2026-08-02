@@ -272,3 +272,19 @@ The Impulse Graph ecosystem publishes native artifacts across **7 major package 
 | **Vcpkg / Conan** | C / C++ | `impulse-graph` | C-ABI header `impulse_graph.h` & `libimpulse_graph.so` / `.dylib` / `.dll`.<br>`vcpkg install impulse-graph` |
 | **GitHub Releases** | C / C++ Native Tarballs | `impulse-graph-v2.3.0-linux-x64.tar.gz`<br>`impulse-graph-v2.3.0-darwin-arm64.tar.gz` | Pre-compiled C-ABI shared library tarballs. |
 | **GHCR / Docker Hub**| Docker Containers | `ghcr.io/impulse-graph/impulse-platform-server:latest`<br>`ghcr.io/impulse-graph/impulse-tools:latest` | Standalone Spring Boot gRPC server & `impulse-opt` optimizer CLI containers. |
+
+---
+
+## 8. Future Endeavor: `impulse-algo` (Macro Graph Analytics Module)
+
+To support whole-graph algorithms (e.g. GAPBS benchmark suite analytics), a dedicated, decoupled **`impulse-algo`** module is planned as a future endeavor.
+
+* **Architecture**: Decoupled from `impulse-core` to preserve the zero-dependency, ultra-lean kernel rule for point queries and ReBAC authorization.
+* **Target Execution**: Bypasses AST overhead to run bare-metal SIMD parallel sweeps (OpenMP, Rayon, FFM VectorAPI) directly over raw off-heap `.imps` CSR offset and target buffers.
+* **Planned Algorithms**:
+  1. **Connected Components (CC)**: Afforest / Union-Find for grid islanding and subgraph clustering.
+  2. **PageRank (PR)**: Pull-direction Jacobi vector sweeps for node ranking and GNN embeddings.
+  3. **Direction-Optimizing BFS**: Parent array & level distance vector generation.
+  4. **Triangle Counting (TC)**: SIMD sorted neighbor array intersections.
+  5. **Single-Source Shortest Paths (SSSP)**: Delta-stepping for weighted topologies.
+
