@@ -700,6 +700,9 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         impulse_sha256(payload.data(), payload.size(), payload_sha256);
 
         // Construct 4KB Header
+        uint8_t header_buf[4096];
+        std::memset(header_buf, 0, 4096);
+
         impulse_snapshot_header_t hdr;
         std::memset(&hdr, 0, sizeof(hdr));
         hdr.magic = IMPULSE_MAGIC;
@@ -712,13 +715,30 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         std::memcpy(hdr.sha256_checksum, payload_sha256, 32);
         hdr.global_required_features = writer->global_features;
 
+        std::memcpy(header_buf, &hdr, sizeof(hdr));
+
+        // Compute Header CRC-32C at offset 0x458 (1112)
+        std::vector<uint8_t> crc_data;
+        crc_data.insert(crc_data.end(), header_buf, header_buf + 0x48);
+        crc_data.insert(crc_data.end(), header_buf + 0x448, header_buf + 0x458);
+
+        uint32_t crc32c = 0xFFFFFFFF;
+        for (uint8_t b : crc_data) {
+            crc32c ^= b;
+            for (int k = 0; k < 8; ++k) {
+                crc32c = (crc32c >> 1) ^ ((crc32c & 1) ? 0x82F63B78 : 0);
+            }
+        }
+        crc32c ^= 0xFFFFFFFF;
+        std::memcpy(header_buf + 0x458, &crc32c, 4);
+
         std::ofstream ofs(writer->output_path, std::ios::binary);
         if (!ofs.is_open()) {
             g_last_error = "Failed to open output file for writing: " + writer->output_path;
             return IMPULSE_ERR_IO_FAILURE;
         }
 
-        ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+        ofs.write(reinterpret_cast<const char*>(header_buf), 4096);
         ofs.write(reinterpret_cast<const char*>(payload.data()), payload.size());
         ofs.close();
 

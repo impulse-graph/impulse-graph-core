@@ -96,6 +96,14 @@ static void test_all_30_spec_v2_4_test_vectors() {
             ASSERT_EQ(c_st, IMPULSE_OK);
             ASSERT_TRUE(comp_snap != nullptr);
             impulse_snapshot_close(comp_snap);
+
+            // Cross-verify zero-delta compacted file with Rust impulse-graph validate tool
+            std::string cli_cmd1 = "/Users/jesse/impulse/impulse-graph-tooling/target/release/impulse-graph validate " + comp_file;
+            int ret1 = std::system(cli_cmd1.c_str());
+            if (ret1 != 0) {
+                std::fprintf(stderr, "FAIL: impulse-graph validate failed on zero-delta compacted vector %s (ret=%d)\n", folder_name.c_str(), ret1);
+                std::abort();
+            }
             std::remove(comp_file.c_str());
 
             // Test 2: Live Delta Layer Compaction (with additions and tombstones)
@@ -119,6 +127,14 @@ static void test_all_30_spec_v2_4_test_vectors() {
             ASSERT_EQ(c_st, IMPULSE_OK);
             ASSERT_TRUE(delta_snap != nullptr);
             impulse_snapshot_close(delta_snap);
+
+            // Cross-verify live delta compacted file with Rust impulse-graph validate tool
+            std::string cli_cmd2 = "/Users/jesse/impulse/impulse-graph-tooling/target/release/impulse-graph validate " + delta_file;
+            int ret2 = std::system(cli_cmd2.c_str());
+            if (ret2 != 0) {
+                std::fprintf(stderr, "FAIL: impulse-graph validate failed on live delta compacted vector %s (ret=%d)\n", folder_name.c_str(), ret2);
+                std::abort();
+            }
             std::remove(delta_file.c_str());
 
             for (auto* d : deltas) {
