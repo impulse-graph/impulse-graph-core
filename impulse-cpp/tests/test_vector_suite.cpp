@@ -1,0 +1,106 @@
+/*
+ * test_vector_suite.cpp — Spec v2.4 30-Vector Test Suite for Impulse C++ Core Engine.
+ */
+
+#include "impulse_graph.h"
+#include "impulse_format_v2_4.h"
+
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+#define ASSERT_EQ(a, b) do { \
+    if ((a) != (b)) { \
+        std::fprintf(stderr, "FAIL: %s:%d: %s != %s\n", __FILE__, __LINE__, #a, #b); \
+        std::abort(); \
+    } \
+} while (0)
+
+#define ASSERT_TRUE(x) do { \
+    if (!(x)) { \
+        std::fprintf(stderr, "FAIL: %s:%d: %s is false\n", __FILE__, __LINE__, #x); \
+        std::abort(); \
+    } \
+} while (0)
+
+static std::string read_file_string(const fs::path& p) {
+    std::ifstream ifs(p, std::ios::binary);
+    if (!ifs.is_open()) return "";
+    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+static void test_all_30_spec_v2_4_test_vectors() {
+    fs::path spec_dir("/Users/jesse/impulse/impulse-graph-spec/test-vectors");
+    ASSERT_TRUE(fs::exists(spec_dir));
+
+    int count = 0;
+    int passed_valid = 0;
+    int passed_rejected = 0;
+
+    for (const auto& entry : fs::directory_iterator(spec_dir)) {
+        if (!entry.is_directory()) continue;
+        fs::path folder = entry.path();
+        fs::path imps_file = folder / "snapshot.imps";
+        fs::path manifest_file = folder / "manifest.json";
+
+        if (!fs::exists(imps_file) || !fs::exists(manifest_file)) continue;
+
+        std::string folder_name = folder.filename().string();
+        std::string manifest_content = read_file_string(manifest_file);
+        bool is_rejection = manifest_content.find("\"REJECT_") != std::string::npos ||
+                           manifest_content.find("\"corrupt_") != std::string::npos ||
+                           manifest_content.find("\"SUCCESS\"") == std::string::npos;
+
+        impulse_status_t status = IMPULSE_OK;
+        impulse_snapshot_t* snap = impulse_snapshot_open(imps_file.c_str(), &status);
+
+        if (is_rejection) {
+            if (snap != nullptr || status == IMPULSE_OK) {
+                std::fprintf(stderr, "FAIL: Vector %s should be REJECTED, but open succeeded!\n", folder_name.c_str());
+                std::abort();
+            }
+            std::printf("  [PASS] Test Vector Correct Rejection: %s (status=%d)\n", folder_name.c_str(), status);
+            passed_rejected++;
+        } else {
+            if (snap == nullptr || status != IMPULSE_OK) {
+                std::fprintf(stderr, "FAIL: Vector %s should LOAD cleanly, but got status %d (%s)\n",
+                             folder_name.c_str(), status, impulse_get_last_error());
+                std::abort();
+            }
+
+            uint32_t magic = impulse_snapshot_magic(snap);
+            uint16_t version = impulse_snapshot_version(snap);
+            ASSERT_EQ(magic, IMPULSE_SPEC_MAGIC_V2_4);
+            ASSERT_TRUE(version == 0x0204 || version == 2);
+
+            uint16_t rel_count = impulse_snapshot_relation_count(snap);
+            for (uint16_t r = 0; r < rel_count; ++r) {
+                impulse_relation_directory_entry_t rel_entry;
+                impulse_status_t r_st = impulse_snapshot_get_relation_entry(snap, r, &rel_entry);
+                ASSERT_EQ(r_st, IMPULSE_OK);
+            }
+
+            impulse_snapshot_close(snap);
+            std::printf("  [PASS] Test Vector Load SUCCESS: %s\n", folder_name.c_str());
+            passed_valid++;
+        }
+        count++;
+    }
+
+    ASSERT_EQ(count, 30);
+    std::printf("\nSpec v2.4 C++ Compatibility Results: %d total (%d valid passed, %d rejection passed)\n",
+                count, passed_valid, passed_rejected);
+}
+
+int main() {
+    std::printf("--- Impulse C++ Core Engine Spec v2.4 Test Battery ---\n\n");
+    test_all_30_spec_v2_4_test_vectors();
+    return 0;
+}

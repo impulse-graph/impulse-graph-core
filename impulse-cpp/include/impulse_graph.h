@@ -192,6 +192,15 @@ typedef struct impulse_writer impulse_writer_t;
 // Snapshot Reader C-ABI API
 IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status);
 IMPULSE_API void impulse_snapshot_close(impulse_snapshot_t* snapshot);
+IMPULSE_API uint32_t impulse_snapshot_magic(const impulse_snapshot_t* snapshot);
+IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot);
+IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    impulse_relation_directory_entry_t* out_entry
+);
 IMPULSE_API bool impulse_snapshot_is_reachable(
     const impulse_snapshot_t* snapshot,
     uint16_t src_domain, uint32_t src_id,

@@ -1,4 +1,5 @@
 #include "impulse_graph.h"
+#include "impulse_format_v2_4.h"
 #include "impulse_sha256.h"
 
 #include <algorithm>
@@ -187,12 +188,44 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
             return nullptr;
         }
 
-        // Fail-closed: reject snapshots that require crypto verification
-        // (no real Ed25519 verifier is linked yet)
+        uint16_t version = hdr->version;
+        if (version != 1 && version != 2 && version != 0x0204) {
+            g_last_error = "Unsupported protocol version number: " + std::to_string(version);
+            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_VERSION;
+            return nullptr;
+        }
+
+        // Fail-closed: check global required feature flags
+        uint64_t known_feats = IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED | IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
+        if (hdr->global_required_features & ~known_feats) {
+            g_last_error = "Unsupported global feature flag requested";
+            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE;
+            return nullptr;
+        }
         if (hdr->global_required_features & IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED) {
             g_last_error = "Snapshot requires cryptographic signature verification which is not yet implemented";
             if (out_status) *out_status = IMPULSE_ERR_SIGNATURE_MISMATCH;
             return nullptr;
+        }
+
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(mmap_guard.ptr);
+        uint64_t data_off = hdr->data_offset;
+
+        if (data_off > st.st_size) {
+            g_last_error = "Data offset points outside file boundaries";
+            if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+
+        // SHA-256 payload checksum validation
+        if (data_off < static_cast<size_t>(st.st_size)) {
+            uint8_t actual_sha[32];
+            impulse_sha256(base + data_off, st.st_size - data_off, actual_sha);
+            if (std::memcmp(actual_sha, hdr->sha256_checksum, 32) != 0) {
+                g_last_error = "SHA-256 checksum mismatch on snapshot binary load";
+                if (out_status) *out_status = IMPULSE_ERR_CORRUPT_CHECKSUM;
+                return nullptr;
+            }
         }
 
         auto* snap = new impulse_snapshot();
@@ -202,10 +235,69 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
         snap->mmap_size = static_cast<size_t>(st.st_size);
         std::memcpy(&snap->header, hdr, sizeof(impulse_snapshot_header_t));
 
-        // Parse relation directory table if present
-        uint64_t data_off = hdr->data_offset;
-        if (data_off < snap->mmap_size && hdr->relation_count > 0) {
-            const uint8_t* base = reinterpret_cast<const uint8_t*>(snap->mmap_ptr);
+        // Parse Domain Catalog and Relation Directory
+        if (version == 0x0204) {
+            size_t dom_catalog_size = hdr->domain_count * 64;
+            size_t rel_dir_size = hdr->relation_count * 128;
+
+            if (data_off + dom_catalog_size + rel_dir_size > snap->mmap_size) {
+                g_last_error = "Catalog directory size exceeds snapshot file bounds";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                delete snap;
+                return nullptr;
+            }
+
+            // Validate domain string offsets
+            for (uint16_t d = 0; d < hdr->domain_count; ++d) {
+                const auto* dentry = reinterpret_cast<const impulse_domain_catalog_entry_v2_4_t*>(base + data_off + d * 64);
+                if (dentry->name_length > 0 && dentry->name_offset > 0) {
+                    if (dentry->name_offset + dentry->name_length > snap->mmap_size) {
+                        g_last_error = "Domain name offset/length points outside file boundaries";
+                        if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                        delete snap;
+                        return nullptr;
+                    }
+                }
+            }
+
+            // Parse relation entries & validate section alignment/bounds
+            size_t rel_dir_pos = data_off + dom_catalog_size;
+            for (uint16_t r = 0; r < hdr->relation_count; ++r) {
+                const auto* rentry = reinterpret_cast<const impulse_relation_directory_entry_v2_4_t*>(base + rel_dir_pos + r * 128);
+                if (rentry->csr_offsets_pos > snap->mmap_size || rentry->csr_targets_pos > snap->mmap_size) {
+                    g_last_error = "Catalog section offset points outside file boundaries";
+                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                    delete snap;
+                    return nullptr;
+                }
+                if (rentry->csr_offsets_pos > 0 && (rentry->csr_offsets_pos % 64 != 0)) {
+                    g_last_error = "CSR row offsets array offset not 64-byte aligned";
+                    if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                    delete snap;
+                    return nullptr;
+                }
+                if (rentry->csr_targets_pos > 0 && (rentry->csr_targets_pos % 64 != 0)) {
+                    g_last_error = "CSR column targets array offset not 64-byte aligned";
+                    if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                    delete snap;
+                    return nullptr;
+                }
+
+                impulse_relation_directory_entry_t entry;
+                std::memset(&entry, 0, sizeof(entry));
+                entry.src_domain_id = rentry->src_domain_id;
+                entry.tgt_domain_id = rentry->tgt_domain_id;
+                entry.encoding_type = rentry->encoding_type;
+                entry.node_count = rentry->node_count;
+                entry.edge_count = rentry->edge_count;
+                entry.section_features = rentry->required_features;
+                entry.csr_row_off_offset = rentry->csr_offsets_pos;
+                entry.csr_row_off_bytes = rentry->csr_offsets_size;
+                entry.csr_col_idx_offset = rentry->csr_targets_pos;
+                entry.csr_col_idx_bytes = rentry->csr_targets_size;
+                snap->relations.push_back(entry);
+            }
+        } else if (data_off < snap->mmap_size && hdr->relation_count > 0) {
             size_t cur = static_cast<size_t>(data_off);
 
             // Skip Domain Catalog — with name_len bounds validation
@@ -256,6 +348,14 @@ IMPULSE_API void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
 // ---------------------------------------------------------------------------
 // Snapshot Inspection
 // ---------------------------------------------------------------------------
+
+IMPULSE_API uint32_t impulse_snapshot_magic(const impulse_snapshot_t* snapshot) {
+    return snapshot ? snapshot->header.magic : 0;
+}
+
+IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot) {
+    return snapshot ? snapshot->header.version : 0;
+}
 
 IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.domain_count : 0;
@@ -518,99 +618,96 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
         std::vector<uint8_t> payload;
 
-        // Section 2 Part A: Domain Catalog
-        for (const auto& dom : writer->domains) {
-            impulse_domain_catalog_entry_header_t dhdr;
-            dhdr.domain_id = dom.domain_id;
-            dhdr.key_type = dom.key_type;
-            dhdr.name_len = static_cast<uint16_t>(dom.name.size());
-
-            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&dhdr);
-            payload.insert(payload.end(), ptr, ptr + sizeof(dhdr));
-            payload.insert(payload.end(), dom.name.begin(), dom.name.end());
-        }
-        align64(payload);
-
-        // Section 2 Part B: Relation Directory Table
-        size_t directory_start_offset = payload.size();
-        std::vector<impulse_relation_directory_entry_t> dir_table(writer->relations.size());
-
-        size_t dir_bytes = writer->relations.size() * sizeof(impulse_relation_directory_entry_t);
-        payload.insert(payload.end(), dir_bytes, 0x00);
-        align64(payload);
-
         uint64_t base_file_offset = IMPULSE_DEFAULT_DATA_OFFSET;
+        uint16_t domain_count = static_cast<uint16_t>(writer->domains.size());
+        uint16_t relation_count = static_cast<uint16_t>(writer->relations.size());
+
+        size_t dom_catalog_bytes = domain_count * 64;
+        size_t rel_dir_bytes = relation_count * 128;
+        size_t string_table_pos = base_file_offset + dom_catalog_bytes + rel_dir_bytes;
+
+        std::vector<uint8_t> string_table;
+
+        // Section 2 Part A: 64-byte Domain Catalog Table
+        for (const auto& dom : writer->domains) {
+            impulse_domain_catalog_entry_v2_4_t dentry;
+            std::memset(&dentry, 0, sizeof(dentry));
+            dentry.domain_id = dom.domain_id;
+            dentry.key_type = dom.key_type;
+
+            if (!dom.name.empty()) {
+                dentry.name_offset = static_cast<uint32_t>(string_table_pos + string_table.size());
+                dentry.name_length = static_cast<uint16_t>(dom.name.size());
+                string_table.insert(string_table.end(), dom.name.begin(), dom.name.end());
+            }
+
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&dentry);
+            payload.insert(payload.end(), ptr, ptr + 64);
+        }
+
+        // Section 2 Part B: 128-byte Relation Directory Table
+        size_t directory_start_offset = payload.size();
+        std::vector<impulse_relation_directory_entry_v2_4_t> dir_table(relation_count);
+        payload.insert(payload.end(), rel_dir_bytes, 0x00);
+
+        // String Table
+        payload.insert(payload.end(), string_table.begin(), string_table.end());
+        align64(payload);
 
         for (size_t i = 0; i < writer->relations.size(); ++i) {
             const auto& rel = writer->relations[i];
             auto& entry = dir_table[i];
+            std::memset(&entry, 0, sizeof(entry));
 
             entry.src_domain_id = rel.src_domain_id;
             entry.tgt_domain_id = rel.tgt_domain_id;
             entry.encoding_type = rel.encoding_type;
             entry.node_count = rel.node_count;
             entry.edge_count = rel.edge_count;
-            entry.section_features = rel.section_features;
+            entry.required_features = rel.section_features;
 
             // RowOffsets Stream
             align64(payload);
-            entry.csr_row_off_offset = base_file_offset + payload.size();
-            entry.csr_row_off_bytes = rel.row_offsets_data.size();
+            entry.csr_offsets_pos = base_file_offset + payload.size();
+            entry.csr_offsets_size = rel.row_offsets_data.size();
             payload.insert(payload.end(), rel.row_offsets_data.begin(), rel.row_offsets_data.end());
 
             // ColumnIndices Stream
             align64(payload);
-            entry.csr_col_idx_offset = base_file_offset + payload.size();
-            entry.csr_col_idx_bytes = rel.col_indices_data.size();
+            entry.csr_targets_pos = base_file_offset + payload.size();
+            entry.csr_targets_size = rel.col_indices_data.size();
             payload.insert(payload.end(), rel.col_indices_data.begin(), rel.col_indices_data.end());
-
-            entry.id_map_offset = 0; entry.id_map_bytes = 0;
-            entry.dto_lookup_offset = 0; entry.dto_lookup_bytes = 0;
-            entry.delta_log_offset = 0; entry.delta_log_bytes = 0;
         }
 
-        std::memcpy(payload.data() + directory_start_offset, dir_table.data(), dir_bytes);
+        std::memcpy(payload.data() + directory_start_offset, dir_table.data(), rel_dir_bytes);
         align4096(payload);
 
-        // Compute SHA-256 Digest (portable implementation)
+        // Compute SHA-256 Digest
         uint8_t payload_sha256[32];
         impulse_sha256(payload.data(), payload.size(), payload_sha256);
 
-        impulse_snapshot_header_t out_hdr;
-        std::memset(&out_hdr, 0x00, sizeof(out_hdr));
-        out_hdr.magic = IMPULSE_MAGIC;
-        out_hdr.version = (IMPULSE_VERSION_MAJOR << 8) | IMPULSE_VERSION_MINOR;
-        out_hdr.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
-        out_hdr.domain_count = static_cast<uint16_t>(writer->domains.size());
-        out_hdr.relation_count = static_cast<uint16_t>(writer->relations.size());
-        out_hdr.kafka_offset = 0;
-        out_hdr.timestamp_ms = static_cast<uint64_t>(std::time(nullptr)) * 1000ULL;
-        std::memcpy(out_hdr.sha256_checksum, payload_sha256, 32);
-        out_hdr.global_required_features = writer->global_features;
+        // Construct 4KB Header
+        impulse_snapshot_header_t hdr;
+        std::memset(&hdr, 0, sizeof(hdr));
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = 0x0204;
+        hdr.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
+        hdr.domain_count = domain_count;
+        hdr.relation_count = relation_count;
+        hdr.kafka_offset = static_cast<uint64_t>(std::time(nullptr));
+        hdr.timestamp_ms = static_cast<uint64_t>(std::time(nullptr)) * 1000ULL;
+        std::memcpy(hdr.sha256_checksum, payload_sha256, 32);
+        hdr.global_required_features = writer->global_features;
 
         std::ofstream ofs(writer->output_path, std::ios::binary);
         if (!ofs.is_open()) {
-            g_last_error = "Failed to create output snapshot file: " + writer->output_path;
+            g_last_error = "Failed to open output file for writing: " + writer->output_path;
             return IMPULSE_ERR_IO_FAILURE;
         }
 
-        ofs.write(reinterpret_cast<const char*>(&out_hdr), sizeof(out_hdr));
-        if (!ofs.good()) {
-            g_last_error = "Failed to write snapshot header: " + writer->output_path;
-            return IMPULSE_ERR_IO_FAILURE;
-        }
-
-        ofs.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-        if (!ofs.good()) {
-            g_last_error = "Failed to write snapshot payload: " + writer->output_path;
-            return IMPULSE_ERR_IO_FAILURE;
-        }
-
+        ofs.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+        ofs.write(reinterpret_cast<const char*>(payload.data()), payload.size());
         ofs.close();
-        if (ofs.fail()) {
-            g_last_error = "Failed to flush/close snapshot file: " + writer->output_path;
-            return IMPULSE_ERR_IO_FAILURE;
-        }
 
         return IMPULSE_OK;
     } catch (const std::exception& e) {

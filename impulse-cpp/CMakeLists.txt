@@ -50,4 +50,8 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(impulse_graph_test tests/impulse_graph_test.cpp)
     target_link_libraries(impulse_graph_test PRIVATE impulse_graph_static)
     add_test(NAME impulse_graph_test COMMAND impulse_graph_test)
+
+    add_executable(test_vector_suite tests/test_vector_suite.cpp)
+    target_link_libraries(test_vector_suite PRIVATE impulse_graph_static)
+    add_test(NAME test_vector_suite COMMAND test_vector_suite)
 endif()
