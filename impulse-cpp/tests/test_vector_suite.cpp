@@ -87,8 +87,46 @@ static void test_all_30_spec_v2_4_test_vectors() {
                 ASSERT_EQ(r_st, IMPULSE_OK);
             }
 
+            // Test 1: Zero-Delta Compaction
+            std::string comp_file = "__temp_compacted_" + folder_name + ".imps";
+            impulse_status_t c_st = impulse_snapshot_compact_to_file(snap, nullptr, 0, comp_file.c_str());
+            ASSERT_EQ(c_st, IMPULSE_OK);
+
+            impulse_snapshot_t* comp_snap = impulse_snapshot_open(comp_file.c_str(), &c_st);
+            ASSERT_EQ(c_st, IMPULSE_OK);
+            ASSERT_TRUE(comp_snap != nullptr);
+            impulse_snapshot_close(comp_snap);
+            std::remove(comp_file.c_str());
+
+            // Test 2: Live Delta Layer Compaction (with additions and tombstones)
+            std::string delta_file = "__temp_delta_" + folder_name + ".imps";
+            std::vector<impulse_delta_layer_t*> deltas;
+            for (uint16_t r = 0; r < rel_count; ++r) {
+                impulse_relation_directory_entry_t rentry;
+                impulse_snapshot_get_relation_entry(snap, r, &rentry);
+                impulse_delta_layer_t* d = impulse_delta_layer_create(rentry.src_domain_id, rentry.tgt_domain_id, "rel");
+                if (rentry.node_count > 0) {
+                    impulse_delta_layer_add_edge(d, 0, 9999);
+                    impulse_delta_layer_tombstone_edge(d, 0, 0);
+                }
+                deltas.push_back(d);
+            }
+
+            c_st = impulse_snapshot_compact_to_file(snap, deltas.data(), deltas.size(), delta_file.c_str());
+            ASSERT_EQ(c_st, IMPULSE_OK);
+
+            impulse_snapshot_t* delta_snap = impulse_snapshot_open(delta_file.c_str(), &c_st);
+            ASSERT_EQ(c_st, IMPULSE_OK);
+            ASSERT_TRUE(delta_snap != nullptr);
+            impulse_snapshot_close(delta_snap);
+            std::remove(delta_file.c_str());
+
+            for (auto* d : deltas) {
+                impulse_delta_layer_destroy(d);
+            }
+
             impulse_snapshot_close(snap);
-            std::printf("  [PASS] Test Vector Load SUCCESS: %s\n", folder_name.c_str());
+            std::printf("  [PASS] Test Vector Load & Compaction SUCCESS: %s\n", folder_name.c_str());
             passed_valid++;
         }
         count++;

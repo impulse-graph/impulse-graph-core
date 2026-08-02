@@ -6,8 +6,12 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <memory>
 #include <new>
+#include <shared_mutex>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Platform I/O abstraction
@@ -119,6 +123,15 @@ struct impulse_relation_entry {
     uint64_t section_features;
     std::vector<uint8_t> row_offsets_data;
     std::vector<uint8_t> col_indices_data;
+};
+
+struct impulse_delta_layer {
+    uint16_t src_domain_id;
+    uint16_t tgt_domain_id;
+    std::string relation_name;
+    mutable std::shared_mutex rw_lock;
+    std::unordered_set<uint64_t> tombstones; // (src << 32 | tgt)
+    std::unordered_map<uint32_t, std::vector<uint32_t>> additions; // src -> targets
 };
 
 struct impulse_writer {
@@ -718,6 +731,158 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer) {
     delete writer;
+}
+
+// ---------------------------------------------------------------------------
+// Live Delta Layer & Compaction Implementation
+// ---------------------------------------------------------------------------
+
+IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name) {
+    try {
+        auto* delta = new impulse_delta_layer();
+        delta->src_domain_id = src_domain_id;
+        delta->tgt_domain_id = tgt_domain_id;
+        delta->relation_name = relation_name ? relation_name : "";
+        return delta;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+IMPULSE_API impulse_status_t impulse_delta_layer_add_edge(impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node) {
+    if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
+    std::unique_lock<std::shared_mutex> lock(delta->rw_lock);
+    uint64_t key = (static_cast<uint64_t>(src_node) << 32) | tgt_node;
+    delta->tombstones.erase(key);
+    auto& list = delta->additions[src_node];
+    if (std::find(list.begin(), list.end(), tgt_node) == list.end()) {
+        list.push_back(tgt_node);
+    }
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_delta_layer_tombstone_edge(impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node) {
+    if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
+    std::unique_lock<std::shared_mutex> lock(delta->rw_lock);
+    uint64_t key = (static_cast<uint64_t>(src_node) << 32) | tgt_node;
+    delta->tombstones.insert(key);
+    auto it = delta->additions.find(src_node);
+    if (it != delta->additions.end()) {
+        auto& list = it->second;
+        list.erase(std::remove(list.begin(), list.end(), tgt_node), list.end());
+    }
+    return IMPULSE_OK;
+}
+
+IMPULSE_API bool impulse_delta_layer_is_tombstoned(const impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node) {
+    if (!delta) return false;
+    std::shared_lock<std::shared_mutex> lock(delta->rw_lock);
+    uint64_t key = (static_cast<uint64_t>(src_node) << 32) | tgt_node;
+    return delta->tombstones.find(key) != delta->tombstones.end();
+}
+
+IMPULSE_API void impulse_delta_layer_destroy(impulse_delta_layer_t* delta) {
+    delete delta;
+}
+
+IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    const char* output_file_path
+) {
+    try {
+        if (!base_snapshot || !output_file_path) {
+            g_last_error = "Invalid base snapshot or output file path";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+
+        impulse_writer_t* writer = impulse_writer_create(output_file_path, base_snapshot->header.global_required_features);
+        if (!writer) return IMPULSE_ERR_IO_FAILURE;
+
+        // Map delta layers by relation index / name
+        std::unordered_map<size_t, impulse_delta_layer_t*> delta_map;
+        for (size_t d = 0; d < delta_count; ++d) {
+            if (deltas && deltas[d]) {
+                delta_map[d] = deltas[d];
+            }
+        }
+
+        // Process each relation in base_snapshot
+        uint16_t rel_count = impulse_snapshot_relation_count(base_snapshot);
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(base_snapshot->mmap_ptr);
+
+        for (uint16_t r = 0; r < rel_count; ++r) {
+            impulse_relation_directory_entry_t rentry;
+            impulse_status_t st = impulse_snapshot_get_relation_entry(base_snapshot, r, &rentry);
+            if (st != IMPULSE_OK) {
+                impulse_writer_destroy(writer);
+                return st;
+            }
+
+            impulse_delta_layer_t* delta = delta_map.count(r) ? delta_map[r] : nullptr;
+
+            const uint32_t* row_offs = (rentry.csr_row_off_offset > 0 && rentry.csr_row_off_bytes >= 4) ?
+                reinterpret_cast<const uint32_t*>(base + rentry.csr_row_off_offset) : nullptr;
+            const uint32_t* col_tgts = (rentry.csr_col_idx_offset > 0 && rentry.csr_col_idx_bytes >= 4) ?
+                reinterpret_cast<const uint32_t*>(base + rentry.csr_col_idx_offset) : nullptr;
+
+            uint32_t num_row_offs = static_cast<uint32_t>(rentry.csr_row_off_bytes / 4);
+            uint32_t num_nodes = rentry.node_count;
+
+            std::vector<uint32_t> final_row_offs;
+            std::vector<uint32_t> final_cols;
+            final_row_offs.push_back(0);
+
+            for (uint32_t src = 0; src < num_nodes; ++src) {
+                if (row_offs && col_tgts && src + 1 < num_row_offs) {
+                    uint32_t start = row_offs[src];
+                    uint32_t end = row_offs[src + 1];
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t tgt = col_tgts[i];
+                        bool tomb = delta ? impulse_delta_layer_is_tombstoned(delta, src, tgt) : false;
+                        if (!tomb) {
+                            final_cols.push_back(tgt);
+                        }
+                    }
+                }
+
+                if (delta) {
+                    std::shared_lock<std::shared_mutex> lock(delta->rw_lock);
+                    auto it = delta->additions.find(src);
+                    if (it != delta->additions.end()) {
+                        for (uint32_t add_tgt : it->second) {
+                            if (std::find(final_cols.begin() + final_row_offs.back(), final_cols.end(), add_tgt) == final_cols.end()) {
+                                final_cols.push_back(add_tgt);
+                            }
+                        }
+                    }
+                }
+                final_row_offs.push_back(static_cast<uint32_t>(final_cols.size()));
+            }
+
+            st = impulse_writer_add_relation(
+                writer,
+                rentry.src_domain_id, rentry.tgt_domain_id,
+                rentry.encoding_type,
+                num_nodes, final_cols.size(),
+                rentry.section_features,
+                final_row_offs.data(), final_row_offs.size() * sizeof(uint32_t),
+                final_cols.data(), final_cols.size() * sizeof(uint32_t)
+            );
+            if (st != IMPULSE_OK) {
+                impulse_writer_destroy(writer);
+                return st;
+            }
+        }
+
+        impulse_status_t comp_st = impulse_writer_finalize(writer);
+        impulse_writer_destroy(writer);
+        return comp_st;
+    } catch (const std::exception& e) {
+        g_last_error = std::string("Exception in impulse_snapshot_compact_to_file: ") + e.what();
+        return IMPULSE_ERR_IO_FAILURE;
+    }
 }
 
 // ---------------------------------------------------------------------------

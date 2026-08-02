@@ -226,6 +226,22 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
 IMPULSE_API impulse_status_t impulse_snapshot_sign_ed25519(const char* snapshot_path, const uint8_t secret_key[64], const uint8_t public_key[32], uint16_t sig_flags);
 IMPULSE_API impulse_status_t impulse_snapshot_verify_ed25519(const impulse_snapshot_t* snapshot);
+typedef struct impulse_delta_layer impulse_delta_layer_t;
+
+// Live Overlay Delta Layer API (Thread-Safe Concurrent Edge Additions & Tombstones)
+IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name);
+IMPULSE_API impulse_status_t impulse_delta_layer_add_edge(impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node);
+IMPULSE_API impulse_status_t impulse_delta_layer_tombstone_edge(impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node);
+IMPULSE_API bool impulse_delta_layer_is_tombstoned(const impulse_delta_layer_t* delta, uint32_t src_node, uint32_t tgt_node);
+IMPULSE_API void impulse_delta_layer_destroy(impulse_delta_layer_t* delta);
+
+// Snapshot Compactor API (Consolidate Base Snapshot + Live Delta Overlay into Spec v2.4 Binary)
+IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    const char* output_file_path
+);
 
 
 // Extended Snapshot Inspection & Zero-Copy Access
