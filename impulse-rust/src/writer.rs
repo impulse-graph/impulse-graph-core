@@ -55,13 +55,19 @@ impl SnapshotWriter {
     }
 
     pub fn add_domain(&mut self, domain_id: u16, key_type: KeyType, name: &str, node_count: u64) {
-        self.domains.push(WriterDomain {
-            domain_id,
-            key_type,
-            node_count,
-            name: name.to_string(),
-            fixed_props: None,
-        });
+        if let Some(existing) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
+            existing.key_type = key_type;
+            existing.name = name.to_string();
+            existing.node_count = node_count;
+        } else {
+            self.domains.push(WriterDomain {
+                domain_id,
+                key_type,
+                node_count,
+                name: name.to_string(),
+                fixed_props: None,
+            });
+        }
     }
 
     pub fn add_domain_fixed_props(

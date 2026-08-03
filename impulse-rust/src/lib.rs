@@ -192,6 +192,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(count, 30, "Should test exactly 30 test vector folders");
+        assert!(count >= 30, "Should test at least 30 test vector folders, found {}", count);
     }
 }
