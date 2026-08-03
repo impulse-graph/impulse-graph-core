@@ -147,6 +147,7 @@ struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t mmap_size = 0;
     impulse_snapshot_header_t header;
+    std::vector<impulse_domain_entry> domains;
     std::vector<impulse_relation_directory_entry_t> relations;
 };
 
@@ -260,7 +261,7 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
                 return nullptr;
             }
 
-            // Validate domain string offsets
+            // Validate domain string offsets & store domain entries
             for (uint16_t d = 0; d < hdr->domain_count; ++d) {
                 const auto* dentry = reinterpret_cast<const impulse_domain_catalog_entry_v2_4_t*>(base + data_off + d * 64);
                 if (dentry->name_length > 0 && dentry->name_offset > 0) {
@@ -271,6 +272,13 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
                         return nullptr;
                     }
                 }
+                impulse_domain_entry de;
+                de.domain_id = dentry->domain_id;
+                de.key_type = dentry->key_type;
+                if (dentry->name_length > 0 && dentry->name_offset > 0) {
+                    de.name = std::string(reinterpret_cast<const char*>(base + dentry->name_offset), dentry->name_length);
+                }
+                snap->domains.push_back(de);
             }
 
             // Parse relation entries & validate section alignment/bounds
@@ -313,12 +321,20 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
         } else if (data_off < snap->mmap_size && hdr->relation_count > 0) {
             size_t cur = static_cast<size_t>(data_off);
 
-            // Skip Domain Catalog — with name_len bounds validation
+            // Parse Domain Catalog — with name_len bounds validation & store domain entries
             for (uint16_t d = 0; d < hdr->domain_count; ++d) {
                 if (cur + sizeof(impulse_domain_catalog_entry_header_t) > snap->mmap_size) break;
                 const auto* dhdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(base + cur);
                 size_t entry_size = sizeof(impulse_domain_catalog_entry_header_t) + dhdr->name_len;
                 if (cur + entry_size > snap->mmap_size) break;
+
+                impulse_domain_entry de;
+                de.domain_id = dhdr->domain_id;
+                de.key_type = dhdr->key_type;
+                if (dhdr->name_len > 0) {
+                    de.name = std::string(reinterpret_cast<const char*>(base + cur + sizeof(impulse_domain_catalog_entry_header_t)), dhdr->name_len);
+                }
+                snap->domains.push_back(de);
                 cur += entry_size;
             }
 
@@ -432,19 +448,27 @@ IMPULSE_API bool impulse_snapshot_is_reachable(
 
             const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
             const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
-            const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
 
             uint32_t start_idx = row_offsets[src_id];
             uint32_t end_idx = row_offsets[src_id + 1];
 
-            // Validate column index range is within bounds
-            if (end_idx > rel.csr_col_idx_bytes / sizeof(uint32_t) || start_idx > end_idx) {
-                return false;
-            }
-
-            for (uint32_t i = start_idx; i < end_idx; ++i) {
-                if (col_indices[i] == tgt_id) {
-                    return true;
+            if (rel.encoding_type == IMPULSE_ENC_RAW_UINT64) {
+                const uint64_t* col_indices64 = reinterpret_cast<const uint64_t*>(base + rel.csr_col_idx_offset);
+                if (end_idx > rel.csr_col_idx_bytes / sizeof(uint64_t) || start_idx > end_idx) return false;
+                for (uint32_t i = start_idx; i < end_idx; ++i) {
+                    if (col_indices64[i] == tgt_id) return true;
+                }
+            } else if (rel.encoding_type == IMPULSE_ENC_RAW_UINT16) {
+                const uint16_t* col_indices16 = reinterpret_cast<const uint16_t*>(base + rel.csr_col_idx_offset);
+                if (end_idx > rel.csr_col_idx_bytes / sizeof(uint16_t) || start_idx > end_idx) return false;
+                for (uint32_t i = start_idx; i < end_idx; ++i) {
+                    if (col_indices16[i] == tgt_id) return true;
+                }
+            } else {
+                const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
+                if (end_idx > rel.csr_col_idx_bytes / sizeof(uint32_t) || start_idx > end_idx) return false;
+                for (uint32_t i = start_idx; i < end_idx; ++i) {
+                    if (col_indices[i] == tgt_id) return true;
                 }
             }
             return false;
@@ -488,16 +512,28 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
 
         const uint8_t* base = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr);
         const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(base + rel.csr_row_off_offset);
-        const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset);
+
+        size_t elem_size = (rel.encoding_type == IMPULSE_ENC_RAW_UINT64) ? sizeof(uint64_t) :
+                           (rel.encoding_type == IMPULSE_ENC_RAW_UINT16) ? sizeof(uint16_t) : sizeof(uint32_t);
 
         uint64_t num_offsets = rel.node_count + 1;
-        uint64_t max_col_entries = rel.csr_col_idx_bytes / sizeof(uint32_t);
+        uint64_t max_col_entries = rel.csr_col_idx_bytes / elem_size;
 
         // Validate row_offsets array size
         if (num_offsets * sizeof(uint32_t) > rel.csr_row_off_bytes) {
             g_last_error = "Row offsets array size mismatch with node_count";
             return IMPULSE_ERR_CORRUPT_CHECKSUM;
         }
+
+        auto get_col = [&](uint32_t idx) -> uint32_t {
+            if (rel.encoding_type == IMPULSE_ENC_RAW_UINT64) {
+                return static_cast<uint32_t>(reinterpret_cast<const uint64_t*>(base + rel.csr_col_idx_offset)[idx]);
+            } else if (rel.encoding_type == IMPULSE_ENC_RAW_UINT16) {
+                return static_cast<uint32_t>(reinterpret_cast<const uint16_t*>(base + rel.csr_col_idx_offset)[idx]);
+            } else {
+                return reinterpret_cast<const uint32_t*>(base + rel.csr_col_idx_offset)[idx];
+            }
+        };
 
         pcg32_fast rng(seed, 54);
         size_t written = 0;
@@ -520,7 +556,7 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
                         return IMPULSE_ERR_BUFFER_OVERFLOW;
                     }
                     if (out_src) out_src[written] = u;
-                    if (out_tgt) out_tgt[written] = col_indices[idx];
+                    if (out_tgt) out_tgt[written] = get_col(idx);
                     written++;
                 }
             } else {
@@ -532,7 +568,7 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
                     }
                     uint32_t pick = start_off + rng.bounded(deg);
                     if (out_src) out_src[written] = u;
-                    if (out_tgt) out_tgt[written] = col_indices[pick];
+                    if (out_tgt) out_tgt[written] = get_col(pick);
                     written++;
                 }
             }
@@ -553,12 +589,13 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
 IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {
     try {
         if (!output_file_path) {
-            g_last_error = "Output file path cannot be null";
+            g_last_error = "Output file path cannot be NULL";
             return nullptr;
         }
+
         auto* writer = new impulse_writer();
         writer->output_path = output_file_path;
-        writer->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED;
+        writer->global_features = global_features;
         return writer;
     } catch (const std::exception& e) {
         g_last_error = std::string("Exception in impulse_writer_create: ") + e.what();
@@ -566,13 +603,27 @@ IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path
     }
 }
 
-IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
+IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer) {
+    delete writer;
+}
+
+IMPULSE_API impulse_status_t impulse_writer_add_domain(
+    impulse_writer_t* writer,
+    uint16_t domain_id,
+    uint8_t key_type,
+    const char* name
+) {
     try {
-        if (!writer || !name) {
-            g_last_error = "Invalid writer or domain name";
+        if (!writer) {
+            g_last_error = "Null writer pointer";
             return IMPULSE_ERR_INVALID_ARGUMENT;
         }
-        writer->domains.push_back({domain_id, key_type, std::string(name)});
+
+        impulse_domain_entry dom;
+        dom.domain_id = domain_id;
+        dom.key_type = key_type;
+        if (name) dom.name = name;
+        writer->domains.push_back(std::move(dom));
         return IMPULSE_OK;
     } catch (const std::exception& e) {
         g_last_error = std::string("Exception in impulse_writer_add_domain: ") + e.what();
@@ -749,12 +800,6 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     }
 }
 
-IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer) {
-    delete writer;
-}
-
-// ---------------------------------------------------------------------------
-// Live Delta Layer & Compaction Implementation
 // ---------------------------------------------------------------------------
 
 IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name) {
@@ -820,6 +865,11 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
         impulse_writer_t* writer = impulse_writer_create(output_file_path, base_snapshot->header.global_required_features);
         if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
+        // Preserve domain catalog from base_snapshot
+        for (const auto& dom : base_snapshot->domains) {
+            impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, dom.name.c_str());
+        }
+
         // Map delta layers by relation index / name
         std::unordered_map<size_t, impulse_delta_layer_t*> delta_map;
         for (size_t d = 0; d < delta_count; ++d) {
@@ -844,22 +894,33 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
 
             const uint32_t* row_offs = (rentry.csr_row_off_offset > 0 && rentry.csr_row_off_bytes >= 4) ?
                 reinterpret_cast<const uint32_t*>(base + rentry.csr_row_off_offset) : nullptr;
-            const uint32_t* col_tgts = (rentry.csr_col_idx_offset > 0 && rentry.csr_col_idx_bytes >= 4) ?
-                reinterpret_cast<const uint32_t*>(base + rentry.csr_col_idx_offset) : nullptr;
 
             uint32_t num_row_offs = static_cast<uint32_t>(rentry.csr_row_off_bytes / 4);
-            uint32_t num_nodes = rentry.node_count;
+            uint32_t num_nodes = static_cast<uint32_t>(rentry.node_count);
 
             std::vector<uint32_t> final_row_offs;
             std::vector<uint32_t> final_cols;
             final_row_offs.push_back(0);
 
+            auto get_target_node = [&](uint32_t idx) -> uint32_t {
+                if (rentry.encoding_type == IMPULSE_ENC_RAW_UINT64) {
+                    const uint64_t* col_tgts64 = reinterpret_cast<const uint64_t*>(base + rentry.csr_col_idx_offset);
+                    return static_cast<uint32_t>(col_tgts64[idx]);
+                } else if (rentry.encoding_type == IMPULSE_ENC_RAW_UINT16) {
+                    const uint16_t* col_tgts16 = reinterpret_cast<const uint16_t*>(base + rentry.csr_col_idx_offset);
+                    return static_cast<uint32_t>(col_tgts16[idx]);
+                } else {
+                    const uint32_t* col_tgts32 = reinterpret_cast<const uint32_t*>(base + rentry.csr_col_idx_offset);
+                    return col_tgts32[idx];
+                }
+            };
+
             for (uint32_t src = 0; src < num_nodes; ++src) {
-                if (row_offs && col_tgts && src + 1 < num_row_offs) {
+                if (row_offs && rentry.csr_col_idx_offset > 0 && src + 1 < num_row_offs) {
                     uint32_t start = row_offs[src];
                     uint32_t end = row_offs[src + 1];
                     for (uint32_t i = start; i < end; ++i) {
-                        uint32_t tgt = col_tgts[i];
+                        uint32_t tgt = get_target_node(i);
                         bool tomb = delta ? impulse_delta_layer_is_tombstoned(delta, src, tgt) : false;
                         if (!tomb) {
                             final_cols.push_back(tgt);
@@ -881,15 +942,39 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
                 final_row_offs.push_back(static_cast<uint32_t>(final_cols.size()));
             }
 
-            st = impulse_writer_add_relation(
-                writer,
-                rentry.src_domain_id, rentry.tgt_domain_id,
-                rentry.encoding_type,
-                num_nodes, final_cols.size(),
-                rentry.section_features,
-                final_row_offs.data(), final_row_offs.size() * sizeof(uint32_t),
-                final_cols.data(), final_cols.size() * sizeof(uint32_t)
-            );
+            if (rentry.encoding_type == IMPULSE_ENC_RAW_UINT64) {
+                std::vector<uint64_t> cols64(final_cols.begin(), final_cols.end());
+                st = impulse_writer_add_relation(
+                    writer,
+                    rentry.src_domain_id, rentry.tgt_domain_id,
+                    rentry.encoding_type,
+                    num_nodes, cols64.size(),
+                    rentry.section_features,
+                    final_row_offs.data(), final_row_offs.size() * sizeof(uint32_t),
+                    cols64.data(), cols64.size() * sizeof(uint64_t)
+                );
+            } else if (rentry.encoding_type == IMPULSE_ENC_RAW_UINT16) {
+                std::vector<uint16_t> cols16(final_cols.begin(), final_cols.end());
+                st = impulse_writer_add_relation(
+                    writer,
+                    rentry.src_domain_id, rentry.tgt_domain_id,
+                    rentry.encoding_type,
+                    num_nodes, cols16.size(),
+                    rentry.section_features,
+                    final_row_offs.data(), final_row_offs.size() * sizeof(uint32_t),
+                    cols16.data(), cols16.size() * sizeof(uint16_t)
+                );
+            } else {
+                st = impulse_writer_add_relation(
+                    writer,
+                    rentry.src_domain_id, rentry.tgt_domain_id,
+                    rentry.encoding_type,
+                    num_nodes, final_cols.size(),
+                    rentry.section_features,
+                    final_row_offs.data(), final_row_offs.size() * sizeof(uint32_t),
+                    final_cols.data(), final_cols.size() * sizeof(uint32_t)
+                );
+            }
             if (st != IMPULSE_OK) {
                 impulse_writer_destroy(writer);
                 return st;

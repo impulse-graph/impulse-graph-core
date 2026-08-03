@@ -238,6 +238,98 @@ static void test_get_buffer_overflow() {
     std::printf("  PASS: test_get_buffer_overflow\n");
 }
 
+// ---- Test: compaction preserves domain catalog metadata ----
+static void test_compaction_domain_catalog_preservation() {
+    const char* base_file = "__comp_domain_base.imps";
+    const char* comp_file = "__comp_domain_compacted.imps";
+
+    impulse_writer_t* writer = impulse_writer_create(base_file, 0);
+    ASSERT_TRUE(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "users");
+    ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_add_domain(writer, 1, IMPULSE_KEY_TYPE_INT32, "roles");
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    const uint32_t row_offs[] = { 0, 2, 3 };
+    const uint32_t col_tgts[] = { 1, 2, 0 };
+
+    st = impulse_writer_add_relation(
+        writer, 0, 1, IMPULSE_ENC_RAW_UINT32, 2, 3, 0,
+        row_offs, sizeof(row_offs), col_tgts, sizeof(col_tgts)
+    );
+    ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_finalize(writer);
+    ASSERT_EQ(st, IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    impulse_snapshot_t* base_snap = impulse_snapshot_open(base_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_EQ(impulse_snapshot_domain_count(base_snap), 2);
+
+    impulse_delta_layer_t* delta = impulse_delta_layer_create(0, 1, "rel");
+    impulse_delta_layer_add_edge(delta, 0, 99);
+
+    impulse_delta_layer_t* deltas[] = { delta };
+    st = impulse_snapshot_compact_to_file(base_snap, deltas, 1, comp_file);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    impulse_delta_layer_destroy(delta);
+    impulse_snapshot_close(base_snap);
+
+    impulse_snapshot_t* comp_snap = impulse_snapshot_open(comp_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(comp_snap != nullptr);
+    ASSERT_EQ(impulse_snapshot_domain_count(comp_snap), 2);
+
+    impulse_snapshot_close(comp_snap);
+    std::remove(base_file);
+    std::remove(comp_file);
+    std::printf("  PASS: test_compaction_domain_catalog_preservation\n");
+}
+
+// ---- Test: compaction supports RAW_UINT64 target encoding ----
+static void test_compaction_raw_uint64_encoding() {
+    const char* base_file = "__comp_u64_base.imps";
+    const char* comp_file = "__comp_u64_compacted.imps";
+
+    impulse_writer_t* writer = impulse_writer_create(base_file, 0);
+    ASSERT_TRUE(writer != nullptr);
+
+    impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT64, "nodes");
+
+    const uint32_t row_offs[] = { 0, 2 };
+    const uint64_t col_tgts64[] = { 100ULL, 200ULL };
+
+    impulse_status_t st = impulse_writer_add_relation(
+        writer, 0, 0, IMPULSE_ENC_RAW_UINT64, 1, 2, 0,
+        row_offs, sizeof(row_offs), col_tgts64, sizeof(col_tgts64)
+    );
+    ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_finalize(writer);
+    ASSERT_EQ(st, IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    impulse_snapshot_t* base_snap = impulse_snapshot_open(base_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    st = impulse_snapshot_compact_to_file(base_snap, nullptr, 0, comp_file);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    impulse_snapshot_close(base_snap);
+
+    impulse_snapshot_t* comp_snap = impulse_snapshot_open(comp_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(comp_snap != nullptr);
+    ASSERT_TRUE(impulse_snapshot_is_reachable(comp_snap, 0, 0, 0, 100));
+    ASSERT_TRUE(impulse_snapshot_is_reachable(comp_snap, 0, 0, 0, 200));
+
+    impulse_snapshot_close(comp_snap);
+    std::remove(base_file);
+    std::remove(comp_file);
+    std::printf("  PASS: test_compaction_raw_uint64_encoding\n");
+}
+
 int main() {
     std::printf("impulse_graph_test: running tests...\n\n");
 
@@ -249,6 +341,8 @@ int main() {
     test_writer_destroy();
     test_null_arguments();
     test_get_buffer_overflow();
+    test_compaction_domain_catalog_preservation();
+    test_compaction_raw_uint64_encoding();
 
     // Cleanup test file
     std::remove(TEST_FILE);
@@ -256,3 +350,4 @@ int main() {
     std::printf("\nAll tests passed.\n");
     return 0;
 }
+

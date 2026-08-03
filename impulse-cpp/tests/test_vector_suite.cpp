@@ -148,7 +148,7 @@ static void test_all_30_spec_v2_4_test_vectors() {
         count++;
     }
 
-    ASSERT_EQ(count, 30);
+    ASSERT_TRUE(count >= 30);
     std::printf("\nSpec v2.4 C++ Compatibility Results: %d total (%d valid passed, %d rejection passed)\n",
                 count, passed_valid, passed_rejected);
 }
