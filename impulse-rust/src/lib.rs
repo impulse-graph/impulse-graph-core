@@ -6,6 +6,7 @@
 pub mod ffi;
 pub mod mmap;
 pub mod reader;
+pub mod simd;
 pub mod spec;
 pub mod writer;
 
@@ -184,8 +185,8 @@ mod tests {
                         assert_eq!(reader.header().magic(), IMPULSE_MAGIC);
                         assert_eq!(reader.header().version(), IMPULSE_VERSION_PACKED);
                         for idx in 0..reader.relation_count() {
-                            assert!(reader.get_row_offsets(idx).is_ok());
-                            assert!(reader.get_col_indices(idx).is_ok());
+                            assert!(reader.get_row_offsets(idx).is_ok(), "Vector {} failed get_row_offsets for relation {}", folder_name, idx);
+                            assert!(reader.get_col_indices(idx).is_ok(), "Vector {} failed get_col_indices for relation {}", folder_name, idx);
                         }
                     }
                     count += 1;
@@ -193,5 +194,35 @@ mod tests {
             }
         }
         assert!(count >= 30, "Should test at least 30 test vector folders, found {}", count);
+    }
+
+    #[test]
+    fn test_custom_metadata_roundtrip_and_utf8_validation() {
+        const TEST_SNAPSHOT: &str = "__test_metadata_roundtrip.imps";
+        let mut writer = SnapshotWriter::new(TEST_SNAPSHOT);
+
+        writer.add_domain(0, KeyType::Int32, "users", 2);
+        writer.add_relation(0, 0, EncodingType::RawUint32, 2, 2, vec![0, 1, 2], vec![1, 0]);
+
+        let mut hdr_meta = std::collections::HashMap::new();
+        hdr_meta.insert("tenant_id".to_string(), "tenant_123".to_string());
+        hdr_meta.insert("environment".to_string(), "production".to_string());
+        assert!(writer.set_header_metadata(hdr_meta.clone()).is_ok());
+
+        let mut ext_meta = std::collections::HashMap::new();
+        ext_meta.insert("schema_definition".to_string(), "{\"nodes\": [\"user\"]}".to_string());
+        assert!(writer.set_extended_metadata(ext_meta.clone()).is_ok());
+
+        assert!(writer.finalize().is_ok());
+
+        let reader = SnapshotReader::open(TEST_SNAPSHOT).unwrap();
+        let read_hdr = reader.header_metadata().unwrap();
+        assert_eq!(read_hdr.get("tenant_id").unwrap(), "tenant_123");
+        assert_eq!(read_hdr.get("environment").unwrap(), "production");
+
+        let read_ext = reader.extended_metadata().unwrap();
+        assert_eq!(read_ext.get("schema_definition").unwrap(), "{\"nodes\": [\"user\"]}");
+
+        let _ = fs::remove_file(TEST_SNAPSHOT);
     }
 }

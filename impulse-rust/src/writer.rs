@@ -41,6 +41,8 @@ pub struct SnapshotWriter {
     global_compat_features: u64,
     domains: Vec<WriterDomain>,
     relations: Vec<WriterRelation>,
+    header_metadata: std::collections::HashMap<String, String>,
+    extended_metadata: std::collections::HashMap<String, String>,
 }
 
 impl SnapshotWriter {
@@ -51,7 +53,41 @@ impl SnapshotWriter {
             global_compat_features: IMPULSE_COMPAT_PAGE_ALIGNED,
             domains: Vec::new(),
             relations: Vec::new(),
+            header_metadata: std::collections::HashMap::new(),
+            extended_metadata: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn set_header_metadata(&mut self, metadata: std::collections::HashMap<String, String>) -> Result<(), ImpulseError> {
+        for (k, v) in &metadata {
+            if std::str::from_utf8(k.as_bytes()).is_err() || std::str::from_utf8(v.as_bytes()).is_err() {
+                return Err(ImpulseError::InvalidArgument);
+            }
+        }
+        let encoded = encode_metadata_map(&metadata);
+        if encoded.len() > 2048 {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        self.header_metadata = metadata;
+        Ok(())
+    }
+
+    pub fn set_extended_metadata(&mut self, metadata: std::collections::HashMap<String, String>) -> Result<(), ImpulseError> {
+        for (k, v) in &metadata {
+            if std::str::from_utf8(k.as_bytes()).is_err() || std::str::from_utf8(v.as_bytes()).is_err() {
+                return Err(ImpulseError::InvalidArgument);
+            }
+        }
+        self.extended_metadata = metadata;
+        Ok(())
+    }
+
+    pub fn remove_header_metadata(&mut self, key: &str) {
+        self.header_metadata.remove(key);
+    }
+
+    pub fn remove_extended_metadata(&mut self, key: &str) {
+        self.extended_metadata.remove(key);
     }
 
     pub fn add_domain(&mut self, domain_id: u16, key_type: KeyType, name: &str, node_count: u64) {
@@ -155,7 +191,7 @@ impl SnapshotWriter {
         let domain_table_size = self.domains.len() * std::mem::size_of::<DomainCatalogEntry>();
         payload.resize(domain_table_size, 0x00);
 
-        Self::align_buffer(&mut payload, 64);
+        Self::align_buffer(&mut payload, 128);
 
         // 2. Reserve Relation Directory Table
         let rel_table_start = payload.len();
@@ -188,12 +224,12 @@ impl SnapshotWriter {
 
             // Write Node Property Block + Aux Table
             if let Some(ref props) = dom.fixed_props {
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 let prop_sec_offset = base_offset + payload.len() as u64;
                 let prop_bytes = Self::encode_prop_block(props, dom.node_count);
                 payload.extend_from_slice(&prop_bytes);
 
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 entry.aux_sections_pos = base_offset + payload.len() as u64;
 
                 let aux_entry = AuxSectionEntry {
@@ -251,7 +287,7 @@ impl SnapshotWriter {
             };
 
             // Write Row Offsets
-            Self::align_buffer(&mut payload, 64);
+            Self::align_buffer(&mut payload, 128);
             entry.csr_offsets_pos = base_offset + payload.len() as u64;
             let offsets_raw: &[u8] = unsafe {
                 std::slice::from_raw_parts(
@@ -263,7 +299,7 @@ impl SnapshotWriter {
             payload.extend_from_slice(offsets_raw);
 
             // Write Col Indices
-            Self::align_buffer(&mut payload, 64);
+            Self::align_buffer(&mut payload, 128);
             entry.csr_targets_pos = base_offset + payload.len() as u64;
             let targets_raw: &[u8] = unsafe {
                 std::slice::from_raw_parts(
@@ -302,7 +338,7 @@ impl SnapshotWriter {
                     }
                 }
 
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 let csc_off_pos = base_offset + payload.len() as u64;
                 let csc_off_raw: &[u8] = unsafe {
                     std::slice::from_raw_parts(
@@ -320,7 +356,7 @@ impl SnapshotWriter {
                     size: csc_off_raw.len() as u64,
                 });
 
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 let csc_tgt_pos = base_offset + payload.len() as u64;
                 let csc_tgt_raw: &[u8] = unsafe {
                     std::slice::from_raw_parts(
@@ -341,7 +377,7 @@ impl SnapshotWriter {
 
             // Write Edge Properties if present
             if let Some(ref props) = rel.fixed_props {
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 let prop_sec_offset = base_offset + payload.len() as u64;
                 let prop_bytes = Self::encode_prop_block(props, rel.edge_count);
                 payload.extend_from_slice(&prop_bytes);
@@ -356,7 +392,7 @@ impl SnapshotWriter {
             }
 
             if !aux_entries.is_empty() {
-                Self::align_buffer(&mut payload, 64);
+                Self::align_buffer(&mut payload, 128);
                 entry.aux_sections_pos = base_offset + payload.len() as u64;
 
                 let aux_bytes = unsafe {
@@ -381,10 +417,48 @@ impl SnapshotWriter {
         };
         payload[rel_table_start..rel_table_start + rel_table_size].copy_from_slice(rel_raw);
 
+        // 5. Write Extended Metadata (Section 7) if present
+        let mut section_dir_offset = 0u64;
+        let mut section_dir_count = 0u16;
+
+        if !self.extended_metadata.is_empty() {
+            Self::align_buffer(&mut payload, 128);
+            let ext_sec_offset = base_offset + payload.len() as u64;
+            let ext_bytes = encode_metadata_map(&self.extended_metadata);
+            payload.extend_from_slice(&ext_bytes);
+
+            // Append global section entry
+            let aux_entry = AuxSectionEntry {
+                section_type: AuxSectionType::CustomMetadataCatalog as u16,
+                flags: 0,
+                reserved: 0,
+                offset: ext_sec_offset,
+                size: ext_bytes.len() as u64,
+            };
+            let aux_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &aux_entry as *const AuxSectionEntry as *const u8,
+                    std::mem::size_of::<AuxSectionEntry>(),
+                )
+            };
+            Self::align_buffer(&mut payload, 128);
+            section_dir_offset = base_offset + payload.len() as u64;
+            section_dir_count = 1;
+            payload.extend_from_slice(aux_bytes);
+        }
+
         Self::align_buffer(&mut payload, 4096);
 
         // Calculate Payload SHA-256
         let payload_sha = compute_sha256(&payload);
+
+        let mut padding = [0u8; 2960];
+        if !self.header_metadata.is_empty() {
+            let encoded_hdr = encode_metadata_map(&self.header_metadata);
+            if encoded_hdr.len() <= 2048 {
+                padding[..encoded_hdr.len()].copy_from_slice(&encoded_hdr);
+            }
+        }
 
         // Build Header
         let mut header = SnapshotHeader {
@@ -402,13 +476,13 @@ impl SnapshotWriter {
             compat_features: self.global_compat_features,
             total_file_size: (IMPULSE_DEFAULT_DATA_OFFSET as usize + payload.len()) as u64,
             header_crc32: 0,
-            section_dir_count: 0,
+            section_dir_count,
             string_table_encoding: 0,
-            section_dir_offset: 0,
+            section_dir_offset,
             relation_dir_entry_size: 128,
             domain_dir_entry_size: 64,
             reserved2: 0,
-            header_padding: [0u8; 2960],
+            header_padding: padding,
         };
 
         // Compute Header CRC-32C

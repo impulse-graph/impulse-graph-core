@@ -136,12 +136,12 @@ impl SnapshotReader {
             });
         }
 
-        // 64-byte align to Relation Directory Table
+        // 128-byte align to Relation Directory Table
         let domain_table_bytes = domain_count * std::mem::size_of::<DomainCatalogEntry>();
         cur = data_off + domain_table_bytes;
-        let rem = cur % 64;
+        let rem = cur % 128;
         if rem != 0 {
-            cur += 64 - rem;
+            cur += 128 - rem;
         }
 
         // Relation Directory Table (O(1) fixed-size 128-byte entries)
@@ -178,6 +178,26 @@ impl SnapshotReader {
             } else {
                 String::new()
             };
+
+            let csr_offsets_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.csr_offsets_pos)) };
+            let csr_targets_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.csr_targets_pos)) };
+
+            if (csr_offsets_pos > 0 && csr_offsets_pos.saturating_add(entry.csr_offsets_size) > slice.len() as u64)
+                || (csr_targets_pos > 0 && csr_targets_pos.saturating_add(entry.csr_targets_size) > slice.len() as u64)
+                || (aux_pos > 0 && aux_pos.saturating_add(aux_sz) > slice.len() as u64)
+            {
+                return Err(ImpulseError::BufferOverflow);
+            }
+
+            if csr_offsets_pos > 0 && csr_offsets_pos % 128 != 0 {
+                return Err(ImpulseError::InvalidAlignment);
+            }
+            if csr_targets_pos > 0 && csr_targets_pos % 128 != 0 {
+                return Err(ImpulseError::InvalidAlignment);
+            }
+            if aux_pos > 0 && aux_pos % 128 != 0 {
+                return Err(ImpulseError::InvalidAlignment);
+            }
 
             relations.push(RelationInfo {
                 src_domain_id: entry.src_domain_id,
@@ -488,5 +508,37 @@ impl SnapshotReader {
         }
 
         Ok(None)
+    }
+
+    /// Retrieve Section 1 Header-Embedded Custom Metadata
+    pub fn header_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+        decode_metadata_map(&self.header.header_padding)
+    }
+
+    /// Retrieve Section 7 Custom Metadata Catalog
+    pub fn extended_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+        let slice = self.mmap.as_slice();
+        let sec_count = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header.section_dir_count)) } as usize;
+        let sec_offset = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header.section_dir_offset)) } as usize;
+
+        let target_type = AuxSectionType::CustomMetadataCatalog as u16;
+
+        if sec_count > 0 && sec_offset > 0 && sec_offset + sec_count * std::mem::size_of::<AuxSectionEntry>() <= slice.len() {
+            for i in 0..sec_count {
+                let entry_off = sec_offset + i * std::mem::size_of::<AuxSectionEntry>();
+                let entry = unsafe {
+                    std::ptr::read_unaligned(slice[entry_off..].as_ptr() as *const AuxSectionEntry)
+                };
+                if entry.section_type == target_type {
+                    let off = entry.offset as usize;
+                    let size = entry.size as usize;
+                    if off + size <= slice.len() {
+                        return decode_metadata_map(&slice[off..off + size]);
+                    }
+                }
+            }
+        }
+
+        Ok(std::collections::HashMap::new())
     }
 }

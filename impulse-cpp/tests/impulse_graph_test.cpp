@@ -330,6 +330,93 @@ static void test_compaction_raw_uint64_encoding() {
     std::printf("  PASS: test_compaction_raw_uint64_encoding\n");
 }
 
+static void test_custom_metadata_and_compaction_updates() {
+    const char* base_file = "__comp_meta_base.imps";
+    const char* comp_file = "__comp_meta_compacted.imps";
+
+    impulse_writer_t* writer = impulse_writer_create(base_file, 0);
+    ASSERT_TRUE(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "users");
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    st = impulse_writer_set_header_metadata(writer, "tenant_id", "tenant_456");
+    ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_set_header_metadata(writer, "kafka_offset", "1001");
+    ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_set_extended_metadata(writer, "schema_doc", "{\"version\": \"v2.4\"}");
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    // Test non-UTF8 rejection
+    const char bad_utf8[] = { (char)0xFF, (char)0xFE, 0 };
+    st = impulse_writer_set_header_metadata(writer, "bad_key", bad_utf8);
+    ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+
+    const uint32_t row_offs[] = { 0, 1 };
+    const uint32_t col_tgts[] = { 0 };
+    st = impulse_writer_add_relation(
+        writer, 0, 0, IMPULSE_ENC_RAW_UINT32, 1, 1, 0,
+        row_offs, sizeof(row_offs), col_tgts, sizeof(col_tgts)
+    );
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    ASSERT_EQ(st, IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    // Open base snapshot and verify metadata getters
+    impulse_snapshot_t* base_snap = impulse_snapshot_open(base_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    char val_buf[128];
+    st = impulse_snapshot_get_header_metadata(base_snap, "tenant_id", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "tenant_456");
+
+    st = impulse_snapshot_get_header_metadata(base_snap, "kafka_offset", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "1001");
+
+    st = impulse_snapshot_get_extended_metadata(base_snap, "schema_doc", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "{\"version\": \"v2.4\"}");
+
+    // Compact with updated metadata (e.g. updated kafka_offset to 2005)
+    const char* keys[] = { "kafka_offset", "compaction_timestamp" };
+    const char* vals[] = { "2005", "1785731000" };
+
+    st = impulse_snapshot_compact_to_file_with_metadata(
+        base_snap, nullptr, 0, comp_file, keys, vals, 2
+    );
+    ASSERT_EQ(st, IMPULSE_OK);
+    impulse_snapshot_close(base_snap);
+
+    // Verify compacted snapshot retains tenant_id and schema_doc, and updates kafka_offset
+    impulse_snapshot_t* comp_snap = impulse_snapshot_open(comp_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    st = impulse_snapshot_get_header_metadata(comp_snap, "tenant_id", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "tenant_456");
+
+    st = impulse_snapshot_get_header_metadata(comp_snap, "kafka_offset", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "2005");
+
+    st = impulse_snapshot_get_header_metadata(comp_snap, "compaction_timestamp", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "1785731000");
+
+    st = impulse_snapshot_get_extended_metadata(comp_snap, "schema_doc", val_buf, sizeof(val_buf));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(std::string(val_buf) == "{\"version\": \"v2.4\"}");
+
+    impulse_snapshot_close(comp_snap);
+    std::remove(base_file);
+    std::remove(comp_file);
+    std::printf("  PASS: test_custom_metadata_and_compaction_updates\n");
+}
+
 int main() {
     std::printf("impulse_graph_test: running tests...\n\n");
 
@@ -343,6 +430,7 @@ int main() {
     test_get_buffer_overflow();
     test_compaction_domain_catalog_preservation();
     test_compaction_raw_uint64_encoding();
+    test_custom_metadata_and_compaction_updates();
 
     // Cleanup test file
     std::remove(TEST_FILE);

@@ -61,10 +61,10 @@ struct MmapGuard {
     MmapGuard& operator=(const MmapGuard&) = delete;
 };
 
-void align64(std::vector<uint8_t>& buf) {
-    size_t rem = buf.size() % 64;
+void align128(std::vector<uint8_t>& buf) {
+    size_t rem = buf.size() % 128;
     if (rem != 0) {
-        buf.resize(buf.size() + (64 - rem), 0x00);
+        buf.resize(buf.size() + (128 - rem), 0x00);
     }
 }
 
@@ -101,6 +101,75 @@ struct pcg32_fast {
         }
     }
 };
+
+bool is_valid_utf8_str(const char* str, size_t len) {
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(str);
+    size_t i = 0;
+    while (i < len) {
+        if (bytes[i] <= 0x7F) {
+            i += 1;
+        } else if ((bytes[i] & 0xE0) == 0xC0) {
+            if (i + 1 >= len || (bytes[i + 1] & 0xC0) != 0x80) return false;
+            i += 2;
+        } else if ((bytes[i] & 0xF0) == 0xE0) {
+            if (i + 2 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80) return false;
+            i += 3;
+        } else if ((bytes[i] & 0xF8) == 0xF0) {
+            if (i + 3 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80 || (bytes[i + 3] & 0xC0) != 0x80) return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<uint8_t> encode_metadata_map_cpp(const std::unordered_map<std::string, std::string>& map) {
+    std::vector<uint8_t> buf;
+    uint16_t count = static_cast<uint16_t>(map.size());
+    buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&count), reinterpret_cast<const uint8_t*>(&count) + 2);
+
+    std::vector<std::pair<std::string, std::string>> pairs(map.begin(), map.end());
+    std::sort(pairs.begin(), pairs.end());
+
+    for (const auto& kv : pairs) {
+        uint16_t k_len = static_cast<uint16_t>(kv.first.size());
+        uint32_t v_len = static_cast<uint32_t>(kv.second.size());
+
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&k_len), reinterpret_cast<const uint8_t*>(&k_len) + 2);
+        buf.insert(buf.end(), kv.first.begin(), kv.first.end());
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&v_len), reinterpret_cast<const uint8_t*>(&v_len) + 4);
+        buf.insert(buf.end(), kv.second.begin(), kv.second.end());
+    }
+    return buf;
+}
+
+bool decode_metadata_map_cpp(const uint8_t* buf, size_t len, std::unordered_map<std::string, std::string>& out_map) {
+    if (!buf || len < 2) return true;
+    uint16_t count = 0;
+    std::memcpy(&count, buf, 2);
+    size_t off = 2;
+    for (uint16_t i = 0; i < count; ++i) {
+        if (off + 2 > len) return false;
+        uint16_t k_len = 0;
+        std::memcpy(&k_len, buf + off, 2);
+        off += 2;
+        if (off + k_len > len) return false;
+        std::string key(reinterpret_cast<const char*>(buf + off), k_len);
+        off += k_len;
+
+        if (off + 4 > len) return false;
+        uint32_t v_len = 0;
+        std::memcpy(&v_len, buf + off, 4);
+        off += 4;
+        if (off + v_len > len) return false;
+        std::string val(reinterpret_cast<const char*>(buf + off), v_len);
+        off += v_len;
+
+        out_map[key] = val;
+    }
+    return true;
+}
 
 } // anonymous namespace
 
@@ -139,6 +208,8 @@ struct impulse_writer {
     uint64_t global_features;
     std::vector<impulse_domain_entry> domains;
     std::vector<impulse_relation_entry> relations;
+    std::unordered_map<std::string, std::string> header_metadata;
+    std::unordered_map<std::string, std::string> extended_metadata;
 };
 
 struct impulse_snapshot {
@@ -149,6 +220,8 @@ struct impulse_snapshot {
     impulse_snapshot_header_t header;
     std::vector<impulse_domain_entry> domains;
     std::vector<impulse_relation_directory_entry_t> relations;
+    std::unordered_map<std::string, std::string> header_metadata;
+    std::unordered_map<std::string, std::string> extended_metadata;
 };
 
 extern "C" {
@@ -291,14 +364,14 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
                     delete snap;
                     return nullptr;
                 }
-                if (rentry->csr_offsets_pos > 0 && (rentry->csr_offsets_pos % 64 != 0)) {
-                    g_last_error = "CSR row offsets array offset not 64-byte aligned";
+                if (rentry->csr_offsets_pos > 0 && (rentry->csr_offsets_pos % 128 != 0)) {
+                    g_last_error = "CSR row offsets array offset not 128-byte aligned";
                     if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
                     delete snap;
                     return nullptr;
                 }
-                if (rentry->csr_targets_pos > 0 && (rentry->csr_targets_pos % 64 != 0)) {
-                    g_last_error = "CSR column targets array offset not 64-byte aligned";
+                if (rentry->csr_targets_pos > 0 && (rentry->csr_targets_pos % 128 != 0)) {
+                    g_last_error = "CSR column targets array offset not 128-byte aligned";
                     if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
                     delete snap;
                     return nullptr;
@@ -338,15 +411,39 @@ IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, imp
                 cur += entry_size;
             }
 
-            // 64-byte align to relation directory
-            size_t rem = cur % 64;
-            if (rem != 0) cur += (64 - rem);
+            // 128-byte align to relation directory
+            size_t rem = cur % 128;
+            if (rem != 0) cur += (128 - rem);
 
             for (uint16_t r = 0; r < hdr->relation_count && cur + sizeof(impulse_relation_directory_entry_t) <= snap->mmap_size; ++r) {
                 impulse_relation_directory_entry_t entry;
                 std::memcpy(&entry, base + cur, sizeof(entry));
                 snap->relations.push_back(entry);
                 cur += sizeof(entry);
+            }
+        }
+
+        // Parse Header Metadata (0x0470..0x0C70)
+        decode_metadata_map_cpp(base + 0x0470, 2048, snap->header_metadata);
+
+        // Parse Section 7 Extended Metadata
+        uint16_t sec_count = *reinterpret_cast<const uint16_t*>(base + 0x045C);
+        uint64_t sec_offset = *reinterpret_cast<const uint64_t*>(base + 0x0460);
+
+        if (sec_count > 0 && sec_offset > 0 && sec_offset + sec_count * 24 <= snap->mmap_size) {
+            struct AuxSectionEntry {
+                uint16_t section_type;
+                uint16_t flags;
+                uint32_t reserved;
+                uint64_t offset;
+                uint64_t size;
+            };
+            for (uint16_t i = 0; i < sec_count; ++i) {
+                AuxSectionEntry entry;
+                std::memcpy(&entry, base + sec_offset + i * sizeof(AuxSectionEntry), sizeof(AuxSectionEntry));
+                if (entry.section_type == 0x000B && entry.offset + entry.size <= snap->mmap_size) {
+                    decode_metadata_map_cpp(base + entry.offset, entry.size, snap->extended_metadata);
+                }
             }
         }
 
@@ -716,7 +813,7 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
         // String Table
         payload.insert(payload.end(), string_table.begin(), string_table.end());
-        align64(payload);
+        align128(payload);
 
         for (size_t i = 0; i < writer->relations.size(); ++i) {
             const auto& rel = writer->relations[i];
@@ -731,19 +828,46 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             entry.required_features = rel.section_features;
 
             // RowOffsets Stream
-            align64(payload);
+            align128(payload);
             entry.csr_offsets_pos = base_file_offset + payload.size();
             entry.csr_offsets_size = rel.row_offsets_data.size();
             payload.insert(payload.end(), rel.row_offsets_data.begin(), rel.row_offsets_data.end());
 
             // ColumnIndices Stream
-            align64(payload);
+            align128(payload);
             entry.csr_targets_pos = base_file_offset + payload.size();
             entry.csr_targets_size = rel.col_indices_data.size();
             payload.insert(payload.end(), rel.col_indices_data.begin(), rel.col_indices_data.end());
         }
 
         std::memcpy(payload.data() + directory_start_offset, dir_table.data(), rel_dir_bytes);
+
+        // Section 7 Extended Metadata Catalog
+        uint16_t section_dir_count = 0;
+        uint64_t section_dir_offset = 0;
+
+        if (!writer->extended_metadata.empty()) {
+            align128(payload);
+            uint64_t ext_offset = base_file_offset + payload.size();
+            std::vector<uint8_t> ext_bytes = encode_metadata_map_cpp(writer->extended_metadata);
+            payload.insert(payload.end(), ext_bytes.begin(), ext_bytes.end());
+
+            align128(payload);
+            section_dir_offset = base_file_offset + payload.size();
+            section_dir_count = 1;
+
+            struct AuxSectionEntry {
+                uint16_t section_type;
+                uint16_t flags;
+                uint32_t reserved;
+                uint64_t offset;
+                uint64_t size;
+            } aux_entry = { 0x000B, 0, 0, ext_offset, ext_bytes.size() };
+
+            const uint8_t* aux_ptr = reinterpret_cast<const uint8_t*>(&aux_entry);
+            payload.insert(payload.end(), aux_ptr, aux_ptr + sizeof(aux_entry));
+        }
+
         align4096(payload);
 
         // Compute SHA-256 Digest
@@ -767,6 +891,18 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         hdr.global_required_features = writer->global_features;
 
         std::memcpy(header_buf, &hdr, sizeof(hdr));
+
+        // Copy Section 1 Header-Embedded Custom Metadata into header_buf + 0x0470 (max 2048 bytes)
+        if (!writer->header_metadata.empty()) {
+            std::vector<uint8_t> encoded_hdr = encode_metadata_map_cpp(writer->header_metadata);
+            if (encoded_hdr.size() <= 2048) {
+                std::memcpy(header_buf + 0x0470, encoded_hdr.data(), encoded_hdr.size());
+            }
+        }
+
+        // Set Section Directory offset and count
+        std::memcpy(header_buf + 0x045C, &section_dir_count, 2);
+        std::memcpy(header_buf + 0x0460, &section_dir_offset, 8);
 
         // Compute Header CRC-32C at offset 0x458 (1112)
         std::vector<uint8_t> crc_data;
@@ -856,6 +992,20 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
     size_t delta_count,
     const char* output_file_path
 ) {
+    return impulse_snapshot_compact_to_file_with_metadata(
+        base_snapshot, deltas, delta_count, output_file_path, nullptr, nullptr, 0
+    );
+}
+
+IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file_with_metadata(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    const char* output_file_path,
+    const char** metadata_keys,
+    const char** metadata_values,
+    size_t metadata_count
+) {
     try {
         if (!base_snapshot || !output_file_path) {
             g_last_error = "Invalid base snapshot or output file path";
@@ -864,6 +1014,35 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
 
         impulse_writer_t* writer = impulse_writer_create(output_file_path, base_snapshot->header.global_required_features);
         if (!writer) return IMPULSE_ERR_IO_FAILURE;
+
+        // Preserve base_snapshot custom metadata
+        writer->header_metadata = base_snapshot->header_metadata;
+        writer->extended_metadata = base_snapshot->extended_metadata;
+
+        // Apply metadata updates/overrides
+        if (metadata_keys && metadata_count > 0) {
+            for (size_t i = 0; i < metadata_count; ++i) {
+                if (metadata_keys[i]) {
+                    if (!is_valid_utf8_str(metadata_keys[i], std::strlen(metadata_keys[i]))) {
+                        impulse_writer_destroy(writer);
+                        g_last_error = "Invalid non-UTF8 key provided in metadata update";
+                        return IMPULSE_ERR_INVALID_ARGUMENT;
+                    }
+                    if (!metadata_values || !metadata_values[i]) {
+                        // Un-set / remove metadata key
+                        writer->header_metadata.erase(metadata_keys[i]);
+                        writer->extended_metadata.erase(metadata_keys[i]);
+                    } else {
+                        if (!is_valid_utf8_str(metadata_values[i], std::strlen(metadata_values[i]))) {
+                            impulse_writer_destroy(writer);
+                            g_last_error = "Invalid non-UTF8 value provided in metadata update";
+                            return IMPULSE_ERR_INVALID_ARGUMENT;
+                        }
+                        writer->header_metadata[metadata_keys[i]] = metadata_values[i];
+                    }
+                }
+            }
+        }
 
         // Preserve domain catalog from base_snapshot
         for (const auto& dom : base_snapshot->domains) {
@@ -988,6 +1167,60 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
         g_last_error = std::string("Exception in impulse_snapshot_compact_to_file: ") + e.what();
         return IMPULSE_ERR_IO_FAILURE;
     }
+}
+
+IMPULSE_API impulse_status_t impulse_writer_set_header_metadata(impulse_writer_t* writer, const char* key, const char* value) {
+    if (!writer || !key) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (!is_valid_utf8_str(key, std::strlen(key))) {
+        g_last_error = "Invalid non-UTF8 key string provided for custom header metadata";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    if (!value) {
+        writer->header_metadata.erase(key);
+        return IMPULSE_OK;
+    }
+    if (!is_valid_utf8_str(value, std::strlen(value))) {
+        g_last_error = "Invalid non-UTF8 value string provided for custom header metadata";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    writer->header_metadata[key] = value;
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_writer_set_extended_metadata(impulse_writer_t* writer, const char* key, const char* value) {
+    if (!writer || !key) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (!is_valid_utf8_str(key, std::strlen(key))) {
+        g_last_error = "Invalid non-UTF8 key string provided for extended metadata";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    if (!value) {
+        writer->extended_metadata.erase(key);
+        return IMPULSE_OK;
+    }
+    if (!is_valid_utf8_str(value, std::strlen(value))) {
+        g_last_error = "Invalid non-UTF8 value string provided for extended metadata";
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    writer->extended_metadata[key] = value;
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_snapshot_get_header_metadata(const impulse_snapshot_t* snapshot, const char* key, char* out_val, size_t out_capacity) {
+    if (!snapshot || !key || !out_val || out_capacity == 0) return IMPULSE_ERR_INVALID_ARGUMENT;
+    auto it = snapshot->header_metadata.find(key);
+    if (it == snapshot->header_metadata.end()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (it->second.size() >= out_capacity) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    std::memcpy(out_val, it->second.c_str(), it->second.size() + 1);
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_snapshot_get_extended_metadata(const impulse_snapshot_t* snapshot, const char* key, char* out_val, size_t out_capacity) {
+    if (!snapshot || !key || !out_val || out_capacity == 0) return IMPULSE_ERR_INVALID_ARGUMENT;
+    auto it = snapshot->extended_metadata.find(key);
+    if (it == snapshot->extended_metadata.end()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (it->second.size() >= out_capacity) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    std::memcpy(out_val, it->second.c_str(), it->second.size() + 1);
+    return IMPULSE_OK;
 }
 
 // ---------------------------------------------------------------------------

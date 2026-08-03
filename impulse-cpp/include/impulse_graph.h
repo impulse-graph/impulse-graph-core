@@ -243,6 +243,22 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
     const char* output_file_path
 );
 
+IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file_with_metadata(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    const char* output_file_path,
+    const char** metadata_keys,
+    const char** metadata_values,
+    size_t metadata_count
+);
+
+// Custom Metadata Management APIs (Section 1 Header & Section 7 Extended)
+IMPULSE_API impulse_status_t impulse_writer_set_header_metadata(impulse_writer_t* writer, const char* key, const char* value);
+IMPULSE_API impulse_status_t impulse_writer_set_extended_metadata(impulse_writer_t* writer, const char* key, const char* value);
+IMPULSE_API impulse_status_t impulse_snapshot_get_header_metadata(const impulse_snapshot_t* snapshot, const char* key, char* out_val, size_t out_capacity);
+IMPULSE_API impulse_status_t impulse_snapshot_get_extended_metadata(const impulse_snapshot_t* snapshot, const char* key, char* out_val, size_t out_capacity);
+
 
 // Extended Snapshot Inspection & Zero-Copy Access
 IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
@@ -269,6 +285,17 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
     uint32_t* out_src,
     uint32_t* out_tgt,
     size_t out_capacity,
+    size_t* out_count
+);
+
+// Architecture-Independent SIMD API (Google Highway Integration)
+IMPULSE_API const char* impulse_simd_get_target_name(void);
+IMPULSE_API float impulse_simd_dot_product_f32(const float* a, const float* b, size_t len);
+IMPULSE_API impulse_status_t impulse_simd_vector_sum_f32(const float* a, const float* b, float* out, size_t len);
+IMPULSE_API impulse_status_t impulse_simd_intersect_sorted_u32(
+    const uint32_t* a, size_t len_a,
+    const uint32_t* b, size_t len_b,
+    uint32_t* out_intersection,
     size_t* out_count
 );
 

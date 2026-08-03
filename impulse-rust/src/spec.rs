@@ -139,6 +139,7 @@ pub enum AuxSectionType {
     NodePropsFixed = 0x0008,
     NodePropsVar = 0x0009,
     IdMap = 0x000A,
+    CustomMetadataCatalog = 0x000B,
     ZstdDict = 0x000C,
 }
 
@@ -155,6 +156,7 @@ impl AuxSectionType {
             0x0008 => Some(AuxSectionType::NodePropsFixed),
             0x0009 => Some(AuxSectionType::NodePropsVar),
             0x000A => Some(AuxSectionType::IdMap),
+            0x000B => Some(AuxSectionType::CustomMetadataCatalog),
             0x000C => Some(AuxSectionType::ZstdDict),
             _ => None,
         }
@@ -186,6 +188,7 @@ pub enum ImpulseError {
     SignatureMismatch = 8,
     BufferOverflow = 9,
     NotFound = 10,
+    InvalidAlignment = 11,
 }
 
 impl fmt::Display for ImpulseError {
@@ -443,4 +446,66 @@ pub fn compute_header_crc32(header_bytes: &[u8]) -> u32 {
     buffer.extend_from_slice(&header_bytes[0x00..0x48]);
     buffer.extend_from_slice(&header_bytes[0x448..0x458]);
     compute_crc32c(&buffer)
+}
+
+/// Encode a key-value String map into binary metadata stream format
+pub fn encode_metadata_map(map: &std::collections::HashMap<String, String>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let count = map.len() as u16;
+    buf.extend_from_slice(&count.to_le_bytes());
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    for k in keys {
+        let v = &map[k];
+        let k_bytes = k.as_bytes();
+        let v_bytes = v.as_bytes();
+        buf.extend_from_slice(&(k_bytes.len() as u16).to_le_bytes());
+        buf.extend_from_slice(k_bytes);
+        buf.extend_from_slice(&(v_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(v_bytes);
+    }
+    buf
+}
+
+/// Decode binary metadata stream format into a key-value String map with strict UTF-8 checking
+pub fn decode_metadata_map(buf: &[u8]) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+    let mut map = std::collections::HashMap::new();
+    if buf.len() < 2 {
+        return Ok(map);
+    }
+    let count = u16::from_le_bytes([buf[0], buf[1]]) as usize;
+    let mut offset = 2;
+    for _ in 0..count {
+        if offset + 2 > buf.len() {
+            break;
+        }
+        let k_len = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+        offset += 2;
+        if offset + k_len > buf.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let k_str = std::str::from_utf8(&buf[offset..offset + k_len])
+            .map_err(|_| ImpulseError::InvalidArgument)?;
+        offset += k_len;
+
+        if offset + 4 > buf.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let v_len = u32::from_le_bytes([
+            buf[offset],
+            buf[offset + 1],
+            buf[offset + 2],
+            buf[offset + 3],
+        ]) as usize;
+        offset += 4;
+        if offset + v_len > buf.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let v_str = std::str::from_utf8(&buf[offset..offset + v_len])
+            .map_err(|_| ImpulseError::InvalidArgument)?;
+        offset += v_len;
+
+        map.insert(k_str.to_string(), v_str.to_string());
+    }
+    Ok(map)
 }
