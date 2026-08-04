@@ -150,7 +150,8 @@ impl SnapshotWriter {
         }
     }
 
-    pub fn finalize(&mut self) -> Result<(), ImpulseError> {
+    pub fn finalize_to_writer(&mut self, writer: &mut impl Write) -> Result<(), ImpulseError> {
+
         // Sort relations primary by src_domain_id, secondary by tgt_domain_id
         self.relations.sort_by(|a, b| {
             a.src_domain_id
@@ -419,12 +420,16 @@ impl SnapshotWriter {
             )
         };
 
-        // Write file to disk
-        let mut file = File::create(&self.output_path).map_err(|_| ImpulseError::IoFailure)?;
-        file.write_all(header_full_bytes).map_err(|_| ImpulseError::IoFailure)?;
-        file.write_all(&final_payload).map_err(|_| ImpulseError::IoFailure)?;
-        file.flush().map_err(|_| ImpulseError::IoFailure)?;
+        writer.write_all(header_full_bytes).map_err(|_| ImpulseError::IoFailure)?;
+        writer.write_all(&final_payload).map_err(|_| ImpulseError::IoFailure)?;
+        writer.flush().map_err(|_| ImpulseError::IoFailure)?;
 
         Ok(())
     }
+
+    pub fn finalize(&mut self) -> Result<(), ImpulseError> {
+        let mut file = File::create(&self.output_path).map_err(|_| ImpulseError::IoFailure)?;
+        self.finalize_to_writer(&mut file)
+    }
 }
+

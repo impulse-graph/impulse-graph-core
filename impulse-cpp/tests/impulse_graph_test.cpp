@@ -167,6 +167,49 @@ static void test_null_arguments() {
     std::printf("  PASS: test_null_arguments\n");
 }
 
+static int32_t memory_write_callback(const void* data, size_t bytes, void* user_data) {
+    auto* vec = static_cast<std::vector<uint8_t>*>(user_data);
+    const auto* p = static_cast<const uint8_t*>(data);
+    vec->insert(vec->end(), p, p + bytes);
+    return 0;
+}
+
+static void test_stream_compaction_and_writer() {
+    impulse_status_t st;
+    impulse_snapshot_t* base_snap = impulse_snapshot_open(TEST_FILE, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(base_snap != nullptr);
+
+    std::vector<uint8_t> stream_buf;
+    st = impulse_snapshot_compact_to_stream(base_snap, nullptr, 0, memory_write_callback, &stream_buf);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(stream_buf.size() > 4096);
+
+    const char* stream_file = "__impulse_test_stream_compact.bin";
+    FILE* f = std::fopen(stream_file, "wb");
+    ASSERT_TRUE(f != nullptr);
+    std::fwrite(stream_buf.data(), 1, stream_buf.size(), f);
+    std::fclose(f);
+
+    impulse_snapshot_t* streamed_snap = impulse_snapshot_open(stream_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(streamed_snap != nullptr);
+
+    ASSERT_EQ(impulse_snapshot_domain_count(streamed_snap), 1);
+    ASSERT_EQ(impulse_snapshot_relation_count(streamed_snap), 1);
+
+    char mval[64];
+    st = impulse_snapshot_get_metadata(streamed_snap, "tenant_id", mval, sizeof(mval));
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_EQ(std::string(mval), "tenant_123");
+
+    impulse_snapshot_close(streamed_snap);
+    impulse_snapshot_close(base_snap);
+    std::remove(stream_file);
+
+    std::printf("  PASS: test_stream_compaction_and_writer\n");
+}
+
 int main() {
     std::printf("impulse_graph_test: running tests...\n\n");
 
@@ -175,6 +218,7 @@ int main() {
     test_reachability();
     test_neighbor_sampler();
     test_null_arguments();
+    test_stream_compaction_and_writer();
 
     std::remove(TEST_FILE);
     std::printf("\nAll tests passed.\n");

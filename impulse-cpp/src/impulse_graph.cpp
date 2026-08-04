@@ -148,7 +148,9 @@ struct impulse_writer_relation {
 
 struct impulse_writer {
     std::string output_path;
-    uint64_t global_features;
+    impulse_write_fn write_cb = nullptr;
+    void* user_data = nullptr;
+    uint64_t global_features = 0;
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_writer_relation> relations;
@@ -248,7 +250,9 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     }
 
     if (ver == 9 || ver == 0x0009) {
-        const uint64_t known_features = IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED | IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
+        const uint64_t known_features = IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED |
+                                        IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED |
+                                        IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
         if ((snap->header.required_features & ~known_features) != 0) {
             g_last_error = "Unsupported global feature bitmask";
             if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE;
@@ -290,6 +294,12 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     if (ver == 9 || ver == 0x0009) {
         if (snap->header.footer_directory_offset > 0 && snap->header.footer_directory_offset < file_size) {
             dir_offset = static_cast<size_t>(snap->header.footer_directory_offset);
+        } else if ((snap->header.required_features & IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG) && file_size >= 16) {
+            impulse_footer_trailer_t trailer;
+            std::memcpy(&trailer, raw + file_size - 16, 16);
+            if (trailer.footer_magic == IMPULSE_MAGIC && file_size >= 16 + trailer.footer_length) {
+                dir_offset = file_size - static_cast<size_t>(trailer.footer_length);
+            }
         }
     }
 
@@ -514,6 +524,14 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         if (trailer.footer_magic == IMPULSE_MAGIC && trailer.footer_length <= file_size) {
             size_t meta_offset = file_size - static_cast<size_t>(trailer.footer_length);
             size_t meta_bytes = static_cast<size_t>(trailer.footer_length) - 16;
+
+            if (snap->header.footer_directory_offset > 0 && snap->header.footer_directory_offset == meta_offset) {
+                meta_offset += static_cast<size_t>(snap->header.footer_directory_bytes);
+                if (meta_bytes >= static_cast<size_t>(snap->header.footer_directory_bytes)) {
+                    meta_bytes -= static_cast<size_t>(snap->header.footer_directory_bytes);
+                }
+            }
+
             if (meta_offset + meta_bytes <= file_size && meta_bytes >= 4) {
                 size_t mcur = meta_offset;
                 uint32_t count = 0;
@@ -651,6 +669,15 @@ impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t g
     return w.release();
 }
 
+impulse_writer_t* impulse_writer_create_stream(impulse_write_fn write_cb, void* user_data, uint64_t global_features) {
+    if (!write_cb) return nullptr;
+    auto w = std::make_unique<impulse_writer_t>();
+    w->write_cb = write_cb;
+    w->user_data = user_data;
+    w->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED | IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
+    return w.release();
+}
+
 impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
     if (!writer || !name) return IMPULSE_ERR_INVALID_ARGUMENT;
     impulse_domain_catalog_entry_t dom{};
@@ -738,6 +765,11 @@ impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const cha
 impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     if (!writer) return IMPULSE_ERR_INVALID_ARGUMENT;
 
+    bool footer_catalog = (writer->global_features & IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG) != 0 || (writer->write_cb != nullptr);
+    if (footer_catalog) {
+        writer->global_features |= IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
+    }
+
     // Sort relations by src_domain_id primary, tgt_domain_id secondary
     std::sort(writer->relations.begin(), writer->relations.end(), [](const impulse_writer_relation& a, const impulse_writer_relation& b) {
         if (a.src_domain_id != b.src_domain_id) return a.src_domain_id < b.src_domain_id;
@@ -797,7 +829,9 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     size_t total_dir_table_len = dir_table.size() + rel_dir_size;
     size_t aligned_dir_table_len = (total_dir_table_len + 4095) & ~4095;
 
-    uint64_t rel_blocks_base_offset = IMPULSE_DEFAULT_DATA_OFFSET + aligned_dir_table_len;
+    uint64_t rel_blocks_base_offset = footer_catalog
+        ? IMPULSE_DEFAULT_DATA_OFFSET
+        : (IMPULSE_DEFAULT_DATA_OFFSET + aligned_dir_table_len);
 
     // 2. Serialize Relation Blocks
     std::vector<uint8_t> payload;
@@ -889,45 +923,56 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     dir_table.resize(aligned_dir_table_len, 0x00);
 
-    // Combine Directory Table and Relation Payload
-    std::vector<uint8_t> final_payload;
-    final_payload.insert(final_payload.end(), dir_table.begin(), dir_table.end());
-    final_payload.insert(final_payload.end(), payload.begin(), payload.end());
+    std::vector<uint8_t> footer_payload;
+    uint64_t footer_dir_offset = 0;
+    uint64_t footer_dir_bytes = 0;
+
+    if (footer_catalog) {
+        align4096(payload);
+        footer_dir_offset = IMPULSE_DEFAULT_DATA_OFFSET + payload.size();
+        footer_dir_bytes = dir_table.size();
+        footer_payload.insert(footer_payload.end(), dir_table.begin(), dir_table.end());
+    } else {
+        std::vector<uint8_t> combined;
+        combined.insert(combined.end(), dir_table.begin(), dir_table.end());
+        combined.insert(combined.end(), payload.begin(), payload.end());
+        payload = std::move(combined);
+    }
 
     // 3. Serialize Footer Block at EOF
-    align4096(final_payload);
-    size_t footer_start = final_payload.size();
+    align4096(footer_payload);
+    size_t footer_start = footer_payload.size();
 
     // Metadata Stream
     uint32_t meta_count = static_cast<uint32_t>(writer->metadata.size());
-    size_t mpos = final_payload.size();
-    final_payload.resize(mpos + 4);
-    std::memcpy(final_payload.data() + mpos, &meta_count, 4);
+    size_t mpos = footer_payload.size();
+    footer_payload.resize(mpos + 4);
+    std::memcpy(footer_payload.data() + mpos, &meta_count, 4);
 
     for (const auto& kv : writer->metadata) {
         uint16_t klen = static_cast<uint16_t>(kv.first.size());
-        mpos = final_payload.size();
-        final_payload.resize(mpos + 2);
-        std::memcpy(final_payload.data() + mpos, &klen, 2);
-        final_payload.insert(final_payload.end(), kv.first.begin(), kv.first.end());
+        mpos = footer_payload.size();
+        footer_payload.resize(mpos + 2);
+        std::memcpy(footer_payload.data() + mpos, &klen, 2);
+        footer_payload.insert(footer_payload.end(), kv.first.begin(), kv.first.end());
 
         uint32_t vlen = static_cast<uint32_t>(kv.second.size());
-        mpos = final_payload.size();
-        final_payload.resize(mpos + 4);
-        std::memcpy(final_payload.data() + mpos, &vlen, 4);
-        final_payload.insert(final_payload.end(), kv.second.begin(), kv.second.end());
+        mpos = footer_payload.size();
+        footer_payload.resize(mpos + 4);
+        std::memcpy(footer_payload.data() + mpos, &vlen, 4);
+        footer_payload.insert(footer_payload.end(), kv.second.begin(), kv.second.end());
     }
 
     // 16-Byte Footer Trailer
-    uint64_t footer_len = static_cast<uint64_t>(final_payload.size() + 16 - footer_start);
+    uint64_t footer_len = static_cast<uint64_t>(footer_payload.size() + 16 - footer_start);
     impulse_footer_trailer_t trailer;
     trailer.footer_length = footer_len;
     trailer.spec_version = IMPULSE_SPEC_VERSION_PACKED;
     trailer.footer_magic = IMPULSE_MAGIC;
 
-    mpos = final_payload.size();
-    final_payload.resize(mpos + sizeof(trailer));
-    std::memcpy(final_payload.data() + mpos, &trailer, sizeof(trailer));
+    mpos = footer_payload.size();
+    footer_payload.resize(mpos + sizeof(trailer));
+    std::memcpy(footer_payload.data() + mpos, &trailer, sizeof(trailer));
 
     // 4. Build Header Page 0 (4096 Bytes)
     impulse_snapshot_header_t header{};
@@ -938,24 +983,46 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     header.relation_count = static_cast<uint16_t>(writer->relations.size());
     header.timestamp_ms = 1700000000000ULL;
     header.required_features = writer->global_features;
-    header.footer_directory_offset = 0;
-    header.footer_directory_bytes = 0;
+    header.footer_directory_offset = footer_dir_offset;
+    header.footer_directory_bytes = footer_dir_bytes;
 
     const uint8_t* header_raw = reinterpret_cast<const uint8_t*>(&header);
     header.header_checksum = compute_crc16(header_raw, 0x3E);
 
-    // Write file to disk
-    std::ofstream ofs(writer->output_path, std::ios::binary);
-    if (!ofs) {
-        g_last_error = "Failed to create output snapshot file";
-        return IMPULSE_ERR_IO_FAILURE;
+    if (writer->write_cb) {
+        if (writer->write_cb(reinterpret_cast<const void*>(&header), sizeof(header), writer->user_data) != 0) {
+            g_last_error = "Write callback returned error for header";
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+        if (!payload.empty()) {
+            if (writer->write_cb(payload.data(), payload.size(), writer->user_data) != 0) {
+                g_last_error = "Write callback returned error for relation payload";
+                return IMPULSE_ERR_IO_FAILURE;
+            }
+        }
+        if (!footer_payload.empty()) {
+            if (writer->write_cb(footer_payload.data(), footer_payload.size(), writer->user_data) != 0) {
+                g_last_error = "Write callback returned error for footer payload";
+                return IMPULSE_ERR_IO_FAILURE;
+            }
+        }
+        return IMPULSE_OK;
+    } else {
+        std::ofstream ofs(writer->output_path, std::ios::binary);
+        if (!ofs) {
+            g_last_error = "Failed to create output snapshot file";
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        ofs.write(reinterpret_cast<const char*>(&header), sizeof(header));
+        if (!payload.empty()) {
+            ofs.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+        }
+        if (!footer_payload.empty()) {
+            ofs.write(reinterpret_cast<const char*>(footer_payload.data()), footer_payload.size());
+        }
+        return IMPULSE_OK;
     }
-
-    ofs.write(reinterpret_cast<const char*>(&header), sizeof(header));
-    ofs.write(reinterpret_cast<const char*>(final_payload.data()), final_payload.size());
-    ofs.flush();
-
-    return IMPULSE_OK;
 }
 
 void impulse_writer_destroy(impulse_writer_t* writer) {
@@ -1033,6 +1100,57 @@ impulse_status_t impulse_snapshot_compact_to_file(
             row_ptr, rel.csr_row_off_bytes,
             col_ptr, rel.csr_col_idx_bytes
         );
+    }
+
+    for (const auto& kv : base_snapshot->metadata) {
+        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
+    }
+
+    impulse_status_t st = impulse_writer_finalize(writer);
+    impulse_writer_destroy(writer);
+    return st;
+}
+
+impulse_status_t impulse_snapshot_compact_to_stream(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    impulse_write_fn write_cb,
+    void* user_data
+) {
+    if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
+    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 0x0009) {
+        gfeat |= base_snapshot->header.required_features;
+    }
+    impulse_writer_t* writer = impulse_writer_create_stream(write_cb, user_data, gfeat);
+    if (!writer) return IMPULSE_ERR_IO_FAILURE;
+
+    for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
+        const auto& dom = base_snapshot->domains[i];
+        const auto& name = base_snapshot->domain_names[i];
+        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
+    }
+
+    const uint8_t* raw = static_cast<const uint8_t*>(base_snapshot->mmap_ptr);
+
+    for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
+        const auto& rel = base_snapshot->relations[r];
+
+        const void* row_ptr = raw + rel.csr_row_off_offset;
+        const void* col_ptr = raw + rel.csr_col_idx_offset;
+
+        impulse_writer_add_relation(
+            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
+            rel.node_count, rel.edge_count, rel.section_features,
+            row_ptr, rel.csr_row_off_bytes,
+            col_ptr, rel.csr_col_idx_bytes
+        );
+    }
+
+    for (const auto& kv : base_snapshot->metadata) {
+        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
     }
 
     impulse_status_t st = impulse_writer_finalize(writer);

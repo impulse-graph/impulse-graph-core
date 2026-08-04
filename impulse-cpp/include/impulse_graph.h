@@ -51,6 +51,10 @@ typedef enum impulse_status {
 // Global Feature Flags (Header Offset 0x16..0x1D)
 #define IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED   (1ULL << 0)
 #define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED      (1ULL << 1)
+#define IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG     (1ULL << 2)
+
+// Stream Writer Callback Signature
+typedef int32_t (*impulse_write_fn)(const void* data, size_t bytes, void* user_data);
 
 // Convenient Type Aliases for v0.9.0 Structs
 typedef impulse_snapshot_header_v0_9_t impulse_snapshot_header_t;
@@ -104,6 +108,7 @@ IMPULSE_API const char* impulse_get_last_error(void);
 
 // Snapshot Generator / Writer C-ABI API (For Third-Party Tooling)
 IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features);
+IMPULSE_API impulse_writer_t* impulse_writer_create_stream(impulse_write_fn write_cb, void* user_data, uint64_t global_features);
 IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name);
 IMPULSE_API impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
@@ -142,6 +147,13 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_file(
     impulse_delta_layer_t** deltas,
     size_t delta_count,
     const char* output_file_path
+);
+IMPULSE_API impulse_status_t impulse_snapshot_compact_to_stream(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    impulse_write_fn write_cb,
+    void* user_data
 );
 
 // Metadata Access API
