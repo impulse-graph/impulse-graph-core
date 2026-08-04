@@ -124,4 +124,50 @@ mod tests {
         // Cleanup
         let _ = fs::remove_file(TEST_SNAPSHOT);
     }
+
+    #[test]
+    fn test_zero_node_relation_and_1023_node_alignment() {
+        const TEST_FILE: &str = "__impulse_test_alignment_v09.imps";
+        let mut writer = SnapshotWriter::new(TEST_FILE);
+
+        writer.add_domain(0, KeyType::Int32, "User");
+
+        // Relation 0: Node count = 0, edge count = 0 (1 row offset [0] = 4 bytes)
+        writer.add_relation(0, 0, 0, 0, vec![0u32], vec![]);
+
+        // Relation 1: Node count = 1023 (requires N + 1 = 1024 int32 row offsets = 4096 bytes)
+        let row_offs_1024 = vec![0u32; 1024];
+        writer.add_relation(0, 0, 1023, 0, row_offs_1024, vec![]);
+
+        // Relation 2: Follower relation
+        writer.add_relation(0, 0, 1, 1, vec![0u32, 1], vec![0u32]);
+
+        assert!(writer.finalize().is_ok());
+
+        let reader = SnapshotReader::open(TEST_FILE).unwrap();
+        assert_eq!(reader.relation_count(), 3);
+
+        let rels = reader.relations();
+
+        // 1. Verify relation 0 (node_count = 0) has 1 row offset = 4 bytes, 0 column bytes
+        assert_eq!(rels[0].node_count, 0);
+        assert_eq!(rels[0].csr_row_off_bytes, 4); // N + 1 = 1 uint32 offset [0]
+        assert_eq!(rels[0].csr_col_idx_bytes, 0);  // 0 column indices
+
+        // 2. Verify relation 1: node_count = 1023 has N + 1 = 1024 uint32 row offsets = 4096 bytes
+        assert_eq!(rels[1].node_count, 1023);
+        assert_eq!(rels[1].csr_row_off_bytes, 4096); // 1024 * 4 = 4096 bytes
+        assert_eq!(rels[1].csr_col_idx_bytes, 0);
+
+        // Verify relation 1 row_offsets ends on a 4KB boundary and relation 2 block starts immediately
+        let rel1_end_offset = rels[1].csr_row_off_offset + rels[1].csr_row_off_bytes;
+        assert_eq!(rel1_end_offset % 4096, 0, "Relation 1 end offset 0x{:X} should land exactly on 4KB page boundary", rel1_end_offset);
+
+        // Relation 2 start offset should match rel1_end_offset
+        assert_eq!(rels[2].csr_row_off_offset, rel1_end_offset, "Relation 2 row offset 0x{:X} should start immediately at 4KB page boundary 0x{:X}", rels[2].csr_row_off_offset, rel1_end_offset);
+
+        let _ = fs::remove_file(TEST_FILE);
+    }
 }
+
+

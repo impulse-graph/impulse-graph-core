@@ -9,6 +9,7 @@ pub struct DomainInfo {
     pub domain_id: u16,
     pub key_type: KeyType,
     pub name: String,
+    pub node_count: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -19,6 +20,7 @@ pub struct RelationInfo {
     pub encoding_id: u8,
     pub node_id_width: u8,
     pub edge_index_width: u8,
+    pub name: String,
     pub node_count: u64,
     pub edge_count: u64,
     pub csr_row_off_offset: u64,
@@ -71,25 +73,21 @@ impl SnapshotReader {
             return Err(ImpulseError::IoFailure);
         }
 
-        // Parse header struct
         let header = unsafe { std::ptr::read_unaligned(slice.as_ptr() as *const SnapshotHeader) };
 
         if header.magic() != IMPULSE_MAGIC {
             return Err(ImpulseError::InvalidMagic);
         }
 
-        // Check version (0.9.0 packed is 9)
         if header.version() != IMPULSE_VERSION_PACKED && (header.version() >> 8) != IMPULSE_VERSION_MAJOR {
             return Err(ImpulseError::UnsupportedVersion);
         }
 
-        // Verify Header CRC-16
         let computed_crc = compute_crc16(&slice[0..0x3E]);
         if computed_crc != header.header_checksum() {
             return Err(ImpulseError::CorruptChecksum);
         }
 
-        // Determine Catalog Directory offset (Page 1 by default, or Footer Directory)
         let dir_offset = if header.footer_directory_offset() > 0 {
             header.footer_directory_offset() as usize
         } else {
@@ -100,39 +98,63 @@ impl SnapshotReader {
             return Err(ImpulseError::BufferOverflow);
         }
 
-        // Parse Domain Catalog
-        let domain_count = header.domain_count() as usize;
-        let mut domains = Vec::with_capacity(domain_count);
         let mut cur = dir_offset;
 
+        // Parse Shared String Table
+        if cur + 4 > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let string_table_bytes = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
+        cur += 4;
+
+        if cur + string_table_bytes > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let string_pool_slice = &slice[cur..cur + string_table_bytes];
+        cur += string_table_bytes;
+
+        let get_string = |name_off: usize| -> String {
+            if name_off >= string_pool_slice.len() {
+                return String::new();
+            }
+            if let Some(null_pos) = string_pool_slice[name_off..].iter().position(|&b| b == 0) {
+                std::str::from_utf8(&string_pool_slice[name_off..name_off + null_pos])
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        let rem = cur % 128;
+        if rem != 0 {
+            cur += 128 - rem;
+        }
+
+        // Parse Domain Catalog Entries Array
+        let domain_count = header.domain_count() as usize;
+        let mut domains = Vec::with_capacity(domain_count);
+
         for _d_idx in 0..domain_count {
-            if cur + std::mem::size_of::<DomainCatalogEntryHeader>() > slice.len() {
+            if cur + std::mem::size_of::<DomainCatalogEntry>() > slice.len() {
                 return Err(ImpulseError::BufferOverflow);
             }
-            let dom_hdr = unsafe {
-                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntryHeader)
+            let dom_entry = unsafe {
+                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntry)
             };
-            cur += std::mem::size_of::<DomainCatalogEntryHeader>();
+            cur += std::mem::size_of::<DomainCatalogEntry>();
 
-            let key_type = KeyType::from_u8(dom_hdr.key_type).ok_or(ImpulseError::InvalidArgument)?;
-            let name_len = dom_hdr.name_len as usize;
-
-            if cur + name_len > slice.len() {
-                return Err(ImpulseError::BufferOverflow);
-            }
-            let name = std::str::from_utf8(&slice[cur..cur + name_len])
-                .map_err(|_| ImpulseError::InvalidArgument)?
-                .to_string();
-            cur += name_len;
+            let key_type = KeyType::from_u8(dom_entry.key_type()).ok_or(ImpulseError::InvalidArgument)?;
+            let name = get_string(dom_entry.name_offset() as usize);
 
             domains.push(DomainInfo {
-                domain_id: dom_hdr.domain_id,
+                domain_id: dom_entry.domain_id(),
                 key_type,
                 name,
+                node_count: dom_entry.node_count(),
             });
         }
 
-        // 128-byte align to Relation Directory Table
         let rem = cur % 128;
         if rem != 0 {
             cur += 128 - rem;
@@ -163,14 +185,7 @@ impl SnapshotReader {
                 };
                 cur += std::mem::size_of::<AttributeDescriptor>();
 
-                let name_len = attr_desc.name_len as usize;
-                if cur + name_len > slice.len() {
-                    return Err(ImpulseError::BufferOverflow);
-                }
-                let attr_name = std::str::from_utf8(&slice[cur..cur + name_len])
-                    .map_err(|_| ImpulseError::InvalidArgument)?
-                    .to_string();
-                cur += name_len;
+                let attr_name = get_string(attr_desc.name_offset() as usize);
 
                 attributes.push(AttributeInfo {
                     name: attr_name,
@@ -183,6 +198,8 @@ impl SnapshotReader {
                 });
             }
 
+            let rel_name = get_string(rel_entry.name_offset() as usize);
+
             relations.push(RelationInfo {
                 relation_id: rel_entry.relation_id(),
                 src_domain_id: rel_entry.src_domain_id(),
@@ -190,6 +207,7 @@ impl SnapshotReader {
                 encoding_id: rel_entry.encoding_id(),
                 node_id_width: rel_entry.node_id_width(),
                 edge_index_width: rel_entry.edge_index_width(),
+                name: rel_name,
                 node_count: rel_entry.node_count(),
                 edge_count: rel_entry.edge_count(),
                 csr_row_off_offset: rel_entry.csr_row_off_offset(),
@@ -204,10 +222,8 @@ impl SnapshotReader {
             });
         }
 
-        // Determine metadata location (Footer Block)
         let mut metadata_offset = 0;
         let mut metadata_bytes = 0;
-
         if slice.len() >= 16 {
             let trailer_pos = slice.len() - 16;
             let trailer = unsafe {
@@ -215,7 +231,7 @@ impl SnapshotReader {
             };
             if trailer.footer_magic() == IMPULSE_MAGIC {
                 let footer_len = trailer.footer_length() as usize;
-                if footer_len > 16 && footer_len <= slice.len() {
+                if footer_len <= slice.len() {
                     metadata_offset = (slice.len() - footer_len) as u64;
                     metadata_bytes = (footer_len - 16) as u64;
                 }
@@ -236,12 +252,12 @@ impl SnapshotReader {
         &self.header
     }
 
-    pub fn domain_count(&self) -> usize {
-        self.domains.len()
+    pub fn domain_count(&self) -> u16 {
+        self.domains.len() as u16
     }
 
-    pub fn relation_count(&self) -> usize {
-        self.relations.len()
+    pub fn relation_count(&self) -> u16 {
+        self.relations.len() as u16
     }
 
     pub fn domains(&self) -> &[DomainInfo] {
@@ -252,159 +268,138 @@ impl SnapshotReader {
         &self.relations
     }
 
-    pub fn get_buffer(&self, offset: u64, size: u64) -> Result<&[u8], ImpulseError> {
-        let slice = self.mmap.as_slice();
-        let off = offset as usize;
-        let sz = size as usize;
-
-        if off > slice.len() || sz > slice.len() - off {
-            return Err(ImpulseError::BufferOverflow);
-        }
-        Ok(&slice[off..off + sz])
+    pub fn get_relation_entry(&self, relation_index: u16) -> Option<&RelationInfo> {
+        self.relations.get(relation_index as usize)
     }
 
-    /// Direct single-hop adjacency check
-    pub fn is_adjacent(
-        &self,
-        relation_index: usize,
-        src_id: u64,
-        tgt_id: u64,
-    ) -> Result<bool, ImpulseError> {
-        if relation_index >= self.relations.len() {
-            return Err(ImpulseError::InvalidArgument);
-        }
+    pub fn is_reachable(&self, relation_index: u16, src_id: u64, tgt_id: u64) -> bool {
+        let rel = match self.relations.get(relation_index as usize) {
+            Some(r) => r,
+            None => return false,
+        };
 
-        let rel = &self.relations[relation_index];
         if src_id >= rel.node_count {
-            return Ok(false);
+            return false;
         }
 
-        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
-        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
+        let slice = self.mmap.as_slice();
+        let row_start = rel.csr_row_off_offset as usize;
+        let col_start = rel.csr_col_idx_offset as usize;
 
-        let row_offsets: &[u32] = unsafe {
+        if row_start + rel.csr_row_off_bytes as usize > slice.len()
+            || col_start + rel.csr_col_idx_bytes as usize > slice.len()
+        {
+            return false;
+        }
+
+        let row_offsets = unsafe {
             std::slice::from_raw_parts(
-                offsets_buf.as_ptr() as *const u32,
-                offsets_buf.len() / 4,
+                slice[row_start..].as_ptr() as *const u32,
+                rel.csr_row_off_bytes as usize / 4,
             )
         };
-        let col_indices: &[u32] = unsafe {
+
+        let col_indices = unsafe {
             std::slice::from_raw_parts(
-                targets_buf.as_ptr() as *const u32,
-                targets_buf.len() / 4,
+                slice[col_start..].as_ptr() as *const u32,
+                rel.csr_col_idx_bytes as usize / 4,
             )
         };
 
         let u = src_id as usize;
         if u + 1 >= row_offsets.len() {
-            return Ok(false);
+            return false;
         }
 
-        let start_idx = row_offsets[u] as usize;
-        let end_idx = row_offsets[u + 1] as usize;
+        let start = row_offsets[u] as usize;
+        let end = row_offsets[u + 1] as usize;
 
-        if start_idx > end_idx || end_idx > col_indices.len() {
-            return Err(ImpulseError::CorruptChecksum);
+        if start > end || end > col_indices.len() {
+            return false;
         }
 
-        for &tgt in &col_indices[start_idx..end_idx] {
-            if tgt as u64 == tgt_id {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        col_indices[start..end].iter().any(|&v| v as u64 == tgt_id)
     }
 
-    /// Zero-copy neighbor slice accessor
-    pub fn get_neighbors(
-        &self,
-        relation_index: usize,
-        node_id: u64,
-    ) -> Result<&[u32], ImpulseError> {
-        if relation_index >= self.relations.len() {
-            return Err(ImpulseError::InvalidArgument);
+    pub fn is_adjacent(&self, relation_index: u16, src_id: u64, tgt_id: u64) -> Result<bool, ImpulseError> {
+        Ok(self.is_reachable(relation_index, src_id, tgt_id))
+    }
+
+    pub fn get_neighbors(&self, relation_index: u16, src_id: u64) -> Result<Vec<u64>, ImpulseError> {
+        let rel = self.relations.get(relation_index as usize).ok_or(ImpulseError::NotFound)?;
+        if src_id >= rel.node_count {
+            return Ok(Vec::new());
         }
 
-        let rel = &self.relations[relation_index];
-        if node_id >= rel.node_count {
-            return Ok(&[]);
-        }
+        let slice = self.mmap.as_slice();
+        let row_start = rel.csr_row_off_offset as usize;
+        let col_start = rel.csr_col_idx_offset as usize;
 
-        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
-        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
-
-        let row_offsets: &[u32] = unsafe {
+        let row_offsets = unsafe {
             std::slice::from_raw_parts(
-                offsets_buf.as_ptr() as *const u32,
-                offsets_buf.len() / 4,
-            )
-        };
-        let col_indices: &[u32] = unsafe {
-            std::slice::from_raw_parts(
-                targets_buf.as_ptr() as *const u32,
-                targets_buf.len() / 4,
+                slice[row_start..].as_ptr() as *const u32,
+                rel.csr_row_off_bytes as usize / 4,
             )
         };
 
-        let u = node_id as usize;
+        let col_indices = unsafe {
+            std::slice::from_raw_parts(
+                slice[col_start..].as_ptr() as *const u32,
+                rel.csr_col_idx_bytes as usize / 4,
+            )
+        };
+
+        let u = src_id as usize;
         if u + 1 >= row_offsets.len() {
-            return Ok(&[]);
+            return Ok(Vec::new());
         }
 
-        let start_idx = row_offsets[u] as usize;
-        let end_idx = row_offsets[u + 1] as usize;
+        let start = row_offsets[u] as usize;
+        let end = row_offsets[u + 1] as usize;
 
-        if start_idx > end_idx || end_idx > col_indices.len() {
-            return Err(ImpulseError::CorruptChecksum);
+        if start > end || end > col_indices.len() {
+            return Ok(Vec::new());
         }
 
-        Ok(&col_indices[start_idx..end_idx])
+        Ok(col_indices[start..end].iter().map(|&v| v as u64).collect())
     }
 
-    /// Access zero-copy CSR row offsets array slice for a relation
-    pub fn get_row_offsets(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
-        if relation_index >= self.relations.len() {
-            return Err(ImpulseError::InvalidArgument);
-        }
-        let rel = &self.relations[relation_index];
-        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
-        let row_offsets: &[u32] = unsafe {
-            std::slice::from_raw_parts(
-                offsets_buf.as_ptr() as *const u32,
-                offsets_buf.len() / 4,
-            )
-        };
-        Ok(row_offsets)
-    }
-
-    /// Access zero-copy CSR column targets array slice for a relation
-    pub fn get_col_indices(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
-        if relation_index >= self.relations.len() {
-            return Err(ImpulseError::InvalidArgument);
-        }
-        let rel = &self.relations[relation_index];
-        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
-        let elem_size = match rel.node_id_width {
-            2 => 2,
-            8 => 8,
-            _ => 4,
-        };
-        let col_indices: &[u32] = unsafe {
-            std::slice::from_raw_parts(
-                targets_buf.as_ptr() as *const u32,
-                targets_buf.len() / elem_size,
-            )
-        };
-        Ok(col_indices)
-    }
-
-    /// Retrieve Metadata map from Footer Block
     pub fn get_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
-        if self.metadata_offset == 0 || self.metadata_bytes == 0 {
-            return Ok(std::collections::HashMap::new());
+        let mut map = std::collections::HashMap::new();
+        if self.metadata_bytes < 4 {
+            return Ok(map);
         }
-        let buf = self.get_buffer(self.metadata_offset, self.metadata_bytes)?;
-        decode_metadata_map(buf)
+
+        let slice = self.mmap.as_slice();
+        let start = self.metadata_offset as usize;
+        let total = self.metadata_bytes as usize;
+
+        if start + total > slice.len() {
+            return Ok(map);
+        }
+
+        let mut cur = start;
+        let count = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
+        cur += 4;
+
+        for _ in 0..count {
+            if cur + 2 > start + total { break; }
+            let klen = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap()) as usize;
+            cur += 2;
+            if cur + klen > start + total { break; }
+            let key = std::str::from_utf8(&slice[cur..cur + klen]).unwrap_or("").to_string();
+            cur += klen;
+
+            if cur + 4 > start + total { break; }
+            let vlen = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
+            cur += 4;
+            if cur + vlen > start + total { break; }
+            let val = std::str::from_utf8(&slice[cur..cur + vlen]).unwrap_or("").to_string();
+            cur += vlen;
+
+            map.insert(key, val);
+        }
+
+        Ok(map)
     }
 }

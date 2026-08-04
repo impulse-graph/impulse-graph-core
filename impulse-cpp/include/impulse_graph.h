@@ -55,7 +55,7 @@ typedef enum impulse_status {
 // Convenient Type Aliases for v0.9.0 Structs
 typedef impulse_snapshot_header_v0_9_t impulse_snapshot_header_t;
 typedef impulse_footer_trailer_v0_9_t impulse_footer_trailer_t;
-typedef impulse_domain_catalog_entry_header_v0_9_t impulse_domain_catalog_entry_header_t;
+typedef impulse_domain_catalog_entry_v0_9_t impulse_domain_catalog_entry_t;
 typedef impulse_relation_directory_entry_v0_9_t impulse_relation_directory_entry_t;
 typedef impulse_attribute_descriptor_v0_9_t impulse_attribute_descriptor_t;
 

@@ -34,21 +34,23 @@ pub fn align_4k(val: u64) -> u64 {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyType {
-    Int16 = 0x00,
-    Int32 = 0x01,
-    Int64 = 0x02,
-    Uuid = 0x03,
-    String = 0x04,
+    Int8 = 0x01,
+    Int16 = 0x02,
+    Int32 = 0x03,
+    Int64 = 0x04,
+    Uuid = 0x0A,
+    String = 0x0B,
 }
 
 impl KeyType {
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
-            0x00 => Some(KeyType::Int16),
-            0x01 => Some(KeyType::Int32),
-            0x02 => Some(KeyType::Int64),
-            0x03 => Some(KeyType::Uuid),
-            0x04 => Some(KeyType::String),
+            0x01 => Some(KeyType::Int8),
+            0x02 => Some(KeyType::Int16),
+            0x03 => Some(KeyType::Int32),
+            0x04 => Some(KeyType::Int64),
+            0x0A => Some(KeyType::Uuid),
+            0x0B => Some(KeyType::String),
             _ => None,
         }
     }
@@ -139,9 +141,8 @@ impl BaseDataType {
 }
 
 // Global Feature Flags
-pub const IMPULSE_FEAT_FOOTER_DIRECTORY: u64 = 1 << 0;
+pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 0;
 pub const IMPULSE_FEAT_CRYPTO_SIGNED: u64 = 1 << 1;
-pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 2;
 
 // Error Codes
 #[repr(i32)]
@@ -245,13 +246,31 @@ impl FooterTrailer {
 const_assert_eq!(std::mem::size_of::<FooterTrailer>(), 16);
 
 #[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct DomainCatalogEntryHeader {
+#[derive(Clone, Copy, Debug)]
+pub struct DomainCatalogEntry {
     pub domain_id: u16,     // 0x00..0x01
     pub key_type: u8,       // 0x02
     pub reserved: u8,       // 0x03
-    pub name_len: u16,      // 0x04..0x05
+    pub name_offset: u32,   // 0x04..0x07 (Offset into Shared String Table)
+    pub node_count: u64,    // 0x08..0x0F
 }
+
+impl DomainCatalogEntry {
+    pub fn domain_id(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.domain_id)) }
+    }
+    pub fn key_type(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.key_type)) }
+    }
+    pub fn name_offset(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
+    }
+    pub fn node_count(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_count)) }
+    }
+}
+
+const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 16);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -262,7 +281,8 @@ pub struct RelationDirectoryEntry {
     pub encoding_id: u8,        // 0x06
     pub node_id_width: u8,      // 0x07 (2 = u16, 4 = u32, 8 = u64)
     pub edge_index_width: u8,   // 0x08 (4 = u32, 8 = u64)
-    pub reserved1: [u8; 7],     // 0x09..0x0F
+    pub reserved1: [u8; 3],     // 0x09..0x0B
+    pub name_offset: u32,       // 0x0C..0x0F (Offset into Shared String Table)
     pub node_count: u64,        // 0x10..0x17
     pub edge_count: u64,        // 0x18..0x1F
     pub section_features: u64,  // 0x20..0x27
@@ -275,7 +295,7 @@ pub struct RelationDirectoryEntry {
     pub csc_col_idx_offset: u64,// 0x58..0x5F
     pub csc_col_idx_bytes: u64, // 0x60..0x67
     pub attr_count: u16,        // 0x68..0x69
-    pub reserved2: [u8; 6],     // 0x6A..0x6F
+    pub reserved2: [u8; 22],    // 0x6A..0x7F (Pads struct to exactly 128 Bytes)
 }
 
 impl RelationDirectoryEntry {
@@ -290,6 +310,9 @@ impl RelationDirectoryEntry {
     }
     pub fn encoding_id(&self) -> u8 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.encoding_id)) }
+    }
+    pub fn name_offset(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
     }
     pub fn node_id_width(&self) -> u8 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_id_width)) }
@@ -317,22 +340,26 @@ impl RelationDirectoryEntry {
     }
 }
 
-const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 112);
+const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 128);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct AttributeDescriptor {
-    pub name_len: u16,          // 0x00..0x01
-    pub type_code: u8,          // 0x02 (Base type + 0x80 Nullable flag)
-    pub reserved: u8,           // 0x03
-    pub dimension: u32,         // 0x04..0x07 (1 for scalar, D for vector)
-    pub data_offset: u64,       // 0x08..0x0F
-    pub data_bytes: u64,        // 0x10..0x17
-    pub offsets_offset: u64,    // 0x18..0x1F (For VAR_STRING / VAR_BYTES)
-    pub offsets_bytes: u64,     // 0x20..0x27 (For VAR_STRING / VAR_BYTES)
+    pub name_offset: u32,       // 0x00..0x03 (Offset into Shared String Table)
+    pub type_code: u8,          // 0x04 (Base type + 0x80 Nullable flag)
+    pub reserved1: u8,          // 0x05
+    pub reserved2: u16,         // 0x06..0x07
+    pub dimension: u32,         // 0x08..0x0B (1 for scalar, D for vector)
+    pub data_offset: u64,       // 0x0C..0x13
+    pub data_bytes: u64,        // 0x14..0x1B
+    pub offsets_offset: u64,    // 0x1C..0x23 (For VAR_STRING / VAR_BYTES)
+    pub offsets_bytes: u64,     // 0x24..0x2B (For VAR_STRING / VAR_BYTES)
 }
 
 impl AttributeDescriptor {
+    pub fn name_offset(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
+    }
     pub fn is_nullable(&self) -> bool {
         (self.type_code & IMPULSE_NULLABLE_FLAG) != 0
     }
@@ -342,32 +369,32 @@ impl AttributeDescriptor {
     }
 }
 
-const_assert_eq!(std::mem::size_of::<AttributeDescriptor>(), 40);
+const_assert_eq!(std::mem::size_of::<AttributeDescriptor>(), 44);
 
 // ---------------------------------------------------------------------------
 // Hashing & CRC-16 Utilities
 // ---------------------------------------------------------------------------
 
 pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
-    let mut state: [u32; 8] = [
+    let mut h: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
     ];
     let k: [u32; 64] = [
-        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ];
 
     let bit_len = (data.len() as u64) * 8;
     let mut padded = data.to_vec();
     padded.push(0x80);
-    while (padded.len() % 64) != 56 {
+    while (padded.len() + 8) % 64 != 0 {
         padded.push(0x00);
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());
@@ -375,50 +402,62 @@ pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
     for chunk in padded.chunks_exact(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([chunk[i*4], chunk[i*4+1], chunk[i*4+2], chunk[i*4+3]]);
+            w[i] = u32::from_be_bytes(chunk[i * 4..(i + 1) * 4].try_into().unwrap());
         }
         for i in 16..64 {
-            let s0 = w[i-15].rotate_right(7) ^ w[i-15].rotate_right(18) ^ (w[i-15] >> 3);
-            let s1 = w[i-2].rotate_right(17) ^ w[i-2].rotate_right(19) ^ (w[i-2] >> 10);
-            w[i] = w[i-16].wrapping_add(s0).wrapping_add(w[i-7]).wrapping_add(s1);
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         }
 
-        let mut a = state[0]; let mut b = state[1]; let mut c = state[2]; let mut d = state[3];
-        let mut e = state[4]; let mut f = state[5]; let mut g = state[6]; let mut h = state[7];
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut h_var = h[7];
 
         for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let s1_var = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(k[i]).wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let temp1 = h_var.wrapping_add(s1_var).wrapping_add(ch).wrapping_add(k[i]).wrapping_add(w[i]);
+            let s0_var = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
+            let temp2 = s0_var.wrapping_add(maj);
 
-            h = g; g = f; f = e; e = d.wrapping_add(temp1);
-            d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+            h_var = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
         }
 
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-        state[5] = state[5].wrapping_add(f);
-        state[6] = state[6].wrapping_add(g);
-        state[7] = state[7].wrapping_add(h);
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(h_var);
     }
 
     let mut out = [0u8; 32];
     for i in 0..8 {
-        out[i*4..(i+1)*4].copy_from_slice(&state[i].to_be_bytes());
+        out[i * 4..(i + 1) * 4].copy_from_slice(&h[i].to_be_bytes());
     }
     out
 }
 
 pub fn compute_crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
-    for &byte in data {
-        crc ^= (byte as u16) << 8;
+    for &b in data {
+        crc ^= (b as u16) << 8;
         for _ in 0..8 {
             if (crc & 0x8000) != 0 {
                 crc = (crc << 1) ^ 0x1021;
@@ -428,64 +467,4 @@ pub fn compute_crc16(data: &[u8]) -> u16 {
         }
     }
     crc
-}
-
-pub fn encode_metadata_map(map: &std::collections::HashMap<String, String>) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let count = map.len() as u32;
-    buf.extend_from_slice(&count.to_le_bytes());
-    let mut keys: Vec<&String> = map.keys().collect();
-    keys.sort();
-    for k in keys {
-        let v = &map[k];
-        let k_bytes = k.as_bytes();
-        let v_bytes = v.as_bytes();
-        buf.extend_from_slice(&(k_bytes.len() as u16).to_le_bytes());
-        buf.extend_from_slice(k_bytes);
-        buf.extend_from_slice(&(v_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(v_bytes);
-    }
-    buf
-}
-
-pub fn decode_metadata_map(buf: &[u8]) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
-    let mut map = std::collections::HashMap::new();
-    if buf.len() < 4 {
-        return Ok(map);
-    }
-    let count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-    let mut offset = 4;
-    for _ in 0..count {
-        if offset + 2 > buf.len() {
-            break;
-        }
-        let k_len = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
-        offset += 2;
-        if offset + k_len > buf.len() {
-            return Err(ImpulseError::BufferOverflow);
-        }
-        let k_str = std::str::from_utf8(&buf[offset..offset + k_len])
-            .map_err(|_| ImpulseError::InvalidArgument)?;
-        offset += k_len;
-
-        if offset + 4 > buf.len() {
-            return Err(ImpulseError::BufferOverflow);
-        }
-        let v_len = u32::from_le_bytes([
-            buf[offset],
-            buf[offset + 1],
-            buf[offset + 2],
-            buf[offset + 3],
-        ]) as usize;
-        offset += 4;
-        if offset + v_len > buf.len() {
-            return Err(ImpulseError::BufferOverflow);
-        }
-        let v_str = std::str::from_utf8(&buf[offset..offset + v_len])
-            .map_err(|_| ImpulseError::InvalidArgument)?;
-        offset += v_len;
-
-        map.insert(k_str.to_string(), v_str.to_string());
-    }
-    Ok(map)
 }

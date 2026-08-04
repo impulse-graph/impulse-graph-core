@@ -61,3 +61,6 @@ site/
 # Binary test outputs
 *.bin
 *.imps
+impulse-cpp/impulse_graph_test
+impulse-cpp/simd_test
+impulse-cpp/test_vector_suite

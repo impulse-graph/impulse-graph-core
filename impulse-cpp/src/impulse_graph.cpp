@@ -117,7 +117,7 @@ struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t file_size = 0;
     impulse_snapshot_header_t header;
-    std::vector<impulse_domain_catalog_entry_header_t> domains;
+    std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::unordered_map<std::string, std::string> metadata;
@@ -149,7 +149,7 @@ struct impulse_writer_relation {
 struct impulse_writer {
     std::string output_path;
     uint64_t global_features;
-    std::vector<impulse_domain_catalog_entry_header_t> domains;
+    std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_writer_relation> relations;
     std::unordered_map<std::string, std::string> metadata;
@@ -304,27 +304,84 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     snap->domains.reserve(domain_count);
     snap->domain_names.reserve(domain_count);
 
-    for (uint16_t i = 0; i < domain_count; ++i) {
-        impulse_domain_catalog_entry_header_t dom_hdr{};
-        std::string dname;
-        if (ver == 9 || ver == 0x0009) {
-            if (cur + sizeof(impulse_domain_catalog_entry_header_t) > file_size) {
+    if (ver == 9 || ver == 0x0009) {
+        // Read String Table Header & Pool
+        if (cur + 4 > file_size) {
+            if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+        uint32_t string_table_bytes = 0;
+        std::memcpy(&string_table_bytes, raw + cur, 4);
+        cur += 4;
+
+        if (cur + string_table_bytes > file_size) {
+            if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+        const char* string_pool = reinterpret_cast<const char*>(raw + cur);
+        cur += string_table_bytes;
+
+        size_t rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
+
+        // Domain Catalog
+        for (uint16_t i = 0; i < domain_count; ++i) {
+            if (cur + sizeof(impulse_domain_catalog_entry_t) > file_size) {
                 g_last_error = "Buffer overflow parsing domain catalog";
                 if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                 return nullptr;
             }
-            std::memcpy(&dom_hdr, raw + cur, sizeof(dom_hdr));
-            cur += sizeof(dom_hdr);
+            impulse_domain_catalog_entry_t dom_entry;
+            std::memcpy(&dom_entry, raw + cur, sizeof(dom_entry));
+            cur += sizeof(dom_entry);
 
-            if (dom_hdr.name_len > 0) {
-                if (cur + dom_hdr.name_len > file_size) {
+            std::string dname = (dom_entry.name_offset < string_table_bytes)
+                ? std::string(string_pool + dom_entry.name_offset)
+                : "";
+
+            snap->domains.push_back(dom_entry);
+            snap->domain_names.push_back(dname);
+        }
+
+        rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
+
+        uint16_t rel_count = snap->header.relation_count;
+        snap->relations.reserve(rel_count);
+
+        for (uint16_t j = 0; j < rel_count; ++j) {
+            if (cur + sizeof(impulse_relation_directory_entry_t) > file_size) {
+                g_last_error = "Buffer overflow parsing relation directory";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+            impulse_relation_directory_entry_t rel_entry;
+            std::memcpy(&rel_entry, raw + cur, sizeof(rel_entry));
+            cur += sizeof(rel_entry);
+
+            uint16_t attr_count = rel_entry.attr_count;
+            for (uint16_t a = 0; a < attr_count; ++a) {
+                if (cur + sizeof(impulse_attribute_descriptor_t) > file_size) {
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
                 }
-                dname.assign(reinterpret_cast<const char*>(raw + cur), dom_hdr.name_len);
-                cur += dom_hdr.name_len;
+                cur += sizeof(impulse_attribute_descriptor_t);
             }
-        } else {
+
+            if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
+                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
+                g_last_error = "Unaligned section offset (must be 128B aligned)";
+                if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
+
+            snap->relations.push_back(rel_entry);
+        }
+    } else {
+        // Legacy v2.4 parsing
+        for (uint16_t i = 0; i < domain_count; ++i) {
+            impulse_domain_catalog_entry_t dom_hdr{};
+            std::string dname;
             if (cur + 64 > file_size) {
                 g_last_error = "Buffer overflow parsing legacy domain catalog";
                 if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
@@ -336,7 +393,6 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             uint16_t name_len = 0;
             std::memcpy(&name_off, raw + cur + 44, 4);
             std::memcpy(&name_len, raw + cur + 48, 2);
-            dom_hdr.name_len = name_len;
             cur += 64;
 
             if (name_len > 0) {
@@ -347,42 +403,18 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                 }
                 dname.assign(reinterpret_cast<const char*>(raw + name_off), name_len);
             }
+            snap->domains.push_back(dom_hdr);
+            snap->domain_names.push_back(dname);
         }
-        snap->domains.push_back(dom_hdr);
-        snap->domain_names.push_back(dname);
-    }
 
-    size_t rem = cur % 128;
-    if (rem != 0) {
-        cur += 128 - rem;
-    }
+        size_t rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
 
-    uint16_t rel_count = snap->header.relation_count;
-    snap->relations.reserve(rel_count);
+        uint16_t rel_count = snap->header.relation_count;
+        snap->relations.reserve(rel_count);
 
-    for (uint16_t j = 0; j < rel_count; ++j) {
-        impulse_relation_directory_entry_t rel_entry{};
-        if (ver == 9 || ver == 0x0009) {
-            if (cur + sizeof(impulse_relation_directory_entry_t) > file_size) {
-                g_last_error = "Buffer overflow parsing relation directory";
-                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
-                return nullptr;
-            }
-            std::memcpy(&rel_entry, raw + cur, sizeof(rel_entry));
-            cur += sizeof(rel_entry);
-
-            uint16_t attr_count = rel_entry.attr_count;
-            for (uint16_t a = 0; a < attr_count; ++a) {
-                if (cur + sizeof(impulse_attribute_descriptor_t) > file_size) {
-                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
-                    return nullptr;
-                }
-                impulse_attribute_descriptor_t attr_desc;
-                std::memcpy(&attr_desc, raw + cur, sizeof(attr_desc));
-                cur += sizeof(attr_desc);
-                cur += attr_desc.name_len;
-            }
-        } else {
+        for (uint16_t j = 0; j < rel_count; ++j) {
+            impulse_relation_directory_entry_t rel_entry{};
             size_t entry_size = (ver == 0x0204) ? 128 : 109;
             if (cur + entry_size > file_size) {
                 g_last_error = "Buffer overflow parsing legacy relation directory";
@@ -407,16 +439,16 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                 return nullptr;
             }
             cur += entry_size;
-        }
 
-        if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
-            (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
-            g_last_error = "Unaligned section offset (must be 128B aligned)";
-            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
-            return nullptr;
-        }
+            if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
+                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
+                g_last_error = "Unaligned section offset (must be 128B aligned)";
+                if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
 
-        snap->relations.push_back(rel_entry);
+            snap->relations.push_back(rel_entry);
+        }
     }
 
     // Read Footer Block Metadata if available at EOF - 16
@@ -567,13 +599,14 @@ impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t g
 
 impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
     if (!writer || !name) return IMPULSE_ERR_INVALID_ARGUMENT;
-    impulse_domain_catalog_entry_header_t hdr;
-    hdr.domain_id = domain_id;
-    hdr.key_type = key_type;
-    hdr.reserved = 0;
-    hdr.name_len = static_cast<uint16_t>(std::strlen(name));
+    impulse_domain_catalog_entry_t dom{};
+    dom.domain_id = domain_id;
+    dom.key_type = key_type;
+    dom.reserved = 0;
+    dom.name_offset = 0; // Set during finalize via string table
+    dom.node_count = 0;
 
-    writer->domains.push_back(hdr);
+    writer->domains.push_back(dom);
     writer->domain_names.push_back(name);
     return IMPULSE_OK;
 }
@@ -660,20 +693,43 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         writer->relations[idx].relation_id = static_cast<uint16_t>(idx);
     }
 
-    // 1. Build Section 2 Directory Table
+    // 1. Build Shared String Table & String Pool
+    std::vector<uint8_t> string_table;
+    string_table.push_back('\0'); // Offset 0 = empty string ""
+    std::unordered_map<std::string, uint32_t> string_map;
+    string_map[""] = 0;
+
+    auto get_or_add_string = [&](const std::string& str) -> uint32_t {
+        if (str.empty()) return 0;
+        auto it = string_map.find(str);
+        if (it != string_map.end()) return it->second;
+        uint32_t off = static_cast<uint32_t>(string_table.size());
+        string_table.insert(string_table.end(), str.begin(), str.end());
+        string_table.push_back('\0');
+        string_map[str] = off;
+        return off;
+    };
+
+    // Collect all strings
+    for (size_t i = 0; i < writer->domain_names.size(); ++i) {
+        writer->domains[i].name_offset = get_or_add_string(writer->domain_names[i]);
+    }
+
     std::vector<uint8_t> dir_table;
 
-    // Domain Catalog
-    for (size_t i = 0; i < writer->domains.size(); ++i) {
-        const auto& dom = writer->domains[i];
-        const auto& dname = writer->domain_names[i];
+    // String Table Header & Pool Blob
+    uint32_t str_bytes = static_cast<uint32_t>(string_table.size());
+    dir_table.resize(4);
+    std::memcpy(dir_table.data(), &str_bytes, 4);
+    dir_table.insert(dir_table.end(), string_table.begin(), string_table.end());
 
-        dir_table.resize(dir_table.size() + sizeof(dom));
-        std::memcpy(dir_table.data() + dir_table.size() - sizeof(dom), &dom, sizeof(dom));
+    align128(dir_table);
 
-        if (!dname.empty()) {
-            dir_table.insert(dir_table.end(), dname.begin(), dname.end());
-        }
+    // Domain Catalog Array
+    for (const auto& dom : writer->domains) {
+        size_t pos = dir_table.size();
+        dir_table.resize(pos + sizeof(dom));
+        std::memcpy(dir_table.data() + pos, &dom, sizeof(dom));
     }
 
     align128(dir_table);
@@ -682,9 +738,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     size_t rel_dir_size = 0;
     for (const auto& rel : writer->relations) {
         rel_dir_size += sizeof(impulse_relation_directory_entry_t);
-        for (const auto& attr : rel.attributes) {
-            rel_dir_size += sizeof(impulse_attribute_descriptor_t) + attr.name.size();
-        }
+        rel_dir_size += rel.attributes.size() * sizeof(impulse_attribute_descriptor_t);
     }
     size_t total_dir_table_len = dir_table.size() + rel_dir_size;
     size_t aligned_dir_table_len = (total_dir_table_len + 4095) & ~4095;
@@ -706,8 +760,8 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         uint64_t csr_col_idx_bytes = rel.col_indices.size();
         payload.insert(payload.end(), rel.col_indices.begin(), rel.col_indices.end());
 
-        // Serialize attributes
         struct TempAttr {
+            uint32_t name_off;
             uint64_t data_off, data_bytes;
             uint64_t offs_off, offs_bytes;
         };
@@ -716,6 +770,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
         for (auto& attr : rel.attributes) {
             TempAttr ta{};
+            ta.name_off = get_or_add_string(attr.name);
             align128(payload);
             ta.data_off = rel_blocks_base_offset + payload.size();
             ta.data_bytes = attr.data.size();
@@ -733,7 +788,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             temp_attrs.push_back(ta);
         }
 
-        // Now append Relation Directory Entry to dir_table
+        // Relation Directory Entry
         impulse_relation_directory_entry_t entry{};
         entry.relation_id = rel.relation_id;
         entry.src_domain_id = rel.src_domain_id;
@@ -741,6 +796,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.encoding_id = rel.encoding_id;
         entry.node_id_width = rel.node_id_width;
         entry.edge_index_width = rel.edge_index_width;
+        entry.name_offset = get_or_add_string("");
         entry.node_count = rel.node_count;
         entry.edge_count = rel.edge_count;
         entry.section_features = rel.section_features;
@@ -762,9 +818,10 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             const auto& ta = temp_attrs[a];
 
             impulse_attribute_descriptor_t desc{};
-            desc.name_len = static_cast<uint16_t>(attr.name.size());
+            desc.name_offset = ta.name_off;
             desc.type_code = attr.type_code;
-            desc.reserved = 0;
+            desc.reserved1 = 0;
+            desc.reserved2 = 0;
             desc.dimension = attr.dimension;
             desc.data_offset = ta.data_off;
             desc.data_bytes = ta.data_bytes;
@@ -773,10 +830,6 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
             dir_table.resize(dir_table.size() + sizeof(desc));
             std::memcpy(dir_table.data() + dir_table.size() - sizeof(desc), &desc, sizeof(desc));
-
-            if (!attr.name.empty()) {
-                dir_table.insert(dir_table.end(), attr.name.begin(), attr.name.end());
-            }
         }
     }
 

@@ -69,5 +69,5 @@ pub extern "C" fn impulse_snapshot_is_adjacent_rs(
         return false;
     }
     let reader_ref = unsafe { &*reader };
-    reader_ref.is_adjacent(relation_index, src_id, tgt_id).unwrap_or(false)
+    reader_ref.is_adjacent(relation_index as u16, src_id, tgt_id).unwrap_or(false)
 }

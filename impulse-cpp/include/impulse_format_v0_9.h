@@ -58,15 +58,21 @@ static_assert(sizeof(impulse_footer_trailer_v0_9_t) == 16,
               "impulse_footer_trailer_v0_9_t size mismatch with spec v0.9.0");
 #endif
 
-// Domain Catalog Header (6 Bytes)
-typedef struct impulse_domain_catalog_entry_header_v0_9_t {
+// Domain Catalog Entry (Fixed 16 Bytes)
+typedef struct impulse_domain_catalog_entry_v0_9_t {
     uint16_t domain_id;                // 0x00..0x01
     uint8_t  key_type;                 // 0x02
     uint8_t  reserved;                 // 0x03
-    uint16_t name_len;                 // 0x04..0x05
-} impulse_domain_catalog_entry_header_v0_9_t;
+    uint32_t name_offset;              // 0x04..0x07 (Offset into Shared String Table)
+    uint64_t node_count;               // 0x08..0x0F
+} impulse_domain_catalog_entry_v0_9_t;
 
-// Relation Directory Entry Descriptor (112 Bytes)
+#ifdef __cplusplus
+static_assert(sizeof(impulse_domain_catalog_entry_v0_9_t) == 16,
+              "impulse_domain_catalog_entry_v0_9_t size mismatch with spec v0.9.0");
+#endif
+
+// Relation Directory Entry Descriptor (Fixed 128 Bytes)
 typedef struct impulse_relation_directory_entry_v0_9_t {
     uint16_t relation_id;              // 0x00..0x01
     uint16_t src_domain_id;            // 0x02..0x03
@@ -74,7 +80,8 @@ typedef struct impulse_relation_directory_entry_v0_9_t {
     uint8_t  encoding_id;               // 0x06
     uint8_t  node_id_width;             // 0x07 (2, 4, 8)
     uint8_t  edge_index_width;          // 0x08 (4, 8)
-    uint8_t  reserved1[7];              // 0x09..0x0F
+    uint8_t  reserved1[3];              // 0x09..0x0B
+    uint32_t name_offset;              // 0x0C..0x0F (Offset into Shared String Table)
     uint64_t node_count;               // 0x10..0x17
     uint64_t edge_count;               // 0x18..0x1F
     uint64_t section_features;         // 0x20..0x27
@@ -87,28 +94,29 @@ typedef struct impulse_relation_directory_entry_v0_9_t {
     uint64_t csc_col_idx_offset;       // 0x58..0x5F
     uint64_t csc_col_idx_bytes;        // 0x60..0x67
     uint16_t attr_count;               // 0x68..0x69
-    uint8_t  reserved2[6];              // 0x6A..0x6F (Pads to 112 bytes)
+    uint8_t  reserved2[22];             // 0x6A..0x7F (Pads struct to exactly 128 bytes)
 } impulse_relation_directory_entry_v0_9_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(impulse_relation_directory_entry_v0_9_t) == 112,
+static_assert(sizeof(impulse_relation_directory_entry_v0_9_t) == 128,
               "impulse_relation_directory_entry_v0_9_t size mismatch with spec v0.9.0");
 #endif
 
-// Attribute Descriptor Entry (40 Bytes)
+// Attribute Descriptor Entry (Fixed 40 Bytes)
 typedef struct impulse_attribute_descriptor_v0_9_t {
-    uint16_t name_len;                 // 0x00..0x01
-    uint8_t  type_code;                // 0x02 (Base type + 0x80 Nullable flag)
-    uint8_t  reserved;                 // 0x03
-    uint32_t dimension;                // 0x04..0x07 (1 for scalar, D for vector)
-    uint64_t data_offset;              // 0x08..0x0F
-    uint64_t data_bytes;               // 0x10..0x17
-    uint64_t offsets_offset;           // 0x18..0x1F (For VAR_STRING / VAR_BYTES)
-    uint64_t offsets_bytes;            // 0x20..0x27 (For VAR_STRING / VAR_BYTES)
+    uint32_t name_offset;              // 0x00..0x03 (Offset into Shared String Table)
+    uint8_t  type_code;                // 0x04 (Base type + 0x80 Nullable flag)
+    uint8_t  reserved1;                // 0x05
+    uint16_t reserved2;                // 0x06..0x07
+    uint32_t dimension;                // 0x08..0x0B (1 for scalar, D for vector)
+    uint64_t data_offset;              // 0x0C..0x13
+    uint64_t data_bytes;               // 0x14..0x1B
+    uint64_t offsets_offset;           // 0x1C..0x23 (For VAR_STRING / VAR_BYTES)
+    uint64_t offsets_bytes;            // 0x24..0x2B (For VAR_STRING / VAR_BYTES)
 } impulse_attribute_descriptor_v0_9_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(impulse_attribute_descriptor_v0_9_t) == 40,
+static_assert(sizeof(impulse_attribute_descriptor_v0_9_t) == 44,
               "impulse_attribute_descriptor_v0_9_t size mismatch with spec v0.9.0");
 #endif
 

@@ -20,6 +20,7 @@ pub struct WriterDomain {
     pub domain_id: u16,
     pub key_type: KeyType,
     pub name: String,
+    pub node_count: u64,
 }
 
 pub struct WriterRelation {
@@ -29,6 +30,7 @@ pub struct WriterRelation {
     pub encoding_id: u8,
     pub node_id_width: u8,
     pub edge_index_width: u8,
+    pub name: String,
     pub node_count: u64,
     pub edge_count: u64,
     pub row_offsets: Vec<u32>,
@@ -77,6 +79,7 @@ impl SnapshotWriter {
                 domain_id,
                 key_type,
                 name: name.to_string(),
+                node_count: 0,
             });
         }
     }
@@ -98,6 +101,7 @@ impl SnapshotWriter {
             encoding_id: EncodingType::Raw.to_u8(),
             node_id_width: 4,
             edge_index_width: 4,
+            name: String::new(),
             node_count,
             edge_count,
             row_offsets,
@@ -157,25 +161,63 @@ impl SnapshotWriter {
             rel.relation_id = idx as u16;
         }
 
-        // 1. Build Section 2 Directory Table first to know its exact size
+        // 1. Build Shared String Table & Pool Blob
+        let mut string_pool = vec![0u8]; // Offset 0 = empty string ""
+        let mut string_map = std::collections::HashMap::new();
+        string_map.insert(String::new(), 0u32);
+
+        let mut get_or_add_string = |s: &str| -> u32 {
+            if s.is_empty() {
+                return 0;
+            }
+            if let Some(&off) = string_map.get(s) {
+                return off;
+            }
+            let off = string_pool.len() as u32;
+            string_pool.extend_from_slice(s.as_bytes());
+            string_pool.push(0); // Null terminator
+            string_map.insert(s.to_string(), off);
+            off
+        };
+
+        // Collect string offsets
+        let domain_name_offsets: Vec<u32> = self.domains.iter().map(|d| get_or_add_string(&d.name)).collect();
+        let rel_name_offsets: Vec<u32> = self.relations.iter().map(|r| get_or_add_string(&r.name)).collect();
+
+        let mut attr_name_offsets: Vec<Vec<u32>> = Vec::new();
+        for rel in &self.relations {
+            let mut a_offs = Vec::new();
+            for attr in &rel.attributes {
+                a_offs.push(get_or_add_string(&attr.name));
+            }
+            attr_name_offsets.push(a_offs);
+        }
+
         let mut dir_table_bytes = Vec::new();
 
-        // Domain Catalog
-        for dom in &self.domains {
-            let dom_hdr = DomainCatalogEntryHeader {
+        // Write String Table Header & Pool Blob
+        let str_pool_len = string_pool.len() as u32;
+        dir_table_bytes.extend_from_slice(&str_pool_len.to_le_bytes());
+        dir_table_bytes.extend_from_slice(&string_pool);
+
+        Self::align_buffer(&mut dir_table_bytes, 128);
+
+        // Domain Catalog Entries Array
+        for (dom, &name_off) in self.domains.iter().zip(domain_name_offsets.iter()) {
+            let dom_entry = DomainCatalogEntry {
                 domain_id: dom.domain_id,
                 key_type: dom.key_type as u8,
                 reserved: 0,
-                name_len: dom.name.len() as u16,
+                name_offset: name_off,
+                node_count: dom.node_count,
             };
-            let hdr_bytes = unsafe {
+            let entry_bytes = unsafe {
                 std::slice::from_raw_parts(
-                    &dom_hdr as *const DomainCatalogEntryHeader as *const u8,
-                    std::mem::size_of::<DomainCatalogEntryHeader>(),
+                    &dom_entry as *const DomainCatalogEntry as *const u8,
+                    std::mem::size_of::<DomainCatalogEntry>(),
                 )
             };
-            dir_table_bytes.extend_from_slice(hdr_bytes);
-            dir_table_bytes.extend_from_slice(dom.name.as_bytes());
+            dir_table_bytes.extend_from_slice(entry_bytes);
         }
 
         Self::align_buffer(&mut dir_table_bytes, 128);
@@ -184,9 +226,7 @@ impl SnapshotWriter {
         let mut rel_dir_size = 0;
         for rel in &self.relations {
             rel_dir_size += std::mem::size_of::<RelationDirectoryEntry>();
-            for attr in &rel.attributes {
-                rel_dir_size += std::mem::size_of::<AttributeDescriptor>() + attr.name.len();
-            }
+            rel_dir_size += rel.attributes.len() * std::mem::size_of::<AttributeDescriptor>();
         }
         let total_dir_table_len = dir_table_bytes.len() + rel_dir_size;
         let aligned_dir_table_len = align_4k(total_dir_table_len as u64) as usize;
@@ -252,7 +292,8 @@ impl SnapshotWriter {
         }
 
         // Now serialize Relation Directory Table entries into dir_table_bytes
-        for rel in &self.relations {
+        for (rel_idx, rel) in self.relations.iter().enumerate() {
+            let rel_name_off = rel_name_offsets[rel_idx];
             let rel_entry = RelationDirectoryEntry {
                 relation_id: rel.relation_id,
                 src_domain_id: rel.src_domain_id,
@@ -260,7 +301,8 @@ impl SnapshotWriter {
                 encoding_id: rel.encoding_id,
                 node_id_width: rel.node_id_width,
                 edge_index_width: rel.edge_index_width,
-                reserved1: [0u8; 7],
+                reserved1: [0u8; 3],
+                name_offset: rel_name_off,
                 node_count: rel.node_count,
                 edge_count: rel.edge_count,
                 section_features: 0,
@@ -273,7 +315,7 @@ impl SnapshotWriter {
                 csc_col_idx_offset: rel.csc_col_idx_offset,
                 csc_col_idx_bytes: rel.csc_col_idx_bytes,
                 attr_count: rel.attributes.len() as u16,
-                reserved2: [0u8; 6],
+                reserved2: [0u8; 22],
             };
             let rel_bytes = unsafe {
                 std::slice::from_raw_parts(
@@ -283,11 +325,13 @@ impl SnapshotWriter {
             };
             dir_table_bytes.extend_from_slice(rel_bytes);
 
-            for attr in &rel.attributes {
+            for (attr_idx, attr) in rel.attributes.iter().enumerate() {
+                let attr_name_off = attr_name_offsets[rel_idx][attr_idx];
                 let attr_desc = AttributeDescriptor {
-                    name_len: attr.name.len() as u16,
+                    name_offset: attr_name_off,
                     type_code: attr.type_code,
-                    reserved: 0,
+                    reserved1: 0,
+                    reserved2: 0,
                     dimension: attr.dimension,
                     data_offset: attr.data_offset,
                     data_bytes: attr.data_bytes,
@@ -301,31 +345,38 @@ impl SnapshotWriter {
                     )
                 };
                 dir_table_bytes.extend_from_slice(desc_bytes);
-                dir_table_bytes.extend_from_slice(attr.name.as_bytes());
             }
         }
 
-        // Pad dir_table_bytes to aligned_dir_table_len
-        dir_table_bytes.resize(aligned_dir_table_len, 0x00);
+        Self::align_buffer(&mut dir_table_bytes, aligned_dir_table_len);
 
-        // Prepend Section 2 Directory Table at payload start
-        let relation_payload_body = payload;
+        // Combine Directory Table and Relation Payload
         let mut final_payload = Vec::new();
         final_payload.extend_from_slice(&dir_table_bytes);
-        final_payload.extend_from_slice(&relation_payload_body);
+        final_payload.extend_from_slice(&payload);
 
         // 3. Serialize Footer Block at EOF
         Self::align_buffer(&mut final_payload, 4096);
-        let footer_start_len = final_payload.len();
+        let footer_start = final_payload.len();
 
-        // Metadata stream
-        let meta_bytes = encode_metadata_map(&self.metadata);
-        final_payload.extend_from_slice(&meta_bytes);
+        // Metadata Stream
+        let meta_count = self.metadata.len() as u32;
+        final_payload.extend_from_slice(&meta_count.to_le_bytes());
 
-        // Footer Trailer (16 bytes)
-        let footer_length = (final_payload.len() + 16 - footer_start_len) as u64;
+        for (k, v) in &self.metadata {
+            let klen = k.len() as u16;
+            final_payload.extend_from_slice(&klen.to_le_bytes());
+            final_payload.extend_from_slice(k.as_bytes());
+
+            let vlen = v.len() as u32;
+            final_payload.extend_from_slice(&vlen.to_le_bytes());
+            final_payload.extend_from_slice(v.as_bytes());
+        }
+
+        // 16-Byte Footer Trailer
+        let footer_len = (final_payload.len() + 16 - footer_start) as u64;
         let trailer = FooterTrailer {
-            footer_length,
+            footer_length: footer_len,
             spec_version: IMPULSE_VERSION_PACKED as u32,
             footer_magic: IMPULSE_MAGIC,
         };
@@ -337,7 +388,7 @@ impl SnapshotWriter {
         };
         final_payload.extend_from_slice(trailer_bytes);
 
-        // 4. Build Header Page 0 (4096 bytes)
+        // 4. Build Header Page 0 (4096 Bytes)
         let mut header = SnapshotHeader {
             magic: IMPULSE_MAGIC,
             version: IMPULSE_VERSION_PACKED,
@@ -353,28 +404,25 @@ impl SnapshotWriter {
             header_padding: [0u8; 4032],
         };
 
-        // Compute Header CRC-16 over 0x00..0x3E
-        let header_slice = unsafe {
+        let header_raw = unsafe {
+            std::slice::from_raw_parts(
+                &header as *const SnapshotHeader as *const u8,
+                0x3E,
+            )
+        };
+        header.header_checksum = compute_crc16(header_raw);
+
+        let header_full_bytes = unsafe {
             std::slice::from_raw_parts(
                 &header as *const SnapshotHeader as *const u8,
                 std::mem::size_of::<SnapshotHeader>(),
             )
         };
-        header.header_checksum = compute_crc16(&header_slice[0..0x3E]);
 
-        let final_header_bytes = unsafe {
-            std::slice::from_raw_parts(
-                &header as *const SnapshotHeader as *const u8,
-                std::mem::size_of::<SnapshotHeader>(),
-            )
-        };
-
-        // 5. Write Header + Final Payload to file
+        // Write file to disk
         let mut file = File::create(&self.output_path).map_err(|_| ImpulseError::IoFailure)?;
-        file.write_all(final_header_bytes)
-            .map_err(|_| ImpulseError::IoFailure)?;
-        file.write_all(&final_payload)
-            .map_err(|_| ImpulseError::IoFailure)?;
+        file.write_all(header_full_bytes).map_err(|_| ImpulseError::IoFailure)?;
+        file.write_all(&final_payload).map_err(|_| ImpulseError::IoFailure)?;
         file.flush().map_err(|_| ImpulseError::IoFailure)?;
 
         Ok(())
