@@ -113,16 +113,20 @@ impl SnapshotReader {
         let string_pool_slice = &slice[cur..cur + string_table_bytes];
         cur += string_table_bytes;
 
-        let get_string = |name_off: usize| -> String {
+        if string_table_bytes == 0 || string_pool_slice[0] != 0 {
+            return Err(ImpulseError::InvalidArgument);
+        }
+
+        let validate_and_get_string = |name_off: usize| -> Result<String, ImpulseError> {
             if name_off >= string_pool_slice.len() {
-                return String::new();
+                return Err(ImpulseError::BufferOverflow);
             }
             if let Some(null_pos) = string_pool_slice[name_off..].iter().position(|&b| b == 0) {
                 std::str::from_utf8(&string_pool_slice[name_off..name_off + null_pos])
-                    .unwrap_or("")
-                    .to_string()
+                    .map(|s| s.to_string())
+                    .map_err(|_| ImpulseError::InvalidArgument)
             } else {
-                String::new()
+                Err(ImpulseError::BufferOverflow)
             }
         };
 
@@ -145,7 +149,7 @@ impl SnapshotReader {
             cur += std::mem::size_of::<DomainCatalogEntry>();
 
             let key_type = KeyType::from_u8(dom_entry.key_type()).ok_or(ImpulseError::InvalidArgument)?;
-            let name = get_string(dom_entry.name_offset() as usize);
+            let name = validate_and_get_string(dom_entry.name_offset() as usize)?;
 
             domains.push(DomainInfo {
                 domain_id: dom_entry.domain_id(),
@@ -185,7 +189,7 @@ impl SnapshotReader {
                 };
                 cur += std::mem::size_of::<AttributeDescriptor>();
 
-                let attr_name = get_string(attr_desc.name_offset() as usize);
+                let attr_name = validate_and_get_string(attr_desc.name_offset() as usize)?;
 
                 attributes.push(AttributeInfo {
                     name: attr_name,
@@ -198,7 +202,7 @@ impl SnapshotReader {
                 });
             }
 
-            let rel_name = get_string(rel_entry.name_offset() as usize);
+            let rel_name = validate_and_get_string(rel_entry.name_offset() as usize)?;
 
             relations.push(RelationInfo {
                 relation_id: rel_entry.relation_id(),

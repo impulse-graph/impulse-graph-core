@@ -321,6 +321,56 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         const char* string_pool = reinterpret_cast<const char*>(raw + cur);
         cur += string_table_bytes;
 
+        if (string_table_bytes == 0 || string_pool[0] != '\0') {
+            g_last_error = "Invalid String Table: string_table_bytes must be >= 1 and string_pool[0] must be '\\0'";
+            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+            return nullptr;
+        }
+
+        auto is_valid_utf8 = [](const char* str, size_t len) -> bool {
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(str);
+            size_t i = 0;
+            while (i < len) {
+                if (bytes[i] <= 0x7F) {
+                    i++;
+                } else if ((bytes[i] & 0xE0) == 0xC0) {
+                    if (i + 1 >= len || (bytes[i + 1] & 0xC0) != 0x80) return false;
+                    i += 2;
+                } else if ((bytes[i] & 0xF0) == 0xE0) {
+                    if (i + 2 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80) return false;
+                    i += 3;
+                } else if ((bytes[i] & 0xF8) == 0xF0) {
+                    if (i + 3 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80 || (bytes[i + 3] & 0xC0) != 0x80) return false;
+                    i += 4;
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto validate_and_get_string = [&](uint32_t name_off, std::string& out_str) -> impulse_status_t {
+            if (string_table_bytes == 0) {
+                if (name_off == 0) { out_str = ""; return IMPULSE_OK; }
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            if (name_off >= string_table_bytes) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            const char* str_start = string_pool + name_off;
+            size_t max_len = string_table_bytes - name_off;
+            const void* null_ptr = std::memchr(str_start, '\0', max_len);
+            if (!null_ptr) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            size_t len = static_cast<const char*>(null_ptr) - str_start;
+            if (!is_valid_utf8(str_start, len)) {
+                return IMPULSE_ERR_INVALID_ARGUMENT;
+            }
+            out_str = std::string(str_start, len);
+            return IMPULSE_OK;
+        };
+
         size_t rem = cur % 128;
         if (rem != 0) cur += 128 - rem;
 
@@ -335,9 +385,13 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             std::memcpy(&dom_entry, raw + cur, sizeof(dom_entry));
             cur += sizeof(dom_entry);
 
-            std::string dname = (dom_entry.name_offset < string_table_bytes)
-                ? std::string(string_pool + dom_entry.name_offset)
-                : "";
+            std::string dname;
+            impulse_status_t str_status = validate_and_get_string(dom_entry.name_offset, dname);
+            if (str_status != IMPULSE_OK) {
+                g_last_error = "Corrupt domain name in Section 2 Shared String Table";
+                if (out_status) *out_status = str_status;
+                return nullptr;
+            }
 
             snap->domains.push_back(dom_entry);
             snap->domain_names.push_back(dname);
