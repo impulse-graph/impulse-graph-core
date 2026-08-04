@@ -1,4 +1,4 @@
-//! Spec v2.4 High-Performance Zero-Copy Reader Engine
+//! Spec v0.9.0 High-Performance Zero-Copy Reader Engine
 
 use crate::mmap::{MemoryMap, SharedMemoryMap};
 use crate::spec::*;
@@ -8,26 +8,39 @@ use std::path::Path;
 pub struct DomainInfo {
     pub domain_id: u16,
     pub key_type: KeyType,
-    pub node_count: u64,
     pub name: String,
-    pub aux_sections_pos: u64,
-    pub aux_sections_size: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct RelationInfo {
+    pub relation_id: u16,
     pub src_domain_id: u16,
     pub tgt_domain_id: u16,
-    pub encoding_type: EncodingType,
+    pub encoding_id: u8,
+    pub node_id_width: u8,
+    pub edge_index_width: u8,
     pub node_count: u64,
     pub edge_count: u64,
-    pub csr_offsets_pos: u64,
-    pub csr_offsets_size: u64,
-    pub csr_targets_pos: u64,
-    pub csr_targets_size: u64,
-    pub aux_sections_pos: u64,
-    pub aux_sections_size: u64,
+    pub csr_row_off_offset: u64,
+    pub csr_row_off_bytes: u64,
+    pub csr_col_idx_offset: u64,
+    pub csr_col_idx_bytes: u64,
+    pub csc_row_off_offset: u64,
+    pub csc_row_off_bytes: u64,
+    pub csc_col_idx_offset: u64,
+    pub csc_col_idx_bytes: u64,
+    pub attributes: Vec<AttributeInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AttributeInfo {
     pub name: String,
+    pub type_code: u8,
+    pub dimension: u32,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+    pub offsets_offset: u64,
+    pub offsets_bytes: u64,
 }
 
 pub struct SnapshotReader {
@@ -35,6 +48,8 @@ pub struct SnapshotReader {
     header: SnapshotHeader,
     domains: Vec<DomainInfo>,
     relations: Vec<RelationInfo>,
+    metadata_offset: u64,
+    metadata_bytes: u64,
 }
 
 impl SnapshotReader {
@@ -63,156 +78,148 @@ impl SnapshotReader {
             return Err(ImpulseError::InvalidMagic);
         }
 
-        // Check version
-        let version_major = header.version() >> 8;
-        if version_major != IMPULSE_VERSION_MAJOR {
+        // Check version (0.9.0 packed is 9)
+        if header.version() != IMPULSE_VERSION_PACKED && (header.version() >> 8) != IMPULSE_VERSION_MAJOR {
             return Err(ImpulseError::UnsupportedVersion);
         }
 
-        // Verify Header CRC-32C
-        let computed_crc = compute_header_crc32(slice);
-        if computed_crc != header.header_crc32() {
+        // Verify Header CRC-16
+        let computed_crc = compute_crc16(&slice[0..0x3E]);
+        if computed_crc != header.header_checksum() {
             return Err(ImpulseError::CorruptChecksum);
         }
 
-        // Verify Payload SHA-256
-        let data_off = header.data_offset() as usize;
-        if data_off < slice.len() {
-            let payload = &slice[data_off..];
-            let computed_sha = compute_sha256(payload);
-            if computed_sha != header.payload_checksum() {
-                return Err(ImpulseError::CorruptChecksum);
-            }
+        // Determine Catalog Directory offset (Page 1 by default, or Footer Directory)
+        let dir_offset = if header.footer_directory_offset() > 0 {
+            header.footer_directory_offset() as usize
+        } else {
+            header.data_offset() as usize
+        };
+
+        if dir_offset >= slice.len() {
+            return Err(ImpulseError::BufferOverflow);
         }
 
-        // Check required feature flags (fail-closed)
-        let known_features = IMPULSE_FEAT_4KB_PAGE_ALIGNED | IMPULSE_FEAT_SIGNED_ENFORCED;
-        if (header.required_features() & !known_features) != 0 {
-            return Err(ImpulseError::UnsupportedGlobalFeature);
-        }
-        if (header.required_features() & IMPULSE_FEAT_SIGNED_ENFORCED) != 0 {
-            return Err(ImpulseError::SignatureMismatch);
-        }
-
-        // Domain Catalog Table (O(1) fixed-size 64-byte entries)
+        // Parse Domain Catalog
         let domain_count = header.domain_count() as usize;
         let mut domains = Vec::with_capacity(domain_count);
-        let mut cur = data_off;
+        let mut cur = dir_offset;
 
-        for _ in 0..domain_count {
-            if cur + std::mem::size_of::<DomainCatalogEntry>() > slice.len() {
-                break;
+        for _d_idx in 0..domain_count {
+            if cur + std::mem::size_of::<DomainCatalogEntryHeader>() > slice.len() {
+                return Err(ImpulseError::BufferOverflow);
             }
-            let entry = unsafe {
-                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntry)
+            let dom_hdr = unsafe {
+                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntryHeader)
             };
-            cur += std::mem::size_of::<DomainCatalogEntry>();
+            cur += std::mem::size_of::<DomainCatalogEntryHeader>();
 
-            let key_type = KeyType::from_u8(entry.key_type).ok_or(ImpulseError::InvalidArgument)?;
-            let name_len = entry.name_length as usize;
-            let name_off = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.name_offset)) } as usize;
+            let key_type = KeyType::from_u8(dom_hdr.key_type).ok_or(ImpulseError::InvalidArgument)?;
+            let name_len = dom_hdr.name_len as usize;
 
-            let name = if name_len > 0 {
-                if name_off == 0 || name_off + name_len > slice.len() {
-                    return Err(ImpulseError::BufferOverflow);
-                }
-                std::str::from_utf8(&slice[name_off..name_off + name_len])
-                    .map_err(|_| ImpulseError::InvalidArgument)?
-                    .to_string()
-            } else {
-                String::new()
-            };
-
-            let aux_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.aux_sections_pos)) };
-            let aux_sz = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.aux_sections_size)) };
+            if cur + name_len > slice.len() {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            let name = std::str::from_utf8(&slice[cur..cur + name_len])
+                .map_err(|_| ImpulseError::InvalidArgument)?
+                .to_string();
+            cur += name_len;
 
             domains.push(DomainInfo {
-                domain_id: entry.domain_id,
+                domain_id: dom_hdr.domain_id,
                 key_type,
-                node_count: entry.node_count,
                 name,
-                aux_sections_pos: aux_pos,
-                aux_sections_size: aux_sz,
             });
         }
 
         // 128-byte align to Relation Directory Table
-        let domain_table_bytes = domain_count * std::mem::size_of::<DomainCatalogEntry>();
-        cur = data_off + domain_table_bytes;
         let rem = cur % 128;
         if rem != 0 {
             cur += 128 - rem;
         }
 
-        // Relation Directory Table (O(1) fixed-size 128-byte entries)
+        // Parse Relation Directory Table
         let relation_count = header.relation_count() as usize;
         let mut relations = Vec::with_capacity(relation_count);
-        let rel_entry_size = if header.relation_dir_entry_size() > 0 {
-            header.relation_dir_entry_size() as usize
-        } else {
-            128
-        };
 
         for _ in 0..relation_count {
             if cur + std::mem::size_of::<RelationDirectoryEntry>() > slice.len() {
-                break;
-            }
-            let entry = unsafe {
-                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const RelationDirectoryEntry)
-            };
-            cur += rel_entry_size;
-
-            let encoding_type =
-                EncodingType::from_u8(entry.encoding_type).ok_or(ImpulseError::InvalidArgument)?;
-
-            let aux_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.aux_sections_pos)) };
-            let aux_sz = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.aux_sections_size)) };
-
-            let name_len = entry.name_length as usize;
-            let name_off = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.name_offset)) } as usize;
-
-            let name = if name_len > 0 && name_off > 0 && name_off + name_len <= slice.len() {
-                std::str::from_utf8(&slice[name_off..name_off + name_len])
-                    .unwrap_or("")
-                    .to_string()
-            } else {
-                String::new()
-            };
-
-            let csr_offsets_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.csr_offsets_pos)) };
-            let csr_targets_pos = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(entry.csr_targets_pos)) };
-
-            if (csr_offsets_pos > 0 && csr_offsets_pos.saturating_add(entry.csr_offsets_size) > slice.len() as u64)
-                || (csr_targets_pos > 0 && csr_targets_pos.saturating_add(entry.csr_targets_size) > slice.len() as u64)
-                || (aux_pos > 0 && aux_pos.saturating_add(aux_sz) > slice.len() as u64)
-            {
                 return Err(ImpulseError::BufferOverflow);
             }
+            let rel_entry = unsafe {
+                std::ptr::read_unaligned(slice[cur..].as_ptr() as *const RelationDirectoryEntry)
+            };
+            cur += std::mem::size_of::<RelationDirectoryEntry>();
 
-            if csr_offsets_pos > 0 && csr_offsets_pos % 128 != 0 {
-                return Err(ImpulseError::InvalidAlignment);
-            }
-            if csr_targets_pos > 0 && csr_targets_pos % 128 != 0 {
-                return Err(ImpulseError::InvalidAlignment);
-            }
-            if aux_pos > 0 && aux_pos % 128 != 0 {
-                return Err(ImpulseError::InvalidAlignment);
+            let attr_count = rel_entry.attr_count as usize;
+            let mut attributes = Vec::with_capacity(attr_count);
+
+            for _ in 0..attr_count {
+                if cur + std::mem::size_of::<AttributeDescriptor>() > slice.len() {
+                    return Err(ImpulseError::BufferOverflow);
+                }
+                let attr_desc = unsafe {
+                    std::ptr::read_unaligned(slice[cur..].as_ptr() as *const AttributeDescriptor)
+                };
+                cur += std::mem::size_of::<AttributeDescriptor>();
+
+                let name_len = attr_desc.name_len as usize;
+                if cur + name_len > slice.len() {
+                    return Err(ImpulseError::BufferOverflow);
+                }
+                let attr_name = std::str::from_utf8(&slice[cur..cur + name_len])
+                    .map_err(|_| ImpulseError::InvalidArgument)?
+                    .to_string();
+                cur += name_len;
+
+                attributes.push(AttributeInfo {
+                    name: attr_name,
+                    type_code: attr_desc.type_code,
+                    dimension: attr_desc.dimension,
+                    data_offset: attr_desc.data_offset,
+                    data_bytes: attr_desc.data_bytes,
+                    offsets_offset: attr_desc.offsets_offset,
+                    offsets_bytes: attr_desc.offsets_bytes,
+                });
             }
 
             relations.push(RelationInfo {
-                src_domain_id: entry.src_domain_id,
-                tgt_domain_id: entry.tgt_domain_id,
-                encoding_type,
-                node_count: entry.node_count,
-                edge_count: entry.edge_count,
-                csr_offsets_pos: entry.csr_offsets_pos,
-                csr_offsets_size: entry.csr_offsets_size,
-                csr_targets_pos: entry.csr_targets_pos,
-                csr_targets_size: entry.csr_targets_size,
-                aux_sections_pos: aux_pos,
-                aux_sections_size: aux_sz,
-                name,
+                relation_id: rel_entry.relation_id(),
+                src_domain_id: rel_entry.src_domain_id(),
+                tgt_domain_id: rel_entry.tgt_domain_id(),
+                encoding_id: rel_entry.encoding_id(),
+                node_id_width: rel_entry.node_id_width(),
+                edge_index_width: rel_entry.edge_index_width(),
+                node_count: rel_entry.node_count(),
+                edge_count: rel_entry.edge_count(),
+                csr_row_off_offset: rel_entry.csr_row_off_offset(),
+                csr_row_off_bytes: rel_entry.csr_row_off_bytes(),
+                csr_col_idx_offset: rel_entry.csr_col_idx_offset(),
+                csr_col_idx_bytes: rel_entry.csr_col_idx_bytes(),
+                csc_row_off_offset: rel_entry.csc_row_off_offset,
+                csc_row_off_bytes: rel_entry.csc_row_off_bytes,
+                csc_col_idx_offset: rel_entry.csc_col_idx_offset,
+                csc_col_idx_bytes: rel_entry.csc_col_idx_bytes,
+                attributes,
             });
+        }
+
+        // Determine metadata location (Footer Block)
+        let mut metadata_offset = 0;
+        let mut metadata_bytes = 0;
+
+        if slice.len() >= 16 {
+            let trailer_pos = slice.len() - 16;
+            let trailer = unsafe {
+                std::ptr::read_unaligned(slice[trailer_pos..].as_ptr() as *const FooterTrailer)
+            };
+            if trailer.footer_magic() == IMPULSE_MAGIC {
+                let footer_len = trailer.footer_length() as usize;
+                if footer_len > 16 && footer_len <= slice.len() {
+                    metadata_offset = (slice.len() - footer_len) as u64;
+                    metadata_bytes = (footer_len - 16) as u64;
+                }
+            }
         }
 
         Ok(Self {
@@ -220,6 +227,8 @@ impl SnapshotReader {
             header,
             domains,
             relations,
+            metadata_offset,
+            metadata_bytes,
         })
     }
 
@@ -270,8 +279,8 @@ impl SnapshotReader {
             return Ok(false);
         }
 
-        let offsets_buf = self.get_buffer(rel.csr_offsets_pos, rel.csr_offsets_size)?;
-        let targets_buf = self.get_buffer(rel.csr_targets_pos, rel.csr_targets_size)?;
+        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
+        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
 
         let row_offsets: &[u32] = unsafe {
             std::slice::from_raw_parts(
@@ -322,8 +331,8 @@ impl SnapshotReader {
             return Ok(&[]);
         }
 
-        let offsets_buf = self.get_buffer(rel.csr_offsets_pos, rel.csr_offsets_size)?;
-        let targets_buf = self.get_buffer(rel.csr_targets_pos, rel.csr_targets_size)?;
+        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
+        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
 
         let row_offsets: &[u32] = unsafe {
             std::slice::from_raw_parts(
@@ -359,10 +368,7 @@ impl SnapshotReader {
             return Err(ImpulseError::InvalidArgument);
         }
         let rel = &self.relations[relation_index];
-        let offsets_buf = self.get_buffer(rel.csr_offsets_pos, rel.csr_offsets_size)?;
-        if (offsets_buf.as_ptr() as usize) % std::mem::align_of::<u32>() != 0 {
-            return Err(ImpulseError::InvalidArgument);
-        }
+        let offsets_buf = self.get_buffer(rel.csr_row_off_offset, rel.csr_row_off_bytes)?;
         let row_offsets: &[u32] = unsafe {
             std::slice::from_raw_parts(
                 offsets_buf.as_ptr() as *const u32,
@@ -378,13 +384,10 @@ impl SnapshotReader {
             return Err(ImpulseError::InvalidArgument);
         }
         let rel = &self.relations[relation_index];
-        let targets_buf = self.get_buffer(rel.csr_targets_pos, rel.csr_targets_size)?;
-        if (targets_buf.as_ptr() as usize) % std::mem::align_of::<u32>() != 0 {
-            return Err(ImpulseError::InvalidArgument);
-        }
-        let elem_size = match rel.encoding_type {
-            EncodingType::RawUint16 => 2,
-            EncodingType::RawUint64 => 8,
+        let targets_buf = self.get_buffer(rel.csr_col_idx_offset, rel.csr_col_idx_bytes)?;
+        let elem_size = match rel.node_id_width {
+            2 => 2,
+            8 => 8,
             _ => 4,
         };
         let col_indices: &[u32] = unsafe {
@@ -396,149 +399,12 @@ impl SnapshotReader {
         Ok(col_indices)
     }
 
-    /// Read Fixed Node Property (AoS or SoA math)
-    pub fn get_node_property(
-        &self,
-        domain_index: usize,
-        node_id: u64,
-        field_name: &str,
-    ) -> Result<Option<&[u8]>, ImpulseError> {
-        if domain_index >= self.domains.len() {
-            return Err(ImpulseError::InvalidArgument);
+    /// Retrieve Metadata map from Footer Block
+    pub fn get_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+        if self.metadata_offset == 0 || self.metadata_bytes == 0 {
+            return Ok(std::collections::HashMap::new());
         }
-        let dom = &self.domains[domain_index];
-        if node_id >= dom.node_count || dom.aux_sections_pos == 0 {
-            return Ok(None);
-        }
-
-        self.get_property_from_aux(dom.aux_sections_pos, dom.aux_sections_size, node_id, field_name)
-    }
-
-    /// Read Fixed Edge Property (AoS or SoA math)
-    pub fn get_edge_property(
-        &self,
-        relation_index: usize,
-        edge_id: u64,
-        field_name: &str,
-    ) -> Result<Option<&[u8]>, ImpulseError> {
-        if relation_index >= self.relations.len() {
-            return Err(ImpulseError::InvalidArgument);
-        }
-        let rel = &self.relations[relation_index];
-        if edge_id >= rel.edge_count || rel.aux_sections_pos == 0 {
-            return Ok(None);
-        }
-
-        self.get_property_from_aux(rel.aux_sections_pos, rel.aux_sections_size, edge_id, field_name)
-    }
-
-    fn get_property_from_aux(
-        &self,
-        aux_pos: u64,
-        aux_size: u64,
-        element_id: u64,
-        field_name: &str,
-    ) -> Result<Option<&[u8]>, ImpulseError> {
-        let aux_buf = self.get_buffer(aux_pos, aux_size)?;
-        let entry_count = aux_buf.len() / std::mem::size_of::<AuxSectionEntry>();
-
-        for i in 0..entry_count {
-            let aux_entry = unsafe {
-                std::ptr::read_unaligned(
-                    aux_buf[i * std::mem::size_of::<AuxSectionEntry>()..].as_ptr()
-                        as *const AuxSectionEntry,
-                )
-            };
-
-            let sec_type = AuxSectionType::from_u16(aux_entry.section_type);
-            if sec_type == Some(AuxSectionType::NodePropsFixed)
-                || sec_type == Some(AuxSectionType::EdgePropsFixed)
-            {
-                let prop_buf = self.get_buffer(aux_entry.offset, aux_entry.size)?;
-                if prop_buf.len() < std::mem::size_of::<PropBlockHeader>() {
-                    continue;
-                }
-
-                let hdr = unsafe {
-                    std::ptr::read_unaligned(prop_buf.as_ptr() as *const PropBlockHeader)
-                };
-
-                let target_hash = fnv1a_hash(field_name);
-                let desc_start = std::mem::size_of::<PropBlockHeader>();
-                let field_count = hdr.field_count as usize;
-
-                for f in 0..field_count {
-                    let desc_pos = desc_start + f * std::mem::size_of::<FieldDescriptor>();
-                    if desc_pos + std::mem::size_of::<FieldDescriptor>() > prop_buf.len() {
-                        break;
-                    }
-
-                    let desc = unsafe {
-                        std::ptr::read_unaligned(
-                            prop_buf[desc_pos..].as_ptr() as *const FieldDescriptor
-                        )
-                    };
-
-                    if desc.name_hash == target_hash {
-                        let data_start = desc_start + field_count * std::mem::size_of::<FieldDescriptor>();
-                        let fsize = desc.field_size as usize;
-
-                        if hdr.layout == 0 {
-                            // AoS Layout: DataStart + (idx * record_size) + offset_in_record
-                            let offset = data_start
-                                + (element_id as usize) * (hdr.record_size as usize)
-                                + (desc.offset_in_record as usize);
-
-                            if offset + fsize <= prop_buf.len() {
-                                return Ok(Some(&prop_buf[offset..offset + fsize]));
-                            }
-                        } else {
-                            // SoA Layout: DataStart + column_offset + (idx * field_size)
-                            let offset = data_start
-                                + (desc.column_offset as usize)
-                                + (element_id as usize) * fsize;
-
-                            if offset + fsize <= prop_buf.len() {
-                                return Ok(Some(&prop_buf[offset..offset + fsize]));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Retrieve Section 1 Header-Embedded Custom Metadata
-    pub fn header_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
-        decode_metadata_map(&self.header.header_padding)
-    }
-
-    /// Retrieve Section 7 Custom Metadata Catalog
-    pub fn extended_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
-        let slice = self.mmap.as_slice();
-        let sec_count = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header.section_dir_count)) } as usize;
-        let sec_offset = unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header.section_dir_offset)) } as usize;
-
-        let target_type = AuxSectionType::CustomMetadataCatalog as u16;
-
-        if sec_count > 0 && sec_offset > 0 && sec_offset + sec_count * std::mem::size_of::<AuxSectionEntry>() <= slice.len() {
-            for i in 0..sec_count {
-                let entry_off = sec_offset + i * std::mem::size_of::<AuxSectionEntry>();
-                let entry = unsafe {
-                    std::ptr::read_unaligned(slice[entry_off..].as_ptr() as *const AuxSectionEntry)
-                };
-                if entry.section_type == target_type {
-                    let off = entry.offset as usize;
-                    let size = entry.size as usize;
-                    if off + size <= slice.len() {
-                        return decode_metadata_map(&slice[off..off + size]);
-                    }
-                }
-            }
-        }
-
-        Ok(std::collections::HashMap::new())
+        let buf = self.get_buffer(self.metadata_offset, self.metadata_bytes)?;
+        decode_metadata_map(buf)
     }
 }

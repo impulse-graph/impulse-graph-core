@@ -1,8 +1,8 @@
-//! Spec v2.4 Constants, Binary Layout Structs, Enums, and Hashing Primitives
+//! Spec v0.9.0 Constants, Binary Layout Structs, Enums, and Hashing Primitives
 
 use std::fmt;
 
-// Helper macro for static assertion (must be defined before structs)
+// Helper macro for static assertion
 #[macro_export]
 macro_rules! const_assert_eq {
     ($left:expr, $right:expr) => {
@@ -11,10 +11,24 @@ macro_rules! const_assert_eq {
 }
 
 pub const IMPULSE_MAGIC: u32 = 0x494D5053; // "IMPS" Little-Endian
-pub const IMPULSE_VERSION_MAJOR: u16 = 2;
-pub const IMPULSE_VERSION_MINOR: u16 = 4;
-pub const IMPULSE_VERSION_PACKED: u16 = (IMPULSE_VERSION_MAJOR << 8) | IMPULSE_VERSION_MINOR;
+pub const IMPULSE_VERSION_MAJOR: u16 = 0;
+pub const IMPULSE_VERSION_MINOR: u16 = 9;
+pub const IMPULSE_VERSION_PACKED: u16 = 9; // v0.9.0 packed as 9
 pub const IMPULSE_DEFAULT_DATA_OFFSET: u32 = 4096;
+
+// Alignment Constants & Helpers
+pub const IMPULSE_ALIGN_SIMD: u64 = 128;
+pub const IMPULSE_ALIGN_PAGE: u64 = 4096;
+
+#[inline]
+pub fn align_128(val: u64) -> u64 {
+    (val + 127) & !127
+}
+
+#[inline]
+pub fn align_4k(val: u64) -> u64 {
+    (val + 4095) & !4095
+}
 
 // Domain Catalog Key Type Enums
 #[repr(u8)]
@@ -40,138 +54,94 @@ impl KeyType {
     }
 }
 
-// Topology Encodings
+// Topology Encodings (v0.9.0: Standard RAW zero-copy is 0x00)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodingType {
-    RawUint32 = 0x00,
-    DeltaVbyte = 0x01,
-    RawUint16 = 0x02,
-    Hybrid1632 = 0x03,
-    SimdComp = 0x04,
-    SlicedEllpack = 0x05,
-    TpuBcoo = 0x06,
-    RawUint64 = 0x07,
-    RoaringBitmap = 0x08,
+    Raw = 0x00,
+    ZstdFrame = 0x01,
+    CustomVendor(u8),
 }
 
 impl EncodingType {
-    pub fn from_u8(val: u8) -> Option<Self> {
+    pub fn from_u8(val: u8) -> Self {
         match val {
-            0x00 => Some(EncodingType::RawUint32),
-            0x01 => Some(EncodingType::DeltaVbyte),
-            0x02 => Some(EncodingType::RawUint16),
-            0x03 => Some(EncodingType::Hybrid1632),
-            0x04 => Some(EncodingType::SimdComp),
-            0x05 => Some(EncodingType::SlicedEllpack),
-            0x06 => Some(EncodingType::TpuBcoo),
-            0x07 => Some(EncodingType::RawUint64),
-            0x08 => Some(EncodingType::RoaringBitmap),
-            _ => None,
+            0x00 => EncodingType::Raw,
+            0x01 => EncodingType::ZstdFrame,
+            v => EncodingType::CustomVendor(v),
+        }
+    }
+
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            EncodingType::Raw => 0x00,
+            EncodingType::ZstdFrame => 0x01,
+            EncodingType::CustomVendor(v) => *v,
         }
     }
 }
 
-// Data Types
+// Attribute Data Types & Nullability Flags
+pub const IMPULSE_TYPE_MASK: u8 = 0x7F;
+pub const IMPULSE_NULLABLE_FLAG: u8 = 0x80;
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataType {
-    Int8 = 0x00,
-    Int16 = 0x01,
-    Int32 = 0x02,
-    Int64 = 0x03,
-    Uint8 = 0x04,
-    Uint16 = 0x05,
-    Uint32 = 0x06,
-    Uint64 = 0x07,
-    Float16 = 0x08,
-    Float32 = 0x09,
-    Float64 = 0x0A,
-    Bool8 = 0x0B,
-    Uuid128 = 0x0C,
-    FixedBytes = 0x0D,
+pub enum BaseDataType {
+    Int8 = 0x01,
+    Int16 = 0x02,
+    Int32 = 0x03,
+    Int64 = 0x04,
+    Float16 = 0x05,
+    Float32 = 0x06,
+    Float64 = 0x07,
+    TimestampMs = 0x08,
+    TimestampNs = 0x09,
+    FixedBytes = 0x0A,
+    VarString = 0x0B,
+    VarBytes = 0x0C,
 }
 
-impl DataType {
+impl BaseDataType {
     pub fn from_u8(val: u8) -> Option<Self> {
-        match val {
-            0x00 => Some(DataType::Int8),
-            0x01 => Some(DataType::Int16),
-            0x02 => Some(DataType::Int32),
-            0x03 => Some(DataType::Int64),
-            0x04 => Some(DataType::Uint8),
-            0x05 => Some(DataType::Uint16),
-            0x06 => Some(DataType::Uint32),
-            0x07 => Some(DataType::Uint64),
-            0x08 => Some(DataType::Float16),
-            0x09 => Some(DataType::Float32),
-            0x0A => Some(DataType::Float64),
-            0x0B => Some(DataType::Bool8),
-            0x0C => Some(DataType::Uuid128),
-            0x0D => Some(DataType::FixedBytes),
+        let base = val & IMPULSE_TYPE_MASK;
+        match base {
+            0x01 => Some(BaseDataType::Int8),
+            0x02 => Some(BaseDataType::Int16),
+            0x03 => Some(BaseDataType::Int32),
+            0x04 => Some(BaseDataType::Int64),
+            0x05 => Some(BaseDataType::Float16),
+            0x06 => Some(BaseDataType::Float32),
+            0x07 => Some(BaseDataType::Float64),
+            0x08 => Some(BaseDataType::TimestampMs),
+            0x09 => Some(BaseDataType::TimestampNs),
+            0x0A => Some(BaseDataType::FixedBytes),
+            0x0B => Some(BaseDataType::VarString),
+            0x0C => Some(BaseDataType::VarBytes),
             _ => None,
         }
     }
 
-    pub fn default_size(&self) -> usize {
+    pub fn element_byte_size(&self) -> usize {
         match self {
-            DataType::Int8 | DataType::Uint8 | DataType::Bool8 => 1,
-            DataType::Int16 | DataType::Uint16 | DataType::Float16 => 2,
-            DataType::Int32 | DataType::Uint32 | DataType::Float32 => 4,
-            DataType::Int64 | DataType::Uint64 | DataType::Float64 => 8,
-            DataType::Uuid128 => 16,
-            DataType::FixedBytes => 1,
+            BaseDataType::Int8 => 1,
+            BaseDataType::Int16 | BaseDataType::Float16 => 2,
+            BaseDataType::Int32 | BaseDataType::Float32 => 4,
+            BaseDataType::Int64 | BaseDataType::Float64 | BaseDataType::TimestampMs | BaseDataType::TimestampNs => 8,
+            BaseDataType::FixedBytes => 1,
+            BaseDataType::VarString | BaseDataType::VarBytes => 0,
         }
     }
-}
 
-// Auxiliary Section Types
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuxSectionType {
-    CscOffsets = 0x0001,
-    CscTargets = 0x0002,
-    CscEdgeMap = 0x0003,
-    EdgeWeights = 0x0004,
-    EdgeTimestamps = 0x0005,
-    EdgePropsFixed = 0x0006,
-    EdgePropsVar = 0x0007,
-    NodePropsFixed = 0x0008,
-    NodePropsVar = 0x0009,
-    IdMap = 0x000A,
-    CustomMetadataCatalog = 0x000B,
-    ZstdDict = 0x000C,
-}
-
-impl AuxSectionType {
-    pub fn from_u16(val: u16) -> Option<Self> {
-        match val {
-            0x0001 => Some(AuxSectionType::CscOffsets),
-            0x0002 => Some(AuxSectionType::CscTargets),
-            0x0003 => Some(AuxSectionType::CscEdgeMap),
-            0x0004 => Some(AuxSectionType::EdgeWeights),
-            0x0005 => Some(AuxSectionType::EdgeTimestamps),
-            0x0006 => Some(AuxSectionType::EdgePropsFixed),
-            0x0007 => Some(AuxSectionType::EdgePropsVar),
-            0x0008 => Some(AuxSectionType::NodePropsFixed),
-            0x0009 => Some(AuxSectionType::NodePropsVar),
-            0x000A => Some(AuxSectionType::IdMap),
-            0x000B => Some(AuxSectionType::CustomMetadataCatalog),
-            0x000C => Some(AuxSectionType::ZstdDict),
-            _ => None,
-        }
+    pub fn is_variable(&self) -> bool {
+        matches!(self, BaseDataType::VarString | BaseDataType::VarBytes)
     }
 }
 
 // Global Feature Flags
-pub const IMPULSE_FEAT_WIDE_NODE_IDS: u64 = 1 << 0;
-pub const IMPULSE_FEAT_SECTION_DIRECTORY: u64 = 1 << 1;
-pub const IMPULSE_FEAT_SIGNED_ENFORCED: u64 = 1 << 2;
-pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 3;
-
-pub const IMPULSE_COMPAT_PAGE_ALIGNED: u64 = 1 << 0;
-pub const IMPULSE_COMPAT_SIGNED: u64 = 1 << 1;
-pub const IMPULSE_COMPAT_ZSTD_DICT: u64 = 1 << 2;
+pub const IMPULSE_FEAT_FOOTER_DIRECTORY: u64 = 1 << 0;
+pub const IMPULSE_FEAT_CRYPTO_SIGNED: u64 = 1 << 1;
+pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 2;
 
 // Error Codes
 #[repr(i32)]
@@ -206,27 +176,18 @@ impl std::error::Error for ImpulseError {}
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct SnapshotHeader {
-    pub magic: u32,                  // 0x00..0x03
-    pub version: u16,                // 0x04..0x05
-    pub data_offset: u32,            // 0x06..0x09
-    pub domain_count: u16,           // 0x0A..0x0B
-    pub relation_count: u16,         // 0x0C..0x0D
-    pub kafka_offset: u64,           // 0x0E..0x15
-    pub timestamp_ms: u64,           // 0x16..0x1D
-    pub payload_checksum: [u8; 32],  // 0x1E..0x3D
-    pub reserved: u16,               // 0x3E..0x3F
-    pub required_features: u64,      // 0x40..0x47
-    pub sig_block: [u8; 1024],       // 0x48..0x447
-    pub compat_features: u64,        // 0x448..0x44F
-    pub total_file_size: u64,        // 0x450..0x457
-    pub header_crc32: u32,           // 0x458..0x45B
-    pub section_dir_count: u16,      // 0x45C..0x45D
-    pub string_table_encoding: u16,  // 0x45E..0x45F
-    pub section_dir_offset: u64,     // 0x460..0x467
-    pub relation_dir_entry_size: u16,// 0x468..0x469 (128)
-    pub domain_dir_entry_size: u16,  // 0x46A..0x46B (64)
-    pub reserved2: u32,              // 0x46C..0x46F
-    pub header_padding: [u8; 2960],  // 0x470..0xFFF (Pads to 4096)
+    pub magic: u32,                     // 0x00..0x03 ("IMPS" = 0x494D5053)
+    pub version: u16,                   // 0x04..0x05 (0x0009)
+    pub data_offset: u32,               // 0x06..0x09 (4096)
+    pub domain_count: u16,              // 0x0A..0x0B
+    pub relation_count: u16,            // 0x0C..0x0D
+    pub timestamp_ms: u64,              // 0x0E..0x15
+    pub required_features: u64,         // 0x16..0x1D
+    pub footer_directory_offset: u64,   // 0x1E..0x25
+    pub footer_directory_bytes: u64,    // 0x26..0x2D
+    pub snapshot_uuid: [u8; 16],        // 0x2E..0x3D
+    pub header_checksum: u16,           // 0x3E..0x3F (CRC-16-CCITT)
+    pub header_padding: [u8; 4032],     // 0x40..0xFFF (Pads to 4096)
 }
 
 impl SnapshotHeader {
@@ -248,14 +209,14 @@ impl SnapshotHeader {
     pub fn required_features(&self) -> u64 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.required_features)) }
     }
-    pub fn header_crc32(&self) -> u32 {
-        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header_crc32)) }
+    pub fn footer_directory_offset(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.footer_directory_offset)) }
     }
-    pub fn payload_checksum(&self) -> [u8; 32] {
-        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.payload_checksum)) }
+    pub fn footer_directory_bytes(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.footer_directory_bytes)) }
     }
-    pub fn relation_dir_entry_size(&self) -> u16 {
-        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.relation_dir_entry_size)) }
+    pub fn header_checksum(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header_checksum)) }
     }
 }
 
@@ -263,97 +224,129 @@ const_assert_eq!(std::mem::size_of::<SnapshotHeader>(), 4096);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-pub struct DomainCatalogEntry {
-    pub domain_id: u16,              // 0x00
-    pub key_type: u8,                // 0x02
-    pub reserved1: u8,               // 0x03
-    pub node_count: u64,             // 0x04
-    pub required_features: u64,      // 0x0C
-    pub compat_features: u64,        // 0x14
-    pub aux_sections_pos: u64,       // 0x1C
-    pub aux_sections_size: u64,      // 0x24
-    pub name_offset: u32,            // 0x2C
-    pub name_length: u16,            // 0x30
-    pub reserved2: [u8; 14],         // 0x32
+pub struct FooterTrailer {
+    pub footer_length: u64, // 0x00..0x07 (Byte size of Footer Block)
+    pub spec_version: u32,  // 0x08..0x0B (0x0009)
+    pub footer_magic: u32,  // 0x0C..0x0F ("IMPS" = 0x494D5053)
 }
 
-const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 64);
-
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct RelationDirectoryEntry {
-    pub src_domain_id: u16,          // 0x00
-    pub tgt_domain_id: u16,          // 0x02
-    pub encoding_type: u8,          // 0x04
-    pub node_count: u64,             // 0x05
-    pub edge_count: u64,             // 0x0D
-    pub required_features: u64,      // 0x15
-    pub compat_features: u64,        // 0x1D
-    pub csr_offsets_pos: u64,        // 0x25
-    pub csr_offsets_size: u64,       // 0x2D
-    pub csr_targets_pos: u64,        // 0x35
-    pub csr_targets_size: u64,       // 0x3D
-    pub aux_sections_pos: u64,       // 0x45
-    pub aux_sections_size: u64,      // 0x4D
-    pub name_offset: u32,            // 0x55
-    pub name_length: u16,            // 0x59
-    pub tgt_node_count_lo16: u16,    // 0x5B
-    pub reserved: [u8; 35],          // 0x5D..0x7F (93 + 35 = 128 bytes)
-}
-
-const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 128);
-
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct AuxSectionEntry {
-    pub section_type: u16,           // 0x00
-    pub flags: u16,                  // 0x02
-    pub reserved: u32,               // 0x04
-    pub offset: u64,                 // 0x08
-    pub size: u64,                   // 0x10
-}
-
-const_assert_eq!(std::mem::size_of::<AuxSectionEntry>(), 24);
-
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct FieldDescriptor {
-    pub name: [u8; 32],              // 0x00
-    pub data_type: u8,               // 0x20
-    pub field_size: u8,              // 0x21
-    pub offset_in_record: u16,       // 0x22
-    pub column_index: u16,           // 0x24
-    pub flags: u16,                  // 0x26
-    pub name_hash: u32,              // 0x28
-    pub column_offset: u64,          // 0x2C
-}
-
-const_assert_eq!(std::mem::size_of::<FieldDescriptor>(), 52);
-
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct PropBlockHeader {
-    pub field_count: u16,            // 0x00
-    pub record_size: u32,            // 0x02
-    pub layout: u8,                  // 0x06 (0 = AoS, 1 = SoA)
-    pub reserved1: u8,               // 0x07
-    pub element_count: u64,          // 0x08
-}
-
-const_assert_eq!(std::mem::size_of::<PropBlockHeader>(), 16);
-
-// ---------------------------------------------------------------------------
-// Pure Rust Hashing Utilities (SHA-256 and CRC-32C)
-// ---------------------------------------------------------------------------
-
-pub fn fnv1a_hash(name: &str) -> u32 {
-    let mut hash: u32 = 0x811c9dc5;
-    for byte in name.as_bytes() {
-        hash ^= *byte as u32;
-        hash = hash.wrapping_mul(0x01000193);
+impl FooterTrailer {
+    pub fn footer_length(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.footer_length)) }
     }
-    hash
+    pub fn spec_version(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.spec_version)) }
+    }
+    pub fn footer_magic(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.footer_magic)) }
+    }
 }
+
+const_assert_eq!(std::mem::size_of::<FooterTrailer>(), 16);
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct DomainCatalogEntryHeader {
+    pub domain_id: u16,     // 0x00..0x01
+    pub key_type: u8,       // 0x02
+    pub reserved: u8,       // 0x03
+    pub name_len: u16,      // 0x04..0x05
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct RelationDirectoryEntry {
+    pub relation_id: u16,       // 0x00..0x01
+    pub src_domain_id: u16,     // 0x02..0x03
+    pub tgt_domain_id: u16,     // 0x04..0x05
+    pub encoding_id: u8,        // 0x06
+    pub node_id_width: u8,      // 0x07 (2 = u16, 4 = u32, 8 = u64)
+    pub edge_index_width: u8,   // 0x08 (4 = u32, 8 = u64)
+    pub reserved1: [u8; 7],     // 0x09..0x0F
+    pub node_count: u64,        // 0x10..0x17
+    pub edge_count: u64,        // 0x18..0x1F
+    pub section_features: u64,  // 0x20..0x27
+    pub csr_row_off_offset: u64,// 0x28..0x2F
+    pub csr_row_off_bytes: u64, // 0x30..0x37
+    pub csr_col_idx_offset: u64,// 0x38..0x3F
+    pub csr_col_idx_bytes: u64, // 0x40..0x47
+    pub csc_row_off_offset: u64,// 0x48..0x4F
+    pub csc_row_off_bytes: u64, // 0x50..0x57
+    pub csc_col_idx_offset: u64,// 0x58..0x5F
+    pub csc_col_idx_bytes: u64, // 0x60..0x67
+    pub attr_count: u16,        // 0x68..0x69
+    pub reserved2: [u8; 6],     // 0x6A..0x6F
+}
+
+impl RelationDirectoryEntry {
+    pub fn relation_id(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.relation_id)) }
+    }
+    pub fn src_domain_id(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.src_domain_id)) }
+    }
+    pub fn tgt_domain_id(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.tgt_domain_id)) }
+    }
+    pub fn encoding_id(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.encoding_id)) }
+    }
+    pub fn node_id_width(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_id_width)) }
+    }
+    pub fn edge_index_width(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.edge_index_width)) }
+    }
+    pub fn node_count(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_count)) }
+    }
+    pub fn edge_count(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.edge_count)) }
+    }
+    pub fn csr_row_off_offset(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.csr_row_off_offset)) }
+    }
+    pub fn csr_row_off_bytes(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.csr_row_off_bytes)) }
+    }
+    pub fn csr_col_idx_offset(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.csr_col_idx_offset)) }
+    }
+    pub fn csr_col_idx_bytes(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.csr_col_idx_bytes)) }
+    }
+}
+
+const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 112);
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct AttributeDescriptor {
+    pub name_len: u16,          // 0x00..0x01
+    pub type_code: u8,          // 0x02 (Base type + 0x80 Nullable flag)
+    pub reserved: u8,           // 0x03
+    pub dimension: u32,         // 0x04..0x07 (1 for scalar, D for vector)
+    pub data_offset: u64,       // 0x08..0x0F
+    pub data_bytes: u64,        // 0x10..0x17
+    pub offsets_offset: u64,    // 0x18..0x1F (For VAR_STRING / VAR_BYTES)
+    pub offsets_bytes: u64,     // 0x20..0x27 (For VAR_STRING / VAR_BYTES)
+}
+
+impl AttributeDescriptor {
+    pub fn is_nullable(&self) -> bool {
+        (self.type_code & IMPULSE_NULLABLE_FLAG) != 0
+    }
+
+    pub fn base_type(&self) -> Option<BaseDataType> {
+        BaseDataType::from_u8(self.type_code & IMPULSE_TYPE_MASK)
+    }
+}
+
+const_assert_eq!(std::mem::size_of::<AttributeDescriptor>(), 40);
+
+// ---------------------------------------------------------------------------
+// Hashing & CRC-16 Utilities
+// ---------------------------------------------------------------------------
 
 pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
     let mut state: [u32; 8] = [
@@ -422,36 +415,24 @@ pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-pub fn compute_crc32c(data: &[u8]) -> u32 {
-    let mut crc: u32 = 0xFFFFFFFF;
+pub fn compute_crc16(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xFFFF;
     for &byte in data {
-        crc ^= byte as u32;
+        crc ^= (byte as u16) << 8;
         for _ in 0..8 {
-            if (crc & 1) != 0 {
-                crc = (crc >> 1) ^ 0x82F63B78;
+            if (crc & 0x8000) != 0 {
+                crc = (crc << 1) ^ 0x1021;
             } else {
-                crc >>= 1;
+                crc <<= 1;
             }
         }
     }
-    !crc
+    crc
 }
 
-/// Compute Header CRC-32C over structural fields excluding sig_block and header_crc32 itself
-pub fn compute_header_crc32(header_bytes: &[u8]) -> u32 {
-    assert!(header_bytes.len() >= 4096);
-    // Part 1: bytes 0x00..0x47 (72 bytes)
-    // Part 2: bytes 0x448..0x457 (16 bytes)
-    let mut buffer = Vec::with_capacity(88);
-    buffer.extend_from_slice(&header_bytes[0x00..0x48]);
-    buffer.extend_from_slice(&header_bytes[0x448..0x458]);
-    compute_crc32c(&buffer)
-}
-
-/// Encode a key-value String map into binary metadata stream format
 pub fn encode_metadata_map(map: &std::collections::HashMap<String, String>) -> Vec<u8> {
     let mut buf = Vec::new();
-    let count = map.len() as u16;
+    let count = map.len() as u32;
     buf.extend_from_slice(&count.to_le_bytes());
     let mut keys: Vec<&String> = map.keys().collect();
     keys.sort();
@@ -467,14 +448,13 @@ pub fn encode_metadata_map(map: &std::collections::HashMap<String, String>) -> V
     buf
 }
 
-/// Decode binary metadata stream format into a key-value String map with strict UTF-8 checking
 pub fn decode_metadata_map(buf: &[u8]) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
     let mut map = std::collections::HashMap::new();
-    if buf.len() < 2 {
+    if buf.len() < 4 {
         return Ok(map);
     }
-    let count = u16::from_le_bytes([buf[0], buf[1]]) as usize;
-    let mut offset = 2;
+    let count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let mut offset = 4;
     for _ in 0..count {
         if offset + 2 > buf.len() {
             break;

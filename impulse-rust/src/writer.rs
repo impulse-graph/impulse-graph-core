@@ -1,119 +1,83 @@
-//! Spec v2.4 Binary Snapshot Generator / Writer
+//! Spec v0.9.0 Binary Snapshot Generator / Writer
 
 use crate::spec::*;
 use std::fs::File;
 use std::io::Write;
 
-pub struct PropertyField {
+pub struct AttributeField {
     pub name: String,
-    pub data_type: DataType,
+    pub type_code: u8,
+    pub dimension: u32,
     pub data: Vec<u8>,
-}
-
-pub struct PropertyBlock {
-    pub is_soa: bool,
-    pub fields: Vec<PropertyField>,
+    pub offsets: Option<Vec<u32>>,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+    pub offsets_offset: u64,
+    pub offsets_bytes: u64,
 }
 
 pub struct WriterDomain {
     pub domain_id: u16,
     pub key_type: KeyType,
-    pub node_count: u64,
     pub name: String,
-    pub fixed_props: Option<PropertyBlock>,
 }
 
 pub struct WriterRelation {
+    pub relation_id: u16,
     pub src_domain_id: u16,
     pub tgt_domain_id: u16,
-    pub encoding_type: EncodingType,
+    pub encoding_id: u8,
+    pub node_id_width: u8,
+    pub edge_index_width: u8,
     pub node_count: u64,
     pub edge_count: u64,
     pub row_offsets: Vec<u32>,
     pub col_indices: Vec<u32>,
-    pub fixed_props: Option<PropertyBlock>,
     pub include_csc: bool,
+    pub attributes: Vec<AttributeField>,
+    pub csr_row_off_offset: u64,
+    pub csr_row_off_bytes: u64,
+    pub csr_col_idx_offset: u64,
+    pub csr_col_idx_bytes: u64,
+    pub csc_row_off_offset: u64,
+    pub csc_row_off_bytes: u64,
+    pub csc_col_idx_offset: u64,
+    pub csc_col_idx_bytes: u64,
 }
 
 pub struct SnapshotWriter {
     output_path: String,
     global_required_features: u64,
-    global_compat_features: u64,
     domains: Vec<WriterDomain>,
     relations: Vec<WriterRelation>,
-    header_metadata: std::collections::HashMap<String, String>,
-    extended_metadata: std::collections::HashMap<String, String>,
+    metadata: std::collections::HashMap<String, String>,
 }
 
 impl SnapshotWriter {
     pub fn new(output_path: &str) -> Self {
         Self {
             output_path: output_path.to_string(),
-            global_required_features: 0,
-            global_compat_features: IMPULSE_COMPAT_PAGE_ALIGNED,
+            global_required_features: IMPULSE_FEAT_4KB_PAGE_ALIGNED,
             domains: Vec::new(),
             relations: Vec::new(),
-            header_metadata: std::collections::HashMap::new(),
-            extended_metadata: std::collections::HashMap::new(),
+            metadata: std::collections::HashMap::new(),
         }
     }
 
-    pub fn set_header_metadata(&mut self, metadata: std::collections::HashMap<String, String>) -> Result<(), ImpulseError> {
-        for (k, v) in &metadata {
-            if std::str::from_utf8(k.as_bytes()).is_err() || std::str::from_utf8(v.as_bytes()).is_err() {
-                return Err(ImpulseError::InvalidArgument);
-            }
-        }
-        let encoded = encode_metadata_map(&metadata);
-        if encoded.len() > 2048 {
-            return Err(ImpulseError::BufferOverflow);
-        }
-        self.header_metadata = metadata;
-        Ok(())
+    pub fn set_metadata(&mut self, metadata: std::collections::HashMap<String, String>) {
+        self.metadata = metadata;
     }
 
-    pub fn set_extended_metadata(&mut self, metadata: std::collections::HashMap<String, String>) -> Result<(), ImpulseError> {
-        for (k, v) in &metadata {
-            if std::str::from_utf8(k.as_bytes()).is_err() || std::str::from_utf8(v.as_bytes()).is_err() {
-                return Err(ImpulseError::InvalidArgument);
-            }
-        }
-        self.extended_metadata = metadata;
-        Ok(())
-    }
-
-    pub fn remove_header_metadata(&mut self, key: &str) {
-        self.header_metadata.remove(key);
-    }
-
-    pub fn remove_extended_metadata(&mut self, key: &str) {
-        self.extended_metadata.remove(key);
-    }
-
-    pub fn add_domain(&mut self, domain_id: u16, key_type: KeyType, name: &str, node_count: u64) {
+    pub fn add_domain(&mut self, domain_id: u16, key_type: KeyType, name: &str) {
         if let Some(existing) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
             existing.key_type = key_type;
             existing.name = name.to_string();
-            existing.node_count = node_count;
         } else {
             self.domains.push(WriterDomain {
                 domain_id,
                 key_type,
-                node_count,
                 name: name.to_string(),
-                fixed_props: None,
             });
-        }
-    }
-
-    pub fn add_domain_fixed_props(
-        &mut self,
-        domain_id: u16,
-        is_soa: bool,
-        fields: Vec<PropertyField>,
-    ) {
-        if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
-            dom.fixed_props = Some(PropertyBlock { is_soa, fields });
         }
     }
 
@@ -121,57 +85,57 @@ impl SnapshotWriter {
         &mut self,
         src_domain_id: u16,
         tgt_domain_id: u16,
-        encoding_type: EncodingType,
         node_count: u64,
         edge_count: u64,
         row_offsets: Vec<u32>,
         col_indices: Vec<u32>,
     ) {
+        let relation_id = self.relations.len() as u16;
         self.relations.push(WriterRelation {
+            relation_id,
             src_domain_id,
             tgt_domain_id,
-            encoding_type,
+            encoding_id: EncodingType::Raw.to_u8(),
+            node_id_width: 4,
+            edge_index_width: 4,
             node_count,
             edge_count,
             row_offsets,
             col_indices,
-            fixed_props: None,
             include_csc: false,
+            attributes: Vec::new(),
+            csr_row_off_offset: 0,
+            csr_row_off_bytes: 0,
+            csr_col_idx_offset: 0,
+            csr_col_idx_bytes: 0,
+            csc_row_off_offset: 0,
+            csc_row_off_bytes: 0,
+            csc_col_idx_offset: 0,
+            csc_col_idx_bytes: 0,
         });
     }
 
-    pub fn add_relation_with_csc(
-        &mut self,
-        src_domain_id: u16,
-        tgt_domain_id: u16,
-        encoding_type: EncodingType,
-        node_count: u64,
-        edge_count: u64,
-        row_offsets: Vec<u32>,
-        col_indices: Vec<u32>,
-        include_csc: bool,
-    ) {
-        self.relations.push(WriterRelation {
-            src_domain_id,
-            tgt_domain_id,
-            encoding_type,
-            node_count,
-            edge_count,
-            row_offsets,
-            col_indices,
-            fixed_props: None,
-            include_csc,
-        });
-    }
-
-    pub fn add_relation_fixed_props(
+    pub fn add_attribute_to_relation(
         &mut self,
         relation_index: usize,
-        is_soa: bool,
-        fields: Vec<PropertyField>,
+        name: &str,
+        type_code: u8,
+        dimension: u32,
+        data: Vec<u8>,
+        offsets: Option<Vec<u32>>,
     ) {
         if relation_index < self.relations.len() {
-            self.relations[relation_index].fixed_props = Some(PropertyBlock { is_soa, fields });
+            self.relations[relation_index].attributes.push(AttributeField {
+                name: name.to_string(),
+                type_code,
+                dimension,
+                data,
+                offsets,
+                data_offset: 0,
+                data_bytes: 0,
+                offsets_offset: 0,
+                offsets_bytes: 0,
+            });
         }
     }
 
@@ -183,396 +147,236 @@ impl SnapshotWriter {
     }
 
     pub fn finalize(&mut self) -> Result<(), ImpulseError> {
-        let mut payload = Vec::new();
-        let base_offset = IMPULSE_DEFAULT_DATA_OFFSET as u64;
+        // Sort relations primary by src_domain_id, secondary by tgt_domain_id
+        self.relations.sort_by(|a, b| {
+            a.src_domain_id
+                .cmp(&b.src_domain_id)
+                .then_with(|| a.tgt_domain_id.cmp(&b.tgt_domain_id))
+        });
+        for (idx, rel) in self.relations.iter_mut().enumerate() {
+            rel.relation_id = idx as u16;
+        }
 
-        // 1. Reserve Domain Catalog Table
-        let domain_table_start = payload.len();
-        let domain_table_size = self.domains.len() * std::mem::size_of::<DomainCatalogEntry>();
-        payload.resize(domain_table_size, 0x00);
+        // 1. Build Section 2 Directory Table first to know its exact size
+        let mut dir_table_bytes = Vec::new();
 
-        Self::align_buffer(&mut payload, 128);
-
-        // 2. Reserve Relation Directory Table
-        let rel_table_start = payload.len();
-        let rel_table_size = self.relations.len() * std::mem::size_of::<RelationDirectoryEntry>();
-        payload.resize(payload.len() + rel_table_size, 0x00);
-
-        let mut domain_entries = Vec::with_capacity(self.domains.len());
-
-        // 3. Write Domain Names & Aux Section Tables
+        // Domain Catalog
         for dom in &self.domains {
-            let mut entry = DomainCatalogEntry {
+            let dom_hdr = DomainCatalogEntryHeader {
                 domain_id: dom.domain_id,
                 key_type: dom.key_type as u8,
-                reserved1: 0,
-                node_count: dom.node_count,
-                required_features: 0,
-                compat_features: 0,
-                aux_sections_pos: 0,
-                aux_sections_size: 0,
-                name_offset: 0,
-                name_length: dom.name.len() as u16,
-                reserved2: [0u8; 14],
+                reserved: 0,
+                name_len: dom.name.len() as u16,
             };
-
-            // Write name string
-            if !dom.name.is_empty() {
-                entry.name_offset = (base_offset + payload.len() as u64) as u32;
-                payload.extend_from_slice(dom.name.as_bytes());
-            }
-
-            // Write Node Property Block + Aux Table
-            if let Some(ref props) = dom.fixed_props {
-                Self::align_buffer(&mut payload, 128);
-                let prop_sec_offset = base_offset + payload.len() as u64;
-                let prop_bytes = Self::encode_prop_block(props, dom.node_count);
-                payload.extend_from_slice(&prop_bytes);
-
-                Self::align_buffer(&mut payload, 128);
-                entry.aux_sections_pos = base_offset + payload.len() as u64;
-
-                let aux_entry = AuxSectionEntry {
-                    section_type: AuxSectionType::NodePropsFixed as u16,
-                    flags: 0,
-                    reserved: 0,
-                    offset: prop_sec_offset,
-                    size: prop_bytes.len() as u64,
-                };
-                entry.aux_sections_size = std::mem::size_of::<AuxSectionEntry>() as u64;
-
-                let aux_bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        &aux_entry as *const AuxSectionEntry as *const u8,
-                        std::mem::size_of::<AuxSectionEntry>(),
-                    )
-                };
-                payload.extend_from_slice(aux_bytes);
-            }
-
-            domain_entries.push(entry);
+            let hdr_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &dom_hdr as *const DomainCatalogEntryHeader as *const u8,
+                    std::mem::size_of::<DomainCatalogEntryHeader>(),
+                )
+            };
+            dir_table_bytes.extend_from_slice(hdr_bytes);
+            dir_table_bytes.extend_from_slice(dom.name.as_bytes());
         }
 
-        // Copy Domain Entries into Domain Table
-        let dom_raw = unsafe {
-            std::slice::from_raw_parts(
-                domain_entries.as_ptr() as *const u8,
-                domain_table_size,
-            )
-        };
-        payload[domain_table_start..domain_table_start + domain_table_size].copy_from_slice(dom_raw);
+        Self::align_buffer(&mut dir_table_bytes, 128);
 
-        // 4. Write Relation Offsets, Targets, Edge Props & Aux Tables
-        let mut rel_entries = Vec::with_capacity(self.relations.len());
-
+        // Calculate Relation Directory Table size
+        let mut rel_dir_size = 0;
         for rel in &self.relations {
-            let mut entry = RelationDirectoryEntry {
+            rel_dir_size += std::mem::size_of::<RelationDirectoryEntry>();
+            for attr in &rel.attributes {
+                rel_dir_size += std::mem::size_of::<AttributeDescriptor>() + attr.name.len();
+            }
+        }
+        let total_dir_table_len = dir_table_bytes.len() + rel_dir_size;
+        let aligned_dir_table_len = align_4k(total_dir_table_len as u64) as usize;
+
+        // Base offset where Relation Blocks payload begins
+        let rel_blocks_base_offset = IMPULSE_DEFAULT_DATA_OFFSET as u64 + aligned_dir_table_len as u64;
+
+        // 2. Serialize Relation Blocks
+        let mut payload = Vec::new();
+        for rel in &mut self.relations {
+            Self::align_buffer(&mut payload, 4096);
+
+            // Align csrRowOffsets to 128B
+            Self::align_buffer(&mut payload, 128);
+            rel.csr_row_off_offset = rel_blocks_base_offset + payload.len() as u64;
+            let row_bytes: Vec<u8> = rel.row_offsets.iter().flat_map(|v| v.to_le_bytes()).collect();
+            rel.csr_row_off_bytes = row_bytes.len() as u64;
+            payload.extend_from_slice(&row_bytes);
+
+            // Align csrColumnIndices to 128B
+            Self::align_buffer(&mut payload, 128);
+            rel.csr_col_idx_offset = rel_blocks_base_offset + payload.len() as u64;
+            let col_bytes: Vec<u8> = rel.col_indices.iter().flat_map(|v| v.to_le_bytes()).collect();
+            rel.csr_col_idx_bytes = col_bytes.len() as u64;
+            payload.extend_from_slice(&col_bytes);
+
+            // CSC Arrays (if enabled)
+            if rel.include_csc {
+                Self::align_buffer(&mut payload, 128);
+                rel.csc_row_off_offset = rel_blocks_base_offset + payload.len() as u64;
+                rel.csc_row_off_bytes = row_bytes.len() as u64;
+                payload.extend_from_slice(&row_bytes);
+
+                Self::align_buffer(&mut payload, 128);
+                rel.csc_col_idx_offset = rel_blocks_base_offset + payload.len() as u64;
+                rel.csc_col_idx_bytes = col_bytes.len() as u64;
+                payload.extend_from_slice(&col_bytes);
+            } else {
+                rel.csc_row_off_offset = 0;
+                rel.csc_row_off_bytes = 0;
+                rel.csc_col_idx_offset = 0;
+                rel.csc_col_idx_bytes = 0;
+            }
+
+            // Serialize Edge Attributes
+            for attr in &mut rel.attributes {
+                Self::align_buffer(&mut payload, 128);
+                attr.data_offset = rel_blocks_base_offset + payload.len() as u64;
+                attr.data_bytes = attr.data.len() as u64;
+                payload.extend_from_slice(&attr.data);
+
+                if let Some(ref offs) = attr.offsets {
+                    Self::align_buffer(&mut payload, 128);
+                    attr.offsets_offset = rel_blocks_base_offset + payload.len() as u64;
+                    let off_bytes: Vec<u8> = offs.iter().flat_map(|v| v.to_le_bytes()).collect();
+                    attr.offsets_bytes = off_bytes.len() as u64;
+                    payload.extend_from_slice(&off_bytes);
+                } else {
+                    attr.offsets_offset = 0;
+                    attr.offsets_bytes = 0;
+                }
+            }
+        }
+
+        // Now serialize Relation Directory Table entries into dir_table_bytes
+        for rel in &self.relations {
+            let rel_entry = RelationDirectoryEntry {
+                relation_id: rel.relation_id,
                 src_domain_id: rel.src_domain_id,
                 tgt_domain_id: rel.tgt_domain_id,
-                encoding_type: rel.encoding_type as u8,
+                encoding_id: rel.encoding_id,
+                node_id_width: rel.node_id_width,
+                edge_index_width: rel.edge_index_width,
+                reserved1: [0u8; 7],
                 node_count: rel.node_count,
                 edge_count: rel.edge_count,
-                required_features: 0,
-                compat_features: 0,
-                csr_offsets_pos: 0,
-                csr_offsets_size: 0,
-                csr_targets_pos: 0,
-                csr_targets_size: 0,
-                aux_sections_pos: 0,
-                aux_sections_size: 0,
-                name_offset: 0,
-                name_length: 0,
-                tgt_node_count_lo16: 0,
-                reserved: [0u8; 35],
+                section_features: 0,
+                csr_row_off_offset: rel.csr_row_off_offset,
+                csr_row_off_bytes: rel.csr_row_off_bytes,
+                csr_col_idx_offset: rel.csr_col_idx_offset,
+                csr_col_idx_bytes: rel.csr_col_idx_bytes,
+                csc_row_off_offset: rel.csc_row_off_offset,
+                csc_row_off_bytes: rel.csc_row_off_bytes,
+                csc_col_idx_offset: rel.csc_col_idx_offset,
+                csc_col_idx_bytes: rel.csc_col_idx_bytes,
+                attr_count: rel.attributes.len() as u16,
+                reserved2: [0u8; 6],
             };
-
-            // Write Row Offsets
-            Self::align_buffer(&mut payload, 128);
-            entry.csr_offsets_pos = base_offset + payload.len() as u64;
-            let offsets_raw: &[u8] = unsafe {
+            let rel_bytes = unsafe {
                 std::slice::from_raw_parts(
-                    rel.row_offsets.as_ptr() as *const u8,
-                    rel.row_offsets.len() * 4,
+                    &rel_entry as *const RelationDirectoryEntry as *const u8,
+                    std::mem::size_of::<RelationDirectoryEntry>(),
                 )
             };
-            entry.csr_offsets_size = offsets_raw.len() as u64;
-            payload.extend_from_slice(offsets_raw);
+            dir_table_bytes.extend_from_slice(rel_bytes);
 
-            // Write Col Indices
-            Self::align_buffer(&mut payload, 128);
-            entry.csr_targets_pos = base_offset + payload.len() as u64;
-            let targets_raw: &[u8] = unsafe {
-                std::slice::from_raw_parts(
-                    rel.col_indices.as_ptr() as *const u8,
-                    rel.col_indices.len() * 4,
-                )
-            };
-            entry.csr_targets_size = targets_raw.len() as u64;
-            payload.extend_from_slice(targets_raw);
-
-            let mut aux_entries: Vec<AuxSectionEntry> = Vec::new();
-
-            if rel.include_csc && rel.node_count > 0 {
-                let tgt_n = rel.node_count as usize;
-                let mut csc_degrees = vec![0u32; tgt_n + 1];
-                for &tgt in &rel.col_indices {
-                    if (tgt as usize) < tgt_n {
-                        csc_degrees[tgt as usize + 1] += 1;
-                    }
-                }
-                let mut csc_offsets = vec![0u32; tgt_n + 1];
-                for i in 0..tgt_n {
-                    csc_offsets[i + 1] = csc_offsets[i] + csc_degrees[i + 1];
-                }
-                let mut csc_targets = vec![0u32; rel.col_indices.len()];
-                let mut cur_offsets = csc_offsets.clone();
-                for src in 0..rel.node_count as u32 {
-                    let start = rel.row_offsets[src as usize] as usize;
-                    let end = rel.row_offsets[(src + 1) as usize] as usize;
-                    for &tgt in &rel.col_indices[start..end] {
-                        if (tgt as usize) < tgt_n {
-                            let pos = cur_offsets[tgt as usize] as usize;
-                            csc_targets[pos] = src;
-                            cur_offsets[tgt as usize] += 1;
-                        }
-                    }
-                }
-
-                Self::align_buffer(&mut payload, 128);
-                let csc_off_pos = base_offset + payload.len() as u64;
-                let csc_off_raw: &[u8] = unsafe {
+            for attr in &rel.attributes {
+                let attr_desc = AttributeDescriptor {
+                    name_len: attr.name.len() as u16,
+                    type_code: attr.type_code,
+                    reserved: 0,
+                    dimension: attr.dimension,
+                    data_offset: attr.data_offset,
+                    data_bytes: attr.data_bytes,
+                    offsets_offset: attr.offsets_offset,
+                    offsets_bytes: attr.offsets_bytes,
+                };
+                let desc_bytes = unsafe {
                     std::slice::from_raw_parts(
-                        csc_offsets.as_ptr() as *const u8,
-                        csc_offsets.len() * 4,
+                        &attr_desc as *const AttributeDescriptor as *const u8,
+                        std::mem::size_of::<AttributeDescriptor>(),
                     )
                 };
-                payload.extend_from_slice(csc_off_raw);
-
-                aux_entries.push(AuxSectionEntry {
-                    section_type: AuxSectionType::CscOffsets as u16,
-                    flags: 0,
-                    reserved: 0,
-                    offset: csc_off_pos,
-                    size: csc_off_raw.len() as u64,
-                });
-
-                Self::align_buffer(&mut payload, 128);
-                let csc_tgt_pos = base_offset + payload.len() as u64;
-                let csc_tgt_raw: &[u8] = unsafe {
-                    std::slice::from_raw_parts(
-                        csc_targets.as_ptr() as *const u8,
-                        csc_targets.len() * 4,
-                    )
-                };
-                payload.extend_from_slice(csc_tgt_raw);
-
-                aux_entries.push(AuxSectionEntry {
-                    section_type: AuxSectionType::CscTargets as u16,
-                    flags: 0,
-                    reserved: 0,
-                    offset: csc_tgt_pos,
-                    size: csc_tgt_raw.len() as u64,
-                });
+                dir_table_bytes.extend_from_slice(desc_bytes);
+                dir_table_bytes.extend_from_slice(attr.name.as_bytes());
             }
-
-            // Write Edge Properties if present
-            if let Some(ref props) = rel.fixed_props {
-                Self::align_buffer(&mut payload, 128);
-                let prop_sec_offset = base_offset + payload.len() as u64;
-                let prop_bytes = Self::encode_prop_block(props, rel.edge_count);
-                payload.extend_from_slice(&prop_bytes);
-
-                aux_entries.push(AuxSectionEntry {
-                    section_type: AuxSectionType::EdgePropsFixed as u16,
-                    flags: 0,
-                    reserved: 0,
-                    offset: prop_sec_offset,
-                    size: prop_bytes.len() as u64,
-                });
-            }
-
-            if !aux_entries.is_empty() {
-                Self::align_buffer(&mut payload, 128);
-                entry.aux_sections_pos = base_offset + payload.len() as u64;
-
-                let aux_bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        aux_entries.as_ptr() as *const u8,
-                        aux_entries.len() * std::mem::size_of::<AuxSectionEntry>(),
-                    )
-                };
-                entry.aux_sections_size = aux_bytes.len() as u64;
-                payload.extend_from_slice(aux_bytes);
-            }
-
-            rel_entries.push(entry);
         }
 
-        // Copy Relation Entries into Relation Table
-        let rel_raw = unsafe {
+        // Pad dir_table_bytes to aligned_dir_table_len
+        dir_table_bytes.resize(aligned_dir_table_len, 0x00);
+
+        // Prepend Section 2 Directory Table at payload start
+        let relation_payload_body = payload;
+        let mut final_payload = Vec::new();
+        final_payload.extend_from_slice(&dir_table_bytes);
+        final_payload.extend_from_slice(&relation_payload_body);
+
+        // 3. Serialize Footer Block at EOF
+        Self::align_buffer(&mut final_payload, 4096);
+        let footer_start_len = final_payload.len();
+
+        // Metadata stream
+        let meta_bytes = encode_metadata_map(&self.metadata);
+        final_payload.extend_from_slice(&meta_bytes);
+
+        // Footer Trailer (16 bytes)
+        let footer_length = (final_payload.len() + 16 - footer_start_len) as u64;
+        let trailer = FooterTrailer {
+            footer_length,
+            spec_version: IMPULSE_VERSION_PACKED as u32,
+            footer_magic: IMPULSE_MAGIC,
+        };
+        let trailer_bytes = unsafe {
             std::slice::from_raw_parts(
-                rel_entries.as_ptr() as *const u8,
-                rel_table_size,
+                &trailer as *const FooterTrailer as *const u8,
+                std::mem::size_of::<FooterTrailer>(),
             )
         };
-        payload[rel_table_start..rel_table_start + rel_table_size].copy_from_slice(rel_raw);
+        final_payload.extend_from_slice(trailer_bytes);
 
-        // 5. Write Extended Metadata (Section 7) if present
-        let mut section_dir_offset = 0u64;
-        let mut section_dir_count = 0u16;
-
-        if !self.extended_metadata.is_empty() {
-            Self::align_buffer(&mut payload, 128);
-            let ext_sec_offset = base_offset + payload.len() as u64;
-            let ext_bytes = encode_metadata_map(&self.extended_metadata);
-            payload.extend_from_slice(&ext_bytes);
-
-            // Append global section entry
-            let aux_entry = AuxSectionEntry {
-                section_type: AuxSectionType::CustomMetadataCatalog as u16,
-                flags: 0,
-                reserved: 0,
-                offset: ext_sec_offset,
-                size: ext_bytes.len() as u64,
-            };
-            let aux_bytes = unsafe {
-                std::slice::from_raw_parts(
-                    &aux_entry as *const AuxSectionEntry as *const u8,
-                    std::mem::size_of::<AuxSectionEntry>(),
-                )
-            };
-            Self::align_buffer(&mut payload, 128);
-            section_dir_offset = base_offset + payload.len() as u64;
-            section_dir_count = 1;
-            payload.extend_from_slice(aux_bytes);
-        }
-
-        Self::align_buffer(&mut payload, 4096);
-
-        // Calculate Payload SHA-256
-        let payload_sha = compute_sha256(&payload);
-
-        let mut padding = [0u8; 2960];
-        if !self.header_metadata.is_empty() {
-            let encoded_hdr = encode_metadata_map(&self.header_metadata);
-            if encoded_hdr.len() <= 2048 {
-                padding[..encoded_hdr.len()].copy_from_slice(&encoded_hdr);
-            }
-        }
-
-        // Build Header
+        // 4. Build Header Page 0 (4096 bytes)
         let mut header = SnapshotHeader {
             magic: IMPULSE_MAGIC,
             version: IMPULSE_VERSION_PACKED,
             data_offset: IMPULSE_DEFAULT_DATA_OFFSET,
             domain_count: self.domains.len() as u16,
             relation_count: self.relations.len() as u16,
-            kafka_offset: 0,
-            timestamp_ms: 0,
-            payload_checksum: payload_sha,
-            reserved: 0,
+            timestamp_ms: 1700000000000,
             required_features: self.global_required_features,
-            sig_block: [0u8; 1024],
-            compat_features: self.global_compat_features,
-            total_file_size: (IMPULSE_DEFAULT_DATA_OFFSET as usize + payload.len()) as u64,
-            header_crc32: 0,
-            section_dir_count,
-            string_table_encoding: 0,
-            section_dir_offset,
-            relation_dir_entry_size: 128,
-            domain_dir_entry_size: 64,
-            reserved2: 0,
-            header_padding: padding,
+            footer_directory_offset: 0,
+            footer_directory_bytes: 0,
+            snapshot_uuid: [0u8; 16],
+            header_checksum: 0,
+            header_padding: [0u8; 4032],
         };
 
-        // Compute Header CRC-32C
-        let header_raw: &[u8] = unsafe {
+        // Compute Header CRC-16 over 0x00..0x3E
+        let header_slice = unsafe {
             std::slice::from_raw_parts(
                 &header as *const SnapshotHeader as *const u8,
                 std::mem::size_of::<SnapshotHeader>(),
             )
         };
-        header.header_crc32 = compute_header_crc32(header_raw);
+        header.header_checksum = compute_crc16(&header_slice[0..0x3E]);
 
-        // Write header + payload to output file
+        let final_header_bytes = unsafe {
+            std::slice::from_raw_parts(
+                &header as *const SnapshotHeader as *const u8,
+                std::mem::size_of::<SnapshotHeader>(),
+            )
+        };
+
+        // 5. Write Header + Final Payload to file
         let mut file = File::create(&self.output_path).map_err(|_| ImpulseError::IoFailure)?;
-        let final_header_raw: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                &header as *const SnapshotHeader as *const u8,
-                std::mem::size_of::<SnapshotHeader>(),
-            )
-        };
-
-        file.write_all(final_header_raw).map_err(|_| ImpulseError::IoFailure)?;
-        file.write_all(&payload).map_err(|_| ImpulseError::IoFailure)?;
+        file.write_all(final_header_bytes)
+            .map_err(|_| ImpulseError::IoFailure)?;
+        file.write_all(&final_payload)
+            .map_err(|_| ImpulseError::IoFailure)?;
         file.flush().map_err(|_| ImpulseError::IoFailure)?;
 
         Ok(())
-    }
-
-    fn encode_prop_block(props: &PropertyBlock, element_count: u64) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let field_count = props.fields.len() as u16;
-
-        let mut record_size: u32 = 0;
-        let mut descriptors = Vec::with_capacity(props.fields.len());
-
-        let mut curr_col_offset: u64 = 0;
-
-        for (idx, f) in props.fields.iter().enumerate() {
-            let fsize = f.data_type.default_size() as u8;
-            let mut name_buf = [0u8; 32];
-            let nbytes = f.name.as_bytes();
-            let len = nbytes.len().min(31);
-            name_buf[..len].copy_from_slice(&nbytes[..len]);
-
-            let desc = FieldDescriptor {
-                name: name_buf,
-                data_type: f.data_type as u8,
-                field_size: fsize,
-                offset_in_record: record_size as u16,
-                column_index: idx as u16,
-                flags: 0,
-                name_hash: fnv1a_hash(&f.name),
-                column_offset: curr_col_offset,
-            };
-
-            record_size += fsize as u32;
-            curr_col_offset += f.data.len() as u64;
-
-            descriptors.push(desc);
-        }
-
-        let hdr = PropBlockHeader {
-            field_count,
-            record_size,
-            layout: if props.is_soa { 1 } else { 0 },
-            reserved1: 0,
-            element_count,
-        };
-
-        let hdr_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                &hdr as *const PropBlockHeader as *const u8,
-                std::mem::size_of::<PropBlockHeader>(),
-            )
-        };
-        buf.extend_from_slice(hdr_bytes);
-
-        for desc in &descriptors {
-            let desc_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(
-                    desc as *const FieldDescriptor as *const u8,
-                    std::mem::size_of::<FieldDescriptor>(),
-                )
-            };
-            buf.extend_from_slice(desc_bytes);
-        }
-
-        for f in &props.fields {
-            buf.extend_from_slice(&f.data);
-        }
-
-        buf
     }
 }
