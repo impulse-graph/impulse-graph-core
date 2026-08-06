@@ -110,6 +110,12 @@ typedef struct alignas(8) {
 typedef struct impulse_snapshot impulse_snapshot_t;
 typedef struct impulse_vm_context impulse_vm_context_t;
 
+// Input keys list structure for key mapping opcodes
+typedef struct {
+    const char** keys;
+    size_t count;
+} impulse_vm_input_keys;
+
 // VM State execution frame - aligned to 64 bytes and sized to exactly 640 bytes
 // to match the Java FFM MemorySegment representation
 typedef struct alignas(64) {
@@ -119,7 +125,9 @@ typedef struct alignas(64) {
     uint64_t registers[64];                       // Offset 16..527
     uint8_t  register_types[64];                  // Offset 528..591 (impulse_register_type_t values)
     impulse_vm_context_t* query_context;          // Offset 592..599
-    uint8_t  reserved_padding[40];                // Offset 600..639 (Pads struct to exactly 640 bytes)
+    uint32_t call_stack[8];                       // Offset 600..631 (8 levels of subroutine return PC)
+    uint32_t call_stack_depth;                    // Offset 632..635
+    uint32_t reserved_padding2;                   // Offset 636..639 (Pads struct to exactly 640 bytes)
 } impulse_vm_state_t;
 
 // Public Context lifecycle APIs
@@ -138,6 +146,16 @@ void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handl
 int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
 void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
 void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
+int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle);
+void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
+size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
+size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
+const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 
 // Public VM execution API
 impulse_vm_status_t impulse_vm_execute(

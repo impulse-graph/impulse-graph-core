@@ -41,6 +41,24 @@ IMPULSE_API impulse_status_t impulse_simd_intersect_sorted_u32(
     size_t* out_count
 );
 
+/**
+ * Architecture-independent Highway SIMD float32 sum reduction.
+ * Computes sum_{i=0..len-1} a[i].
+ */
+IMPULSE_API float impulse_simd_reduce_sum_f32(const float* a, size_t len);
+
+/**
+ * Architecture-independent Highway SIMD float32 elementwise vector scaling.
+ * Computes a[i] *= scalar for i in 0..len-1.
+ */
+IMPULSE_API impulse_status_t impulse_simd_vector_scale_f32(float* a, float scalar, size_t len);
+
+/**
+ * Architecture-independent Highway SIMD float32 elementwise vector multiply.
+ * Computes a[i] *= b[i] for i in 0..len-1.
+ */
+IMPULSE_API impulse_status_t impulse_simd_vector_mul_f32(float* a, const float* b, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

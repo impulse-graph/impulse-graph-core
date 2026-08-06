@@ -142,6 +142,166 @@ void vector_sum_neon(const float* a, const float* b, float* out, size_t len) {
 #endif
 
 // ---------------------------------------------------------------------------
+// Kernel: Float32 Sum Reduction
+// ---------------------------------------------------------------------------
+
+float reduce_sum_emu128(const float* a, size_t len) {
+    float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        sum0 += a[i + 0];
+        sum1 += a[i + 1];
+        sum2 += a[i + 2];
+        sum3 += a[i + 3];
+    }
+    float total = (sum0 + sum1) + (sum2 + sum3);
+    for (; i < len; ++i) {
+        total += a[i];
+    }
+    return total;
+}
+
+#if defined(IMPULSE_ARCH_ARM)
+float reduce_sum_neon(const float* a, size_t len) {
+    float32x4_t vsum = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        float32x4_t va = vld1q_f32(a + i);
+        vsum = vaddq_f32(vsum, va);
+    }
+    float total = vaddvq_f32(vsum);
+    for (; i < len; ++i) {
+        total += a[i];
+    }
+    return total;
+}
+#endif
+
+#if defined(IMPULSE_ARCH_X86)
+#if defined(__AVX2__)
+float reduce_sum_avx2(const float* a, size_t len) {
+    __m256 vsum = _mm256_setzero_ps();
+    size_t i = 0;
+    size_t vec_len = len & ~7ULL;
+    for (; i < vec_len; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        vsum = _mm256_add_ps(vsum, va);
+    }
+    alignas(32) float buf[8];
+    _mm256_storeu_ps(buf, vsum);
+    float total = 0.0f;
+    for (int k = 0; k < 8; ++k) total += buf[k];
+    for (; i < len; ++i) {
+        total += a[i];
+    }
+    return total;
+}
+#endif
+#endif
+
+// ---------------------------------------------------------------------------
+// Kernel: Float32 Vector Scale
+// ---------------------------------------------------------------------------
+
+void vector_scale_emu128(float* a, float scalar, size_t len) {
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        a[i + 0] *= scalar;
+        a[i + 1] *= scalar;
+        a[i + 2] *= scalar;
+        a[i + 3] *= scalar;
+    }
+    for (; i < len; ++i) {
+        a[i] *= scalar;
+    }
+}
+
+#if defined(IMPULSE_ARCH_ARM)
+void vector_scale_neon(float* a, float scalar, size_t len) {
+    float32x4_t vscalar = vdupq_n_f32(scalar);
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        float32x4_t va = vld1q_f32(a + i);
+        vst1q_f32(a + i, vmulq_f32(va, vscalar));
+    }
+    for (; i < len; ++i) {
+        a[i] *= scalar;
+    }
+}
+#endif
+
+#if defined(IMPULSE_ARCH_X86)
+#if defined(__AVX2__)
+void vector_scale_avx2(float* a, float scalar, size_t len) {
+    __m256 vscalar = _mm256_set1_ps(scalar);
+    size_t i = 0;
+    size_t vec_len = len & ~7ULL;
+    for (; i < vec_len; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        _mm256_storeu_ps(a + i, _mm256_mul_ps(va, vscalar));
+    }
+    for (; i < len; ++i) {
+        a[i] *= scalar;
+    }
+}
+#endif
+#endif
+
+// ---------------------------------------------------------------------------
+// Kernel: Float32 Vector Multiply
+// ---------------------------------------------------------------------------
+
+void vector_mul_emu128(float* a, const float* b, size_t len) {
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        a[i + 0] *= b[i + 0];
+        a[i + 1] *= b[i + 1];
+        a[i + 2] *= b[i + 2];
+        a[i + 3] *= b[i + 3];
+    }
+    for (; i < len; ++i) {
+        a[i] *= b[i];
+    }
+}
+
+#if defined(IMPULSE_ARCH_ARM)
+void vector_mul_neon(float* a, const float* b, size_t len) {
+    size_t i = 0;
+    size_t vec_len = len & ~3ULL;
+    for (; i < vec_len; i += 4) {
+        float32x4_t va = vld1q_f32(a + i);
+        float32x4_t vb = vld1q_f32(b + i);
+        vst1q_f32(a + i, vmulq_f32(va, vb));
+    }
+    for (; i < len; ++i) {
+        a[i] *= b[i];
+    }
+}
+#endif
+
+#if defined(IMPULSE_ARCH_X86)
+#if defined(__AVX2__)
+void vector_mul_avx2(float* a, const float* b, size_t len) {
+    size_t i = 0;
+    size_t vec_len = len & ~7ULL;
+    for (; i < vec_len; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+        _mm256_storeu_ps(a + i, _mm256_mul_ps(va, vb));
+    }
+    for (; i < len; ++i) {
+        a[i] *= b[i];
+    }
+}
+#endif
+#endif
+
+// ---------------------------------------------------------------------------
 // Kernel: Sorted Uint32 Array Intersection
 // ---------------------------------------------------------------------------
 
@@ -227,6 +387,65 @@ IMPULSE_API impulse_status_t impulse_simd_intersect_sorted_u32(
     if (!a || !b || !out_intersection || !out_count) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     *out_count = intersect_sorted_emu128(a, len_a, b, len_b, out_intersection);
+    return IMPULSE_OK;
+}
+
+IMPULSE_API float impulse_simd_reduce_sum_f32(const float* a, size_t len) {
+    if (!a || len == 0) return 0.0f;
+    SimdTarget target = detect_best_target();
+#if defined(IMPULSE_ARCH_ARM)
+    if (target == SimdTarget::NEON) {
+        return reduce_sum_neon(a, len);
+    }
+#elif defined(IMPULSE_ARCH_X86)
+  #if defined(__AVX2__)
+    if (target == SimdTarget::AVX2) {
+        return reduce_sum_avx2(a, len);
+    }
+  #endif
+#endif
+    return reduce_sum_emu128(a, len);
+}
+
+IMPULSE_API impulse_status_t impulse_simd_vector_scale_f32(float* a, float scalar, size_t len) {
+    if (!a) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (len == 0) return IMPULSE_OK;
+    SimdTarget target = detect_best_target();
+#if defined(IMPULSE_ARCH_ARM)
+    if (target == SimdTarget::NEON) {
+        vector_scale_neon(a, scalar, len);
+        return IMPULSE_OK;
+    }
+#elif defined(IMPULSE_ARCH_X86)
+  #if defined(__AVX2__)
+    if (target == SimdTarget::AVX2) {
+        vector_scale_avx2(a, scalar, len);
+        return IMPULSE_OK;
+    }
+  #endif
+#endif
+    vector_scale_emu128(a, scalar, len);
+    return IMPULSE_OK;
+}
+
+IMPULSE_API impulse_status_t impulse_simd_vector_mul_f32(float* a, const float* b, size_t len) {
+    if (!a || !b) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (len == 0) return IMPULSE_OK;
+    SimdTarget target = detect_best_target();
+#if defined(IMPULSE_ARCH_ARM)
+    if (target == SimdTarget::NEON) {
+        vector_mul_neon(a, b, len);
+        return IMPULSE_OK;
+    }
+#elif defined(IMPULSE_ARCH_X86)
+  #if defined(__AVX2__)
+    if (target == SimdTarget::AVX2) {
+        vector_mul_avx2(a, b, len);
+        return IMPULSE_OK;
+    }
+  #endif
+#endif
+    vector_mul_emu128(a, b, len);
     return IMPULSE_OK;
 }
 

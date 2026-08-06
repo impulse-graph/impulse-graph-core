@@ -1,5 +1,6 @@
 #include "impulse_vm.h"
 #include "impulse_graph.h"
+#include "impulse_simd.h"
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -50,6 +51,11 @@ struct BoundAttributeSlot {
     uint32_t    dimension = 0;
 };
 
+struct BoundValueMap {
+    std::vector<const char*> keys;
+    std::vector<float> values;
+};
+
 // Thread-local virtual machine context implementation
 struct impulse_vm_context {
     const impulse_snapshot_t* snapshot;
@@ -73,6 +79,10 @@ struct impulse_vm_context {
     std::array<bool, 4> float_vectors_allocated;
     std::array<std::vector<double>, 4> double_vectors;
     std::array<bool, 4> double_vectors_allocated;
+    std::array<std::vector<const char*>, 4> string_vectors;
+    std::array<bool, 4> string_vectors_allocated;
+    std::array<BoundValueMap, 4> value_maps;
+    std::array<bool, 4> value_maps_allocated;
 
     // Contiguous node buffer for array returns
     std::vector<uint64_t> node_buffer;
@@ -133,6 +143,46 @@ inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
     }
 }
 
+inline int acquire_string_vector(impulse_vm_context_t* ctx) {
+    if (!ctx) return -1;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!ctx->string_vectors_allocated[i]) {
+            ctx->string_vectors_allocated[i] = true;
+            ctx->string_vectors[i].clear();
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4) {
+        ctx->string_vectors[handle].clear();
+        ctx->string_vectors_allocated[handle] = false;
+    }
+}
+
+inline int acquire_value_map(impulse_vm_context_t* ctx) {
+    if (!ctx) return -1;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!ctx->value_maps_allocated[i]) {
+            ctx->value_maps_allocated[i] = true;
+            ctx->value_maps[i].keys.clear();
+            ctx->value_maps[i].values.clear();
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4) {
+        ctx->value_maps[handle].keys.clear();
+        ctx->value_maps[handle].values.clear();
+        ctx->value_maps_allocated[handle] = false;
+    }
+}
+
 inline void bitset_add(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
     if (node_id < max_nodes) {
         size_t word_idx = node_id / 64;
@@ -182,6 +232,11 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->float_vectors_allocated[i] = false;
         ctx->double_vectors[i].resize(ctx->max_nodes, 0.0);
         ctx->double_vectors_allocated[i] = false;
+        ctx->string_vectors[i].reserve(ctx->max_nodes);
+        ctx->string_vectors_allocated[i] = false;
+        ctx->value_maps[i].keys.reserve(ctx->max_nodes);
+        ctx->value_maps[i].values.reserve(ctx->max_nodes);
+        ctx->value_maps_allocated[i] = false;
     }
 
     // Pre-index snapshot relations if a snapshot is present
@@ -305,6 +360,105 @@ void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t hand
     }
 }
 
+int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx) {
+    if (!ctx) return -1;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!ctx->string_vectors_allocated[i]) {
+            ctx->string_vectors_allocated[i] = true;
+            ctx->string_vectors[i].clear();
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4) {
+        ctx->string_vectors[handle].clear();
+        ctx->string_vectors_allocated[handle] = false;
+    }
+}
+
+void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str) {
+    if (ctx && handle < 4 && ctx->string_vectors_allocated[handle]) {
+        ctx->string_vectors[handle].push_back(str);
+    }
+}
+
+size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4 && ctx->string_vectors_allocated[handle]) {
+        return ctx->string_vectors[handle].size();
+    }
+    return 0;
+}
+
+const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
+    if (ctx && handle < 4 && ctx->string_vectors_allocated[handle] && index < ctx->string_vectors[handle].size()) {
+        return ctx->string_vectors[handle][index];
+    }
+    return nullptr;
+}
+
+int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx) {
+    if (!ctx) return -1;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!ctx->value_maps_allocated[i]) {
+            ctx->value_maps_allocated[i] = true;
+            ctx->value_maps[i].keys.clear();
+            ctx->value_maps[i].values.clear();
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4) {
+        ctx->value_maps[handle].keys.clear();
+        ctx->value_maps[handle].values.clear();
+        ctx->value_maps_allocated[handle] = false;
+    }
+}
+
+size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4 && ctx->value_maps_allocated[handle]) {
+        return ctx->value_maps[handle].keys.size();
+    }
+    return 0;
+}
+
+const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
+    if (ctx && handle < 4 && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].keys.size()) {
+        return ctx->value_maps[handle].keys[index];
+    }
+    return nullptr;
+}
+
+float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
+    if (ctx && handle < 4 && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].values.size()) {
+        return ctx->value_maps[handle].values[index];
+    }
+    return 0.0f;
+}
+
+inline const BoundAttributeSlot* find_key_attribute(const impulse_vm_state_t* vm_state, uint16_t domain_id) {
+    if (!vm_state || !vm_state->query_context) return nullptr;
+    if (domain_id >= vm_state->query_context->attribute_slots.size()) return nullptr;
+    const auto& attrs = vm_state->query_context->attribute_slots[domain_id];
+    for (const auto& attr : attrs) {
+        if (attr.data_ptr) {
+            uint8_t base_type = attr.type_code & 0x7F;
+            if (base_type == 0x0B || base_type == 0x0A || base_type == 0x03 || base_type == 0x04) {
+                return &attr;
+            }
+        }
+    }
+    if (!attrs.empty() && attrs[0].data_ptr) {
+        return &attrs[0];
+    }
+    return nullptr;
+}
+
 // Main execution routine
 impulse_vm_status_t impulse_vm_execute(
     const impulse_instruction_t* bytecode,
@@ -348,6 +502,11 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR,
         [OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM,
         [OP_VECTOR_DIV] = &&op_VECTOR_DIV,
+        [OP_CALL] = &&op_CALL,
+        [OP_RET] = &&op_RET,
+        [OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE,
+        [OP_MAP_DENSE_TO_KEYS] = &&op_MAP_DENSE_TO_KEYS,
+        [OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP,
         [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
         [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
         [OP_HALT] = &&op_HALT
@@ -1141,7 +1300,7 @@ op_VECTOR_MUL_ATTR: {
             for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
         } else {
             float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-            for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
+            impulse_simd_vector_scale_f32(vec, scalar, size);
         }
     } else {
         uint8_t src_reg = inst.payload & 0xFF;
@@ -1168,13 +1327,16 @@ op_VECTOR_MUL_ATTR: {
             }
         } else {
             float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-            for (size_t i = 0; i < size; ++i) {
-                float val = 1.0f;
-                if (base_type == 0x08) val = static_cast<const float*>(attr.data_ptr)[i];
-                else if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
-                else if (base_type == 0x03) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
-                else val = static_cast<float>(static_cast<const int64_t*>(attr.data_ptr)[i]);
-                vec[i] *= val;
+            if (base_type == 0x08) {
+                impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
+            } else {
+                for (size_t i = 0; i < size; ++i) {
+                    float val = 1.0f;
+                    if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
+                    else if (base_type == 0x03) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
+                    else val = static_cast<float>(static_cast<const int64_t*>(attr.data_ptr)[i]);
+                    vec[i] *= val;
+                }
             }
         }
     }
@@ -1200,8 +1362,7 @@ op_VECTOR_REDUCE_SUM: {
         vm_state->register_types[dst] = TYPE_DOUBLE;
     } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
         const float* vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
-        float fsum = 0.0f;
-        for (size_t i = 0; i < size; ++i) fsum += vec[i];
+        float fsum = impulse_simd_reduce_sum_f32(vec, size);
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
         vm_state->register_types[dst] = TYPE_FLOAT;
@@ -1426,6 +1587,240 @@ op_COLLECT_ARRAY: {
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
     if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CALL: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint32_t func_offset = inst.payload;
+    if (vm_state->call_stack_depth >= 8) return IMPULSE_VM_ERR_STACK_OVERFLOW;
+    vm_state->call_stack[vm_state->call_stack_depth++] = vm_state->pc + 1;
+    vm_state->pc = func_offset;
+    DISPATCH();
+}
+
+op_RET: {
+    if (vm_state->call_stack_depth == 0) return IMPULSE_VM_ERR_STACK_UNDERFLOW;
+    vm_state->pc = vm_state->call_stack[--vm_state->call_stack_depth];
+    DISPATCH();
+}
+
+op_MAP_KEYS_TO_DENSE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t domain_id = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
+    if (input_keys && input_keys->keys && input_keys->count > 0) {
+        uint8_t base_type = attr->type_code & 0x7F;
+        size_t node_count = vm_state->query_context->max_nodes;
+
+        for (size_t k = 0; k < input_keys->count; ++k) {
+            const char* target_key = input_keys->keys[k];
+            if (!target_key) continue;
+
+            for (size_t u = 0; u < node_count; ++u) {
+                bool is_match = false;
+                if (base_type == 0x0B) {
+                    const char* str_ptr = nullptr;
+                    size_t str_len = 0;
+                    if (!attr->offsets_ptr) {
+                        str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+                        str_len = attr->dimension;
+                    } else {
+                        const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                        str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+                        str_len = offsets[u + 1] - offsets[u];
+                    }
+                    if (str_ptr) {
+                        size_t target_len = std::strlen(target_key);
+                        size_t actual_len = 0;
+                        while (actual_len < str_len && str_ptr[actual_len] != '\0') {
+                            actual_len++;
+                        }
+                        if (actual_len == target_len && std::strncmp(str_ptr, target_key, actual_len) == 0) {
+                            is_match = true;
+                        }
+                    }
+                } else if (base_type == 0x03 || base_type == 0x04) {
+                    int64_t val = 0;
+                    if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
+                    else val = static_cast<const int64_t*>(attr->data_ptr)[u];
+                    
+                    char* endptr = nullptr;
+                    int64_t target_val = std::strtoll(target_key, &endptr, 10);
+                    if (endptr != target_key && val == target_val) {
+                        is_match = true;
+                    }
+                }
+
+                if (is_match) {
+                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                    break;
+                }
+            }
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_MAP_DENSE_TO_KEYS: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint8_t src = inst.payload & 0xFF;
+    uint16_t domain_id = (inst.payload >> 8) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+    int h_dst = acquire_string_vector(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& svec = vm_state->query_context->string_vectors[h_dst];
+    svec.clear();
+
+    bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    uint8_t base_type = attr->type_code & 0x7F;
+    size_t max_nodes = vm_state->query_context->max_nodes;
+
+    auto add_key = [&](uint64_t u) {
+        if (base_type == 0x0B) {
+            const char* str_ptr = nullptr;
+            if (!attr->offsets_ptr) {
+                str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+            } else {
+                const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+            }
+            if (str_ptr) {
+                svec.push_back(str_ptr);
+            }
+        }
+    };
+
+    if (src_is_bitset) {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            uint64_t w = bs_src.words[i];
+            if (w == 0) continue;
+            for (int b = 0; b < 64; ++b) {
+                if (w & (1ULL << b)) {
+                    uint64_t u = i * 64 + b;
+                    if (u < max_nodes) add_key(u);
+                }
+            }
+        }
+    } else {
+        uint64_t u = vm_state->registers[src];
+        if (u < max_nodes) add_key(u);
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_STRING_VECTOR;
+
+    if (svec.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_COLLECT_VALUE_MAP: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint8_t nodes_reg = inst.payload & 0xFF;
+    uint8_t vals_reg = (inst.payload >> 8) & 0xFF;
+    uint16_t domain_id = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(nodes_reg);
+    VALIDATE_REG(vals_reg);
+
+    const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+    int h_dst = acquire_value_map(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& vmap = vm_state->query_context->value_maps[h_dst];
+    vmap.keys.clear();
+    vmap.values.clear();
+
+    bool nodes_is_bitset = (vm_state->register_types[nodes_reg] == TYPE_BITSET_HANDLE);
+    bool vals_is_double = (vm_state->register_types[vals_reg] == TYPE_DOUBLE_VECTOR);
+    size_t max_nodes = vm_state->query_context->max_nodes;
+    uint8_t base_type = attr->type_code & 0x7F;
+
+    auto add_entry = [&](uint64_t u) {
+        const char* str_ptr = nullptr;
+        if (base_type == 0x0B) {
+            if (!attr->offsets_ptr) {
+                str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+            } else {
+                const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+            }
+        }
+        
+        float val = 0.0f;
+        if (vals_is_double) {
+            val = static_cast<float>(vm_state->query_context->double_vectors[vm_state->registers[vals_reg]][u]);
+        } else if (vm_state->register_types[vals_reg] == TYPE_FLOAT_VECTOR) {
+            val = vm_state->query_context->float_vectors[vm_state->registers[vals_reg]][u];
+        }
+
+        if (str_ptr) {
+            vmap.keys.push_back(str_ptr);
+            vmap.values.push_back(val);
+        }
+    };
+
+    if (nodes_is_bitset) {
+        int h_nodes = static_cast<int>(vm_state->registers[nodes_reg]);
+        const auto& bs_nodes = vm_state->query_context->bitsets[h_nodes];
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            uint64_t w = bs_nodes.words[i];
+            if (w == 0) continue;
+            for (int b = 0; b < 64; ++b) {
+                if (w & (1ULL << b)) {
+                    uint64_t u = i * 64 + b;
+                    if (u < max_nodes) add_entry(u);
+                }
+            }
+        }
+    } else {
+        uint64_t u = vm_state->registers[nodes_reg];
+        if (u < max_nodes) add_entry(u);
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_VALUE_MAP;
+
+    if (vmap.keys.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
@@ -2174,7 +2569,7 @@ op_OUT_OF_BOUNDS:
                         for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
                     } else {
                         float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-                        for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
+                        impulse_simd_vector_scale_f32(vec, scalar, size);
                     }
                 } else {
                     uint8_t src_reg = inst.payload & 0xFF;
@@ -2201,13 +2596,16 @@ op_OUT_OF_BOUNDS:
                         }
                     } else {
                         float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-                        for (size_t i = 0; i < size; ++i) {
-                            float val = 1.0f;
-                            if (base_type == 0x08) val = static_cast<const float*>(attr.data_ptr)[i];
-                            else if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
-                            else if (base_type == 0x03) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
-                            else val = static_cast<float>(static_cast<const int64_t*>(attr.data_ptr)[i]);
-                            vec[i] *= val;
+                        if (base_type == 0x08) {
+                            impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
+                        } else {
+                            for (size_t i = 0; i < size; ++i) {
+                                float val = 1.0f;
+                                if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
+                                if (base_type == 0x03) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
+                                else val = static_cast<float>(static_cast<const int64_t*>(attr.data_ptr)[i]);
+                                vec[i] *= val;
+                            }
                         }
                     }
                 }
@@ -2231,8 +2629,7 @@ op_OUT_OF_BOUNDS:
                     vm_state->register_types[dst] = TYPE_DOUBLE;
                 } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
                     const float* vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
-                    float fsum = 0.0f;
-                    for (size_t i = 0; i < size; ++i) fsum += vec[i];
+                    float fsum = impulse_simd_reduce_sum_f32(vec, size);
                     vm_state->registers[dst] = 0;
                     reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
                     vm_state->register_types[dst] = TYPE_FLOAT;
@@ -2449,6 +2846,231 @@ op_OUT_OF_BOUNDS:
                 vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
                 if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_CALL: {
+                uint32_t func_offset = inst.payload;
+                if (vm_state->call_stack_depth >= 8) return IMPULSE_VM_ERR_STACK_OVERFLOW;
+                vm_state->call_stack[vm_state->call_stack_depth++] = vm_state->pc + 1;
+                vm_state->pc = func_offset;
+                break;
+            }
+            case OP_RET: {
+                if (vm_state->call_stack_depth == 0) return IMPULSE_VM_ERR_STACK_UNDERFLOW;
+                vm_state->pc = vm_state->call_stack[--vm_state->call_stack_depth];
+                break;
+            }
+            case OP_MAP_KEYS_TO_DENSE: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t domain_id = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+                if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+                int h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+                bs_dst.clear();
+
+                const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
+                if (input_keys && input_keys->keys && input_keys->count > 0) {
+                    uint8_t base_type = attr->type_code & 0x7F;
+                    size_t node_count = vm_state->query_context->max_nodes;
+
+                    for (size_t k = 0; k < input_keys->count; ++k) {
+                        const char* target_key = input_keys->keys[k];
+                        if (!target_key) continue;
+
+                        for (size_t u = 0; u < node_count; ++u) {
+                            bool is_match = false;
+                            if (base_type == 0x0B) {
+                                const char* str_ptr = nullptr;
+                                size_t str_len = 0;
+                                if (!attr->offsets_ptr) {
+                                    str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+                                    str_len = attr->dimension;
+                                } else {
+                                    const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                                    str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+                                    str_len = offsets[u + 1] - offsets[u];
+                                }
+                                if (str_ptr) {
+                                    size_t target_len = std::strlen(target_key);
+                                    size_t actual_len = 0;
+                                    while (actual_len < str_len && str_ptr[actual_len] != '\0') {
+                                        actual_len++;
+                                    }
+                                    if (actual_len == target_len && std::strncmp(str_ptr, target_key, actual_len) == 0) {
+                                        is_match = true;
+                                    }
+                                }
+                            } else if (base_type == 0x03 || base_type == 0x04) {
+                                int64_t val = 0;
+                                if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
+                                else val = static_cast<const int64_t*>(attr->data_ptr)[u];
+                                
+                                char* endptr = nullptr;
+                                int64_t target_val = std::strtoll(target_key, &endptr, 10);
+                                if (endptr != target_key && val == target_val) {
+                                    is_match = true;
+                                }
+                            }
+
+                            if (is_match) {
+                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+                bool is_empty = true;
+                for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                    if (bs_dst.words[i] != 0) { is_empty = false; break; }
+                }
+                if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_MAP_DENSE_TO_KEYS: {
+                uint16_t dst = inst.dst_reg;
+                uint8_t src = inst.payload & 0xFF;
+                uint16_t domain_id = (inst.payload >> 8) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+
+                const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+                if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+                int h_dst = acquire_string_vector(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                auto& svec = vm_state->query_context->string_vectors[h_dst];
+                svec.clear();
+
+                bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+                uint8_t base_type = attr->type_code & 0x7F;
+                size_t max_nodes = vm_state->query_context->max_nodes;
+
+                auto add_key = [&](uint64_t u) {
+                    if (base_type == 0x0B) {
+                        const char* str_ptr = nullptr;
+                        if (!attr->offsets_ptr) {
+                            str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+                        } else {
+                            const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                            str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+                        }
+                        if (str_ptr) {
+                            svec.push_back(str_ptr);
+                        }
+                    }
+                };
+
+                if (src_is_bitset) {
+                    int h_src = static_cast<int>(vm_state->registers[src]);
+                    const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                        uint64_t w = bs_src.words[i];
+                        if (w == 0) continue;
+                        for (int b = 0; b < 64; ++b) {
+                            if (w & (1ULL << b)) {
+                                uint64_t u = i * 64 + b;
+                                if (u < max_nodes) add_key(u);
+                            }
+                        }
+                    }
+                } else {
+                    uint64_t u = vm_state->registers[src];
+                    if (u < max_nodes) add_key(u);
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_STRING_VECTOR;
+
+                if (svec.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_COLLECT_VALUE_MAP: {
+                uint16_t dst = inst.dst_reg;
+                uint8_t nodes_reg = inst.payload & 0xFF;
+                uint8_t vals_reg = (inst.payload >> 8) & 0xFF;
+                uint16_t domain_id = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(nodes_reg);
+                VALIDATE_REG(vals_reg);
+
+                const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
+                if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+                int h_dst = acquire_value_map(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                auto& vmap = vm_state->query_context->value_maps[h_dst];
+                vmap.keys.clear();
+                vmap.values.clear();
+
+                bool nodes_is_bitset = (vm_state->register_types[nodes_reg] == TYPE_BITSET_HANDLE);
+                bool vals_is_double = (vm_state->register_types[vals_reg] == TYPE_DOUBLE_VECTOR);
+                size_t max_nodes = vm_state->query_context->max_nodes;
+                uint8_t base_type = attr->type_code & 0x7F;
+
+                auto add_entry = [&](uint64_t u) {
+                    const char* str_ptr = nullptr;
+                    if (base_type == 0x0B) {
+                        if (!attr->offsets_ptr) {
+                            str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+                        } else {
+                            const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                            str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+                        }
+                    }
+                    
+                    float val = 0.0f;
+                    if (vals_is_double) {
+                        val = static_cast<float>(vm_state->query_context->double_vectors[vm_state->registers[vals_reg]][u]);
+                    } else if (vm_state->register_types[vals_reg] == TYPE_FLOAT_VECTOR) {
+                        val = vm_state->query_context->float_vectors[vm_state->registers[vals_reg]][u];
+                    }
+
+                    if (str_ptr) {
+                        vmap.keys.push_back(str_ptr);
+                        vmap.values.push_back(val);
+                    }
+                };
+
+                if (nodes_is_bitset) {
+                    int h_nodes = static_cast<int>(vm_state->registers[nodes_reg]);
+                    const auto& bs_nodes = vm_state->query_context->bitsets[h_nodes];
+                    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                        uint64_t w = bs_nodes.words[i];
+                        if (w == 0) continue;
+                        for (int b = 0; b < 64; ++b) {
+                            if (w & (1ULL << b)) {
+                                uint64_t u = i * 64 + b;
+                                if (u < max_nodes) add_entry(u);
+                            }
+                        }
+                    }
+                } else {
+                    uint64_t u = vm_state->registers[nodes_reg];
+                    if (u < max_nodes) add_entry(u);
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_VALUE_MAP;
+
+                if (vmap.keys.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
                 else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
                 vm_state->pc++;

@@ -655,6 +655,159 @@ void test_attribute_filtering_and_math() {
     std::cout << "[VM Test] Attribute Filtering & Math Opcodes (Phase 4): PASSED" << std::endl;
 }
 
+void test_subroutines_and_key_resolutions() {
+    const char* filename = "__vm_test_phase5.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_STRING, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 5 nodes, 0 edges
+    const uint32_t offsets[] = { 0, 0, 0, 0, 0, 0 };
+    const uint32_t targets[] = { 0 };
+
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 5, 0, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, 0);
+    assert(st == IMPULSE_OK);
+
+    // Add name attribute (fixed-width string, dimension 4)
+    const char names[] = "ALIC" "BOB\0" "ALAN" "CHAR" "ALEX";
+    st = impulse_writer_add_attribute(writer, 0, "name", 0x0B, 4, names, sizeof(names) - 1, nullptr, 0);
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    // Open snapshot and context
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // --- Part 1: Subroutine CALL & RET ---
+    std::vector<impulse_instruction_t> bytecode1 = {
+        { OP_LOAD_CONST_INT, 0, 10, 5 },
+        { OP_CALL, 0, 0, 3 },            // Call PC 3
+        { OP_HALT, 0, 0, 0 },
+        { OP_LOAD_CONST_INT, 0, 10, 99 },
+        { OP_RET, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+
+    impulse_vm_status_t status1 = impulse_vm_execute(
+        bytecode1.data(), bytecode1.size(), &state1, 0
+    );
+    assert(status1 == IMPULSE_VM_OK);
+    assert(state1.registers[10] == 99);
+    assert(state1.call_stack_depth == 0); // Correctly popped
+
+    // --- Part 2: Key Mappings (OP_MAP_KEYS_TO_DENSE & OP_MAP_DENSE_TO_KEYS) ---
+    // Load input keys "BOB" and "ALAN"
+    const char* keys[] = { "BOB", "ALAN" };
+    impulse_vm_input_keys input_keys{};
+    input_keys.keys = keys;
+    input_keys.count = 2;
+
+    // opcode: OP_MAP_KEYS_TO_DENSE R3, DOMAIN_0 (0)
+    // opcode: OP_MAP_DENSE_TO_KEYS R4, R3, DOMAIN_0 (0)
+    // opcode: OP_HALT
+    std::vector<impulse_instruction_t> bytecode2 = {
+        { OP_MAP_KEYS_TO_DENSE, 0, 3, 0 },
+        { OP_MAP_DENSE_TO_KEYS, 0, 4, 3 | (0 << 8) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+
+    impulse_vm_status_t status2 = impulse_vm_execute(
+        bytecode2.data(), bytecode2.size(), &state2, reinterpret_cast<uint64_t>(&input_keys)
+    );
+    assert(status2 == IMPULSE_VM_OK);
+
+    // Verify R3 is a bitset containing nodes 1 (BOB) and 2 (ALAN)
+    int h_bs = static_cast<int>(state2.registers[3]);
+    assert(state2.register_types[3] == TYPE_BITSET_HANDLE);
+    assert(impulse_vm_context_bitset_test(ctx, h_bs, 1));
+    assert(impulse_vm_context_bitset_test(ctx, h_bs, 2));
+    assert(!impulse_vm_context_bitset_test(ctx, h_bs, 0));
+
+    // Verify R4 is a string vector containing "BOB\0" and "ALAN"
+    int h_svec = static_cast<int>(state2.registers[4]);
+    assert(state2.register_types[4] == TYPE_STRING_VECTOR);
+    assert(impulse_vm_context_string_vector_size(ctx, h_svec) == 2);
+    const char* key0 = impulse_vm_context_string_vector_get(ctx, h_svec, 0);
+    const char* key1 = impulse_vm_context_string_vector_get(ctx, h_svec, 1);
+    assert(key0 != nullptr && std::strncmp(key0, "BOB", 3) == 0);
+    assert(key1 != nullptr && std::strncmp(key1, "ALAN", 4) == 0);
+
+    // Release pools
+    impulse_vm_context_release_bitset(ctx, h_bs);
+    impulse_vm_context_release_string_vector(ctx, h_svec);
+
+    // --- Part 3: Value Map Collection (OP_COLLECT_VALUE_MAP) ---
+    // R1: Node bitset containing { 1, 3 } ("BOB", "CHAR")
+    // R5: Float vector with values: Node 1 = 12.34f, Node 3 = 56.78f
+    int h_nodes = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_add(ctx, h_nodes, 1);
+    impulse_vm_context_bitset_add(ctx, h_nodes, 3);
+
+    int h_vals = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_vals, 1, 12.34f);
+    impulse_vm_context_float_vector_set(ctx, h_vals, 3, 56.78f);
+
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+    state3.registers[1] = h_nodes;
+    state3.register_types[1] = TYPE_BITSET_HANDLE;
+    state3.registers[5] = h_vals;
+    state3.register_types[5] = TYPE_FLOAT_VECTOR;
+
+    // opcode: OP_COLLECT_VALUE_MAP R6, nodes_reg=1, vals_reg=5, domain_id=0
+    std::vector<impulse_instruction_t> bytecode3 = {
+        { OP_COLLECT_VALUE_MAP, 0, 6, 1 | (5 << 8) | (0 << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_status_t status3 = impulse_vm_execute(
+        bytecode3.data(), bytecode3.size(), &state3, 0
+    );
+    assert(status3 == IMPULSE_VM_OK);
+
+    int h_vmap = static_cast<int>(state3.registers[6]);
+    assert(state3.register_types[6] == TYPE_VALUE_MAP);
+    assert(impulse_vm_context_value_map_size(ctx, h_vmap) == 2);
+
+    const char* vkey0 = impulse_vm_context_value_map_get_key(ctx, h_vmap, 0);
+    float vval0 = impulse_vm_context_value_map_get_value(ctx, h_vmap, 0);
+    const char* vkey1 = impulse_vm_context_value_map_get_key(ctx, h_vmap, 1);
+    float vval1 = impulse_vm_context_value_map_get_value(ctx, h_vmap, 1);
+
+    assert(vkey0 != nullptr && std::strncmp(vkey0, "BOB", 3) == 0);
+    assert(std::abs(vval0 - 12.34f) < 1e-4f);
+    assert(vkey1 != nullptr && std::strncmp(vkey1, "CHAR", 4) == 0);
+    assert(std::abs(vval1 - 56.78f) < 1e-4f);
+
+    // Clean up
+    impulse_vm_context_release_bitset(ctx, h_nodes);
+    impulse_vm_context_release_float_vector(ctx, h_vals);
+    impulse_vm_context_release_value_map(ctx, h_vmap);
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] Subroutines & Key Resolutions (Phase 5): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -666,6 +819,7 @@ int main() {
     test_bitset_operations();
     test_rbac_traversal();
     test_attribute_filtering_and_math();
+    test_subroutines_and_key_resolutions();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
