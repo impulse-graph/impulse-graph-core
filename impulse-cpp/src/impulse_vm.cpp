@@ -927,9 +927,6 @@ op_CSR_WALK: {
     if (slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-            #pragma omp parallel for schedule(dynamic, 1024)
-#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w = bs_src.words[i];
                 if (w == 0) continue;
@@ -940,7 +937,7 @@ op_CSR_WALK: {
                             uint32_t start = slot.offsets_ptr[u];
                             uint32_t end   = slot.offsets_ptr[u + 1];
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                bitset_add_atomic(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                             }
                         }
                     }
@@ -2299,9 +2296,6 @@ op_OUT_OF_BOUNDS:
                 if (slot.offsets_ptr && slot.targets_ptr) {
                     if (src_is_bitset) {
                         const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-                        #pragma omp parallel for schedule(dynamic, 1024)
-#endif
                         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                             uint64_t w = bs_src.words[i];
                             if (w == 0) continue;
@@ -2312,7 +2306,7 @@ op_OUT_OF_BOUNDS:
                                         uint32_t start = slot.offsets_ptr[u];
                                         uint32_t end   = slot.offsets_ptr[u + 1];
                                         for (uint32_t idx = start; idx < end; ++idx) {
-                                            bitset_add_atomic(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                            bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                                         }
                                     }
                                 }
