@@ -34,6 +34,13 @@ struct VmBitSet {
     }
 };
 
+struct BoundRelationSlot {
+    const uint32_t* offsets_ptr = nullptr;
+    const uint32_t* targets_ptr = nullptr;
+    uint64_t node_count = 0;
+    uint64_t edge_count = 0;
+};
+
 // Thread-local virtual machine context implementation
 struct impulse_vm_context {
     const impulse_snapshot_t* snapshot;
@@ -47,6 +54,9 @@ struct impulse_vm_context {
 
     std::array<VmBitSet, 16> bitsets;
     std::array<bool, 16> bitset_allocated;
+
+    // Pre-indexed relation slots for zero-lookup overhead
+    std::vector<BoundRelationSlot> slots;
 
     // Contiguous node buffer for array returns
     std::vector<uint64_t> node_buffer;
@@ -114,6 +124,25 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->bitset_allocated[i] = false;
     }
 
+    // Pre-index snapshot relations if a snapshot is present
+    if (snapshot) {
+        uint16_t rel_count = impulse_snapshot_relation_count(snapshot);
+        ctx->slots.resize(rel_count);
+        for (uint16_t r = 0; r < rel_count; ++r) {
+            const uint32_t* offsets = nullptr;
+            const uint32_t* targets = nullptr;
+            uint64_t node_count = 0;
+            uint64_t edge_count = 0;
+            impulse_snapshot_get_relation_buffers(
+                snapshot, r, &offsets, &targets, &node_count, &edge_count
+            );
+            ctx->slots[r].offsets_ptr = offsets;
+            ctx->slots[r].targets_ptr = targets;
+            ctx->slots[r].node_count = node_count;
+            ctx->slots[r].edge_count = edge_count;
+        }
+    }
+
     return ctx;
 }
 
@@ -161,6 +190,9 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
         [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
         [OP_SET_CARDINALITY] = &&op_SET_CARDINALITY,
+        [OP_CSR_WALK] = &&op_CSR_WALK,
+        [OP_CSR_DEGREE] = &&op_CSR_DEGREE,
+        [OP_STABLE_CHECK] = &&op_STABLE_CHECK,
         [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
         [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
         [OP_HALT] = &&op_HALT
@@ -502,6 +534,180 @@ op_SET_CARDINALITY: {
 
     if (count == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CSR_WALK: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+
+    bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+
+    int h_dst = -1;
+    bool accum = (inst.flags & IMPULSE_VM_OP_FLAG_ACCUMULATE);
+
+    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
+        int h_existing = static_cast<int>(vm_state->registers[dst]);
+        if (accum) {
+            h_dst = h_existing;
+        } else {
+            if (dst == src) {
+                h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                vm_state->query_context->bitsets[h_dst].clear();
+            } else {
+                h_dst = h_existing;
+                vm_state->query_context->bitsets[h_dst].clear();
+            }
+        }
+    } else {
+        h_dst = acquire_bitset(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+        bs_dst.clear();
+        if (accum && (vm_state->register_types[dst] == TYPE_NODE_ID || vm_state->register_types[dst] == TYPE_INT64)) {
+            bitset_add(bs_dst, vm_state->registers[dst], vm_state->query_context->max_nodes);
+        }
+    }
+
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+    if (slot.offsets_ptr && slot.targets_ptr) {
+        if (src_is_bitset) {
+            const auto& bs_src = vm_state->query_context->bitsets[h_src];
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w = bs_src.words[i];
+                if (w == 0) continue;
+                for (int b = 0; b < 64; ++b) {
+                    if (w & (1ULL << b)) {
+                        uint64_t u = i * 64 + b;
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            uint64_t u = scalar_src;
+            if (u < slot.node_count) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end   = slot.offsets_ptr[u + 1];
+                for (uint32_t idx = start; idx < end; ++idx) {
+                    bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                }
+            }
+        }
+    }
+
+    if (!accum && dst == src && src_is_bitset) {
+        release_bitset(vm_state->query_context, h_src);
+    }
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) {
+            is_empty = false;
+            break;
+        }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CSR_DEGREE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+
+    uint64_t degree = 0;
+    if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+        uint64_t u = vm_state->registers[src];
+        if (slot.offsets_ptr && u < slot.node_count) {
+            degree = slot.offsets_ptr[u + 1] - slot.offsets_ptr[u];
+        }
+    }
+
+    vm_state->registers[dst] = degree;
+    vm_state->register_types[dst] = TYPE_INT64;
+
+    if (degree == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_STABLE_CHECK: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    bool is_subset = true;
+    bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
+    int h_dst = dst_is_bitset ? static_cast<int>(vm_state->registers[dst]) : -1;
+    uint64_t scalar_dst = !dst_is_bitset ? vm_state->registers[dst] : 0;
+
+    bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+
+    if (src_is_bitset && dst_is_bitset) {
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            if ((bs_src.words[i] & ~bs_dst.words[i]) != 0) {
+                is_subset = false;
+                break;
+            }
+        }
+    } else if (!src_is_bitset && dst_is_bitset) {
+        const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+        is_subset = bitset_test(bs_dst, scalar_src, vm_state->query_context->max_nodes);
+    } else if (!src_is_bitset && !dst_is_bitset) {
+        is_subset = (scalar_src == scalar_dst);
+    } else {
+        is_subset = false;
+    }
+
+    if (is_subset) {
+        vm_state->flags |= IMPULSE_VM_FLAG_ST;
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    } else {
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ST;
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    }
 
     vm_state->pc++;
     DISPATCH();
@@ -862,6 +1068,174 @@ op_OUT_OF_BOUNDS:
 
                 if (count == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
                 else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_CSR_WALK: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+
+                bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+                int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+                uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+
+                int h_dst = -1;
+                bool accum = (inst.flags & IMPULSE_VM_OP_FLAG_ACCUMULATE);
+
+                if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
+                    int h_existing = static_cast<int>(vm_state->registers[dst]);
+                    if (accum) {
+                        h_dst = h_existing;
+                    } else {
+                        if (dst == src) {
+                            h_dst = acquire_bitset(vm_state->query_context);
+                            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                            vm_state->query_context->bitsets[h_dst].clear();
+                        } else {
+                            h_dst = h_existing;
+                            vm_state->query_context->bitsets[h_dst].clear();
+                        }
+                    }
+                } else {
+                    h_dst = acquire_bitset(vm_state->query_context);
+                    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+                    bs_dst.clear();
+                    if (accum && (vm_state->register_types[dst] == TYPE_NODE_ID || vm_state->register_types[dst] == TYPE_INT64)) {
+                        bitset_add(bs_dst, vm_state->registers[dst], vm_state->query_context->max_nodes);
+                    }
+                }
+
+                auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+                if (slot.offsets_ptr && slot.targets_ptr) {
+                    if (src_is_bitset) {
+                        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                            uint64_t w = bs_src.words[i];
+                            if (w == 0) continue;
+                            for (int b = 0; b < 64; ++b) {
+                                if (w & (1ULL << b)) {
+                                    uint64_t u = i * 64 + b;
+                                    if (u < slot.node_count) {
+                                        uint32_t start = slot.offsets_ptr[u];
+                                        uint32_t end   = slot.offsets_ptr[u + 1];
+                                        for (uint32_t idx = start; idx < end; ++idx) {
+                                            bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        uint64_t u = scalar_src;
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                }
+
+                if (!accum && dst == src && src_is_bitset) {
+                    release_bitset(vm_state->query_context, h_src);
+                }
+                vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+                bool is_empty = true;
+                for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                    if (bs_dst.words[i] != 0) {
+                        is_empty = false;
+                        break;
+                    }
+                }
+                if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_CSR_DEGREE: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+
+                uint64_t degree = 0;
+                if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+                    uint64_t u = vm_state->registers[src];
+                    if (slot.offsets_ptr && u < slot.node_count) {
+                        degree = slot.offsets_ptr[u + 1] - slot.offsets_ptr[u];
+                    }
+                }
+
+                vm_state->registers[dst] = degree;
+                vm_state->register_types[dst] = TYPE_INT64;
+
+                if (degree == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_STABLE_CHECK: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+
+                bool is_subset = true;
+                bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
+                int h_dst = dst_is_bitset ? static_cast<int>(vm_state->registers[dst]) : -1;
+                uint64_t scalar_dst = !dst_is_bitset ? vm_state->registers[dst] : 0;
+
+                bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+                int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+                uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+
+                if (src_is_bitset && dst_is_bitset) {
+                    const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                    const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+                    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                        if ((bs_src.words[i] & ~bs_dst.words[i]) != 0) {
+                            is_subset = false;
+                            break;
+                        }
+                    }
+                } else if (!src_is_bitset && dst_is_bitset) {
+                    const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+                    is_subset = bitset_test(bs_dst, scalar_src, vm_state->query_context->max_nodes);
+                } else if (!src_is_bitset && !dst_is_bitset) {
+                    is_subset = (scalar_src == scalar_dst);
+                } else {
+                    is_subset = false;
+                }
+
+                if (is_subset) {
+                    vm_state->flags |= IMPULSE_VM_FLAG_ST;
+                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                } else {
+                    vm_state->flags &= ~IMPULSE_VM_FLAG_ST;
+                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+                }
 
                 vm_state->pc++;
                 break;

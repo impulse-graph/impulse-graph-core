@@ -1,8 +1,10 @@
 #include "impulse_vm.h"
+#include "impulse_graph.h"
 #include <iostream>
 #include <cassert>
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 void test_basic_nop_halt() {
     // 0: NOP
@@ -307,6 +309,168 @@ void test_bitset_operations() {
     std::cout << "[VM Test] BitSet & Set Operations (Phase 2): PASSED" << std::endl;
 }
 
+void test_rbac_traversal() {
+    const char* filename = "__vm_test_rbac_snapshot.bin";
+    std::remove(filename); // Clean up any stale files
+
+    // Build a small graph: 8 nodes, 7 edges
+    // Rel 0 (userToGroup):
+    //   0 -> 3 (Alice is User 0, assigned to Employee Role 3)
+    //   1 -> 2 (Bob is User 1, assigned to Guest Role 2)
+    const uint32_t r0_offsets[] = { 0, 1, 2, 2, 2, 2, 2, 2, 2 };
+    const uint32_t r0_targets[] = { 3, 2 };
+
+    // Rel 1 (roleInheritance):
+    //   Role 4 (Admin) -> Role 3 (Employee)
+    //   Role 3 (Employee) -> Role 2 (Guest)
+    const uint32_t r1_offsets[] = { 0, 0, 0, 0, 1, 2, 2, 2, 2 };
+    const uint32_t r1_targets[] = { 2, 3 }; // Note: 3 -> 2, 4 -> 3
+
+    // Rel 2 (rolePermission):
+    //   Role 2 (Guest) -> Permission 5 (read)
+    //   Role 3 (Employee) -> Permission 6 (write)
+    //   Role 4 (Admin) -> Permission 7 (delete)
+    const uint32_t r2_offsets[] = { 0, 0, 0, 1, 2, 3, 3, 3, 3 };
+    const uint32_t r2_targets[] = { 5, 6, 7 };
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st;
+    st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "entities");
+    assert(st == IMPULSE_OK);
+
+    // Add Rel 0 (userToGroup)
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 8, 2, 0,
+                                     r0_offsets, sizeof(r0_offsets),
+                                     r0_targets, sizeof(r0_targets));
+    assert(st == IMPULSE_OK);
+
+    // Add Rel 1 (roleInheritance)
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 8, 2, 0,
+                                     r1_offsets, sizeof(r1_offsets),
+                                     r1_targets, sizeof(r1_targets));
+    assert(st == IMPULSE_OK);
+
+    // Add Rel 2 (rolePermission)
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 8, 3, 0,
+                                     r2_offsets, sizeof(r2_offsets),
+                                     r2_targets, sizeof(r2_targets));
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    // Open snapshot
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    // Create VM query context using snapshot
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // --- PROGRAM 1: Linear 3-Tier walk starting at User 0 (Alice) ---
+    // 0: INIT_INPUT_NODE R0, 0           ; R0 = 0 (Alice)
+    // 1: CSR_WALK R1, R0, REL_0          ; R1 = Walk userToGroup from Alice -> {3} (Employee)
+    // 2: CSR_WALK R2, R1, REL_1          ; R2 = Walk roleInheritance from Employee -> {2} (Guest)
+    // 3: CSR_WALK R3, R2, REL_2          ; R3 = Walk rolePermission from Guest -> {5} (Read permission)
+    // 4: COLLECT_ARRAY R63, R3           ; Collect node IDs of R3 into R63 vector
+    // 5: HALT
+    std::vector<impulse_instruction_t> bytecode1 = {
+        { OP_INIT_INPUT_NODE, 0, 0, 0 },
+        { OP_CSR_WALK, 0, 1, 0 | (0 << 16) }, // dst=1, src=0, rel=0 (userToGroup)
+        { OP_CSR_WALK, 0, 2, 1 | (1 << 16) }, // dst=2, src=1, rel=1 (roleInheritance)
+        { OP_CSR_WALK, 0, 3, 2 | (2 << 16) }, // dst=3, src=2, rel=2 (rolePermission)
+        { OP_COLLECT_ARRAY, 0, 63, 3 },       // dst=63, src=3
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+
+    impulse_vm_status_t status1 = impulse_vm_execute(
+        bytecode1.data(), bytecode1.size(), &state1, 0ULL
+    );
+
+    assert(status1 == IMPULSE_VM_OK);
+    assert(state1.register_types[63] == TYPE_NODE_VECTOR);
+    assert(impulse_vm_context_get_vector_size(ctx) == 1);
+    const uint64_t* res1 = reinterpret_cast<const uint64_t*>(state1.registers[63]);
+    assert(res1 != nullptr && res1[0] == 5); // Read Permission (node ID 5)
+
+    // --- PROGRAM 2: Transitive closure loop using OP_STABLE_CHECK ---
+    // We start with Admin (Role 4) in R4 and want to find all direct and inherited roles: {4, 3, 2}.
+    // 0: INIT_INPUT_NODE R4, 0           ; R4 = 4 (Admin)
+    // 1: MOV R5, R4                      ; R5 = R4 = {4} (All accumulated roles set)
+    // ; Loop start at PC 2:
+    // 2: MOV R6, R5                      ; R6 = R5 (Save old set to R6)
+    // 3: CSR_WALK R5, R6, REL_1 (accum)  ; R5 = R5 | walk(R6, REL_1)
+    // 4: STABLE_CHECK R6, R5             ; ST = ZF = (R5 subset of R6) -> converged?
+    // 5: JNZ 0, 0, -3                    ; If ZF == 0 (not stable yet), jump back to PC 2 (-3 offset)
+    // 6: CSR_WALK R7, R5, REL_2          ; R7 = Walk rolePermission from accumulated roles {4, 3, 2}
+    // 7: COLLECT_ARRAY R63, R7           ; Return permissions array
+    // 8: HALT
+    std::vector<impulse_instruction_t> bytecode2 = {
+        { OP_INIT_INPUT_NODE, 0, 4, 0 },
+        { OP_MOV, 0, 5, 4 },
+        { OP_MOV, 0, 6, 5 },
+        { OP_CSR_WALK, IMPULSE_VM_OP_FLAG_ACCUMULATE, 5, 6 | (1 << 16) },
+        { OP_STABLE_CHECK, 0, 6, 5 },
+        { OP_JNZ, 0, 0, static_cast<uint32_t>(-3) },
+        { OP_CSR_WALK, 0, 7, 5 | (2 << 16) },
+        { OP_COLLECT_ARRAY, 0, 63, 7 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+
+    impulse_vm_status_t status2 = impulse_vm_execute(
+        bytecode2.data(), bytecode2.size(), &state2, 4ULL
+    );
+
+    assert(status2 == IMPULSE_VM_OK);
+    assert(state2.register_types[63] == TYPE_NODE_VECTOR);
+    size_t size2 = impulse_vm_context_get_vector_size(ctx);
+    const uint64_t* res2 = reinterpret_cast<const uint64_t*>(state2.registers[63]);
+    assert(size2 == 3); // Read (5), Write (6), Delete (7)
+    assert(res2 != nullptr);
+    std::vector<uint64_t> actual_perms(res2, res2 + size2);
+    std::sort(actual_perms.begin(), actual_perms.end());
+    assert(actual_perms[0] == 5);
+    assert(actual_perms[1] == 6);
+    assert(actual_perms[2] == 7);
+
+    // --- PROGRAM 3: OP_CSR_DEGREE check ---
+    // 0: INIT_INPUT_NODE R0, 0           ; R0 = 3 (Employee Role)
+    // 1: CSR_DEGREE R1, R0, REL_1        ; R1 = degree of Node 3 in relation 1 (roleInheritance) -> should be 1
+    // 2: HALT
+    std::vector<impulse_instruction_t> bytecode3 = {
+        { OP_INIT_INPUT_NODE, 0, 0, 0 },
+        { OP_CSR_DEGREE, 0, 1, 0 | (1 << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+
+    impulse_vm_status_t status3 = impulse_vm_execute(
+        bytecode3.data(), bytecode3.size(), &state3, 3ULL
+    );
+    assert(status3 == IMPULSE_VM_OK);
+    assert(state3.registers[1] == 1); // Employee inherits 1 role (Guest)
+    assert(state3.register_types[1] == TYPE_INT64);
+
+    // Clean up
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] 3-Tier RBAC Traversal & Stable Check (Phase 3): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -316,6 +480,7 @@ int main() {
     test_jmp_jz_jnz();
     test_loop_decr();
     test_bitset_operations();
+    test_rbac_traversal();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
