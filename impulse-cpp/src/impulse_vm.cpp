@@ -718,6 +718,9 @@ op_SET_UNION: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] |= bs_src.words[i];
         }
@@ -767,6 +770,9 @@ op_SET_INTERSECT: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] &= bs_src.words[i];
         }
@@ -823,6 +829,9 @@ op_SET_DIFFERENCE: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] &= ~bs_src.words[i];
         }
@@ -861,6 +870,9 @@ op_SET_CARDINALITY: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int handle = static_cast<int>(vm_state->registers[src]);
         const auto& bs = vm_state->query_context->bitsets[handle];
+#if defined(_OPENMP)
+        #pragma omp parallel for reduction(+:count) schedule(static)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             count += std::popcount(bs.words[i]);
         }
@@ -1187,15 +1199,22 @@ op_NODE_FILTER: {
     if (src_is_bitset) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(dynamic, 1024)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             uint64_t w = bs_src.words[i];
             if (w == 0) continue;
+            uint64_t w_dst = 0;
             for (int b = 0; b < 64; ++b) {
                 if (w & (1ULL << b)) {
                     uint64_t u = i * 64 + b;
-                    if (eval_match(u)) bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                    if (eval_match(u)) {
+                        w_dst |= (1ULL << b);
+                    }
                 }
             }
+            bs_dst.words[i] = w_dst;
         }
     } else {
         uint64_t u = vm_state->registers[src];
@@ -1264,15 +1283,22 @@ op_NODE_FILTER_STR_PREFIX: {
     if (src_is_bitset) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(dynamic, 1024)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             uint64_t w = bs_src.words[i];
             if (w == 0) continue;
+            uint64_t w_dst = 0;
             for (int b = 0; b < 64; ++b) {
                 if (w & (1ULL << b)) {
                     uint64_t u = i * 64 + b;
-                    if (eval_match(u)) bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                    if (eval_match(u)) {
+                        w_dst |= (1ULL << b);
+                    }
                 }
             }
+            bs_dst.words[i] = w_dst;
         }
     } else {
         uint64_t u = vm_state->registers[src];
@@ -1349,6 +1375,9 @@ op_VECTOR_DIV: {
             denom_vec = temp_denom.data();
         }
 
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+#endif
         for (size_t i = 0; i < size; ++i) {
             dst_vec[i] = (denom_vec[i] != 0.0) ? (num_vec[i] / denom_vec[i]) : 0.0;
         }
@@ -1386,6 +1415,9 @@ op_VECTOR_DIV: {
             denom_vec = temp_denom.data();
         }
 
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+#endif
         for (size_t i = 0; i < size; ++i) {
             dst_vec[i] = (denom_vec[i] != 0.0f) ? (num_vec[i] / denom_vec[i]) : 0.0f;
         }
@@ -1430,6 +1462,9 @@ op_VECTOR_MUL_ATTR: {
 
         if (is_double) {
             double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(static)
+#endif
             for (size_t i = 0; i < size; ++i) {
                 double val = 1.0;
                 if (base_type == 0x08) val = static_cast<double>(static_cast<const float*>(attr.data_ptr)[i]);
@@ -1443,6 +1478,9 @@ op_VECTOR_MUL_ATTR: {
             if (base_type == 0x08) {
                 impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
             } else {
+#if defined(_OPENMP)
+                #pragma omp parallel for schedule(static)
+#endif
                 for (size_t i = 0; i < size; ++i) {
                     float val = 1.0f;
                     if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
@@ -1470,6 +1508,9 @@ op_VECTOR_REDUCE_SUM: {
 
     if (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
         const double* vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
+#if defined(_OPENMP)
+        #pragma omp parallel for reduction(+:sum) schedule(static)
+#endif
         for (size_t i = 0; i < size; ++i) sum += vec[i];
         vm_state->registers[dst] = reinterpret_cast<uint64_t&>(sum);
         vm_state->register_types[dst] = TYPE_DOUBLE;
@@ -2100,6 +2141,9 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] |= bs_src.words[i];
                     }
@@ -2145,6 +2189,9 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] &= bs_src.words[i];
                     }
@@ -2197,6 +2244,9 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] &= ~bs_src.words[i];
                     }
@@ -2232,6 +2282,9 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int handle = static_cast<int>(vm_state->registers[src]);
                     const auto& bs = vm_state->query_context->bitsets[handle];
+#if defined(_OPENMP)
+                    #pragma omp parallel for reduction(+:count) schedule(static)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         count += std::popcount(bs.words[i]);
                     }
@@ -2548,15 +2601,22 @@ op_OUT_OF_BOUNDS:
                 if (src_is_bitset) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(dynamic, 1024)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         uint64_t w = bs_src.words[i];
                         if (w == 0) continue;
+                        uint64_t w_dst = 0;
                         for (int b = 0; b < 64; ++b) {
                             if (w & (1ULL << b)) {
                                 uint64_t u = i * 64 + b;
-                                if (eval_match(u)) bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                                if (eval_match(u)) {
+                                    w_dst |= (1ULL << b);
+                                }
                             }
                         }
+                        bs_dst.words[i] = w_dst;
                     }
                 } else {
                     uint64_t u = vm_state->registers[src];
@@ -2623,15 +2683,22 @@ op_OUT_OF_BOUNDS:
                 if (src_is_bitset) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(dynamic, 1024)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         uint64_t w = bs_src.words[i];
                         if (w == 0) continue;
+                        uint64_t w_dst = 0;
                         for (int b = 0; b < 64; ++b) {
                             if (w & (1ULL << b)) {
                                 uint64_t u = i * 64 + b;
-                                if (eval_match(u)) bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                                if (eval_match(u)) {
+                                    w_dst |= (1ULL << b);
+                                }
                             }
                         }
+                        bs_dst.words[i] = w_dst;
                     }
                 } else {
                     uint64_t u = vm_state->registers[src];
@@ -2706,6 +2773,9 @@ op_OUT_OF_BOUNDS:
                         denom_vec = temp_denom.data();
                     }
 
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static)
+#endif
                     for (size_t i = 0; i < size; ++i) {
                         dst_vec[i] = (denom_vec[i] != 0.0) ? (num_vec[i] / denom_vec[i]) : 0.0;
                     }
@@ -2743,6 +2813,9 @@ op_OUT_OF_BOUNDS:
                         denom_vec = temp_denom.data();
                     }
 
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static)
+#endif
                     for (size_t i = 0; i < size; ++i) {
                         dst_vec[i] = (denom_vec[i] != 0.0f) ? (num_vec[i] / denom_vec[i]) : 0.0f;
                     }
@@ -2785,6 +2858,9 @@ op_OUT_OF_BOUNDS:
 
                     if (is_double) {
                         double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+#if defined(_OPENMP)
+                        #pragma omp parallel for schedule(static)
+#endif
                         for (size_t i = 0; i < size; ++i) {
                             double val = 1.0;
                             if (base_type == 0x08) val = static_cast<double>(static_cast<const float*>(attr.data_ptr)[i]);
@@ -2798,6 +2874,9 @@ op_OUT_OF_BOUNDS:
                         if (base_type == 0x08) {
                             impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
                         } else {
+#if defined(_OPENMP)
+                            #pragma omp parallel for schedule(static)
+#endif
                             for (size_t i = 0; i < size; ++i) {
                                 float val = 1.0f;
                                 if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
@@ -2823,6 +2902,9 @@ op_OUT_OF_BOUNDS:
 
                 if (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
                     const double* vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
+#if defined(_OPENMP)
+                    #pragma omp parallel for reduction(+:sum) schedule(static)
+#endif
                     for (size_t i = 0; i < size; ++i) sum += vec[i];
                     vm_state->registers[dst] = reinterpret_cast<uint64_t&>(sum);
                     vm_state->register_types[dst] = TYPE_DOUBLE;
