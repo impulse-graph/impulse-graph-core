@@ -1039,6 +1039,115 @@ void test_graphblas_opcodes() {
     std::cout << "[VM Test] GraphBLAS Opcodes (OP_MXV, OP_VXM, OP_EWISE, OP_REDUCE): PASSED" << std::endl;
 }
 
+void test_extra_opcodes() {
+    const char* filename = "__vm_test_extra_snapshot.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 3 nodes, 2 edges: 0->1, 1->2
+    const uint32_t offsets[] = { 0, 1, 2, 2 };
+    const uint32_t targets[] = { 1, 2 };
+
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 3, 2, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, sizeof(targets));
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // --- PROGRAM 1: OP_CC_AFFOREST ---
+    std::vector<impulse_instruction_t> bytecode1 = {
+        { OP_CC_AFFOREST, 0, 1, 0 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+
+    impulse_vm_status_t status1 = impulse_vm_execute(
+        bytecode1.data(), bytecode1.size(), &state1, 0
+    );
+    assert(status1 == IMPULSE_VM_OK);
+    assert(state1.register_types[1] == TYPE_UINT64_VECTOR);
+    int h_comp = static_cast<int>(state1.registers[1]);
+    const uint64_t* comp_data = impulse_vm_context_get_node_vector(ctx, h_comp);
+    assert(comp_data[0] == comp_data[1]);
+    assert(comp_data[1] == comp_data[2]);
+
+    // --- PROGRAM 2: OP_COLLECT_BITSET ---
+    int h_bs1 = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_add(ctx, h_bs1, 0);
+
+    std::vector<impulse_instruction_t> bytecode2 = {
+        { OP_COLLECT_BITSET, 0, 2, 1 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+    state2.registers[1] = h_bs1;
+    state2.register_types[1] = TYPE_BITSET_HANDLE;
+
+    impulse_vm_status_t status2 = impulse_vm_execute(
+        bytecode2.data(), bytecode2.size(), &state2, 0
+    );
+    assert(status2 == IMPULSE_VM_OK);
+    assert(state2.register_types[2] == TYPE_BITSET_HANDLE);
+    assert(state2.registers[2] == static_cast<uint64_t>(h_bs1));
+
+    // --- PROGRAM 3: OP_CSR_WALK_REDUCE ---
+    int h_f3 = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_f3, 0, 10.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f3, 1, 20.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f3, 2, 30.0f);
+
+    std::vector<impulse_instruction_t> bytecode3 = {
+        { OP_CSR_WALK_REDUCE, 0, 4, 3 | (0 << 8) | (0 << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+    state3.registers[3] = h_f3;
+    state3.register_types[3] = TYPE_FLOAT_VECTOR;
+
+    impulse_vm_status_t status3 = impulse_vm_execute(
+        bytecode3.data(), bytecode3.size(), &state3, 0
+    );
+    assert(status3 == IMPULSE_VM_OK);
+    int h_f4 = static_cast<int>(state3.registers[4]);
+    assert(state3.register_types[4] == TYPE_FLOAT_VECTOR);
+    const float* f4_data = impulse_vm_context_get_float_vector(ctx, h_f4);
+    assert(f4_data[0] == 0.0f);
+    assert(f4_data[1] == 10.0f);
+    assert(f4_data[2] == 20.0f);
+
+    // Clean up
+    impulse_vm_context_release_node_vector(ctx, h_comp);
+    impulse_vm_context_release_bitset(ctx, h_bs1);
+    impulse_vm_context_release_float_vector(ctx, h_f3);
+    impulse_vm_context_release_float_vector(ctx, h_f4);
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] Extra Opcodes (OP_CC_AFFOREST, OP_COLLECT_BITSET, OP_CSR_WALK_REDUCE): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -1053,6 +1162,7 @@ int main() {
     test_subroutines_and_key_resolutions();
     test_csc_walk();
     test_graphblas_opcodes();
+    test_extra_opcodes();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
