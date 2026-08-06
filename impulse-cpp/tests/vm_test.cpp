@@ -1148,6 +1148,110 @@ void test_extra_opcodes() {
     std::cout << "[VM Test] Extra Opcodes (OP_CC_AFFOREST, OP_COLLECT_BITSET, OP_CSR_WALK_REDUCE): PASSED" << std::endl;
 }
 
+void test_pagerank_bytecode() {
+    const char* filename = "__vm_test_pagerank_snapshot.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 3 nodes, 3 edges: 0->1, 1->2, 2->0 (directed cycle)
+    const uint32_t offsets[] = { 0, 1, 2, 3 };
+    const uint32_t targets[] = { 1, 2, 0 };
+
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 3, 3, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, sizeof(targets));
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // Mock CSC: 0<-2, 1<-0, 2<-1 (directed cycle)
+    const uint32_t csc_offsets[] = { 0, 1, 2, 3 };
+    const uint32_t csc_targets[] = { 2, 0, 1 };
+    impulse_vm_context_mock_csc(ctx, 0, csc_offsets, csc_targets);
+
+    // R1: p = [1/3, 1/3, 1/3]
+    int h_p = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_p, 0, 1.0f / 3.0f);
+    impulse_vm_context_float_vector_set(ctx, h_p, 1, 1.0f / 3.0f);
+    impulse_vm_context_float_vector_set(ctx, h_p, 2, 1.0f / 3.0f);
+
+    // R2: d = [1.0f, 1.0f, 1.0f]
+    int h_d = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_d, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, h_d, 1, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, h_d, 2, 1.0f);
+
+    // R3: t = [0.05f, 0.05f, 0.05f] ( (1 - beta) / N = 0.15 / 3 = 0.05 )
+    int h_t = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_t, 0, 0.05f);
+    impulse_vm_context_float_vector_set(ctx, h_t, 1, 0.05f);
+    impulse_vm_context_float_vector_set(ctx, h_t, 2, 0.05f);
+
+    float damping = 0.85f;
+    uint32_t damping_payload = reinterpret_cast<uint32_t&>(damping);
+
+    std::vector<impulse_instruction_t> bytecode = {
+        { OP_LOAD_CONST_INT, 0, 6, 4 }, // iterations = 4
+        // .loop: (PC = 1)
+        { OP_VECTOR_DIV, 0, 4, 1 | (2 << 16) }, // R4 = R1 / R2
+        { OP_VXM, 0, 5, 4 | (0 << 8) | (SEMIRING_PLUS_TIMES << 16) }, // R5 = A^T * R4
+        { OP_VECTOR_MUL_ATTR, 0, 5, damping_payload }, // R5 = R5 * 0.85f
+        { OP_EWISE_ADD, 0, 1, 5 | (3 << 8) | (BINARY_OP_ADD << 16) }, // R1 = R5 + R3
+        { OP_LOOP_DECR, 0, 6, static_cast<uint32_t>(-4) }, // loop PC=1
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+    state.registers[1] = h_p;
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[2] = h_d;
+    state.register_types[2] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = h_t;
+    state.register_types[3] = TYPE_FLOAT_VECTOR;
+
+    impulse_vm_status_t status = impulse_vm_execute(
+        bytecode.data(), bytecode.size(), &state, 0
+    );
+    assert(status == IMPULSE_VM_OK);
+
+    // Verify PageRank converges to exactly 1/3 = 0.33333f for all 3 nodes
+    const float* p_data = impulse_vm_context_get_float_vector(ctx, h_p);
+    assert(std::abs(p_data[0] - 1.0f / 3.0f) < 1e-4f);
+    assert(std::abs(p_data[1] - 1.0f / 3.0f) < 1e-4f);
+    assert(std::abs(p_data[2] - 1.0f / 3.0f) < 1e-4f);
+
+    // Clean up
+    impulse_vm_context_release_float_vector(ctx, h_p);
+    impulse_vm_context_release_float_vector(ctx, h_d);
+    impulse_vm_context_release_float_vector(ctx, h_t);
+    if (state.register_types[4] == TYPE_FLOAT_VECTOR) {
+        impulse_vm_context_release_float_vector(ctx, state.registers[4]);
+    }
+    if (state.register_types[5] == TYPE_FLOAT_VECTOR) {
+        impulse_vm_context_release_float_vector(ctx, state.registers[5]);
+    }
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] PageRank Bytecode: PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -1163,6 +1267,7 @@ int main() {
     test_csc_walk();
     test_graphblas_opcodes();
     test_extra_opcodes();
+    test_pagerank_bytecode();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;

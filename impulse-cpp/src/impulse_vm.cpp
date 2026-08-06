@@ -87,16 +87,16 @@ struct impulse_vm_context {
     std::vector<std::vector<BoundAttributeSlot>> attribute_slots;
 
     // Pre-allocated float and double vectors for VM operations
-    std::array<std::vector<float>, 4> float_vectors;
-    std::array<bool, 4> float_vectors_allocated;
-    std::array<std::vector<double>, 4> double_vectors;
-    std::array<bool, 4> double_vectors_allocated;
-    std::array<std::vector<uint64_t>, 4> node_vectors;
-    std::array<bool, 4> node_vectors_allocated;
-    std::array<std::vector<const char*>, 4> string_vectors;
-    std::array<bool, 4> string_vectors_allocated;
-    std::array<BoundValueMap, 4> value_maps;
-    std::array<bool, 4> value_maps_allocated;
+    std::array<std::vector<float>, 8> float_vectors;
+    std::array<bool, 8> float_vectors_allocated;
+    std::array<std::vector<double>, 8> double_vectors;
+    std::array<bool, 8> double_vectors_allocated;
+    std::array<std::vector<uint64_t>, 8> node_vectors;
+    std::array<bool, 8> node_vectors_allocated;
+    std::array<std::vector<const char*>, 8> string_vectors;
+    std::array<bool, 8> string_vectors_allocated;
+    std::array<BoundValueMap, 8> value_maps;
+    std::array<bool, 8> value_maps_allocated;
 
     // Contiguous node buffer for array returns
     std::vector<uint64_t> node_buffer;
@@ -123,7 +123,7 @@ inline void release_bitset(impulse_vm_context_t* ctx, size_t handle) {
 
 inline int acquire_float_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         if (!ctx->float_vectors_allocated[i]) {
             ctx->float_vectors_allocated[i] = true;
             std::memset(ctx->float_vectors[i].data(), 0, ctx->float_vectors[i].size() * sizeof(float));
@@ -134,14 +134,14 @@ inline int acquire_float_vector(impulse_vm_context_t* ctx) {
 }
 
 inline void release_float_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 4) {
+    if (ctx && handle < 8) {
         ctx->float_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_double_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         if (!ctx->double_vectors_allocated[i]) {
             ctx->double_vectors_allocated[i] = true;
             std::memset(ctx->double_vectors[i].data(), 0, ctx->double_vectors[i].size() * sizeof(double));
@@ -152,14 +152,14 @@ inline int acquire_double_vector(impulse_vm_context_t* ctx) {
 }
 
 inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 4) {
+    if (ctx && handle < 8) {
         ctx->double_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_node_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         if (!ctx->node_vectors_allocated[i]) {
             ctx->node_vectors_allocated[i] = true;
             std::memset(ctx->node_vectors[i].data(), 0, ctx->node_vectors[i].size() * sizeof(uint64_t));
@@ -170,14 +170,14 @@ inline int acquire_node_vector(impulse_vm_context_t* ctx) {
 }
 
 inline void release_node_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 4) {
+    if (ctx && handle < 8) {
         ctx->node_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_string_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         if (!ctx->string_vectors_allocated[i]) {
             ctx->string_vectors_allocated[i] = true;
             ctx->string_vectors[i].clear();
@@ -188,7 +188,7 @@ inline int acquire_string_vector(impulse_vm_context_t* ctx) {
 }
 
 inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 4) {
+    if (ctx && handle < 8) {
         ctx->string_vectors[handle].clear();
         ctx->string_vectors_allocated[handle] = false;
     }
@@ -196,7 +196,7 @@ inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
 
 inline int acquire_value_map(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         if (!ctx->value_maps_allocated[i]) {
             ctx->value_maps_allocated[i] = true;
             ctx->value_maps[i].keys.clear();
@@ -208,7 +208,7 @@ inline int acquire_value_map(impulse_vm_context_t* ctx) {
 }
 
 inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 4) {
+    if (ctx && handle < 8) {
         ctx->value_maps[handle].keys.clear();
         ctx->value_maps[handle].values.clear();
         ctx->value_maps_allocated[handle] = false;
@@ -287,7 +287,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     }
 
     // Pre-allocate float and double vector buffers
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 8; ++i) {
         ctx->float_vectors[i].resize(ctx->max_nodes, 0.0f);
         ctx->float_vectors_allocated[i] = false;
         ctx->double_vectors[i].resize(ctx->max_nodes, 0.0);
