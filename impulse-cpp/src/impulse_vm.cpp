@@ -1450,8 +1450,13 @@ op_VECTOR_DIV: {
     bool denom_is_double = (vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR);
 
     if (num_is_double || denom_is_double) {
-        int h_dst = acquire_double_vector(vm_state->query_context);
-        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h_dst = -1;
+        if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR) {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+        } else {
+            h_dst = acquire_double_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
 
         const double* num_vec = nullptr;
@@ -1502,8 +1507,13 @@ op_VECTOR_DIV: {
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else {
-        int h_dst = acquire_float_vector(vm_state->query_context);
-        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h_dst = -1;
+        if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR) {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+        } else {
+            h_dst = acquire_float_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
 
         const float* num_vec = nullptr;
