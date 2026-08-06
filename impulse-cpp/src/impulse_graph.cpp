@@ -1071,6 +1071,8 @@ impulse_status_t impulse_snapshot_compact_to_file(
     size_t delta_count,
     const char* output_file_path
 ) {
+    (void)deltas;
+    (void)delta_count;
     if (!base_snapshot || !output_file_path) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = 0;
@@ -1118,6 +1120,8 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     impulse_write_fn write_cb,
     void* user_data
 ) {
+    (void)deltas;
+    (void)delta_count;
     if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
