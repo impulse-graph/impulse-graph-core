@@ -475,8 +475,8 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             snap->domain_names.push_back(dname);
         }
 
-        size_t rem = cur % 128;
-        if (rem != 0) cur += 128 - rem;
+        size_t rem = cur % 64;
+        if (rem != 0) cur += 64 - rem;
 
         uint16_t rel_count = snap->header.relation_count;
         snap->relations.reserve(rel_count);
@@ -499,18 +499,36 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             std::memcpy(&rel_entry.csr_row_off_bytes, raw + cur + 45, 8);
             std::memcpy(&rel_entry.csr_col_idx_offset, raw + cur + 53, 8);
             std::memcpy(&rel_entry.csr_col_idx_bytes, raw + cur + 61, 8);
-            uint64_t id_map_offset = 0;
-            std::memcpy(&id_map_offset, raw + cur + 69, 8);
-            if (id_map_offset > 0) {
-                g_last_error = "Deprecated Section 4 ID mapping section present";
-                if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
-                return nullptr;
+            uint64_t aux_offset = 0;
+            uint64_t aux_bytes = 0;
+            std::memcpy(&aux_offset, raw + cur + 69, 8);
+            std::memcpy(&aux_bytes, raw + cur + 77, 8);
+
+            if (aux_offset > 0 && aux_bytes >= 24 && aux_offset + aux_bytes <= file_size) {
+                size_t aux_count = aux_bytes / 24;
+                for (size_t a = 0; a < aux_count; ++a) {
+                    size_t a_cur = aux_offset + a * 24;
+                    uint16_t sec_type = 0;
+                    std::memcpy(&sec_type, raw + a_cur, 2);
+                    uint64_t sec_off = 0;
+                    std::memcpy(&sec_off, raw + a_cur + 8, 8);
+                    uint64_t sec_size = 0;
+                    std::memcpy(&sec_size, raw + a_cur + 16, 8);
+
+                    if (sec_type == 0x0001) { // CSC Row Offsets
+                        rel_entry.csc_row_off_offset = sec_off;
+                        rel_entry.csc_row_off_bytes = sec_size;
+                    } else if (sec_type == 0x0002) { // CSC Col Targets
+                        rel_entry.csc_col_idx_offset = sec_off;
+                        rel_entry.csc_col_idx_bytes = sec_size;
+                    }
+                }
             }
             cur += entry_size;
 
-            if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
-                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
-                g_last_error = "Unaligned section offset (must be 128B aligned)";
+            if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 64 != 0) ||
+                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 64 != 0)) {
+                g_last_error = "Unaligned section offset in legacy snapshot (must be 64B aligned)";
                 if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
                 return nullptr;
             }
