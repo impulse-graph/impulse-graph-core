@@ -52,6 +52,10 @@ extern "C" {
 #define OP_VECTOR_REDUCE_SUM        0x35
 #define OP_VECTOR_DIV               0x36
 #define OP_VECTOR_STR_CONCAT        0x37
+#define OP_VEC_GET                  0x38
+#define OP_VEC_SET                  0x39
+#define OP_VEC_SEQUENCE             0x3A
+#define OP_CC_AFFOREST              0x40
 
 #define OP_JMP                      0x50
 #define OP_JZ                       0x51
@@ -85,7 +89,8 @@ typedef enum {
     TYPE_VALUE_MAP = 0x0A,
     TYPE_STRING_VECTOR = 0x0B,
     TYPE_FLOAT_VECTOR = 0x0C,
-    TYPE_DOUBLE_VECTOR = 0x0D
+    TYPE_DOUBLE_VECTOR = 0x0D,
+    TYPE_UINT64_VECTOR = 0x0E
 } impulse_register_type_t;
 
 // VM Execution result status
@@ -149,6 +154,9 @@ void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handl
 int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
 void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
 void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
+int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle);
+const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle);
 int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx);
 void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle);
 void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);

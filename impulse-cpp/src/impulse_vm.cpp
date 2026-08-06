@@ -7,6 +7,7 @@
 #include <bit>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 
 #if defined(_OPENMP)
 #include <omp.h>
@@ -90,6 +91,8 @@ struct impulse_vm_context {
     std::array<bool, 4> float_vectors_allocated;
     std::array<std::vector<double>, 4> double_vectors;
     std::array<bool, 4> double_vectors_allocated;
+    std::array<std::vector<uint64_t>, 4> node_vectors;
+    std::array<bool, 4> node_vectors_allocated;
     std::array<std::vector<const char*>, 4> string_vectors;
     std::array<bool, 4> string_vectors_allocated;
     std::array<BoundValueMap, 4> value_maps;
@@ -151,6 +154,24 @@ inline int acquire_double_vector(impulse_vm_context_t* ctx) {
 inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < 4) {
         ctx->double_vectors_allocated[handle] = false;
+    }
+}
+
+inline int acquire_node_vector(impulse_vm_context_t* ctx) {
+    if (!ctx) return -1;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!ctx->node_vectors_allocated[i]) {
+            ctx->node_vectors_allocated[i] = true;
+            std::memset(ctx->node_vectors[i].data(), 0, ctx->node_vectors[i].size() * sizeof(uint64_t));
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+inline void release_node_vector(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4) {
+        ctx->node_vectors_allocated[handle] = false;
     }
 }
 
@@ -271,6 +292,8 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->float_vectors_allocated[i] = false;
         ctx->double_vectors[i].resize(ctx->max_nodes, 0.0);
         ctx->double_vectors_allocated[i] = false;
+        ctx->node_vectors[i].resize(ctx->max_nodes, 0);
+        ctx->node_vectors_allocated[i] = false;
         ctx->string_vectors[i].reserve(ctx->max_nodes);
         ctx->string_vectors_allocated[i] = false;
         ctx->value_maps[i].keys.reserve(ctx->max_nodes);
@@ -407,6 +430,21 @@ void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t hand
     if (ctx && handle < 4 && ctx->double_vectors_allocated[handle] && index < ctx->max_nodes) {
         ctx->double_vectors[handle][index] = val;
     }
+}
+
+int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx) {
+    return acquire_node_vector(ctx);
+}
+
+void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle) {
+    release_node_vector(ctx, handle);
+}
+
+const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < 4 && ctx->node_vectors_allocated[handle]) {
+        return ctx->node_vectors[handle].data();
+    }
+    return nullptr;
 }
 
 int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx) {
@@ -552,6 +590,10 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR,
         [OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM,
         [OP_VECTOR_DIV] = &&op_VECTOR_DIV,
+        [OP_VEC_GET] = &&op_VEC_GET,
+        [OP_VEC_SET] = &&op_VEC_SET,
+        [OP_VEC_SEQUENCE] = &&op_VEC_SEQUENCE,
+        [OP_CC_AFFOREST] = &&op_CC_AFFOREST,
         [OP_CALL] = &&op_CALL,
         [OP_RET] = &&op_RET,
         [OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE,
@@ -1497,6 +1539,237 @@ op_VECTOR_DIV: {
 
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_VEC_GET: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src_vec = inst.payload & 0xFFFF;
+    uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src_vec);
+    VALIDATE_REG(idx_reg);
+
+    uint64_t idx = vm_state->registers[idx_reg];
+    if (vm_state->register_types[src_vec] == TYPE_UINT64_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[src_vec]);
+        if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        vm_state->registers[dst] = vm_state->query_context->node_vectors[handle][idx];
+        vm_state->register_types[dst] = TYPE_INT64;
+    } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[src_vec]);
+        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        float val = vm_state->query_context->float_vectors[handle][idx];
+        vm_state->registers[dst] = 0;
+        reinterpret_cast<float&>(vm_state->registers[dst]) = val;
+        vm_state->register_types[dst] = TYPE_FLOAT;
+    } else if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[src_vec]);
+        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        double val = vm_state->query_context->double_vectors[handle][idx];
+        vm_state->registers[dst] = reinterpret_cast<uint64_t&>(val);
+        vm_state->register_types[dst] = TYPE_DOUBLE;
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_VEC_SET: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst_vec = inst.dst_reg;
+    uint16_t val_reg = inst.payload & 0xFFFF;
+    uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst_vec);
+    VALIDATE_REG(val_reg);
+    VALIDATE_REG(idx_reg);
+
+    uint64_t idx = vm_state->registers[idx_reg];
+    if (vm_state->register_types[dst_vec] == TYPE_UINT64_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[dst_vec]);
+        if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        vm_state->query_context->node_vectors[handle][idx] = vm_state->registers[val_reg];
+    } else if (vm_state->register_types[dst_vec] == TYPE_FLOAT_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[dst_vec]);
+        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        float val = 0.0f;
+        if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
+        else val = static_cast<float>(vm_state->registers[val_reg]);
+        vm_state->query_context->float_vectors[handle][idx] = val;
+    } else if (vm_state->register_types[dst_vec] == TYPE_DOUBLE_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[dst_vec]);
+        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        double val = 0.0;
+        if (vm_state->register_types[val_reg] == TYPE_DOUBLE) val = reinterpret_cast<const double&>(vm_state->registers[val_reg]);
+        else if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
+        else val = static_cast<double>(vm_state->registers[val_reg]);
+        vm_state->query_context->double_vectors[handle][idx] = val;
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_VEC_SEQUENCE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+
+    if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+        int h_dst = acquire_node_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+    }
+
+    int handle = static_cast<int>(vm_state->registers[dst]);
+    size_t size = vm_state->query_context->max_nodes;
+    uint64_t* data = vm_state->query_context->node_vectors[handle].data();
+#if defined(_OPENMP)
+    #pragma omp parallel for schedule(static)
+#endif
+    for (size_t i = 0; i < size; ++i) {
+        data[i] = i;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CC_AFFOREST: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t rel = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+    if (!slot.offsets_ptr || !slot.targets_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+
+    if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+        int h_dst = acquire_node_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+    }
+
+    int handle = static_cast<int>(vm_state->registers[dst]);
+    auto& comp = vm_state->query_context->node_vectors[handle];
+    size_t N = vm_state->query_context->max_nodes;
+    comp.resize(N, 0);
+
+#if defined(_OPENMP)
+    #pragma omp parallel for schedule(static)
+#endif
+    for (size_t u = 0; u < N; ++u) {
+        comp[u] = u;
+    }
+
+    auto find_root_u64 = [](uint64_t u, std::vector<uint64_t>& comp_vec) -> uint64_t {
+        uint64_t curr = u;
+        while (curr != comp_vec[curr]) {
+            comp_vec[curr] = comp_vec[comp_vec[curr]];
+            curr = comp_vec[curr];
+        }
+        return curr;
+    };
+
+    for (size_t r = 0; r < 2; ++r) {
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static, 2048)
+#endif
+        for (size_t u = 0; u < N; ++u) {
+            if (u < slot.node_count) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end = slot.offsets_ptr[u + 1];
+                uint32_t deg = end - start;
+                if (r < deg) {
+                    uint32_t v = slot.targets_ptr[start + r];
+                    if (v < N) {
+                        uint64_t root_u = find_root_u64(u, comp);
+                        uint64_t root_v = find_root_u64(v, comp);
+                        if (root_u != root_v) {
+                            uint64_t high_root = std::min(root_u, root_v);
+                            uint64_t low_root = std::max(root_u, root_v);
+                            comp[low_root] = high_root;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    uint64_t giant_root = 0;
+    {
+        std::unordered_map<uint64_t, uint32_t> c_counts;
+        uint32_t max_count = 0;
+        uint32_t sample_n = std::min(static_cast<uint32_t>(N), 100000u);
+        for (uint32_t i = 0; i < sample_n; ++i) {
+            uint64_t u = (i * 9973ULL) % N;
+            uint64_t root = find_root_u64(u, comp);
+            uint32_t cnt = ++c_counts[root];
+            if (cnt > max_count) {
+                max_count = cnt;
+                giant_root = root;
+            }
+        }
+    }
+
+#if defined(_OPENMP)
+    #pragma omp parallel for schedule(dynamic, 2048)
+#endif
+    for (size_t u = 0; u < N; ++u) {
+        if (find_root_u64(u, comp) == giant_root) continue;
+
+        if (u < slot.node_count) {
+            uint32_t start = slot.offsets_ptr[u];
+            uint32_t end = slot.offsets_ptr[u + 1];
+            uint32_t deg = end - start;
+            for (uint32_t i = 0; i < deg; ++i) {
+                uint32_t v = slot.targets_ptr[start + i];
+                if (v < N) {
+                    uint64_t root_u = find_root_u64(u, comp);
+                    uint64_t root_v = find_root_u64(v, comp);
+                    if (root_u != root_v) {
+                        uint64_t high_root = std::min(root_u, root_v);
+                        uint64_t low_root = std::max(root_u, root_v);
+                        comp[low_root] = high_root;
+                        if (high_root == giant_root) break;
+                    }
+                }
+            }
+        }
+    }
+
+#if defined(_OPENMP)
+    #pragma omp parallel for schedule(static, 4096)
+#endif
+    for (size_t u = 0; u < N; ++u) {
+        comp[u] = find_root_u64(u, comp);
     }
 
     vm_state->pc++;
@@ -2943,6 +3216,229 @@ op_OUT_OF_BOUNDS:
 
                     vm_state->registers[dst] = h_dst;
                     vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_VEC_GET: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src_vec = inst.payload & 0xFFFF;
+                uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src_vec);
+                VALIDATE_REG(idx_reg);
+
+                uint64_t idx = vm_state->registers[idx_reg];
+                if (vm_state->register_types[src_vec] == TYPE_UINT64_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[src_vec]);
+                    if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    vm_state->registers[dst] = vm_state->query_context->node_vectors[handle][idx];
+                    vm_state->register_types[dst] = TYPE_INT64;
+                } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[src_vec]);
+                    if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    float val = vm_state->query_context->float_vectors[handle][idx];
+                    vm_state->registers[dst] = 0;
+                    reinterpret_cast<float&>(vm_state->registers[dst]) = val;
+                    vm_state->register_types[dst] = TYPE_FLOAT;
+                } else if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[src_vec]);
+                    if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    double val = vm_state->query_context->double_vectors[handle][idx];
+                    vm_state->registers[dst] = reinterpret_cast<uint64_t&>(val);
+                    vm_state->register_types[dst] = TYPE_DOUBLE;
+                } else {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_VEC_SET: {
+                uint16_t dst_vec = inst.dst_reg;
+                uint16_t val_reg = inst.payload & 0xFFFF;
+                uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst_vec);
+                VALIDATE_REG(val_reg);
+                VALIDATE_REG(idx_reg);
+
+                uint64_t idx = vm_state->registers[idx_reg];
+                if (vm_state->register_types[dst_vec] == TYPE_UINT64_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
+                    if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    vm_state->query_context->node_vectors[handle][idx] = vm_state->registers[val_reg];
+                } else if (vm_state->register_types[dst_vec] == TYPE_FLOAT_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
+                    if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    float val = 0.0f;
+                    if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
+                    else val = static_cast<float>(vm_state->registers[val_reg]);
+                    vm_state->query_context->float_vectors[handle][idx] = val;
+                } else if (vm_state->register_types[dst_vec] == TYPE_DOUBLE_VECTOR) {
+                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
+                    if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    double val = 0.0;
+                    if (vm_state->register_types[val_reg] == TYPE_DOUBLE) val = reinterpret_cast<const double&>(vm_state->registers[val_reg]);
+                    else if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
+                    else val = static_cast<double>(vm_state->registers[val_reg]);
+                    vm_state->query_context->double_vectors[handle][idx] = val;
+                } else {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_VEC_SEQUENCE: {
+                uint16_t dst = inst.dst_reg;
+                VALIDATE_REG(dst);
+
+                if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+                    int h_dst = acquire_node_vector(vm_state->query_context);
+                    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    vm_state->registers[dst] = h_dst;
+                    vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+                }
+
+                int handle = static_cast<int>(vm_state->registers[dst]);
+                size_t size = vm_state->query_context->max_nodes;
+                uint64_t* data = vm_state->query_context->node_vectors[handle].data();
+#if defined(_OPENMP)
+                #pragma omp parallel for schedule(static)
+#endif
+                for (size_t i = 0; i < size; ++i) {
+                    data[i] = i;
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_CC_AFFOREST: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t rel = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+                if (!slot.offsets_ptr || !slot.targets_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+
+                if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+                    int h_dst = acquire_node_vector(vm_state->query_context);
+                    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    vm_state->registers[dst] = h_dst;
+                    vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+                }
+
+                int handle = static_cast<int>(vm_state->registers[dst]);
+                auto& comp = vm_state->query_context->node_vectors[handle];
+                size_t N = vm_state->query_context->max_nodes;
+                comp.resize(N, 0);
+
+#if defined(_OPENMP)
+                #pragma omp parallel for schedule(static)
+#endif
+                for (size_t u = 0; u < N; ++u) {
+                    comp[u] = u;
+                }
+
+                auto find_root_u64 = [](uint64_t u, std::vector<uint64_t>& comp_vec) -> uint64_t {
+                    uint64_t curr = u;
+                    while (curr != comp_vec[curr]) {
+                        comp_vec[curr] = comp_vec[comp_vec[curr]];
+                        curr = comp_vec[curr];
+                    }
+                    return curr;
+                };
+
+                for (size_t r = 0; r < 2; ++r) {
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(static, 2048)
+#endif
+                    for (size_t u = 0; u < N; ++u) {
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end = slot.offsets_ptr[u + 1];
+                            uint32_t deg = end - start;
+                            if (r < deg) {
+                                uint32_t v = slot.targets_ptr[start + r];
+                                if (v < N) {
+                                    uint64_t root_u = find_root_u64(u, comp);
+                                    uint64_t root_v = find_root_u64(v, comp);
+                                    if (root_u != root_v) {
+                                        uint64_t high_root = std::min(root_u, root_v);
+                                        uint64_t low_root = std::max(root_u, root_v);
+                                        comp[low_root] = high_root;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                uint64_t giant_root = 0;
+                {
+                    std::unordered_map<uint64_t, uint32_t> c_counts;
+                    uint32_t max_count = 0;
+                    uint32_t sample_n = std::min(static_cast<uint32_t>(N), 100000u);
+                    for (uint32_t i = 0; i < sample_n; ++i) {
+                        uint64_t u = (i * 9973ULL) % N;
+                        uint64_t root = find_root_u64(u, comp);
+                        uint32_t cnt = ++c_counts[root];
+                        if (cnt > max_count) {
+                            max_count = cnt;
+                            giant_root = root;
+                        }
+                    }
+                }
+
+#if defined(_OPENMP)
+                #pragma omp parallel for schedule(dynamic, 2048)
+#endif
+                for (size_t u = 0; u < N; ++u) {
+                    if (find_root_u64(u, comp) == giant_root) continue;
+
+                    if (u < slot.node_count) {
+                        uint32_t start = slot.offsets_ptr[u];
+                        uint32_t end = slot.offsets_ptr[u + 1];
+                        uint32_t deg = end - start;
+                        for (uint32_t i = 0; i < deg; ++i) {
+                            uint32_t v = slot.targets_ptr[start + i];
+                            if (v < N) {
+                                uint64_t root_u = find_root_u64(u, comp);
+                                uint64_t root_v = find_root_u64(v, comp);
+                                if (root_u != root_v) {
+                                    uint64_t high_root = std::min(root_u, root_v);
+                                    uint64_t low_root = std::max(root_u, root_v);
+                                    comp[low_root] = high_root;
+                                    if (high_root == giant_root) break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+#if defined(_OPENMP)
+                #pragma omp parallel for schedule(static, 4096)
+#endif
+                for (size_t u = 0; u < N; ++u) {
+                    comp[u] = find_root_u64(u, comp);
                 }
 
                 vm_state->pc++;
