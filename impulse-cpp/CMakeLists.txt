@@ -15,7 +15,7 @@ if(IMPULSE_SANITIZE)
 endif()
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
-add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_simd.cpp)
+add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_simd.cpp src/impulse_vm.cpp)
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -23,7 +23,7 @@ target_include_directories(impulse_graph PUBLIC
 )
 
 # --- Static Library (.a / .lib) ------------------------------------------
-add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_simd.cpp)
+add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_simd.cpp src/impulse_vm.cpp)
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -34,7 +34,7 @@ install(TARGETS impulse_graph impulse_graph_static
     EXPORT ImpulseGraphTargets
     DESTINATION lib
 )
-install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h
+install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h include/impulse_vm.h
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets
@@ -58,4 +58,8 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(simd_test tests/simd_test.cpp)
     target_link_libraries(simd_test PRIVATE impulse_graph_static)
     add_test(NAME simd_test COMMAND simd_test)
+
+    add_executable(vm_test tests/vm_test.cpp)
+    target_link_libraries(vm_test PRIVATE impulse_graph_static)
+    add_test(NAME vm_test COMMAND vm_test)
 endif()

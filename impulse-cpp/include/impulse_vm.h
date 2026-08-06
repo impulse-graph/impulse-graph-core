@@ -1,0 +1,139 @@
+#ifndef IMPULSE_VM_H
+#define IMPULSE_VM_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Little-Endian VM Magic: 'I' 'M' 'P' 'B' (0x494D5042)
+#define IMPULSE_VM_MAGIC 0x494D5042
+
+// Status Flags Bitmasks (FLAGS Register)
+#define IMPULSE_VM_FLAG_ZF (1ULL << 0) // Zero Flag: set if candidate set or arithmetic result is empty / 0
+#define IMPULSE_VM_FLAG_LT (1ULL << 1) // Less Than Flag: set if src1 < src2
+#define IMPULSE_VM_FLAG_GT (1ULL << 2) // Greater Than Flag: set if src1 > src2
+#define IMPULSE_VM_FLAG_EQ (1ULL << 3) // Equal Flag: set if src1 == src2
+#define IMPULSE_VM_FLAG_ST (1ULL << 4) // Stable Flag: set by repeat checks when set generation converged
+
+// Opcode Modifier Flags (FLAGS field in instruction)
+#define IMPULSE_VM_OP_FLAG_MODE_BITSET 0x01
+#define IMPULSE_VM_OP_FLAG_ACCUMULATE  0x02
+#define IMPULSE_VM_OP_FLAG_INVERT      0x04
+#define IMPULSE_VM_OP_FLAG_OFFHEAP     0x08
+
+// Opcodes Definitions
+#define OP_NOP                      0x00
+#define OP_INIT_INPUT_NODE          0x01
+#define OP_INIT_INPUT_SET           0x02
+#define OP_LOAD_CONST_INT           0x03
+#define OP_MAP_KEYS_TO_DENSE        0x04
+#define OP_LOAD_CONST_FLOAT         0x05
+#define OP_LOAD_CONST_STR_PREFIX    0x06
+
+#define OP_CSR_WALK                 0x10
+#define OP_CSR_WALK_FILTERED        0x11
+#define OP_CSR_DEGREE               0x12
+#define OP_CSR_WALK_PREDICATE       0x13
+#define OP_NODE_FILTER              0x14
+#define OP_NODE_FILTER_STR_PREFIX   0x15
+#define OP_CSR_WALK_REDUCE_SUM      0x16
+#define OP_CSR_WALK_REDUCE          0x17
+
+#define OP_SET_UNION                0x30
+#define OP_SET_INTERSECT            0x31
+#define OP_SET_DIFFERENCE           0x32
+#define OP_SET_CARDINALITY          0x33
+#define OP_VECTOR_MUL_ATTR          0x34
+#define OP_VECTOR_REDUCE_SUM        0x35
+#define OP_VECTOR_DIV               0x36
+#define OP_VECTOR_STR_CONCAT        0x37
+
+#define OP_JMP                      0x50
+#define OP_JZ                       0x51
+#define OP_JNZ                      0x52
+#define OP_LOOP_DECR                0x53
+#define OP_STABLE_CHECK             0x54
+#define OP_CALL                     0x55
+#define OP_RET                      0x56
+
+#define OP_MOV                      0x70
+#define OP_CLEAR_REG                0x71
+
+#define OP_COLLECT_BITSET           0x90
+#define OP_COLLECT_ARRAY            0x91
+#define OP_MAP_DENSE_TO_KEYS        0x92
+#define OP_COLLECT_VALUE_MAP        0x93
+#define OP_HALT                     0xFF
+
+// Register Type Tags
+typedef enum {
+    TYPE_NULL = 0x00,
+    TYPE_INT64 = 0x01,
+    TYPE_NODE_ID = 0x02,
+    TYPE_RELATION_ID = 0x03,
+    TYPE_BITSET_HANDLE = 0x04,
+    TYPE_NODE_VECTOR = 0x05,
+    TYPE_CSR_SPAN = 0x06,
+    TYPE_BOOLEAN = 0x07,
+    TYPE_FLOAT = 0x08,
+    TYPE_DOUBLE = 0x09,
+    TYPE_VALUE_MAP = 0x0A,
+    TYPE_STRING_VECTOR = 0x0B
+} impulse_register_type_t;
+
+// VM Execution result status
+typedef enum {
+    IMPULSE_VM_OK = 0,
+    IMPULSE_VM_ERR_INVALID_OPCODE = 1,
+    IMPULSE_VM_ERR_OUT_OF_BOUNDS = 2,
+    IMPULSE_VM_ERR_NULL_SNAPSHOT = 3,
+    IMPULSE_VM_ERR_STACK_OVERFLOW = 4,
+    IMPULSE_VM_ERR_STACK_UNDERFLOW = 5,
+    IMPULSE_VM_ERR_INVALID_REGISTER = 6
+} impulse_vm_status_t;
+
+// Fixed 64-bit Instruction Encoding
+typedef struct alignas(8) {
+    uint8_t  opcode;    // 0x00
+    uint8_t  flags;     // 0x01
+    uint16_t dst_reg;   // 0x02..0x03
+    uint32_t payload;   // 0x04..0x07 (src_reg, rel_id, offset, etc.)
+} impulse_instruction_t;
+
+// Forward declaration of snapshot and execution context
+typedef struct impulse_snapshot impulse_snapshot_t;
+typedef struct impulse_vm_context impulse_vm_context_t;
+
+// VM State execution frame - aligned to 64 bytes and sized to exactly 640 bytes
+// to match the Java FFM MemorySegment representation
+typedef struct alignas(64) {
+    uint32_t pc;                                  // Offset 0
+    uint32_t reserved;                            // Offset 4 (Alignment padding)
+    uint64_t flags;                               // Offset 8 (ZF, LT, GT, EQ, ST flags)
+    uint64_t registers[64];                       // Offset 16..527
+    uint8_t  register_types[64];                  // Offset 528..591 (impulse_register_type_t values)
+    impulse_vm_context_t* query_context;          // Offset 592..599
+    uint8_t  reserved_padding[40];                // Offset 600..639 (Pads struct to exactly 640 bytes)
+} impulse_vm_state_t;
+
+// Public Context lifecycle APIs
+impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
+void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
+
+// Public VM execution API
+impulse_vm_status_t impulse_vm_execute(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count,
+    impulse_vm_state_t* vm_state,
+    uint64_t input_param
+);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // IMPULSE_VM_H
