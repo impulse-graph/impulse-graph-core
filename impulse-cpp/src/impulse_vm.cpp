@@ -718,9 +718,6 @@ op_SET_UNION: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(static)
-#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] |= bs_src.words[i];
         }
@@ -770,9 +767,6 @@ op_SET_INTERSECT: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(static)
-#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] &= bs_src.words[i];
         }
@@ -829,9 +823,6 @@ op_SET_DIFFERENCE: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(static)
-#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] &= ~bs_src.words[i];
         }
@@ -870,9 +861,6 @@ op_SET_CARDINALITY: {
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int handle = static_cast<int>(vm_state->registers[src]);
         const auto& bs = vm_state->query_context->bitsets[handle];
-#if defined(_OPENMP)
-        #pragma omp parallel for reduction(+:count) schedule(static)
-#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             count += std::popcount(bs.words[i]);
         }
@@ -2141,9 +2129,6 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-                    #pragma omp parallel for schedule(static)
-#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] |= bs_src.words[i];
                     }
@@ -2189,9 +2174,6 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-                    #pragma omp parallel for schedule(static)
-#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] &= bs_src.words[i];
                     }
@@ -2244,9 +2226,6 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int h_src = static_cast<int>(vm_state->registers[src]);
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-                    #pragma omp parallel for schedule(static)
-#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         bs_dst.words[i] &= ~bs_src.words[i];
                     }
@@ -2282,9 +2261,6 @@ op_OUT_OF_BOUNDS:
                 if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                     int handle = static_cast<int>(vm_state->registers[src]);
                     const auto& bs = vm_state->query_context->bitsets[handle];
-#if defined(_OPENMP)
-                    #pragma omp parallel for reduction(+:count) schedule(static)
-#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         count += std::popcount(bs.words[i]);
                     }
