@@ -68,6 +68,7 @@ extern "C" {
 
 #define OP_MOV                      0x70
 #define OP_CLEAR_REG                0x71
+#define OP_CMP                      0x72
 
 #define OP_COLLECT_BITSET           0x90
 #define OP_COLLECT_ARRAY            0x91
