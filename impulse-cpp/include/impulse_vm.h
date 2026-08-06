@@ -123,6 +123,7 @@ typedef struct alignas(64) {
 // Public Context lifecycle APIs
 impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
 void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
+size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
 
 // Public VM execution API
 impulse_vm_status_t impulse_vm_execute(

@@ -249,15 +249,74 @@ void test_vm_state_layout_size() {
     std::cout << "[VM Test] VmState Memory Layout Alignment: PASSED" << std::endl;
 }
 
+void test_bitset_operations() {
+    // Create query context (defaults to 1024 * 1024 max nodes -> 16384 words of 64-bit)
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    
+    // Initialize a mock bitset with nodes 5, 10, 100 set
+    std::vector<uint64_t> input_set(16384, 0);
+    input_set[5 / 64] |= (1ULL << (5 % 64));
+    input_set[10 / 64] |= (1ULL << (10 % 64));
+    input_set[100 / 64] |= (1ULL << (100 % 64));
+
+    // Program:
+    // 0: INIT_INPUT_SET R4, input_param (R4 = {5, 10, 100})
+    // 1: CLEAR_REG R5
+    // 2: LOAD_CONST_INT R10, 500
+    // 3: SET_UNION R5, R10              (R5 = {500})
+    // 4: LOAD_CONST_INT R11, 10
+    // 5: SET_UNION R5, R11              (R5 = {10, 500})
+    // 6: SET_INTERSECT R4, R5           (R4 = R4 & R5 -> {10})
+    // 7: SET_CARDINALITY R7, R4         (R7 = 1)
+    // 8: COLLECT_ARRAY R63, R4          (R63 = array data, type = TYPE_NODE_VECTOR)
+    // 9: HALT
+    std::vector<impulse_instruction_t> bytecode = {
+        { OP_INIT_INPUT_SET, 0, 4, 0 },
+        { OP_CLEAR_REG, 0, 5, 0 },
+        { OP_LOAD_CONST_INT, 0, 10, 500 },
+        { OP_SET_UNION, 0, 5, 10 },
+        { OP_LOAD_CONST_INT, 0, 11, 10 },
+        { OP_SET_UNION, 0, 5, 11 },
+        { OP_SET_INTERSECT, 0, 4, 5 },
+        { OP_SET_CARDINALITY, 0, 7, 4 },
+        { OP_COLLECT_ARRAY, 0, 63, 4 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    impulse_vm_status_t status = impulse_vm_execute(
+        bytecode.data(), bytecode.size(), &state, reinterpret_cast<uint64_t>(input_set.data())
+    );
+
+    assert(status == IMPULSE_VM_OK);
+    assert(state.registers[7] == 1); // Cardinality is 1
+    assert(state.register_types[7] == TYPE_INT64);
+    assert(state.register_types[63] == TYPE_NODE_VECTOR);
+
+    // Retrieve contiguous array
+    const uint64_t* results = reinterpret_cast<const uint64_t*>(state.registers[63]);
+    assert(results != nullptr);
+    // There should be exactly 1 element in node_buffer: 10
+    assert(impulse_vm_context_get_vector_size(ctx) == 1);
+    assert(results[0] == 10);
+
+    // Clean up
+    impulse_vm_context_destroy(ctx);
+    std::cout << "[VM Test] BitSet & Set Operations (Phase 2): PASSED" << std::endl;
+}
+
 int main() {
-    std::cout << "--- Impulse C++ VM Unit Test Suite (Phase 1) ---" << std::endl;
+    std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
     test_basic_nop_halt();
     test_scalar_load_and_mov();
     test_init_input_node();
     test_jmp_jz_jnz();
     test_loop_decr();
+    test_bitset_operations();
     test_error_handling();
-    std::cout << "All Phase 1 VM tests passed successfully!" << std::endl;
+    std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
 }

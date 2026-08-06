@@ -1219,4 +1219,36 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     return IMPULSE_OK;
 }
 
+uint64_t impulse_snapshot_max_node_count(const impulse_snapshot_t* snapshot) {
+    if (!snapshot) return 0;
+    uint64_t max_nodes = 0;
+    for (const auto& d : snapshot->domains) {
+        if (d.node_count > max_nodes) max_nodes = d.node_count;
+    }
+    for (const auto& r : snapshot->relations) {
+        if (r.node_count > max_nodes) max_nodes = r.node_count;
+    }
+    return max_nodes;
+}
+
+impulse_status_t impulse_snapshot_get_relation_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t** out_offsets,
+    const uint32_t** out_targets,
+    uint64_t* out_node_count,
+    uint64_t* out_edge_count
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_offsets || !out_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    *out_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
+    *out_targets = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+    if (out_node_count) *out_node_count = rel.node_count;
+    if (out_edge_count) *out_edge_count = rel.edge_count;
+    return IMPULSE_OK;
+}
+
 } // extern "C"

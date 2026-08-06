@@ -180,6 +180,17 @@ IMPULSE_API impulse_status_t impulse_snapshot_sample_neighbors(
     size_t* out_count
 );
 
+// VM Access Helpers
+IMPULSE_API uint64_t impulse_snapshot_max_node_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t** out_offsets,
+    const uint32_t** out_targets,
+    uint64_t* out_node_count,
+    uint64_t* out_edge_count
+);
+
 // Architecture-Independent SIMD API
 IMPULSE_API const char* impulse_simd_get_target_name(void);
 IMPULSE_API float impulse_simd_dot_product_f32(const float* a, const float* b, size_t len);
