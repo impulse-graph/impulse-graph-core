@@ -193,6 +193,19 @@ inline void bitset_add(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
     }
 }
 
+inline void bitset_add_atomic(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
+    if (node_id < max_nodes) {
+        size_t word_idx = node_id / 64;
+        size_t bit_idx = node_id % 64;
+        uint64_t mask = (1ULL << bit_idx);
+#if defined(_OPENMP)
+        __sync_or_and_fetch(&bs.words[word_idx], mask);
+#else
+        bs.words[word_idx] |= mask;
+#endif
+    }
+}
+
 inline bool bitset_test(const VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
     if (node_id < max_nodes) {
         size_t word_idx = node_id / 64;
@@ -914,6 +927,9 @@ op_CSR_WALK: {
     if (slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(dynamic, 1024)
+#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w = bs_src.words[i];
                 if (w == 0) continue;
@@ -924,7 +940,7 @@ op_CSR_WALK: {
                             uint32_t start = slot.offsets_ptr[u];
                             uint32_t end   = slot.offsets_ptr[u + 1];
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                bitset_add_atomic(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                             }
                         }
                     }
@@ -1005,6 +1021,9 @@ op_CSC_WALK: {
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
 
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(dynamic, 1024)
+#endif
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             uint64_t w_unv = bs_unv.words[i];
             if (w_unv == 0) continue;
@@ -2280,6 +2299,9 @@ op_OUT_OF_BOUNDS:
                 if (slot.offsets_ptr && slot.targets_ptr) {
                     if (src_is_bitset) {
                         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+#if defined(_OPENMP)
+                        #pragma omp parallel for schedule(dynamic, 1024)
+#endif
                         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                             uint64_t w = bs_src.words[i];
                             if (w == 0) continue;
@@ -2290,7 +2312,7 @@ op_OUT_OF_BOUNDS:
                                         uint32_t start = slot.offsets_ptr[u];
                                         uint32_t end   = slot.offsets_ptr[u + 1];
                                         for (uint32_t idx = start; idx < end; ++idx) {
-                                            bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                            bitset_add_atomic(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                                         }
                                     }
                                 }
@@ -2369,6 +2391,9 @@ op_OUT_OF_BOUNDS:
                     const auto& bs_src = vm_state->query_context->bitsets[h_src];
                     const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
 
+#if defined(_OPENMP)
+                    #pragma omp parallel for schedule(dynamic, 1024)
+#endif
                     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                         uint64_t w_unv = bs_unv.words[i];
                         if (w_unv == 0) continue;
@@ -3274,6 +3299,31 @@ void impulse_vm_context_mock_csc(
         ctx->slots[relation_index].csc_offsets_ptr = csc_offsets;
         ctx->slots[relation_index].csc_targets_ptr = csc_targets;
     }
+}
+
+void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count) {
+    if (ctx && handle < ctx->bitsets.size()) {
+        auto& bs = ctx->bitsets[handle];
+        bs.clear();
+        size_t full_words = count / 64;
+        for (size_t i = 0; i < full_words; ++i) {
+            bs.words[i] = ~0ULL;
+        }
+        size_t rem = count % 64;
+        if (rem > 0) {
+            bs.words[full_words] = (1ULL << rem) - 1;
+        }
+    }
+}
+
+uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx) {
+    if (ctx && handle < ctx->bitsets.size()) {
+        const auto& bs = ctx->bitsets[handle];
+        if (word_idx < bs.word_count) {
+            return bs.words[word_idx];
+        }
+    }
+    return 0;
 }
 
 } // extern "C"
