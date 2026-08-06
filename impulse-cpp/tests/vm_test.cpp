@@ -884,6 +884,161 @@ void test_csc_walk() {
     std::cout << "[VM Test] CSC Bottom-Up Walk (OP_CSC_WALK): PASSED" << std::endl;
 }
 
+void test_graphblas_opcodes() {
+    const char* filename = "__vm_test_graphblas_snapshot.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 3 nodes, 2 edges: 0->1, 1->2
+    const uint32_t offsets[] = { 0, 1, 2, 2 };
+    const uint32_t targets[] = { 1, 2 };
+
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 3, 2, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, sizeof(targets));
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    // Open snapshot and context
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // Mock CSC: 0<-none, 1<-0, 2<-1
+    const uint32_t csc_offsets[] = { 0, 0, 1, 2 };
+    const uint32_t csc_targets[] = { 0, 1 };
+    impulse_vm_context_mock_csc(ctx, 0, csc_offsets, csc_targets);
+
+    // --- PROGRAM 1: OP_MXV (Plus-Times) and OP_REDUCE ---
+    // Initialize input float vector R1 = [1.0f, 2.0f, 3.0f]
+    int h_v1 = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_v1, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, h_v1, 1, 2.0f);
+    impulse_vm_context_float_vector_set(ctx, h_v1, 2, 3.0f);
+
+    std::vector<impulse_instruction_t> bytecode1 = {
+        { OP_MXV, 0, 2, 1 | (0 << 8) | (SEMIRING_PLUS_TIMES << 16) },
+        { OP_REDUCE, 0, 3, 2 | (BINARY_OP_ADD << 16) },
+        { OP_REDUCE, 0, 4, 2 | (BINARY_OP_MAX << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+    state1.registers[1] = h_v1;
+    state1.register_types[1] = TYPE_FLOAT_VECTOR;
+
+    impulse_vm_status_t status1 = impulse_vm_execute(
+        bytecode1.data(), bytecode1.size(), &state1, 0
+    );
+    assert(status1 == IMPULSE_VM_OK);
+
+    // Assert that dst vector R2 is a float vector with [2.0f, 3.0f, 0.0f]
+    int h_v2 = static_cast<int>(state1.registers[2]);
+    assert(state1.register_types[2] == TYPE_FLOAT_VECTOR);
+    const float* v2_data = impulse_vm_context_get_float_vector(ctx, h_v2);
+    assert(v2_data[0] == 2.0f);
+    assert(v2_data[1] == 3.0f);
+    assert(v2_data[2] == 0.0f);
+
+    // Assert reduction sum (R3) is 5.0f
+    assert(state1.register_types[3] == TYPE_FLOAT);
+    float sum_val = reinterpret_cast<float&>(state1.registers[3]);
+    assert(sum_val == 5.0f);
+
+    // Assert reduction max (R4) is 3.0f
+    assert(state1.register_types[4] == TYPE_FLOAT);
+    float max_val = reinterpret_cast<float&>(state1.registers[4]);
+    assert(max_val == 3.0f);
+
+    impulse_vm_context_release_float_vector(ctx, h_v2);
+
+    // --- PROGRAM 2: OP_VXM (Plus-Times) ---
+    // Multiply transpose of adjacency matrix by v1.
+    // Expecting: [0.0f, 1.0f, 2.0f]
+    std::vector<impulse_instruction_t> bytecode2 = {
+        { OP_VXM, 0, 2, 1 | (0 << 8) | (SEMIRING_PLUS_TIMES << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+    state2.registers[1] = h_v1;
+    state2.register_types[1] = TYPE_FLOAT_VECTOR;
+
+    impulse_vm_status_t status2 = impulse_vm_execute(
+        bytecode2.data(), bytecode2.size(), &state2, 0
+    );
+    assert(status2 == IMPULSE_VM_OK);
+
+    int h_v2_vxm = static_cast<int>(state2.registers[2]);
+    const float* vxm_data = impulse_vm_context_get_float_vector(ctx, h_v2_vxm);
+    assert(vxm_data[0] == 0.0f);
+    assert(vxm_data[1] == 1.0f);
+    assert(vxm_data[2] == 2.0f);
+
+    impulse_vm_context_release_float_vector(ctx, h_v1);
+
+    // --- PROGRAM 3: OP_EWISE_ADD and OP_EWISE_MULT ---
+    // Initialize input float vector R5 = [2.0f, 2.0f, 2.0f]
+    int h_v5 = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_v5, 0, 2.0f);
+    impulse_vm_context_float_vector_set(ctx, h_v5, 1, 2.0f);
+    impulse_vm_context_float_vector_set(ctx, h_v5, 2, 2.0f);
+
+    std::vector<impulse_instruction_t> bytecode3 = {
+        { OP_EWISE_ADD, 0, 6, 2 | (5 << 8) | (BINARY_OP_ADD << 16) },
+        { OP_EWISE_MULT, 0, 7, 2 | (5 << 8) | (BINARY_OP_MUL << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+    state3.registers[2] = h_v2_vxm;
+    state3.register_types[2] = TYPE_FLOAT_VECTOR;
+    state3.registers[5] = h_v5;
+    state3.register_types[5] = TYPE_FLOAT_VECTOR;
+
+    impulse_vm_status_t status3 = impulse_vm_execute(
+        bytecode3.data(), bytecode3.size(), &state3, 0
+    );
+    assert(status3 == IMPULSE_VM_OK);
+
+    int h_v6 = static_cast<int>(state3.registers[6]);
+    const float* v6_data = impulse_vm_context_get_float_vector(ctx, h_v6);
+    assert(v6_data[0] == 2.0f);
+    assert(v6_data[1] == 3.0f);
+    assert(v6_data[2] == 4.0f);
+
+    int h_v7 = static_cast<int>(state3.registers[7]);
+    const float* v7_data = impulse_vm_context_get_float_vector(ctx, h_v7);
+    assert(v7_data[0] == 0.0f);
+    assert(v7_data[1] == 2.0f);
+    assert(v7_data[2] == 4.0f);
+
+    // Clean up
+    impulse_vm_context_release_float_vector(ctx, h_v2_vxm);
+    impulse_vm_context_release_float_vector(ctx, h_v5);
+    impulse_vm_context_release_float_vector(ctx, h_v6);
+    impulse_vm_context_release_float_vector(ctx, h_v7);
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] GraphBLAS Opcodes (OP_MXV, OP_VXM, OP_EWISE, OP_REDUCE): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -897,6 +1052,7 @@ int main() {
     test_attribute_filtering_and_math();
     test_subroutines_and_key_resolutions();
     test_csc_walk();
+    test_graphblas_opcodes();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;

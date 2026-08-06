@@ -52,11 +52,12 @@ extern "C" {
 #define OP_VECTOR_REDUCE_SUM        0x35
 #define OP_VECTOR_DIV               0x36
 #define OP_VECTOR_STR_CONCAT        0x37
-#define OP_VEC_GET                  0x38
-#define OP_VEC_SET                  0x39
-#define OP_VEC_SEQUENCE             0x3A
-#define OP_CSR_GET_NBR              0x3B
 #define OP_CC_AFFOREST              0x40
+#define OP_MXV                      0x41
+#define OP_VXM                      0x42
+#define OP_EWISE_ADD                0x43
+#define OP_EWISE_MULT               0x44
+#define OP_REDUCE                   0x45
 
 #define OP_JMP                      0x50
 #define OP_JZ                       0x51
@@ -68,9 +69,20 @@ extern "C" {
 
 #define OP_MOV                      0x70
 #define OP_CLEAR_REG                0x71
-#define OP_CMP                      0x72
-#define OP_ADD                      0x73
-#define OP_SUB                      0x74
+
+// GraphBLAS Semiring IDs
+#define SEMIRING_PLUS_TIMES         0
+#define SEMIRING_MIN_PLUS           1
+#define SEMIRING_MAX_MIN            2
+#define SEMIRING_BOOL               3
+
+// GraphBLAS Binary / Monoid Operator IDs
+#define BINARY_OP_ADD               0
+#define BINARY_OP_MUL               1
+#define BINARY_OP_MIN               2
+#define BINARY_OP_MAX               3
+#define BINARY_OP_AND               4
+#define BINARY_OP_OR                5
 
 #define OP_COLLECT_BITSET           0x90
 #define OP_COLLECT_ARRAY            0x91

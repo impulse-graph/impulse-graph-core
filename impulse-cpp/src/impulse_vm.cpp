@@ -575,9 +575,6 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_LOOP_DECR] = &&op_LOOP_DECR,
         [OP_MOV] = &&op_MOV,
         [OP_CLEAR_REG] = &&op_CLEAR_REG,
-        [OP_CMP] = &&op_CMP,
-        [OP_ADD] = &&op_ADD,
-        [OP_SUB] = &&op_SUB,
         [OP_SET_UNION] = &&op_SET_UNION,
         [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
         [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
@@ -593,11 +590,12 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR,
         [OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM,
         [OP_VECTOR_DIV] = &&op_VECTOR_DIV,
-        [OP_VEC_GET] = &&op_VEC_GET,
-        [OP_VEC_SET] = &&op_VEC_SET,
-        [OP_VEC_SEQUENCE] = &&op_VEC_SEQUENCE,
-        [OP_CSR_GET_NBR] = &&op_CSR_GET_NBR,
         [OP_CC_AFFOREST] = &&op_CC_AFFOREST,
+        [OP_MXV] = &&op_MXV,
+        [OP_VXM] = &&op_VXM,
+        [OP_EWISE_ADD] = &&op_EWISE_ADD,
+        [OP_EWISE_MULT] = &&op_EWISE_MULT,
+        [OP_REDUCE] = &&op_REDUCE,
         [OP_CALL] = &&op_CALL,
         [OP_RET] = &&op_RET,
         [OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE,
@@ -758,55 +756,6 @@ op_CLEAR_REG: {
     VALIDATE_REG(dst);
     vm_state->registers[dst] = 0;
     vm_state->register_types[dst] = TYPE_NULL;
-    vm_state->pc++;
-    DISPATCH();
-}
-
-op_CMP: {
-    const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-
-    if (vm_state->registers[dst] == vm_state->registers[src]) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
-
-    vm_state->pc++;
-    DISPATCH();
-}
-
-op_ADD: {
-    const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-    vm_state->registers[dst] += vm_state->registers[src];
-    if (vm_state->registers[dst] == 0) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
-    vm_state->pc++;
-    DISPATCH();
-}
-
-op_SUB: {
-    const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-    vm_state->registers[dst] -= vm_state->registers[src];
-    if (vm_state->registers[dst] == 0) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
     vm_state->pc++;
     DISPATCH();
 }
@@ -1598,111 +1547,412 @@ op_VECTOR_DIV: {
     DISPATCH();
 }
 
-op_VEC_GET: {
+op_MXV: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src_vec = inst.payload & 0xFFFF;
-    uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+    int mask_reg_idx = inst.flags > 0 ? (inst.flags - 1) : -1;
+    uint16_t src_vec = inst.payload & 0xFF;
+    uint16_t rel = (inst.payload >> 8) & 0xFF;
+    uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
-    VALIDATE_REG(idx_reg);
 
-    uint64_t idx = vm_state->registers[idx_reg];
-    if (vm_state->register_types[src_vec] == TYPE_UINT64_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+    if (!slot.offsets_ptr || !slot.targets_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+
+    size_t N = vm_state->query_context->max_nodes;
+    bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
+
+    if (is_double) {
+        if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+            int h_dst = acquire_double_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
-        vm_state->registers[dst] = vm_state->query_context->node_vectors[handle][idx];
-        vm_state->register_types[dst] = TYPE_INT64;
-    } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+        const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (mask_reg_idx >= 0) {
+                size_t mask_handle = vm_state->registers[mask_reg_idx];
+                if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                    dst_data[u] = 0.0;
+                    continue;
+                }
+            }
+
+            if (u < slot.node_count) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end = slot.offsets_ptr[u + 1];
+                if (semiring_id == SEMIRING_PLUS_TIMES) {
+                    double sum = 0.0;
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.targets_ptr[i];
+                        if (v < N) sum += src_data[v];
+                    }
+                    dst_data[u] = sum;
+                } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                    double min_val = std::numeric_limits<double>::infinity();
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.targets_ptr[i];
+                        if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
+                    }
+                    dst_data[u] = min_val;
+                } else {
+                    dst_data[u] = 0.0;
+                }
+            } else {
+                dst_data[u] = 0.0;
+            }
         }
-        float val = vm_state->query_context->float_vectors[handle][idx];
-        vm_state->registers[dst] = 0;
-        reinterpret_cast<float&>(vm_state->registers[dst]) = val;
-        vm_state->register_types[dst] = TYPE_FLOAT;
-    } else if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
-        double val = vm_state->query_context->double_vectors[handle][idx];
-        vm_state->registers[dst] = reinterpret_cast<uint64_t&>(val);
-        vm_state->register_types[dst] = TYPE_DOUBLE;
     } else {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
+        if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+            int h_dst = acquire_float_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        }
+        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+        const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (mask_reg_idx >= 0) {
+                size_t mask_handle = vm_state->registers[mask_reg_idx];
+                if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                    dst_data[u] = 0.0f;
+                    continue;
+                }
+            }
+
+            if (u < slot.node_count) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end = slot.offsets_ptr[u + 1];
+                if (semiring_id == SEMIRING_PLUS_TIMES) {
+                    float sum = 0.0f;
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.targets_ptr[i];
+                        if (v < N) sum += src_data[v];
+                    }
+                    dst_data[u] = sum;
+                } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                    float min_val = std::numeric_limits<float>::infinity();
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.targets_ptr[i];
+                        if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
+                    }
+                    dst_data[u] = min_val;
+                } else {
+                    dst_data[u] = 0.0f;
+                }
+            } else {
+                dst_data[u] = 0.0f;
+            }
+        }
     }
 
     vm_state->pc++;
     DISPATCH();
 }
 
-op_VEC_SET: {
-    const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst_vec = inst.dst_reg;
-    uint16_t val_reg = inst.payload & 0xFFFF;
-    uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
-    VALIDATE_REG(dst_vec);
-    VALIDATE_REG(val_reg);
-    VALIDATE_REG(idx_reg);
-
-    uint64_t idx = vm_state->registers[idx_reg];
-    if (vm_state->register_types[dst_vec] == TYPE_UINT64_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[dst_vec]);
-        if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
-        vm_state->query_context->node_vectors[handle][idx] = vm_state->registers[val_reg];
-    } else if (vm_state->register_types[dst_vec] == TYPE_FLOAT_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[dst_vec]);
-        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
-        float val = 0.0f;
-        if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
-        else val = static_cast<float>(vm_state->registers[val_reg]);
-        vm_state->query_context->float_vectors[handle][idx] = val;
-    } else if (vm_state->register_types[dst_vec] == TYPE_DOUBLE_VECTOR) {
-        int handle = static_cast<int>(vm_state->registers[dst_vec]);
-        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
-        double val = 0.0;
-        if (vm_state->register_types[val_reg] == TYPE_DOUBLE) val = reinterpret_cast<const double&>(vm_state->registers[val_reg]);
-        else if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
-        else val = static_cast<double>(vm_state->registers[val_reg]);
-        vm_state->query_context->double_vectors[handle][idx] = val;
-    } else {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
-
-    vm_state->pc++;
-    DISPATCH();
-}
-
-op_VEC_SEQUENCE: {
+op_VXM: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
+    int mask_reg_idx = inst.flags > 0 ? (inst.flags - 1) : -1;
+    uint16_t src_vec = inst.payload & 0xFF;
+    uint16_t rel = (inst.payload >> 8) & 0xFF;
+    uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
+    VALIDATE_REG(src_vec);
 
-    if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
-        int h_dst = acquire_node_vector(vm_state->query_context);
-        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
-    int handle = static_cast<int>(vm_state->registers[dst]);
-    size_t size = vm_state->query_context->max_nodes;
-    uint64_t* data = vm_state->query_context->node_vectors[handle].data();
-#if defined(_OPENMP)
-    #pragma omp parallel for schedule(static)
-#endif
-    for (size_t i = 0; i < size; ++i) {
-        data[i] = i;
+    size_t N = vm_state->query_context->max_nodes;
+    bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
+
+    if (is_double) {
+        if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+            int h_dst = acquire_double_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        }
+        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+        const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (mask_reg_idx >= 0) {
+                size_t mask_handle = vm_state->registers[mask_reg_idx];
+                if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                    dst_data[u] = 0.0;
+                    continue;
+                }
+            }
+
+            if (u < slot.node_count) {
+                uint32_t start = slot.csc_offsets_ptr[u];
+                uint32_t end = slot.csc_offsets_ptr[u + 1];
+                if (semiring_id == SEMIRING_PLUS_TIMES) {
+                    double sum = 0.0;
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.csc_targets_ptr[i];
+                        if (v < N) sum += src_data[v];
+                    }
+                    dst_data[u] = sum;
+                } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                    double min_val = std::numeric_limits<double>::infinity();
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.csc_targets_ptr[i];
+                        if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
+                    }
+                    dst_data[u] = min_val;
+                } else {
+                    dst_data[u] = 0.0;
+                }
+            } else {
+                dst_data[u] = 0.0;
+            }
+        }
+    } else {
+        if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+            int h_dst = acquire_float_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        }
+        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+        const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (mask_reg_idx >= 0) {
+                size_t mask_handle = vm_state->registers[mask_reg_idx];
+                if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                    dst_data[u] = 0.0f;
+                    continue;
+                }
+            }
+
+            if (u < slot.node_count) {
+                uint32_t start = slot.csc_offsets_ptr[u];
+                uint32_t end = slot.csc_offsets_ptr[u + 1];
+                if (semiring_id == SEMIRING_PLUS_TIMES) {
+                    float sum = 0.0f;
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.csc_targets_ptr[i];
+                        if (v < N) sum += src_data[v];
+                    }
+                    dst_data[u] = sum;
+                } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                    float min_val = std::numeric_limits<float>::infinity();
+                    for (uint32_t i = start; i < end; ++i) {
+                        uint32_t v = slot.csc_targets_ptr[i];
+                        if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
+                    }
+                    dst_data[u] = min_val;
+                } else {
+                    dst_data[u] = 0.0f;
+                }
+            } else {
+                dst_data[u] = 0.0f;
+            }
+        }
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_EWISE_ADD: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    size_t N = vm_state->query_context->max_nodes;
+    bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+
+    if (is_double) {
+        if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+            int h_dst = acquire_double_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        }
+        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+        const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
+        const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            if (op_id == BINARY_OP_ADD) dst_data[i] = s1_data[i] + s2_data[i];
+            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+            else dst_data[i] = s1_data[i] + s2_data[i];
+        }
+    } else {
+        if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+            int h_dst = acquire_float_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        }
+        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+        const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
+        const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            if (op_id == BINARY_OP_ADD) dst_data[i] = s1_data[i] + s2_data[i];
+            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+            else dst_data[i] = s1_data[i] + s2_data[i];
+        }
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_EWISE_MULT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    size_t N = vm_state->query_context->max_nodes;
+    bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+
+    if (is_double) {
+        if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+            int h_dst = acquire_double_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        }
+        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+        const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
+        const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            if (op_id == BINARY_OP_MUL) dst_data[i] = s1_data[i] * s2_data[i];
+            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+            else dst_data[i] = s1_data[i] * s2_data[i];
+        }
+    } else {
+        if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+            int h_dst = acquire_float_vector(vm_state->query_context);
+            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = h_dst;
+            vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        }
+        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+        const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
+        const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            if (op_id == BINARY_OP_MUL) dst_data[i] = s1_data[i] * s2_data[i];
+            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+            else dst_data[i] = s1_data[i] * s2_data[i];
+        }
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_REDUCE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src_vec = inst.payload & 0xFF;
+    uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src_vec);
+
+    size_t N = vm_state->query_context->max_nodes;
+    if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[src_vec]);
+        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const double* vec = vm_state->query_context->double_vectors[handle].data();
+        double res = 0.0;
+        if (op_id == BINARY_OP_ADD) {
+            #pragma omp parallel for reduction(+:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res += vec[i];
+            }
+        } else if (op_id == BINARY_OP_MIN) {
+            res = std::numeric_limits<double>::infinity();
+            #pragma omp parallel for reduction(min:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res = std::min(res, vec[i]);
+            }
+        } else if (op_id == BINARY_OP_MAX) {
+            res = -std::numeric_limits<double>::infinity();
+            #pragma omp parallel for reduction(max:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res = std::max(res, vec[i]);
+            }
+        }
+        vm_state->registers[dst] = reinterpret_cast<uint64_t&>(res);
+        vm_state->register_types[dst] = TYPE_DOUBLE;
+    } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[src_vec]);
+        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const float* vec = vm_state->query_context->float_vectors[handle].data();
+        float res = 0.0f;
+        if (op_id == BINARY_OP_ADD) {
+            #pragma omp parallel for reduction(+:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res += vec[i];
+            }
+        } else if (op_id == BINARY_OP_MIN) {
+            res = std::numeric_limits<float>::infinity();
+            #pragma omp parallel for reduction(min:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res = std::min(res, vec[i]);
+            }
+        } else if (op_id == BINARY_OP_MAX) {
+            res = -std::numeric_limits<float>::infinity();
+            #pragma omp parallel for reduction(max:res) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                res = std::max(res, vec[i]);
+            }
+        }
+        vm_state->registers[dst] = 0;
+        reinterpret_cast<float&>(vm_state->registers[dst]) = res;
+        vm_state->register_types[dst] = TYPE_FLOAT;
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
 
     vm_state->pc++;
@@ -1824,39 +2074,6 @@ op_CC_AFFOREST: {
     for (size_t u = 0; u < N; ++u) {
         comp[u] = find_root_u64(u, comp);
     }
-
-    vm_state->pc++;
-    DISPATCH();
-}
-
-op_CSR_GET_NBR: {
-    const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t node_reg = inst.payload & 0xFFFF;
-    uint32_t payload_hi = (inst.payload >> 16) & 0xFFFF;
-    uint16_t idx_reg = payload_hi & 0xFF;
-    uint16_t rel = (payload_hi >> 8) & 0xFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(node_reg);
-    VALIDATE_REG(idx_reg);
-
-    uint64_t node = vm_state->registers[node_reg];
-    uint64_t idx = vm_state->registers[idx_reg];
-    if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.offsets_ptr || !slot.targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-
-    if (node >= slot.node_count) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
-    uint32_t start = slot.offsets_ptr[node];
-    uint32_t end = slot.offsets_ptr[node + 1];
-    uint32_t deg = end - start;
-    if (idx >= deg) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
-    vm_state->registers[dst] = slot.targets_ptr[start + idx];
-    vm_state->register_types[dst] = TYPE_NODE_ID;
 
     vm_state->pc++;
     DISPATCH();
@@ -2447,49 +2664,6 @@ op_OUT_OF_BOUNDS:
                 VALIDATE_REG(dst);
                 vm_state->registers[dst] = 0;
                 vm_state->register_types[dst] = TYPE_NULL;
-                vm_state->pc++;
-                break;
-            }
-            case OP_CMP: {
-                uint16_t dst = inst.dst_reg;
-                uint16_t src = inst.payload & 0xFFFF;
-                VALIDATE_REG(dst);
-                VALIDATE_REG(src);
-
-                if (vm_state->registers[dst] == vm_state->registers[src]) {
-                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-                } else {
-                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-                }
-
-                vm_state->pc++;
-                break;
-            }
-            case OP_ADD: {
-                uint16_t dst = inst.dst_reg;
-                uint16_t src = inst.payload & 0xFFFF;
-                VALIDATE_REG(dst);
-                VALIDATE_REG(src);
-                vm_state->registers[dst] += vm_state->registers[src];
-                if (vm_state->registers[dst] == 0) {
-                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-                } else {
-                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-                }
-                vm_state->pc++;
-                break;
-            }
-            case OP_SUB: {
-                uint16_t dst = inst.dst_reg;
-                uint16_t src = inst.payload & 0xFFFF;
-                VALIDATE_REG(dst);
-                VALIDATE_REG(src);
-                vm_state->registers[dst] -= vm_state->registers[src];
-                if (vm_state->registers[dst] == 0) {
-                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-                } else {
-                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-                }
                 vm_state->pc++;
                 break;
             }
@@ -3350,138 +3524,404 @@ op_OUT_OF_BOUNDS:
                 vm_state->pc++;
                 break;
             }
-            case OP_VEC_GET: {
+            case OP_MXV: {
                 uint16_t dst = inst.dst_reg;
-                uint16_t src_vec = inst.payload & 0xFFFF;
-                uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+                int mask_reg_idx = inst.flags > 0 ? (inst.flags - 1) : -1;
+                uint16_t src_vec = inst.payload & 0xFF;
+                uint16_t rel = (inst.payload >> 8) & 0xFF;
+                uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
                 VALIDATE_REG(dst);
                 VALIDATE_REG(src_vec);
-                VALIDATE_REG(idx_reg);
 
-                uint64_t idx = vm_state->registers[idx_reg];
-                if (vm_state->register_types[src_vec] == TYPE_UINT64_VECTOR) {
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+                if (!slot.offsets_ptr || !slot.targets_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+
+                size_t N = vm_state->query_context->max_nodes;
+                bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
+
+                if (is_double) {
+                    if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+                        int h_dst = acquire_double_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+                    }
+                    double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+                    const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t u = 0; u < N; ++u) {
+                        if (mask_reg_idx >= 0) {
+                            size_t mask_handle = vm_state->registers[mask_reg_idx];
+                            if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                                dst_data[u] = 0.0;
+                                continue;
+                            }
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end = slot.offsets_ptr[u + 1];
+                            if (semiring_id == SEMIRING_PLUS_TIMES) {
+                                double sum = 0.0;
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.targets_ptr[i];
+                                    if (v < N) sum += src_data[v];
+                                }
+                                dst_data[u] = sum;
+                            } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                                double min_val = std::numeric_limits<double>::infinity();
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.targets_ptr[i];
+                                    if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
+                                }
+                                dst_data[u] = min_val;
+                            } else {
+                                dst_data[u] = 0.0;
+                            }
+                        } else {
+                            dst_data[u] = 0.0;
+                        }
+                    }
+                } else {
+                    if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+                        int h_dst = acquire_float_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                    }
+                    float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+                    const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t u = 0; u < N; ++u) {
+                        if (mask_reg_idx >= 0) {
+                            size_t mask_handle = vm_state->registers[mask_reg_idx];
+                            if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                                dst_data[u] = 0.0f;
+                                continue;
+                            }
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end = slot.offsets_ptr[u + 1];
+                            if (semiring_id == SEMIRING_PLUS_TIMES) {
+                                float sum = 0.0f;
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.targets_ptr[i];
+                                    if (v < N) sum += src_data[v];
+                                }
+                                dst_data[u] = sum;
+                            } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                                float min_val = std::numeric_limits<float>::infinity();
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.targets_ptr[i];
+                                    if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
+                                }
+                                dst_data[u] = min_val;
+                            } else {
+                                dst_data[u] = 0.0f;
+                            }
+                        } else {
+                            dst_data[u] = 0.0f;
+                        }
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_VXM: {
+                uint16_t dst = inst.dst_reg;
+                int mask_reg_idx = inst.flags > 0 ? (inst.flags - 1) : -1;
+                uint16_t src_vec = inst.payload & 0xFF;
+                uint16_t rel = (inst.payload >> 8) & 0xFF;
+                uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src_vec);
+
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+                if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+
+                size_t N = vm_state->query_context->max_nodes;
+                bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
+
+                if (is_double) {
+                    if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+                        int h_dst = acquire_double_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+                    }
+                    double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+                    const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t u = 0; u < N; ++u) {
+                        if (mask_reg_idx >= 0) {
+                            size_t mask_handle = vm_state->registers[mask_reg_idx];
+                            if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                                dst_data[u] = 0.0;
+                                continue;
+                            }
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.csc_offsets_ptr[u];
+                            uint32_t end = slot.csc_offsets_ptr[u + 1];
+                            if (semiring_id == SEMIRING_PLUS_TIMES) {
+                                double sum = 0.0;
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.csc_targets_ptr[i];
+                                    if (v < N) sum += src_data[v];
+                                }
+                                dst_data[u] = sum;
+                            } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                                double min_val = std::numeric_limits<double>::infinity();
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.csc_targets_ptr[i];
+                                    if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
+                                }
+                                dst_data[u] = min_val;
+                            } else {
+                                dst_data[u] = 0.0;
+                            }
+                        } else {
+                            dst_data[u] = 0.0;
+                        }
+                    }
+                } else {
+                    if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+                        int h_dst = acquire_float_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                    }
+                    float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+                    const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t u = 0; u < N; ++u) {
+                        if (mask_reg_idx >= 0) {
+                            size_t mask_handle = vm_state->registers[mask_reg_idx];
+                            if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
+                                dst_data[u] = 0.0f;
+                                continue;
+                            }
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.csc_offsets_ptr[u];
+                            uint32_t end = slot.csc_offsets_ptr[u + 1];
+                            if (semiring_id == SEMIRING_PLUS_TIMES) {
+                                float sum = 0.0f;
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.csc_targets_ptr[i];
+                                    if (v < N) sum += src_data[v];
+                                }
+                                dst_data[u] = sum;
+                            } else if (semiring_id == SEMIRING_MIN_PLUS) {
+                                float min_val = std::numeric_limits<float>::infinity();
+                                for (uint32_t i = start; i < end; ++i) {
+                                    uint32_t v = slot.csc_targets_ptr[i];
+                                    if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
+                                }
+                                dst_data[u] = min_val;
+                            } else {
+                                dst_data[u] = 0.0f;
+                            }
+                        } else {
+                            dst_data[u] = 0.0f;
+                        }
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_EWISE_ADD: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src1 = inst.payload & 0xFF;
+                uint16_t src2 = (inst.payload >> 8) & 0xFF;
+                uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src1);
+                VALIDATE_REG(src2);
+
+                size_t N = vm_state->query_context->max_nodes;
+                bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+
+                if (is_double) {
+                    if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+                        int h_dst = acquire_double_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+                    }
+                    double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+                    const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
+                    const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t i = 0; i < N; ++i) {
+                        if (op_id == BINARY_OP_ADD) dst_data[i] = s1_data[i] + s2_data[i];
+                        else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+                        else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+                        else dst_data[i] = s1_data[i] + s2_data[i];
+                    }
+                } else {
+                    if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+                        int h_dst = acquire_float_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                    }
+                    float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+                    const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
+                    const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t i = 0; i < N; ++i) {
+                        if (op_id == BINARY_OP_ADD) dst_data[i] = s1_data[i] + s2_data[i];
+                        else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+                        else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+                        else dst_data[i] = s1_data[i] + s2_data[i];
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_EWISE_MULT: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src1 = inst.payload & 0xFF;
+                uint16_t src2 = (inst.payload >> 8) & 0xFF;
+                uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src1);
+                VALIDATE_REG(src2);
+
+                size_t N = vm_state->query_context->max_nodes;
+                bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+
+                if (is_double) {
+                    if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+                        int h_dst = acquire_double_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+                    }
+                    double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+                    const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
+                    const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t i = 0; i < N; ++i) {
+                        if (op_id == BINARY_OP_MUL) dst_data[i] = s1_data[i] * s2_data[i];
+                        else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+                        else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+                        else dst_data[i] = s1_data[i] * s2_data[i];
+                    }
+                } else {
+                    if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+                        int h_dst = acquire_float_vector(vm_state->query_context);
+                        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                        vm_state->registers[dst] = h_dst;
+                        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                    }
+                    float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+                    const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
+                    const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+
+                    #pragma omp parallel for schedule(static)
+                    for (size_t i = 0; i < N; ++i) {
+                        if (op_id == BINARY_OP_MUL) dst_data[i] = s1_data[i] * s2_data[i];
+                        else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
+                        else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
+                        else dst_data[i] = s1_data[i] * s2_data[i];
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_REDUCE: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src_vec = inst.payload & 0xFF;
+                uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src_vec);
+
+                size_t N = vm_state->query_context->max_nodes;
+                if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
                     int handle = static_cast<int>(vm_state->registers[src_vec]);
-                    if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                    if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle]) {
                         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                     }
-                    vm_state->registers[dst] = vm_state->query_context->node_vectors[handle][idx];
-                    vm_state->register_types[dst] = TYPE_INT64;
+                    const double* vec = vm_state->query_context->double_vectors[handle].data();
+                    double res = 0.0;
+                    if (op_id == BINARY_OP_ADD) {
+                        #pragma omp parallel for reduction(+:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res += vec[i];
+                        }
+                    } else if (op_id == BINARY_OP_MIN) {
+                        res = std::numeric_limits<double>::infinity();
+                        #pragma omp parallel for reduction(min:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res = std::min(res, vec[i]);
+                        }
+                    } else if (op_id == BINARY_OP_MAX) {
+                        res = -std::numeric_limits<double>::infinity();
+                        #pragma omp parallel for reduction(max:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res = std::max(res, vec[i]);
+                        }
+                    }
+                    vm_state->registers[dst] = reinterpret_cast<uint64_t&>(res);
+                    vm_state->register_types[dst] = TYPE_DOUBLE;
                 } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
                     int handle = static_cast<int>(vm_state->registers[src_vec]);
-                    if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
+                    if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle]) {
                         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                     }
-                    float val = vm_state->query_context->float_vectors[handle][idx];
+                    const float* vec = vm_state->query_context->float_vectors[handle].data();
+                    float res = 0.0f;
+                    if (op_id == BINARY_OP_ADD) {
+                        #pragma omp parallel for reduction(+:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res += vec[i];
+                        }
+                    } else if (op_id == BINARY_OP_MIN) {
+                        res = std::numeric_limits<float>::infinity();
+                        #pragma omp parallel for reduction(min:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res = std::min(res, vec[i]);
+                        }
+                    } else if (op_id == BINARY_OP_MAX) {
+                        res = -std::numeric_limits<float>::infinity();
+                        #pragma omp parallel for reduction(max:res) schedule(static)
+                        for (size_t i = 0; i < N; ++i) {
+                            res = std::max(res, vec[i]);
+                        }
+                    }
                     vm_state->registers[dst] = 0;
-                    reinterpret_cast<float&>(vm_state->registers[dst]) = val;
+                    reinterpret_cast<float&>(vm_state->registers[dst]) = res;
                     vm_state->register_types[dst] = TYPE_FLOAT;
-                } else if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
-                    int handle = static_cast<int>(vm_state->registers[src_vec]);
-                    if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                    }
-                    double val = vm_state->query_context->double_vectors[handle][idx];
-                    vm_state->registers[dst] = reinterpret_cast<uint64_t&>(val);
-                    vm_state->register_types[dst] = TYPE_DOUBLE;
                 } else {
                     return IMPULSE_VM_ERR_INVALID_REGISTER;
                 }
-
-                vm_state->pc++;
-                break;
-            }
-            case OP_VEC_SET: {
-                uint16_t dst_vec = inst.dst_reg;
-                uint16_t val_reg = inst.payload & 0xFFFF;
-                uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
-                VALIDATE_REG(dst_vec);
-                VALIDATE_REG(val_reg);
-                VALIDATE_REG(idx_reg);
-
-                uint64_t idx = vm_state->registers[idx_reg];
-                if (vm_state->register_types[dst_vec] == TYPE_UINT64_VECTOR) {
-                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
-                    if (handle >= 4 || !vm_state->query_context->node_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                    }
-                    vm_state->query_context->node_vectors[handle][idx] = vm_state->registers[val_reg];
-                } else if (vm_state->register_types[dst_vec] == TYPE_FLOAT_VECTOR) {
-                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
-                    if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                    }
-                    float val = 0.0f;
-                    if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
-                    else val = static_cast<float>(vm_state->registers[val_reg]);
-                    vm_state->query_context->float_vectors[handle][idx] = val;
-                } else if (vm_state->register_types[dst_vec] == TYPE_DOUBLE_VECTOR) {
-                    int handle = static_cast<int>(vm_state->registers[dst_vec]);
-                    if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle] || idx >= vm_state->query_context->max_nodes) {
-                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                    }
-                    double val = 0.0;
-                    if (vm_state->register_types[val_reg] == TYPE_DOUBLE) val = reinterpret_cast<const double&>(vm_state->registers[val_reg]);
-                    else if (vm_state->register_types[val_reg] == TYPE_FLOAT) val = reinterpret_cast<const float&>(vm_state->registers[val_reg]);
-                    else val = static_cast<double>(vm_state->registers[val_reg]);
-                    vm_state->query_context->double_vectors[handle][idx] = val;
-                } else {
-                    return IMPULSE_VM_ERR_INVALID_REGISTER;
-                }
-
-                vm_state->pc++;
-                break;
-            }
-            case OP_VEC_SEQUENCE: {
-                uint16_t dst = inst.dst_reg;
-                VALIDATE_REG(dst);
-
-                if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
-                    int h_dst = acquire_node_vector(vm_state->query_context);
-                    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                    vm_state->registers[dst] = h_dst;
-                    vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
-                }
-
-                int handle = static_cast<int>(vm_state->registers[dst]);
-                size_t size = vm_state->query_context->max_nodes;
-                uint64_t* data = vm_state->query_context->node_vectors[handle].data();
-#if defined(_OPENMP)
-                #pragma omp parallel for schedule(static)
-#endif
-                for (size_t i = 0; i < size; ++i) {
-                    data[i] = i;
-                }
-
-                vm_state->pc++;
-                break;
-            }
-            case OP_CSR_GET_NBR: {
-                uint16_t dst = inst.dst_reg;
-                uint16_t node_reg = inst.payload & 0xFFFF;
-                uint32_t payload_hi = (inst.payload >> 16) & 0xFFFF;
-                uint16_t idx_reg = payload_hi & 0xFF;
-                uint16_t rel = (payload_hi >> 8) & 0xFF;
-                VALIDATE_REG(dst);
-                VALIDATE_REG(node_reg);
-                VALIDATE_REG(idx_reg);
-
-                uint64_t node = vm_state->registers[node_reg];
-                uint64_t idx = vm_state->registers[idx_reg];
-                if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                const auto& slot = vm_state->query_context->slots[rel];
-                if (!slot.offsets_ptr || !slot.targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-
-                if (node >= slot.node_count) {
-                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                }
-                uint32_t start = slot.offsets_ptr[node];
-                uint32_t end = slot.offsets_ptr[node + 1];
-                uint32_t deg = end - start;
-                if (idx >= deg) {
-                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                }
-                vm_state->registers[dst] = slot.targets_ptr[start + idx];
-                vm_state->register_types[dst] = TYPE_NODE_ID;
 
                 vm_state->pc++;
                 break;
