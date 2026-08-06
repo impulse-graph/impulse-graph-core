@@ -471,6 +471,190 @@ void test_rbac_traversal() {
     std::cout << "[VM Test] 3-Tier RBAC Traversal & Stable Check (Phase 3): PASSED" << std::endl;
 }
 
+void test_attribute_filtering_and_math() {
+    const char* filename = "__vm_test_attr_math.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 5 nodes, 5 edges (triangle + self/extra edges)
+    // Relation 0 (edges): Node 0->1, 1->2, 2->0, 3->4, 4->3
+    const uint32_t offsets[] = { 0, 1, 2, 3, 4, 5 };
+    const uint32_t targets[] = { 1, 2, 0, 4, 3 };
+
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 5, 5, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, sizeof(targets));
+    assert(st == IMPULSE_OK);
+
+    // Add age attribute (INT32, dimension 1)
+    const int32_t ages[] = { 10, 20, 30, 20, 50 };
+    st = impulse_writer_add_attribute(writer, 0, "age", 0x03, 1, ages, sizeof(ages), nullptr, 0);
+    assert(st == IMPULSE_OK);
+
+    // Add name attribute (fixed-width string, dimension 4)
+    const char names[] = "ALIC" "BOB\0" "ALAN" "CHAR" "ALEX";
+    st = impulse_writer_add_attribute(writer, 0, "name", 0x0B, 4, names, sizeof(names) - 1, nullptr, 0);
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    if (st != IMPULSE_OK) {
+        std::cerr << "[FINALIZE ERROR] " << impulse_get_last_error() << std::endl;
+    }
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    // Open snapshot and context
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    assert(snap != nullptr);
+    assert(st == IMPULSE_OK);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // --- Part 1: OP_NODE_FILTER (age == 20) ---
+    // Register 1: Source bitset (containing {0, 1, 2, 3, 4})
+    // Register 2: Comparison value (20)
+    // Register 3: Destination bitset
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+
+    // Load nodes 0..4 into bitset R1
+    int h_src = impulse_vm_context_acquire_bitset(ctx);
+    assert(h_src >= 0);
+    for (uint64_t i = 0; i < 5; ++i) {
+        impulse_vm_context_bitset_add(ctx, h_src, i);
+    }
+    state1.registers[1] = h_src;
+    state1.register_types[1] = TYPE_BITSET_HANDLE;
+    state1.registers[2] = 20;
+    state1.register_types[2] = TYPE_INT64;
+
+    // opcode: OP_NODE_FILTER, dst=3, payload: src=1, val_reg=2, attr_id=0, rel_id=0
+    std::vector<impulse_instruction_t> bytecode1 = {
+        { OP_NODE_FILTER, 0, 3, 1 | (2 << 8) | (0 << 16) | (0 << 24) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_status_t status1 = impulse_vm_execute(
+        bytecode1.data(), bytecode1.size(), &state1, 0
+    );
+    assert(status1 == IMPULSE_VM_OK);
+    assert(state1.register_types[3] == TYPE_BITSET_HANDLE);
+
+    int h_dst = static_cast<int>(state1.registers[3]);
+    // Expect nodes 1 and 3 to be matched (ages[1]=20, ages[3]=20)
+    assert(impulse_vm_context_bitset_test(ctx, h_dst, 1));
+    assert(impulse_vm_context_bitset_test(ctx, h_dst, 3));
+    assert(!impulse_vm_context_bitset_test(ctx, h_dst, 0));
+    assert(!impulse_vm_context_bitset_test(ctx, h_dst, 2));
+    assert(!impulse_vm_context_bitset_test(ctx, h_dst, 4));
+
+    // Release bitsets
+    impulse_vm_context_release_bitset(ctx, h_src);
+    impulse_vm_context_release_bitset(ctx, h_dst);
+
+    // --- Part 2: OP_NODE_FILTER_STR_PREFIX (name.startsWith("AL")) ---
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+
+    int h_src2 = impulse_vm_context_acquire_bitset(ctx);
+    for (uint64_t i = 0; i < 5; ++i) {
+        impulse_vm_context_bitset_add(ctx, h_src2, i);
+    }
+    state2.registers[1] = h_src2;
+    state2.register_types[1] = TYPE_BITSET_HANDLE;
+    state2.registers[2] = reinterpret_cast<uint64_t>("AL");
+    state2.register_types[2] = TYPE_INT64;
+
+    // opcode: OP_NODE_FILTER_STR_PREFIX, dst=3, payload: src=1, val_reg=2, attr_id=1, rel_id=0
+    std::vector<impulse_instruction_t> bytecode2 = {
+        { OP_NODE_FILTER_STR_PREFIX, 0, 3, 1 | (2 << 8) | (1 << 16) | (0 << 24) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_status_t status2 = impulse_vm_execute(
+        bytecode2.data(), bytecode2.size(), &state2, 0
+    );
+    assert(status2 == IMPULSE_VM_OK);
+    int h_dst2 = static_cast<int>(state2.registers[3]);
+    // Expect nodes 0 (ALIC), 2 (ALAN), 4 (ALEX) to match
+    assert(impulse_vm_context_bitset_test(ctx, h_dst2, 0));
+    assert(impulse_vm_context_bitset_test(ctx, h_dst2, 2));
+    assert(impulse_vm_context_bitset_test(ctx, h_dst2, 4));
+    assert(!impulse_vm_context_bitset_test(ctx, h_dst2, 1));
+    assert(!impulse_vm_context_bitset_test(ctx, h_dst2, 3));
+
+    impulse_vm_context_release_bitset(ctx, h_src2);
+    impulse_vm_context_release_bitset(ctx, h_dst2);
+
+    // --- Part 3: Vector Math & CSR Walk PageRank ---
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+
+    // Allocate input vector R5 (all 1.0f)
+    int h_v5 = impulse_vm_context_acquire_float_vector(ctx);
+    assert(h_v5 >= 0);
+    for (size_t i = 0; i < 5; ++i) {
+        impulse_vm_context_float_vector_set(ctx, h_v5, i, 1.0f);
+    }
+    state3.registers[5] = h_v5;
+    state3.register_types[5] = TYPE_FLOAT_VECTOR;
+
+    // Allocate denom vector R1 (all 1.0f)
+    int h_v1 = impulse_vm_context_acquire_float_vector(ctx);
+    assert(h_v1 >= 0);
+    for (size_t i = 0; i < 5; ++i) {
+        impulse_vm_context_float_vector_set(ctx, h_v1, i, 1.0f);
+    }
+    state3.registers[1] = h_v1;
+    state3.register_types[1] = TYPE_FLOAT_VECTOR;
+
+    float damping = 0.85f;
+    uint32_t damping_payload = reinterpret_cast<uint32_t&>(damping);
+
+    std::vector<impulse_instruction_t> bytecode3 = {
+        { OP_VECTOR_DIV, 0, 5, 5 | (1 << 16) },
+        { OP_CSR_WALK_REDUCE_SUM, 0, 6, 5 | (0xFF << 8) | (0 << 16) }, // attr_id=0xFF (no edge attribute weight)
+        { OP_VECTOR_MUL_ATTR, 0, 6, damping_payload },
+        { OP_VECTOR_REDUCE_SUM, 0, 7, 6 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_status_t status3 = impulse_vm_execute(
+        bytecode3.data(), bytecode3.size(), &state3, 0
+    );
+    assert(status3 == IMPULSE_VM_OK);
+
+    // Verify R6 values (nodes 0, 1, 2 should be 0.85f; nodes 3, 4 should be 0.85f)
+    int h_v6 = static_cast<int>(state3.registers[6]);
+    const float* res_v6 = impulse_vm_context_get_float_vector(ctx, h_v6);
+    assert(res_v6 != nullptr);
+    assert(std::abs(res_v6[0] - 0.85f) < 1e-5f);
+    assert(std::abs(res_v6[1] - 0.85f) < 1e-5f);
+    assert(std::abs(res_v6[2] - 0.85f) < 1e-5f);
+    assert(std::abs(res_v6[3] - 0.85f) < 1e-5f);
+    assert(std::abs(res_v6[4] - 0.85f) < 1e-5f);
+
+    // Verify R7 sum reduction (0.85 * 5 = 4.25f)
+    float sum_val = reinterpret_cast<float&>(state3.registers[7]);
+    assert(std::abs(sum_val - 4.25f) < 1e-5f);
+
+    // Clean up
+    impulse_vm_context_release_float_vector(ctx, h_v5);
+    impulse_vm_context_release_float_vector(ctx, h_v1);
+    impulse_vm_context_release_float_vector(ctx, h_v6);
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] Attribute Filtering & Math Opcodes (Phase 4): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -481,6 +665,7 @@ int main() {
     test_loop_decr();
     test_bitset_operations();
     test_rbac_traversal();
+    test_attribute_filtering_and_math();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;

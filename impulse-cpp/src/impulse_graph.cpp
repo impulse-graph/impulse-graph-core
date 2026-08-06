@@ -120,6 +120,7 @@ struct impulse_snapshot {
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
+    std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -412,6 +413,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
         uint16_t rel_count = snap->header.relation_count;
         snap->relations.reserve(rel_count);
+        snap->relation_attributes.resize(rel_count);
 
         for (uint16_t j = 0; j < rel_count; ++j) {
             if (cur + sizeof(impulse_relation_directory_entry_t) > file_size) {
@@ -424,11 +426,13 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             cur += sizeof(rel_entry);
 
             uint16_t attr_count = rel_entry.attr_count;
+            snap->relation_attributes[j].resize(attr_count);
             for (uint16_t a = 0; a < attr_count; ++a) {
                 if (cur + sizeof(impulse_attribute_descriptor_t) > file_size) {
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
                 }
+                std::memcpy(&snap->relation_attributes[j][a], raw + cur, sizeof(impulse_attribute_descriptor_t));
                 cur += sizeof(impulse_attribute_descriptor_t);
             }
 
@@ -1248,6 +1252,35 @@ impulse_status_t impulse_snapshot_get_relation_buffers(
     *out_targets = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
     if (out_node_count) *out_node_count = rel.node_count;
     if (out_edge_count) *out_edge_count = rel.edge_count;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_get_attribute_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    const void** out_data,
+    uint64_t* out_data_bytes,
+    const void** out_offsets,
+    uint64_t* out_offsets_bytes,
+    uint8_t* out_type_code,
+    uint32_t* out_dimension
+) {
+    if (!snapshot || relation_index >= snapshot->relation_attributes.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attrs = snapshot->relation_attributes[relation_index];
+    if (attribute_index >= attrs.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attr = attrs[attribute_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    if (out_data) *out_data = raw + attr.data_offset;
+    if (out_data_bytes) *out_data_bytes = attr.data_bytes;
+    if (out_offsets) *out_offsets = (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr;
+    if (out_offsets_bytes) *out_offsets_bytes = attr.offsets_bytes;
+    if (out_type_code) *out_type_code = attr.type_code;
+    if (out_dimension) *out_dimension = attr.dimension;
     return IMPULSE_OK;
 }
 

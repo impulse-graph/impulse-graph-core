@@ -82,7 +82,9 @@ typedef enum {
     TYPE_FLOAT = 0x08,
     TYPE_DOUBLE = 0x09,
     TYPE_VALUE_MAP = 0x0A,
-    TYPE_STRING_VECTOR = 0x0B
+    TYPE_STRING_VECTOR = 0x0B,
+    TYPE_FLOAT_VECTOR = 0x0C,
+    TYPE_DOUBLE_VECTOR = 0x0D
 } impulse_register_type_t;
 
 // VM Execution result status
@@ -124,6 +126,18 @@ typedef struct alignas(64) {
 impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
 void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
 size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
+const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
+const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
+int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle);
+void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
+bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
+int impulse_vm_context_acquire_float_vector(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t handle);
+void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val);
+int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
+void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
+void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
 
 // Public VM execution API
 impulse_vm_status_t impulse_vm_execute(

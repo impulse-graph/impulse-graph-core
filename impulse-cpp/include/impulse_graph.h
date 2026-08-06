@@ -190,6 +190,17 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_relation_buffers(
     uint64_t* out_node_count,
     uint64_t* out_edge_count
 );
+IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    const void** out_data,
+    uint64_t* out_data_bytes,
+    const void** out_offsets,
+    uint64_t* out_offsets_bytes,
+    uint8_t* out_type_code,
+    uint32_t* out_dimension
+);
 
 // Architecture-Independent SIMD API
 IMPULSE_API const char* impulse_simd_get_target_name(void);
