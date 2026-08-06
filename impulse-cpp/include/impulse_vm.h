@@ -55,6 +55,7 @@ extern "C" {
 #define OP_VEC_GET                  0x38
 #define OP_VEC_SET                  0x39
 #define OP_VEC_SEQUENCE             0x3A
+#define OP_CSR_GET_NBR              0x3B
 #define OP_CC_AFFOREST              0x40
 
 #define OP_JMP                      0x50

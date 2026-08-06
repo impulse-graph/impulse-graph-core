@@ -593,6 +593,7 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_VEC_GET] = &&op_VEC_GET,
         [OP_VEC_SET] = &&op_VEC_SET,
         [OP_VEC_SEQUENCE] = &&op_VEC_SEQUENCE,
+        [OP_CSR_GET_NBR] = &&op_CSR_GET_NBR,
         [OP_CC_AFFOREST] = &&op_CC_AFFOREST,
         [OP_CALL] = &&op_CALL,
         [OP_RET] = &&op_RET,
@@ -1771,6 +1772,39 @@ op_CC_AFFOREST: {
     for (size_t u = 0; u < N; ++u) {
         comp[u] = find_root_u64(u, comp);
     }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CSR_GET_NBR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t node_reg = inst.payload & 0xFFFF;
+    uint32_t payload_hi = (inst.payload >> 16) & 0xFFFF;
+    uint16_t idx_reg = payload_hi & 0xFF;
+    uint16_t rel = (payload_hi >> 8) & 0xFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(node_reg);
+    VALIDATE_REG(idx_reg);
+
+    uint64_t node = vm_state->registers[node_reg];
+    uint64_t idx = vm_state->registers[idx_reg];
+    if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    const auto& slot = vm_state->query_context->slots[rel];
+    if (!slot.offsets_ptr || !slot.targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+
+    if (node >= slot.node_count) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    uint32_t start = slot.offsets_ptr[node];
+    uint32_t end = slot.offsets_ptr[node + 1];
+    uint32_t deg = end - start;
+    if (idx >= deg) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    vm_state->registers[dst] = slot.targets_ptr[start + idx];
+    vm_state->register_types[dst] = TYPE_NODE_ID;
 
     vm_state->pc++;
     DISPATCH();
@@ -3322,6 +3356,37 @@ op_OUT_OF_BOUNDS:
                 for (size_t i = 0; i < size; ++i) {
                     data[i] = i;
                 }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_CSR_GET_NBR: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t node_reg = inst.payload & 0xFFFF;
+                uint32_t payload_hi = (inst.payload >> 16) & 0xFFFF;
+                uint16_t idx_reg = payload_hi & 0xFF;
+                uint16_t rel = (payload_hi >> 8) & 0xFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(node_reg);
+                VALIDATE_REG(idx_reg);
+
+                uint64_t node = vm_state->registers[node_reg];
+                uint64_t idx = vm_state->registers[idx_reg];
+                if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                const auto& slot = vm_state->query_context->slots[rel];
+                if (!slot.offsets_ptr || !slot.targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+
+                if (node >= slot.node_count) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                uint32_t start = slot.offsets_ptr[node];
+                uint32_t end = slot.offsets_ptr[node + 1];
+                uint32_t deg = end - start;
+                if (idx >= deg) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                vm_state->registers[dst] = slot.targets_ptr[start + idx];
+                vm_state->register_types[dst] = TYPE_NODE_ID;
 
                 vm_state->pc++;
                 break;
