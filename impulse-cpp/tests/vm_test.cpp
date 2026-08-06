@@ -808,6 +808,82 @@ void test_subroutines_and_key_resolutions() {
     std::cout << "[VM Test] Subroutines & Key Resolutions (Phase 5): PASSED" << std::endl;
 }
 
+void test_csc_walk() {
+    const char* filename = "__vm_test_csc.bin";
+    std::remove(filename);
+
+    impulse_writer_t* writer = impulse_writer_create(filename, 0);
+    assert(writer != nullptr);
+
+    impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_STRING, "nodes");
+    assert(st == IMPULSE_OK);
+
+    // 5 nodes, 0 edges (dummy graph)
+    const uint32_t offsets[] = { 0, 0, 0, 0, 0, 0 };
+    const uint32_t targets[] = { 0 };
+    st = impulse_writer_add_relation(writer, 0, 0, IMPULSE_ENC_RAW, 5, 0, 0,
+                                     offsets, sizeof(offsets),
+                                     targets, 0);
+    assert(st == IMPULSE_OK);
+
+    st = impulse_writer_finalize(writer);
+    assert(st == IMPULSE_OK);
+    impulse_writer_destroy(writer);
+
+    impulse_snapshot_t* snap = impulse_snapshot_open(filename, &st);
+    if (!snap) {
+        std::cerr << "test_csc_walk failed to open snapshot: status=" << st << " (" << impulse_get_last_error() << ")" << std::endl;
+    }
+    assert(snap != nullptr);
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // Mock relation slot 0 CSC buffers
+    // Target 0 has incoming edges from 1 and 2
+    uint32_t csc_offsets[] = { 0, 2, 2, 2, 2, 2 };
+    uint32_t csc_targets[] = { 1, 2 };
+    impulse_vm_context_mock_csc(ctx, 0, csc_offsets, csc_targets);
+
+    // Bytecode:
+    // R1 = current frontier (bitset containing node 1 and node 2)
+    // R2 = unvisited set (bitset containing node 0)
+    // R3 = next frontier (OP_CSC_WALK R3, R1 | (R2 << 16) | (0 << 24))
+    std::vector<impulse_instruction_t> bytecode = {
+        { OP_LOAD_CONST_INT, 0, 4, 1 }, // R4 = 1
+        { OP_LOAD_CONST_INT, 0, 5, 2 }, // R5 = 2
+        { OP_LOAD_CONST_INT, 0, 6, 0 }, // R6 = 0
+        { OP_SET_UNION, 0, 1, 4 },       // R1 = {1}
+        { OP_SET_UNION, 0, 1, 5 },       // R1 = {1, 2} (frontier)
+        { OP_SET_UNION, 0, 2, 6 },       // R2 = {0} (unvisited)
+        { OP_CSC_WALK, 0, 3, 1 | (2 << 16) | (0 << 24) }, // R3 = CSC walk from R1 on R2 (relation 0)
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    impulse_vm_status_t status = impulse_vm_execute(
+        bytecode.data(), bytecode.size(), &state, 0
+    );
+    assert(status == IMPULSE_VM_OK);
+
+    // Assert that R3 is indeed a bitset containing node 0!
+    int h_dst = static_cast<int>(state.registers[3]);
+    assert(state.register_types[3] == TYPE_BITSET_HANDLE);
+    assert(impulse_vm_context_bitset_test(ctx, h_dst, 0) == true);
+    assert(impulse_vm_context_bitset_test(ctx, h_dst, 1) == false);
+
+    impulse_vm_context_release_bitset(ctx, state.registers[1]);
+    impulse_vm_context_release_bitset(ctx, state.registers[2]);
+    impulse_vm_context_release_bitset(ctx, state.registers[3]);
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(filename);
+
+    std::cout << "[VM Test] CSC Bottom-Up Walk (OP_CSC_WALK): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -820,6 +896,7 @@ int main() {
     test_rbac_traversal();
     test_attribute_filtering_and_math();
     test_subroutines_and_key_resolutions();
+    test_csc_walk();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;

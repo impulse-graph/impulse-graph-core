@@ -190,6 +190,14 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_relation_buffers(
     uint64_t* out_node_count,
     uint64_t* out_edge_count
 );
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_csc_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t** out_csc_offsets,
+    const uint32_t** out_csc_targets,
+    uint64_t* out_csc_row_count,
+    uint64_t* out_csc_edge_count
+);
 IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_buffers(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,

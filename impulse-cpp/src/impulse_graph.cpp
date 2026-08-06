@@ -1302,4 +1302,32 @@ impulse_status_t impulse_snapshot_get_attribute_buffers(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_snapshot_get_relation_csc_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const uint32_t** out_csc_offsets,
+    const uint32_t** out_csc_targets,
+    uint64_t* out_csc_row_count,
+    uint64_t* out_csc_edge_count
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_csc_offsets || !out_csc_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    if (rel.csc_row_off_offset > 0) {
+        *out_csc_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csc_row_off_offset);
+    } else {
+        *out_csc_offsets = nullptr;
+    }
+    if (rel.csc_col_idx_offset > 0) {
+        *out_csc_targets = reinterpret_cast<const uint32_t*>(raw + rel.csc_col_idx_offset);
+    } else {
+        *out_csc_targets = nullptr;
+    }
+    if (out_csc_row_count) *out_csc_row_count = rel.node_count;
+    if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
+    return IMPULSE_OK;
+}
+
 } // extern "C"

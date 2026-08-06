@@ -42,6 +42,7 @@ extern "C" {
 #define OP_NODE_FILTER_STR_PREFIX   0x15
 #define OP_CSR_WALK_REDUCE_SUM      0x16
 #define OP_CSR_WALK_REDUCE          0x17
+#define OP_CSC_WALK                 0x18
 
 #define OP_SET_UNION                0x30
 #define OP_SET_INTERSECT            0x31
@@ -156,6 +157,13 @@ void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t hand
 size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
 const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+
+void impulse_vm_context_mock_csc(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const uint32_t* csc_offsets,
+    const uint32_t* csc_targets
+);
 
 // Public VM execution API
 impulse_vm_status_t impulse_vm_execute(
