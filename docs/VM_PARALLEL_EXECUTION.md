@@ -37,18 +37,27 @@ Add a thread count parameter to `impulse_vm_context_t` (which holds thread-local
 IMPULSE_API void impulse_vm_context_set_concurrency(impulse_vm_context_t* ctx, int thread_count);
 ```
 
-In the opcode loop handlers:
+To avoid the CPU-level hardware overhead of atomic instructions when executing single-threaded (where the compiler would still emit `lock or` instructions if the loop body uses atomics), a single branch check is evaluated **once per opcode** (outside the loop):
+
 ```cpp
-#if defined(_OPENMP)
+case OP_CSR_WALK: {
     int num_threads = vm_state->query_context->threads;
-    #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+    if (num_threads > 1) {
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
 #endif
-    for (size_t i = 0; i < words; ++i) {
-        // parallel or sequential work
+        for (size_t i = 0; i < words; ++i) {
+            // Loop body using bitset_add_atomic
+        }
+    } else {
+        for (size_t i = 0; i < words; ++i) {
+            // Loop body using standard, non-atomic bitset_add
+        }
     }
+}
 ```
-* **Pros:** Extremely clean. Leverages OpenMP's built-in `num_threads` parameter. Setting it to `1` automatically avoids thread spawning and synchronization overhead.
-* **Cons:** OpenMP runtime still checks the `num_threads` expression at runtime.
+* **Pros:** Extremely clean. Leverages OpenMP's built-in `num_threads` parameter. Evaluating the `if (num_threads > 1)` check once per opcode execution incurs zero runtime overhead, while completely bypassing the atomic synchronization hardware instructions when running in sequential/high-concurrency single-thread mode.
+* **Cons:** Duplicates the inner loop body in the source code (though compiler inlining minimizes maintenance cost).
 
 ---
 
