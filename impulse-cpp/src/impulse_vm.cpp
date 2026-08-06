@@ -576,6 +576,8 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_MOV] = &&op_MOV,
         [OP_CLEAR_REG] = &&op_CLEAR_REG,
         [OP_CMP] = &&op_CMP,
+        [OP_ADD] = &&op_ADD,
+        [OP_SUB] = &&op_SUB,
         [OP_SET_UNION] = &&op_SET_UNION,
         [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
         [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
@@ -773,6 +775,38 @@ op_CMP: {
         vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ADD: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+    vm_state->registers[dst] += vm_state->registers[src];
+    if (vm_state->registers[dst] == 0) {
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    } else {
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    }
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_SUB: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+    vm_state->registers[dst] -= vm_state->registers[src];
+    if (vm_state->registers[dst] == 0) {
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    } else {
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    }
     vm_state->pc++;
     DISPATCH();
 }
@@ -2428,6 +2462,34 @@ op_OUT_OF_BOUNDS:
                     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
                 }
 
+                vm_state->pc++;
+                break;
+            }
+            case OP_ADD: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+                vm_state->registers[dst] += vm_state->registers[src];
+                if (vm_state->registers[dst] == 0) {
+                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                } else {
+                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+                }
+                vm_state->pc++;
+                break;
+            }
+            case OP_SUB: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+                vm_state->registers[dst] -= vm_state->registers[src];
+                if (vm_state->registers[dst] == 0) {
+                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                } else {
+                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+                }
                 vm_state->pc++;
                 break;
             }
