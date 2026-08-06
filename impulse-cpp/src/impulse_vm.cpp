@@ -8,6 +8,10 @@
 #include <vector>
 #include <algorithm>
 
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
+
 #if defined(__clang__)
   #pragma clang diagnostic push
   #pragma clang diagnostic ignored "-Wgnu-label-as-value"
@@ -71,6 +75,11 @@ struct impulse_vm_context {
 
     std::array<VmBitSet, 16> bitsets;
     std::array<bool, 16> bitset_allocated;
+
+    // Thread-private workspace bitsets for parallel map/reduce walks
+    int max_threads;
+    uint64_t* private_arena_memory;
+    std::vector<VmBitSet> private_bitsets;
 
     // Pre-indexed relation slots for zero-lookup overhead
     std::vector<BoundRelationSlot> slots;
@@ -241,6 +250,21 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->bitset_allocated[i] = false;
     }
 
+    ctx->private_arena_memory = nullptr;
+#if defined(_OPENMP)
+    ctx->max_threads = omp_get_max_threads();
+#else
+    ctx->max_threads = 1;
+#endif
+    if (ctx->max_threads > 1) {
+        ctx->private_arena_memory = new uint64_t[ctx->max_threads * ctx->words_per_bitset]();
+        ctx->private_bitsets.resize(ctx->max_threads);
+        for (int i = 0; i < ctx->max_threads; ++i) {
+            ctx->private_bitsets[i].words = ctx->private_arena_memory + (i * ctx->words_per_bitset);
+            ctx->private_bitsets[i].word_count = ctx->words_per_bitset;
+        }
+    }
+
     // Pre-allocate float and double vector buffers
     for (size_t i = 0; i < 4; ++i) {
         ctx->float_vectors[i].resize(ctx->max_nodes, 0.0f);
@@ -312,6 +336,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
 
 void impulse_vm_context_destroy(impulse_vm_context_t* ctx) {
     if (ctx) {
+        delete[] ctx->private_arena_memory;
         delete[] ctx->arena_memory;
         delete ctx;
     }
@@ -927,17 +952,77 @@ op_CSR_WALK: {
     if (slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
+            size_t frontier_size = 0;
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-                uint64_t w = bs_src.words[i];
-                if (w == 0) continue;
-                for (int b = 0; b < 64; ++b) {
-                    if (w & (1ULL << b)) {
-                        uint64_t u = i * 64 + b;
-                        if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
-                            for (uint32_t idx = start; idx < end; ++idx) {
-                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                frontier_size += std::popcount(bs_src.words[i]);
+            }
+
+            bool use_parallel = (vm_state->query_context->max_threads > 1 && frontier_size > 15000);
+            if (use_parallel) {
+#if defined(_OPENMP)
+                int num_threads = vm_state->query_context->max_threads;
+                auto* ctx = vm_state->query_context;
+                size_t max_nodes = ctx->max_nodes;
+                size_t words = ctx->words_per_bitset;
+
+                #pragma omp parallel for schedule(static) num_threads(num_threads)
+                for (int t = 0; t < num_threads; ++t) {
+                    ctx->private_bitsets[t].clear();
+                }
+
+                #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+                for (size_t i = 0; i < words; ++i) {
+                    uint64_t w = bs_src.words[i];
+                    if (w == 0) continue;
+                    int tid = omp_get_thread_num();
+                    auto& private_bs = ctx->private_bitsets[tid];
+                    for (int b = 0; b < 64; ++b) {
+                        if (w & (1ULL << b)) {
+                            uint64_t u = i * 64 + b;
+                            if (u < slot.node_count) {
+                                uint32_t start = slot.offsets_ptr[u];
+                                uint32_t end   = slot.offsets_ptr[u + 1];
+                                for (uint32_t idx = start; idx < end; ++idx) {
+                                    bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (accum) {
+                    #pragma omp parallel for schedule(static) num_threads(num_threads)
+                    for (size_t i = 0; i < words; ++i) {
+                        uint64_t merged = bs_dst.words[i];
+                        for (int t = 0; t < num_threads; ++t) {
+                            merged |= ctx->private_bitsets[t].words[i];
+                        }
+                        bs_dst.words[i] = merged;
+                    }
+                } else {
+                    #pragma omp parallel for schedule(static) num_threads(num_threads)
+                    for (size_t i = 0; i < words; ++i) {
+                        uint64_t merged = 0;
+                        for (int t = 0; t < num_threads; ++t) {
+                            merged |= ctx->private_bitsets[t].words[i];
+                        }
+                        bs_dst.words[i] = merged;
+                    }
+                }
+#endif
+            } else {
+                for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                    uint64_t w = bs_src.words[i];
+                    if (w == 0) continue;
+                    for (int b = 0; b < 64; ++b) {
+                        if (w & (1ULL << b)) {
+                            uint64_t u = i * 64 + b;
+                            if (u < slot.node_count) {
+                                uint32_t start = slot.offsets_ptr[u];
+                                uint32_t end   = slot.offsets_ptr[u + 1];
+                                for (uint32_t idx = start; idx < end; ++idx) {
+                                    bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                }
                             }
                         }
                     }
@@ -2325,17 +2410,77 @@ op_OUT_OF_BOUNDS:
                 if (slot.offsets_ptr && slot.targets_ptr) {
                     if (src_is_bitset) {
                         const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                        size_t frontier_size = 0;
                         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-                            uint64_t w = bs_src.words[i];
-                            if (w == 0) continue;
-                            for (int b = 0; b < 64; ++b) {
-                                if (w & (1ULL << b)) {
-                                    uint64_t u = i * 64 + b;
-                                    if (u < slot.node_count) {
-                                        uint32_t start = slot.offsets_ptr[u];
-                                        uint32_t end   = slot.offsets_ptr[u + 1];
-                                        for (uint32_t idx = start; idx < end; ++idx) {
-                                            bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                            frontier_size += std::popcount(bs_src.words[i]);
+                        }
+
+                        bool use_parallel = (vm_state->query_context->max_threads > 1 && frontier_size > 15000);
+                        if (use_parallel) {
+#if defined(_OPENMP)
+                            int num_threads = vm_state->query_context->max_threads;
+                            auto* ctx = vm_state->query_context;
+                            size_t max_nodes = ctx->max_nodes;
+                            size_t words = ctx->words_per_bitset;
+
+                            #pragma omp parallel for schedule(static) num_threads(num_threads)
+                            for (int t = 0; t < num_threads; ++t) {
+                                ctx->private_bitsets[t].clear();
+                            }
+
+                            #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+                            for (size_t i = 0; i < words; ++i) {
+                                uint64_t w = bs_src.words[i];
+                                if (w == 0) continue;
+                                int tid = omp_get_thread_num();
+                                auto& private_bs = ctx->private_bitsets[tid];
+                                for (int b = 0; b < 64; ++b) {
+                                    if (w & (1ULL << b)) {
+                                        uint64_t u = i * 64 + b;
+                                        if (u < slot.node_count) {
+                                            uint32_t start = slot.offsets_ptr[u];
+                                            uint32_t end   = slot.offsets_ptr[u + 1];
+                                            for (uint32_t idx = start; idx < end; ++idx) {
+                                                bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (accum) {
+                                #pragma omp parallel for schedule(static) num_threads(num_threads)
+                                for (size_t i = 0; i < words; ++i) {
+                                    uint64_t merged = bs_dst.words[i];
+                                    for (int t = 0; t < num_threads; ++t) {
+                                        merged |= ctx->private_bitsets[t].words[i];
+                                    }
+                                    bs_dst.words[i] = merged;
+                                }
+                            } else {
+                                #pragma omp parallel for schedule(static) num_threads(num_threads)
+                                for (size_t i = 0; i < words; ++i) {
+                                    uint64_t merged = 0;
+                                    for (int t = 0; t < num_threads; ++t) {
+                                        merged |= ctx->private_bitsets[t].words[i];
+                                    }
+                                    bs_dst.words[i] = merged;
+                                }
+                            }
+#endif
+                        } else {
+                            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                                uint64_t w = bs_src.words[i];
+                                if (w == 0) continue;
+                                for (int b = 0; b < 64; ++b) {
+                                    if (w & (1ULL << b)) {
+                                        uint64_t u = i * 64 + b;
+                                        if (u < slot.node_count) {
+                                            uint32_t start = slot.offsets_ptr[u];
+                                            uint32_t end   = slot.offsets_ptr[u + 1];
+                                            for (uint32_t idx = start; idx < end; ++idx) {
+                                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                                            }
                                         }
                                     }
                                 }
