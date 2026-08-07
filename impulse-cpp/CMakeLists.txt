@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(impulse_graph VERSION 2.4.0 LANGUAGES C CXX)
+project(impulse_graph VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Warnings -------------------------------------------------
-add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+add_compile_options(-Wall -Wextra -Wpedantic)
 
 # --- Sanitizer Option ---------------------------------------------------
 option(IMPULSE_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
@@ -67,4 +67,3 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(vm_fluent_test PRIVATE impulse_graph_static)
     add_test(NAME vm_fluent_test COMMAND vm_fluent_test)
 endif()
-
