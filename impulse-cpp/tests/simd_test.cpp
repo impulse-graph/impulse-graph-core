@@ -35,6 +35,7 @@ void test_vector_sum() {
 
     impulse_status_t status = impulse_simd_vector_sum_f32(a.data(), b.data(), out.data(), N);
     assert(status == IMPULSE_OK);
+    (void)status;
 
     for (size_t i = 0; i < N; ++i) {
         assert(out[i] == static_cast<float>(N));
@@ -50,6 +51,7 @@ void test_sorted_intersection() {
 
     impulse_status_t status = impulse_simd_intersect_sorted_u32(a.data(), a.size(), b.data(), b.size(), out.data(), &count);
     assert(status == IMPULSE_OK);
+    (void)status;
     assert(count == 4);
     assert(out[0] == 5);
     assert(out[1] == 10);
