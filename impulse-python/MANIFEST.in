@@ -1,0 +1,6 @@
+include README.md
+include pyproject.toml
+include setup.py
+recursive-include src *
+recursive-include impulse_graph *
+recursive-include impulse-cpp *

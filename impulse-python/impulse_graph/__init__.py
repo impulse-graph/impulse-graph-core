@@ -1,8 +1,9 @@
 """
-Impulse Graph Engine Python SDK & Zero-Copy C-ABI Binding
+Impulse Graph Engine Python SDK & C++ Bytecode VM Binding
 """
 
 import numpy as np
+from . import vm
 
 try:
     from _impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
@@ -36,8 +37,8 @@ class Snapshot:
     def get_relation(self, index: int) -> dict:
         return self._native.get_relation(index)
 
-    def is_reachable(self, src_domain: int, src_id: int, tgt_domain: int, tgt_id: int) -> bool:
-        return self._native.is_reachable(src_domain, src_id, tgt_domain, tgt_id)
+    def is_reachable(self, relation_index: int, src_id: int, tgt_id: int) -> bool:
+        return self._native.is_reachable(relation_index, src_id, tgt_id)
 
     def get_row_offsets_array(self, relation_index: int) -> np.ndarray:
         mv = self._native.get_csr_row_offsets(relation_index)
@@ -49,17 +50,22 @@ class Snapshot:
 
     def sample_neighbors(self, relation_index: int, nodes: list | np.ndarray, k_samples: int, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
         if isinstance(nodes, np.ndarray):
-            nodes_list = nodes.astype(np.uint32).tolist()
+            nodes_list = nodes.astype(np.uint64).tolist()
         else:
             nodes_list = [int(x) for x in nodes]
         return self._native.sample_neighbors(relation_index, nodes_list, k_samples, seed)
 
+    def execute_query(self, query: vm.CompiledQuery, input_param: int = 0) -> vm.QueryResult:
+        native_query = getattr(query, "_native", query)
+        return vm.QueryResult(self._native.execute_query(native_query, input_param))
+
 
 class Writer:
-    def __init__(self, output_path: str, global_features: int = 8):
+    def __init__(self, output_path: str, global_features: int = 1):
         if _NativeWriter is None:
             raise RuntimeError("_impulse_native extension is not compiled.")
         self._native = _NativeWriter(output_path, global_features)
+
 
     def __enter__(self):
         return self
@@ -101,4 +107,4 @@ class Writer:
 
 
 __version__ = "2.4.0"
-__all__ = ["Snapshot", "Writer"]
+__all__ = ["Snapshot", "Writer", "vm"]

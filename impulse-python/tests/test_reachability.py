@@ -31,16 +31,17 @@ def test_reachability_queries():
             writer.finalize()
 
         with Snapshot(snapshot_path) as snap:
-            # Check edge existence
-            assert snap.is_reachable(0, 0, 0, 1) is True
-            assert snap.is_reachable(0, 0, 0, 2) is True
-            assert snap.is_reachable(0, 0, 0, 3) is False
+            # Check edge existence (relation 0)
+            assert snap.is_reachable(0, 0, 1) is True
+            assert snap.is_reachable(0, 0, 2) is True
+            assert snap.is_reachable(0, 0, 3) is False
             
-            assert snap.is_reachable(0, 1, 0, 3) is True
-            assert snap.is_reachable(0, 1, 0, 0) is False
+            assert snap.is_reachable(0, 1, 3) is True
+            assert snap.is_reachable(0, 1, 0) is False
             
-            assert snap.is_reachable(0, 2, 0, 0) is False
-            assert snap.is_reachable(0, 3, 0, 0) is True
+            assert snap.is_reachable(0, 2, 0) is False
+            assert snap.is_reachable(0, 3, 0) is True
             
             # Out of bounds
-            assert snap.is_reachable(0, 10, 0, 0) is False
+            assert snap.is_reachable(0, 10, 0) is False
+

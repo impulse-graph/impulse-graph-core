@@ -63,7 +63,7 @@ static void test_all_30_spec_v0_9_test_vectors() {
 
         if (is_rejection) {
             if (snap != nullptr || status == IMPULSE_OK) {
-                std::fprintf(stderr, "FAIL: Vector %s should be REJECTED, but open succeeded!\n", folder_name.c_str());
+                std::fprintf(stderr, "FAIL: Vector %s should be REJECTED, but open succeeded! (snap=%p, status=%d)\n", folder_name.c_str(), (void*)snap, status);
                 std::abort();
             }
             std::printf("  [PASS] Test Vector Correct Rejection: %s (status=%d)\n", folder_name.c_str(), status);

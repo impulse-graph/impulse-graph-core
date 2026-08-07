@@ -1,23 +1,33 @@
+/**
+ * @file impulse_vm.h
+ * @brief Impulse Graph Bytecode Virtual Machine Engine & Instruction Set Specification.
+ *
+ * Defines raw 64-bit opcode instructions (`impulse_instruction_t`), hardware registers (`R0`..`R63`),
+ * VM execution frame layout (`impulse_vm_state_t`), off-heap context handle pools, and native execution APIs.
+ */
+
 #ifndef IMPULSE_VM_H
 #define IMPULSE_VM_H
 
+#include "impulse_graph.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Little-Endian VM Magic: 'I' 'M' 'P' 'B' (0x494D5042)
+/** Little-Endian VM Magic: 'I' 'M' 'P' 'B' (0x494D5042) */
 #define IMPULSE_VM_MAGIC 0x494D5042
 
 // Status Flags Bitmasks (FLAGS Register)
-#define IMPULSE_VM_FLAG_ZF (1ULL << 0) // Zero Flag: set if candidate set or arithmetic result is empty / 0
-#define IMPULSE_VM_FLAG_LT (1ULL << 1) // Less Than Flag: set if src1 < src2
-#define IMPULSE_VM_FLAG_GT (1ULL << 2) // Greater Than Flag: set if src1 > src2
-#define IMPULSE_VM_FLAG_EQ (1ULL << 3) // Equal Flag: set if src1 == src2
-#define IMPULSE_VM_FLAG_ST (1ULL << 4) // Stable Flag: set by repeat checks when set generation converged
+#define IMPULSE_VM_FLAG_ZF (1ULL << 0) /**< Zero Flag: set if candidate set or arithmetic result is empty / 0 */
+#define IMPULSE_VM_FLAG_LT (1ULL << 1) /**< Less Than Flag: set if src1 < src2 */
+#define IMPULSE_VM_FLAG_GT (1ULL << 2) /**< Greater Than Flag: set if src1 > src2 */
+#define IMPULSE_VM_FLAG_EQ (1ULL << 3) /**< Equal Flag: set if src1 == src2 */
+#define IMPULSE_VM_FLAG_ST (1ULL << 4) /**< Stable Flag: set by repeat checks when set generation converged */
 
 // Opcode Modifier Flags (FLAGS field in instruction)
 #define IMPULSE_VM_OP_FLAG_MODE_BITSET 0x01
@@ -112,7 +122,7 @@ extern "C" {
 #define OP_COLLECT_VALUE_MAP        0x93
 #define OP_HALT                     0xFF
 
-// Register Type Tags
+/** @brief Register Type Tags */
 typedef enum {
     TYPE_NULL = 0x00,
     TYPE_INT64 = 0x01,
@@ -131,7 +141,7 @@ typedef enum {
     TYPE_UINT64_VECTOR = 0x0E
 } impulse_register_type_t;
 
-// VM Execution result status
+/** @brief VM Execution Status Codes */
 typedef enum {
     IMPULSE_VM_OK = 0,
     IMPULSE_VM_ERR_INVALID_OPCODE = 1,
@@ -142,79 +152,89 @@ typedef enum {
     IMPULSE_VM_ERR_INVALID_REGISTER = 6
 } impulse_vm_status_t;
 
-// Fixed 64-bit Instruction Encoding
+/**
+ * @brief Fixed 64-bit Instruction Structure Layout.
+ */
 typedef struct alignas(8) {
-    uint8_t  opcode;    // 0x00
-    uint8_t  flags;     // 0x01
-    uint16_t dst_reg;   // 0x02..0x03
-    uint32_t payload;   // 0x04..0x07 (src_reg, rel_id, offset, etc.)
+    uint8_t  opcode;    /**< Opcode byte (0x00..0xFF) */
+    uint8_t  flags;     /**< Instruction modifier flags */
+    uint16_t dst_reg;   /**< Destination register index (R0..R63) */
+    uint32_t payload;   /**< Payload data (source register, relation ID, jump offset, or scalar constant) */
 } impulse_instruction_t;
 
-// Forward declaration of snapshot and execution context
 typedef struct impulse_snapshot impulse_snapshot_t;
 typedef struct impulse_vm_context impulse_vm_context_t;
 
-// Input keys list structure for key mapping opcodes
 typedef struct {
     const char** keys;
     size_t count;
 } impulse_vm_input_keys;
 
-// VM State execution frame - aligned to 64 bytes and sized to exactly 640 bytes
-// to match the Java FFM MemorySegment representation
+/**
+ * @brief VM Execution State Frame (640 bytes, 64-byte aligned).
+ *
+ * Matches the layout of the Java 25 FFM MemorySegment representation.
+ */
 typedef struct alignas(64) {
-    uint32_t pc;                                  // Offset 0
-    uint32_t reserved;                            // Offset 4 (Alignment padding)
-    uint64_t flags;                               // Offset 8 (ZF, LT, GT, EQ, ST flags)
-    uint64_t registers[64];                       // Offset 16..527
-    uint8_t  register_types[64];                  // Offset 528..591 (impulse_register_type_t values)
-    impulse_vm_context_t* query_context;          // Offset 592..599
-    uint32_t call_stack[8];                       // Offset 600..631 (8 levels of subroutine return PC)
-    uint32_t call_stack_depth;                    // Offset 632..635
-    uint32_t reserved_padding2;                   // Offset 636..639 (Pads struct to exactly 640 bytes)
+    uint32_t pc;                                  /**< Program Counter offset (0) */
+    uint32_t reserved;                            /**< Alignment padding (4) */
+    uint64_t flags;                               /**< Status flags register (ZF, LT, GT, EQ, ST) (8) */
+    uint64_t registers[64];                       /**< 64-bit registers R0..R63 (16..527) */
+    uint8_t  register_types[64];                  /**< Type tags for registers R0..R63 (528..591) */
+    impulse_vm_context_t* query_context;          /**< Pointer to off-heap execution context (592..599) */
+    uint32_t call_stack[8];                       /**< Subroutine return stack (600..631) */
+    uint32_t call_stack_depth;                    /**< Subroutine stack depth (632..635) */
+    uint32_t reserved_padding2;                   /**< Padding to exactly 640 bytes (636..639) */
 } impulse_vm_state_t;
 
 // Public Context lifecycle APIs
-impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
-void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
-size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
-const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
-const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
-int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle);
-void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
-bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
-void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count);
-uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx);
-int impulse_vm_context_acquire_float_vector(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t handle);
-void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val);
-int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
-void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
-int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle);
-const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle);
-int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle);
-void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
-size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
-int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
-void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
-size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
-const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
-float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+IMPULSE_API impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
+IMPULSE_API void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
+IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
+IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
+IMPULSE_API bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
+IMPULSE_API void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count);
+IMPULSE_API uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx);
+IMPULSE_API int impulse_vm_context_acquire_float_vector(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val);
+IMPULSE_API int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
+IMPULSE_API int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
+IMPULSE_API size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+IMPULSE_API int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+IMPULSE_API float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 
-void impulse_vm_context_mock_csc(
+IMPULSE_API void impulse_vm_context_mock_csc(
     impulse_vm_context_t* ctx,
     uint16_t relation_index,
     const uint32_t* csc_offsets,
     const uint32_t* csc_targets
 );
 
-// Public VM execution API
-impulse_vm_status_t impulse_vm_execute(
+/**
+ * @brief Execute a sequence of VM bytecode instructions against a VM state frame.
+ * @param bytecode Pointer to array of impulse_instruction_t instructions.
+ * @param instruction_count Number of instructions in array.
+ * @param vm_state Pointer to aligned VM state frame.
+ * @param input_param Input seed node ID or parameter value.
+ * @return IMPULSE_VM_OK on successful execution, or VM error code.
+ */
+IMPULSE_API impulse_vm_status_t impulse_vm_execute(
     const impulse_instruction_t* bytecode,
     size_t instruction_count,
     impulse_vm_state_t* vm_state,

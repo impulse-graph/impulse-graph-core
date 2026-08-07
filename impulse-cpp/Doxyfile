@@ -1,0 +1,62 @@
+# Doxyfile for Impulse Graph C++ Engine (impulse-cpp)
+
+PROJECT_NAME           = "Impulse Graph C++ Engine"
+PROJECT_NUMBER         = "2.4.0"
+PROJECT_BRIEF          = "High-Performance Zero-Copy C-ABI Kernel and C++20 Fluent VM Engine"
+OUTPUT_DIRECTORY       = "build/docs"
+CREATE_SUBDIRS         = NO
+OUTPUT_LANGUAGE        = English
+
+# Input source directories
+INPUT                  = include/
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp
+
+# Extraction settings
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_PACKAGE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+HIDE_FRIEND_COMPOUNDS  = NO
+
+# Build settings
+CASE_SENSE_NAMES       = YES
+OPTIMIZE_OUTPUT_FOR_C  = NO
+OPTIMIZE_OUTPUT_JAVA   = NO
+OPTIMIZE_FOR_FORTRAN   = NO
+OPTIMIZE_OUTPUT_VHDL   = NO
+
+# Preprocessor
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF_DEFAULT = NO
+SEARCH_INCLUDES        = YES
+INCLUDE_PATH           = include/
+
+# HTML output format
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = YES
+HTML_EXTRA_STYLESHEET  = 
+
+# Disable LaTeX & Other Formats by Default
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+
+# Markdown support
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+
+# Warning settings
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES

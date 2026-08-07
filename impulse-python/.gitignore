@@ -1,0 +1,8 @@
+build/
+dist/
+*.egg-info/
+*.so
+*.dylib
+*.dll
+.pytest_cache/
+impulse-cpp/

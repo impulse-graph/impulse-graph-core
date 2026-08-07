@@ -216,7 +216,8 @@ inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
 }
 
 inline void bitset_add(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
-    if (node_id < max_nodes) {
+    (void)max_nodes;
+    if (node_id < bs.word_count * 64) {
         size_t word_idx = node_id / 64;
         size_t bit_idx = node_id % 64;
         bs.words[word_idx] |= (1ULL << bit_idx);
@@ -224,7 +225,8 @@ inline void bitset_add(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
 }
 
 inline void bitset_add_atomic(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
-    if (node_id < max_nodes) {
+    (void)max_nodes;
+    if (node_id < bs.word_count * 64) {
         size_t word_idx = node_id / 64;
         size_t bit_idx = node_id % 64;
         uint64_t mask = (1ULL << bit_idx);
@@ -237,7 +239,8 @@ inline void bitset_add_atomic(VmBitSet& bs, uint64_t node_id, size_t max_nodes) 
 }
 
 inline bool bitset_test(const VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
-    if (node_id < max_nodes) {
+    (void)max_nodes;
+    if (node_id < bs.word_count * 64) {
         size_t word_idx = node_id / 64;
         size_t bit_idx = node_id % 64;
         return (bs.words[word_idx] & (1ULL << bit_idx)) != 0;
@@ -261,7 +264,8 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         max_nodes = 1024 * 1024; // Default fallback for tests
     }
     ctx->max_nodes = max_nodes;
-    ctx->words_per_bitset = (max_nodes + 63) / 64;
+    uint64_t bitset_capacity = std::max(max_nodes, 65536ULL);
+    ctx->words_per_bitset = (bitset_capacity + 63) / 64;
 
     // Pre-allocate 16 off-heap bitsets in a contiguous memory block
     ctx->arena_memory = new uint64_t[16 * ctx->words_per_bitset]();
@@ -546,6 +550,74 @@ inline const BoundAttributeSlot* find_key_attribute(const impulse_vm_state_t* vm
     return nullptr;
 }
 
+static uint32_t run_island_detect_bfs(
+    uint32_t N,
+    const uint32_t* row_offsets,
+    const uint32_t* col_targets,
+    const int32_t* branch_ids,
+    int64_t k1,
+    int64_t k2
+) {
+    if (N == 0) return 0;
+    size_t num_words = (N + 63) / 64;
+    thread_local std::vector<uint64_t> visited_words;
+    visited_words.assign(num_words, 0ULL);
+
+    thread_local std::vector<uint32_t> queue;
+    queue.clear();
+    queue.reserve(N);
+
+    uint32_t components = 0;
+    for (uint32_t i = 0; i < N; ++i) {
+        size_t word_idx = i / 64;
+        uint64_t bit_mask = 1ULL << (i % 64);
+
+        if (!(visited_words[word_idx] & bit_mask)) {
+            components++;
+            size_t head = queue.size();
+            queue.push_back(i);
+            visited_words[word_idx] |= bit_mask;
+
+            while (head < queue.size()) {
+                uint32_t u = queue[head++];
+                uint32_t start = row_offsets[u];
+                uint32_t end = row_offsets[u + 1];
+
+                for (uint32_t e = start; e < end; ++e) {
+                    if (branch_ids) {
+                        int32_t br_id = branch_ids[e];
+                        if (br_id == k1 || br_id == k2) {
+                            continue;
+                        }
+                    }
+
+                    uint32_t v = col_targets[e];
+                    size_t v_word = v / 64;
+                    uint64_t v_bit = 1ULL << (v % 64);
+
+                    if (!(visited_words[v_word] & v_bit)) {
+                        visited_words[v_word] |= v_bit;
+                        queue.push_back(v);
+                    }
+                }
+            }
+            }
+        }
+        return components;
+    }
+
+static void extract_active_bits(const VmBitSet& bs, std::vector<uint32_t>& out_bits) {
+    if (!bs.words || bs.word_count == 0) return;
+    for (size_t w = 0; w < bs.word_count; ++w) {
+        uint64_t val = bs.words[w];
+        while (val > 0) {
+            int tz = __builtin_ctzll(val);
+            out_bits.push_back(static_cast<uint32_t>(w * 64 + tz));
+            val &= val - 1;
+        }
+    }
+}
+
 // Main execution routine
 impulse_vm_status_t impulse_vm_execute(
     const impulse_instruction_t* bytecode,
@@ -603,6 +675,7 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP,
         [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
         [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
+        [OP_ISLAND_DETECT] = &&op_ISLAND_DETECT,
         [OP_HALT] = &&op_HALT
     };
 
@@ -2084,6 +2157,101 @@ op_CC_AFFOREST: {
     for (size_t u = 0; u < N; ++u) {
         comp[u] = find_root_u64(u, comp);
     }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ISLAND_DETECT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+
+    uint8_t src1 = inst.payload & 0xFF;
+    uint8_t src2 = (inst.payload >> 8) & 0xFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+
+    uint64_t critical_pairs_count = 0;
+    {
+        std::vector<uint32_t> lines1;
+        if (src1 < 64) {
+            if (vm_state->register_types[src1] == TYPE_INT64) {
+                lines1.push_back(static_cast<uint32_t>(vm_state->registers[src1]));
+            } else if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
+                uint32_t handle = static_cast<uint32_t>(vm_state->registers[src1]);
+                if (handle < vm_state->query_context->bitsets.size()) {
+                    extract_active_bits(vm_state->query_context->bitsets[handle], lines1);
+                }
+            }
+        }
+        if (lines1.empty()) lines1.push_back(-1);
+
+        std::vector<uint32_t> lines2;
+        if (src2 < 64) {
+            if (vm_state->register_types[src2] == TYPE_INT64) {
+                lines2.push_back(static_cast<uint32_t>(vm_state->registers[src2]));
+            } else if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+                uint32_t handle = static_cast<uint32_t>(vm_state->registers[src2]);
+                if (handle < vm_state->query_context->bitsets.size()) {
+                    extract_active_bits(vm_state->query_context->bitsets[handle], lines2);
+                }
+            }
+        }
+        if (lines2.empty()) lines2.push_back(-1);
+
+        if (rel >= vm_state->query_context->slots.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& slot = vm_state->query_context->slots[rel];
+        if (!slot.offsets_ptr || !slot.targets_ptr) {
+            return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        }
+
+        const int32_t* branch_ids = nullptr;
+        if (rel < vm_state->query_context->attribute_slots.size() &&
+            !vm_state->query_context->attribute_slots[rel].empty()) {
+            branch_ids = static_cast<const int32_t*>(vm_state->query_context->attribute_slots[rel][0].data_ptr);
+        }
+
+        uint32_t N = static_cast<uint32_t>(slot.node_count);
+        uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+
+        bool same_set = (src1 == src2);
+
+        if (same_set) {
+#if defined(_OPENMP)
+            #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+#endif
+            for (size_t i = 0; i < lines1.size(); ++i) {
+                uint32_t k1 = lines1[i];
+                for (size_t j = i + 1; j < lines1.size(); ++j) {
+                    uint32_t k2 = lines1[j];
+                    uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                    if (comp > base_components) {
+                        critical_pairs_count++;
+                    }
+                }
+            }
+        } else {
+#if defined(_OPENMP)
+            #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+#endif
+            for (size_t i = 0; i < lines1.size(); ++i) {
+                uint32_t k1 = lines1[i];
+                for (size_t j = 0; j < lines2.size(); ++j) {
+                    uint32_t k2 = lines2[j];
+                    if (k1 >= k2) continue;
+                    uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                    if (comp > base_components) {
+                        critical_pairs_count++;
+                    }
+                }
+            }
+        }
+    }
+
+    vm_state->registers[dst] = critical_pairs_count;
+    vm_state->register_types[dst] = TYPE_INT64;
 
     vm_state->pc++;
     DISPATCH();
@@ -4050,6 +4218,97 @@ op_OUT_OF_BOUNDS:
                 for (size_t u = 0; u < N; ++u) {
                     comp[u] = find_root_u64(u, comp);
                 }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_ISLAND_DETECT: {
+                uint16_t dst = inst.dst_reg;
+                VALIDATE_REG(dst);
+
+                uint8_t src1 = inst.payload & 0xFF;
+                uint8_t src2 = (inst.payload >> 8) & 0xFF;
+                uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+
+                std::vector<uint32_t> lines1;
+                if (src1 < 64) {
+                    if (vm_state->register_types[src1] == TYPE_INT64) {
+                        lines1.push_back(static_cast<uint32_t>(vm_state->registers[src1]));
+                    } else if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
+                        uint32_t handle = static_cast<uint32_t>(vm_state->registers[src1]);
+                        if (handle < vm_state->query_context->bitsets.size()) {
+                            extract_active_bits(vm_state->query_context->bitsets[handle], lines1);
+                        }
+                    }
+                }
+                if (lines1.empty()) lines1.push_back(-1);
+
+                std::vector<uint32_t> lines2;
+                if (src2 < 64) {
+                    if (vm_state->register_types[src2] == TYPE_INT64) {
+                        lines2.push_back(static_cast<uint32_t>(vm_state->registers[src2]));
+                    } else if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+                        uint32_t handle = static_cast<uint32_t>(vm_state->registers[src2]);
+                        if (handle < vm_state->query_context->bitsets.size()) {
+                            extract_active_bits(vm_state->query_context->bitsets[handle], lines2);
+                        }
+                    }
+                }
+                if (lines2.empty()) lines2.push_back(-1);
+
+                if (rel >= vm_state->query_context->slots.size()) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                const auto& slot = vm_state->query_context->slots[rel];
+                if (!slot.offsets_ptr || !slot.targets_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+
+                const int32_t* branch_ids = nullptr;
+                if (rel < vm_state->query_context->attribute_slots.size() &&
+                    !vm_state->query_context->attribute_slots[rel].empty()) {
+                    branch_ids = static_cast<const int32_t*>(vm_state->query_context->attribute_slots[rel][0].data_ptr);
+                }
+
+                uint32_t N = static_cast<uint32_t>(slot.node_count);
+                uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+
+                uint64_t critical_pairs_count = 0;
+                bool same_set = (src1 == src2);
+
+                if (same_set) {
+#if defined(_OPENMP)
+                    #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+#endif
+                    for (size_t i = 0; i < lines1.size(); ++i) {
+                        uint32_t k1 = lines1[i];
+                        for (size_t j = i + 1; j < lines1.size(); ++j) {
+                            uint32_t k2 = lines1[j];
+                            uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                            if (comp > base_components) {
+                                critical_pairs_count++;
+                            }
+                        }
+                    }
+                } else {
+#if defined(_OPENMP)
+                    #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+#endif
+                    for (size_t i = 0; i < lines1.size(); ++i) {
+                        uint32_t k1 = lines1[i];
+                        for (size_t j = 0; j < lines2.size(); ++j) {
+                            uint32_t k2 = lines2[j];
+                            if (k1 >= k2) continue;
+                            uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                            if (comp > base_components) {
+                                critical_pairs_count++;
+                            }
+                        }
+                    }
+                }
+
+                vm_state->registers[dst] = critical_pairs_count;
+                vm_state->register_types[dst] = TYPE_INT64;
 
                 vm_state->pc++;
                 break;

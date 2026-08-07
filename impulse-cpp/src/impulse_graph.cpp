@@ -521,13 +521,19 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                     } else if (sec_type == 0x0002) { // CSC Col Targets
                         rel_entry.csc_col_idx_offset = sec_off;
                         rel_entry.csc_col_idx_bytes = sec_size;
+                    } else if (sec_type != 0) {
+                        g_last_error = "Unsupported auxiliary section feature type";
+                        if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                        return nullptr;
                     }
                 }
             }
             cur += entry_size;
 
             if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 64 != 0) ||
-                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 64 != 0)) {
+                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 64 != 0) ||
+                (rel_entry.csc_row_off_offset > 0 && rel_entry.csc_row_off_offset % 64 != 0) ||
+                (rel_entry.csc_col_idx_offset > 0 && rel_entry.csc_col_idx_offset % 64 != 0)) {
                 g_last_error = "Unaligned section offset in legacy snapshot (must be 64B aligned)";
                 if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
                 return nullptr;
