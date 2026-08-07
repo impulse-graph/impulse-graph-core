@@ -66,7 +66,4 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(vm_fluent_test tests/vm_fluent_test.cpp)
     target_link_libraries(vm_fluent_test PRIVATE impulse_graph_static)
     add_test(NAME vm_fluent_test COMMAND vm_fluent_test)
-
-    add_executable(gen_rbac_snapshot gen_rbac_snapshot.cpp)
-    target_link_libraries(gen_rbac_snapshot PRIVATE impulse_graph_static)
 endif()
