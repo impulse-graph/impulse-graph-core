@@ -52,12 +52,34 @@ extern "C" {
 #define OP_VECTOR_REDUCE_SUM        0x35
 #define OP_VECTOR_DIV               0x36
 #define OP_VECTOR_STR_CONCAT        0x37
+#define OP_FLOAT_VECTOR_SCALE       0x38
+#define OP_L1_NORM_DIFF             0x39
+
 #define OP_CC_AFFOREST              0x40
 #define OP_MXV                      0x41
 #define OP_VXM                      0x42
 #define OP_EWISE_ADD                0x43
 #define OP_EWISE_MULT               0x44
 #define OP_REDUCE                   0x45
+#define OP_CC_HOOK_COMPRESS         0x46
+#define OP_TC_SWEEP_BATCH           0x47
+#define OP_BRANDES_FORWARD          0x48
+#define OP_BRANDES_BACKWARD         0x49
+#define OP_DELTA_STEP_RELAX         0x4A
+#define OP_READ_EDGE_WEIGHT         0x4B
+
+// Extended Domain Opcodes (0x60 - 0x6A)
+#define OP_SAMPLE_NEIGHBORS         0x60
+#define OP_RANDOM_WALK              0x61
+#define OP_SCATTER_GATHER           0x62
+#define OP_REBAC_CHECK              0x63
+#define OP_ROARING_BITMAP_AND       0x64
+#define OP_ISLAND_DETECT            0x65
+#define OP_SPARSE_MATVEC            0x66
+#define OP_LOUVAIN_MODULARITY       0x67
+#define OP_KCORE_DECOMPOSITION      0x68
+#define OP_MOTIF_MATCH_3            0x69
+#define OP_GRAPH_ISOMORPHISM        0x6A
 
 #define OP_JMP                      0x50
 #define OP_JZ                       0x51
