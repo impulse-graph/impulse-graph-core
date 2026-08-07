@@ -54,6 +54,10 @@ static void test_all_30_spec_v0_9_test_vectors() {
 
         std::string folder_name = folder.filename().string();
         std::string manifest_content = read_file_string(manifest_file);
+        if (manifest_content.find("\"spec_version\": \"0.9.0\"") == std::string::npos) {
+            continue;
+        }
+
         bool is_rejection = manifest_content.find("\"REJECT_") != std::string::npos ||
                            manifest_content.find("\"corrupt_") != std::string::npos ||
                            manifest_content.find("\"SUCCESS\"") == std::string::npos;
