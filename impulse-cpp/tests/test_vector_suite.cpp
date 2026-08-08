@@ -81,7 +81,7 @@ static void test_all_30_spec_v0_9_test_vectors() {
 
             uint32_t magic = impulse_snapshot_magic(snap);
             uint16_t version = impulse_snapshot_version(snap);
-            ASSERT_EQ(magic, IMPULSE_SPEC_MAGIC);
+            ASSERT_EQ(magic, IMPULSE_MAGIC);
             ASSERT_TRUE(version == IMPULSE_SPEC_VERSION_PACKED || version == 9 || version == 2 || version == 0x0204);
 
             uint16_t rel_count = impulse_snapshot_relation_count(snap);

@@ -57,9 +57,15 @@ typedef enum impulse_status {
 } impulse_status_t;
 
 /** Global Feature Flags (Header Offset 0x16..0x1D) */
+#ifndef IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED
 #define IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED   (1ULL << 0)
+#endif
+#ifndef IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED
 #define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED      (1ULL << 1)
+#endif
+#ifndef IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG
 #define IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG     (1ULL << 2)
+#endif
 
 /** @brief Stream Writer Callback Signature */
 typedef int32_t (*impulse_write_fn)(const void* data, size_t bytes, void* user_data);

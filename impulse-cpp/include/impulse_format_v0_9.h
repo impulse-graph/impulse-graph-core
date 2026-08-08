@@ -14,6 +14,12 @@ extern "C" {
 #define IMPULSE_SPEC_MAGIC_V0_9 0x494D5053
 #define IMPULSE_SPEC_HEADER_BASELINE_OFFSET_V0_9 4096
 
+#ifndef IMPULSE_SPEC_VERSION_PACKED
+#define IMPULSE_SPEC_VERSION_PACKED 9
+#define IMPULSE_SPEC_VERSION_MAJOR 0
+#define IMPULSE_SPEC_VERSION_MINOR 9
+#endif
+
 #define IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED 0x0000000000000001ULL
 #define IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED 0x0000000000000002ULL
 #define IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG 0x0000000000000004ULL
@@ -24,47 +30,47 @@ extern "C" {
 #define IMPULSE_SECTION_FEAT_SIMDCOMP 0x0000000000000010ULL
 
 // C-ABI Status and Error Return Codes (v0.9.0)
-typedef enum impulse_status_t {
-    IMPULSE_OK = 0,
-    IMPULSE_ERR_INVALID_MAGIC = 1,
-    IMPULSE_ERR_UNSUPPORTED_VERSION = 2,
-    IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE = 3,
-    IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE = 4,
-    IMPULSE_ERR_CORRUPT_CHECKSUM = 5,
-    IMPULSE_ERR_IO_FAILURE = 6,
-    IMPULSE_ERR_INVALID_ARGUMENT = 7,
-    IMPULSE_ERR_SIGNATURE_MISMATCH = 8,
-    IMPULSE_ERR_BUFFER_OVERFLOW = 9
-} impulse_status_t;
+typedef enum impulse_status_t_v0_9 {
+    IMPULSE_OK_V0_9 = 0,
+    IMPULSE_ERR_INVALID_MAGIC_V0_9 = 1,
+    IMPULSE_ERR_UNSUPPORTED_VERSION_V0_9 = 2,
+    IMPULSE_ERR_UNSUPPORTED_GLOBAL_FEATURE_V0_9 = 3,
+    IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE_V0_9 = 4,
+    IMPULSE_ERR_CORRUPT_CHECKSUM_V0_9 = 5,
+    IMPULSE_ERR_IO_FAILURE_V0_9 = 6,
+    IMPULSE_ERR_INVALID_ARGUMENT_V0_9 = 7,
+    IMPULSE_ERR_SIGNATURE_MISMATCH_V0_9 = 8,
+    IMPULSE_ERR_BUFFER_OVERFLOW_V0_9 = 9
+} impulse_status_t_v0_9_t;
 
 // Domain Catalog Key Type Enums (v0.9.0)
-typedef enum impulse_key_type_t {
-    IMPULSE_KEY_TYPE_INT8 = 1,
-    IMPULSE_KEY_TYPE_INT16 = 2,
-    IMPULSE_KEY_TYPE_INT32 = 3,
-    IMPULSE_KEY_TYPE_INT64 = 4,
-    IMPULSE_KEY_TYPE_UINT8 = 5,
-    IMPULSE_KEY_TYPE_UINT16 = 6,
-    IMPULSE_KEY_TYPE_UINT32 = 7,
-    IMPULSE_KEY_TYPE_UINT64 = 8,
-    IMPULSE_KEY_TYPE_FLOAT32 = 9,
-    IMPULSE_KEY_TYPE_FLOAT64 = 10,
-    IMPULSE_KEY_TYPE_VAR_STRING = 11,
-    IMPULSE_KEY_TYPE_UUID128 = 12
-} impulse_key_type_t;
+typedef enum impulse_key_type_t_v0_9 {
+    IMPULSE_KEY_TYPE_INT8_V0_9 = 1,
+    IMPULSE_KEY_TYPE_INT16_V0_9 = 2,
+    IMPULSE_KEY_TYPE_INT32_V0_9 = 3,
+    IMPULSE_KEY_TYPE_INT64_V0_9 = 4,
+    IMPULSE_KEY_TYPE_UINT8_V0_9 = 5,
+    IMPULSE_KEY_TYPE_UINT16_V0_9 = 6,
+    IMPULSE_KEY_TYPE_UINT32_V0_9 = 7,
+    IMPULSE_KEY_TYPE_UINT64_V0_9 = 8,
+    IMPULSE_KEY_TYPE_FLOAT32_V0_9 = 9,
+    IMPULSE_KEY_TYPE_FLOAT64_V0_9 = 10,
+    IMPULSE_KEY_TYPE_VAR_STRING_V0_9 = 11,
+    IMPULSE_KEY_TYPE_UUID128_V0_9 = 12
+} impulse_key_type_t_v0_9_t;
 
 // Primary Topology CSR Encoding Enums (v0.9.0)
-typedef enum impulse_encoding_type_t {
-    IMPULSE_ENC_RAW_UINT32 = 0,
-    IMPULSE_ENC_DELTA_VBYTE = 1,
-    IMPULSE_ENC_RAW_UINT16 = 2,
-    IMPULSE_ENC_HYBRID_16_32 = 3,
-    IMPULSE_ENC_SIMDCOMP = 4,
-    IMPULSE_ENC_SLICED_ELLPACK = 5,
-    IMPULSE_ENC_TPU_BCOO = 6,
-    IMPULSE_ENC_RAW_UINT64 = 7,
-    IMPULSE_ENC_ROARING_BITMAP = 8
-} impulse_encoding_type_t;
+typedef enum impulse_encoding_type_t_v0_9 {
+    IMPULSE_ENC_RAW_UINT32_V0_9 = 0,
+    IMPULSE_ENC_DELTA_VBYTE_V0_9 = 1,
+    IMPULSE_ENC_RAW_UINT16_V0_9 = 2,
+    IMPULSE_ENC_HYBRID_16_32_V0_9 = 3,
+    IMPULSE_ENC_SIMDCOMP_V0_9 = 4,
+    IMPULSE_ENC_SLICED_ELLPACK_V0_9 = 5,
+    IMPULSE_ENC_TPU_BCOO_V0_9 = 6,
+    IMPULSE_ENC_RAW_UINT64_V0_9 = 7,
+    IMPULSE_ENC_ROARING_BITMAP_V0_9 = 8
+} impulse_encoding_type_t_v0_9_t;
 
 #pragma pack(push, 1)
 
@@ -79,9 +85,9 @@ typedef struct impulse_snapshot_header_v0_9_t {
     uint64_t required_features;      // Global feature flags bitmask
     uint64_t footer_directory_offset; // Absolute file offset to Footer Directory Table
     uint64_t footer_directory_bytes; // Byte size of Footer Directory Table
-    uint8 snapshot_uuid[16];         // 128-bit Binary UUID
+    uint8_t snapshot_uuid[16];       // 128-bit Binary UUID
     uint16_t header_checksum;        // CRC-16-CCITT checksum over bytes 0x00..0x3D
-    uint8 header_padding[4032];      // Reserved header expansion padding
+    uint8_t header_padding[4032];    // Reserved header expansion padding
 } impulse_snapshot_header_v0_9_t;
 
 // Section 2 Domain Catalog Entry (16 Bytes)
@@ -101,7 +107,7 @@ typedef struct impulse_relation_directory_entry_v0_9_t {
     uint8_t encoding_id;             // Topology encoding type enum
     uint8_t node_id_width;           // Node index width (bits)
     uint8_t edge_index_width;        // Edge index width (bits)
-    uint8 reserved1[3];              // Reserved alignment
+    uint8_t reserved1[3];            // Reserved alignment
     uint32_t name_offset;            // Offset into Shared String Table
     uint64_t node_count;             // Source node count
     uint64_t edge_count;             // Edge count
@@ -114,9 +120,22 @@ typedef struct impulse_relation_directory_entry_v0_9_t {
     uint64_t csc_row_off_bytes;      // CSC row offsets byte size
     uint64_t csc_col_idx_offset;     // CSC col indices file offset
     uint64_t csc_col_idx_bytes;      // CSC col indices byte size
-    uint16_t attribute_count;        // Number of edge attribute descriptors
-    uint8 reserved2[22];             // Directory entry expansion padding
+    uint16_t attr_count;             // Number of edge attribute descriptors
+    uint8_t reserved2[22];           // Directory entry expansion padding
 } impulse_relation_directory_entry_v0_9_t;
+
+// Section 2 Edge Attribute Descriptor Entry (44 Bytes)
+typedef struct impulse_attribute_descriptor_v0_9_t {
+    uint32_t name_offset;            // Offset into Shared String Table
+    uint8_t type_code;               // Attribute primitive type enum
+    uint8_t reserved1;               // Alignment padding
+    uint16_t reserved2;              // Alignment padding
+    uint32_t dimension;              // Vector dimension (1 for scalar)
+    uint64_t data_offset;            // Absolute file offset to attribute payload
+    uint64_t data_bytes;             // Byte size of attribute payload
+    uint64_t offsets_offset;         // Absolute file offset to var-string offsets array
+    uint64_t offsets_bytes;          // Byte size of var-string offsets array
+} impulse_attribute_descriptor_v0_9_t;
 
 // 16-Byte Footer Trailer at EOF
 typedef struct impulse_footer_trailer_v0_9_t {
