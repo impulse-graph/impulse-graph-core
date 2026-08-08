@@ -88,7 +88,7 @@ jobs:
     name: Trigger Downstream Ecosystem Builds
     needs: [build-cpp-kernel, test-rust-engine, test-ffi-bindings]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.ORGANIZATION_PAT != ''
     steps:
       - name: Trigger Downstream Repositories
         uses: peter-evans/repository-dispatch@v3

@@ -289,7 +289,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         max_nodes = 1024 * 1024; // Default fallback for tests
     }
     ctx->max_nodes = max_nodes;
-    uint64_t bitset_capacity = std::max(max_nodes, 65536ULL);
+    uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);
     ctx->words_per_bitset = (bitset_capacity + 63) / 64;
 
     // Pre-allocate 16 off-heap bitsets in a contiguous memory block
