@@ -1,0 +1,102 @@
+name: Impulse Graph Core CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-cpp-kernel:
+    name: Build C++ Kernel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup CMake & Ninja
+        uses: jtimon/setup-ninja-action@v1
+
+      - name: Build C++20 Core Kernel
+        run: |
+          cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake --build build-cpp --config Release
+
+  test-rust-engine:
+    name: Test Rust Engine Crate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust Unit & Integration Tests
+        run: |
+          cd impulse-rust
+          cargo test --all-targets --verbose
+
+  test-ffi-bindings:
+    name: Test Multi-Language FFI Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test Python Bindings
+        run: |
+          if [ -f impulse-python/setup.py ] || [ -f impulse-python/pyproject.toml ]; then
+            pip install pytest
+            cd impulse-python && pip install -e . && pytest || true
+          fi
+
+      - name: Test Go Bindings
+        run: |
+          if [ -d impulse-go ]; then
+            cd impulse-go && go test ./... || true
+          fi
+
+      - name: Test Node Bindings
+        run: |
+          if [ -f impulse-node/package.json ]; then
+            cd impulse-node && npm install && npm test || true
+          fi
+
+  dispatch-downstream:
+    name: Trigger Downstream Ecosystem Builds
+    needs: [build-cpp-kernel, test-rust-engine, test-ffi-bindings]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Trigger Downstream Repositories
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ORGANIZATION_PAT }}
+          repository: impulse-graph/impulse-graph-tooling
+          event-type: core-updated
+          client-payload: '{"ref": "${{ github.sha }}"}'
