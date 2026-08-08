@@ -91,7 +91,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Trigger Downstream Repositories
-        if: secrets.ORGANIZATION_PAT != ''
+        if: ${{ secrets.ORGANIZATION_PAT != '' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ORGANIZATION_PAT }}
