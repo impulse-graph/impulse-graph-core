@@ -89,9 +89,11 @@ jobs:
     needs: [build-cpp-kernel, test-rust-engine, test-ffi-bindings]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    env:
+      PAT_SECRET: ${{ secrets.ORGANIZATION_PAT }}
     steps:
       - name: Trigger Downstream Repositories
-        if: ${{ secrets.ORGANIZATION_PAT != '' }}
+        if: env.PAT_SECRET != ''
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ORGANIZATION_PAT }}
