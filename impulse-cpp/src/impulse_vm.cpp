@@ -5635,6 +5635,85 @@ void impulse_vm_context_bind_inline_data(impulse_vm_context_t* ctx, const void* 
     }
 }
 
+impulse_vm_status_t impulse_vm_validate(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count
+) {
+    if (!bytecode && instruction_count > 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (instruction_count == 0) return IMPULSE_VM_OK;
+
+    uint8_t abstract_types[64] = {0};
+
+    for (size_t pc = 0; pc < instruction_count; pc++) {
+        const auto& inst = bytecode[pc];
+        uint8_t opcode = inst.opcode;
+        uint16_t dst = inst.dst_reg;
+        uint16_t src = inst.payload & 0xFFFF;
+
+        if (dst >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+
+        switch (opcode) {
+            case OP_NOP:
+            case OP_HALT:
+            case OP_JMP:
+            case OP_JZ:
+            case OP_JNZ:
+            case OP_LOOP_DECR:
+            case OP_STABLE_CHECK:
+            case OP_CALL:
+            case OP_RET:
+            case OP_THROW:
+            case OP_ASSERT:
+            case OP_TRAP:
+            case OP_SET_MAX_DOP:
+            case OP_ALLOC_SCRATCH:
+            case OP_ASSERT_SCRATCH_BYTES:
+                break;
+
+            case OP_INIT_INPUT_NODE:
+                abstract_types[dst] = TYPE_NODE_ID;
+                break;
+            case OP_INIT_INPUT_SET:
+            case OP_MAP_KEYS_TO_DENSE:
+            case OP_CSR_WALK:
+            case OP_CSR_WALK_FILTERED:
+            case OP_CSC_WALK:
+            case OP_SET_UNION:
+            case OP_SET_INTERSECT:
+            case OP_SET_DIFFERENCE:
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_LOAD_CONST_INT:
+            case OP_CSR_DEGREE:
+            case OP_SET_CARDINALITY:
+                abstract_types[dst] = TYPE_INT64;
+                break;
+
+            case OP_LOAD_CONST_FLOAT:
+            case OP_VECTOR_REDUCE_SUM:
+                abstract_types[dst] = TYPE_FLOAT;
+                break;
+
+            case OP_LOAD_INLINE_ARRAY:
+                abstract_types[dst] = TYPE_FLOAT_VECTOR;
+                break;
+
+            case OP_MOV:
+                if (src < 64) abstract_types[dst] = abstract_types[src];
+                break;
+
+            case OP_CLEAR_REG:
+                abstract_types[dst] = TYPE_NULL;
+                break;
+
+            default:
+                break;
+        }
+    }
+    return IMPULSE_VM_OK;
+}
+
 } // extern "C"
 
 #if defined(__clang__)

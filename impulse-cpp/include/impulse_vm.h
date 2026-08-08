@@ -261,6 +261,20 @@ IMPULSE_API void impulse_vm_context_mock_csc(
  * @param input_param Input seed node ID or parameter value.
  * @return IMPULSE_VM_OK on successful execution, or VM error code.
  */
+/**
+ * @brief Ahead-of-Time Bytecode Type & Register Validator.
+ * Performs single-pass abstract type propagation across registers R0..R63.
+ * Guarantees zero runtime type tag branch mispredictions in SIMD execution loops.
+ *
+ * @param bytecode Pointer to array of impulse_instruction_t instructions.
+ * @param instruction_count Number of instructions in array.
+ * @return IMPULSE_VM_OK if statically valid, or VM status error code on type mismatch.
+ */
+IMPULSE_API impulse_vm_status_t impulse_vm_validate(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count
+);
+
 IMPULSE_API impulse_vm_status_t impulse_vm_execute(
     const impulse_instruction_t* bytecode,
     size_t instruction_count,
