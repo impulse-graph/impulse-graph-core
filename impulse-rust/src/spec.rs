@@ -394,7 +394,7 @@ pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
     let bit_len = (data.len() as u64) * 8;
     let mut padded = data.to_vec();
     padded.push(0x80);
-    while (padded.len() + 8) % 64 != 0 {
+    while !(padded.len() + 8).is_multiple_of(64) {
         padded.push(0x00);
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());

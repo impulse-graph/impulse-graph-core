@@ -356,6 +356,41 @@ QueryBuilder& QueryBuilder::clearReg(uint16_t reg) {
     return *this;
 }
 
+QueryBuilder& QueryBuilder::loadIndirect(uint16_t dst_reg, uint16_t src_param, uint16_t index_reg, uint8_t flags) {
+    current_reg_ = dst_reg;
+    uint32_t payload = static_cast<uint32_t>(src_param) | (static_cast<uint32_t>(index_reg) << 16);
+    emit(OP_LOAD_INDIRECT, flags, dst_reg, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::loadInlineArray(uint16_t dst_reg, uint16_t offset_bytes, uint16_t count) {
+    current_reg_ = dst_reg;
+    uint32_t payload = static_cast<uint32_t>(offset_bytes) | (static_cast<uint32_t>(count) << 16);
+    emit(OP_LOAD_INLINE_ARRAY, 0, dst_reg, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::initMockGraph(uint16_t slot_id, uint16_t offset_bytes, uint16_t node_count) {
+    uint32_t payload = static_cast<uint32_t>(offset_bytes) | (static_cast<uint32_t>(node_count) << 16);
+    emit(OP_INIT_MOCK_GRAPH, 0, slot_id, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::throwErr(uint32_t user_error_code) {
+    emit(OP_THROW, 0, 0, user_error_code);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::assertVal(uint16_t src_reg, uint32_t expected_val, uint8_t flags) {
+    emit(OP_ASSERT, flags, src_reg, expected_val);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::trap(uint32_t signal_id) {
+    emit(OP_TRAP, 0, 0, signal_id);
+    return *this;
+}
+
 QueryBuilder& QueryBuilder::nop() {
     emit(OP_NOP, 0, 0, 0);
     return *this;

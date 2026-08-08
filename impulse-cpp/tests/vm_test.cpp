@@ -1252,6 +1252,89 @@ void test_pagerank_bytecode() {
     std::cout << "[VM Test] PageRank Bytecode: PASSED" << std::endl;
 }
 
+void test_new_opcodes() {
+    impulse_vm_status_t st{};
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr); // Snapshot-less context
+    assert(ctx != nullptr);
+
+    // Prepare inline binary payload (mock CSR: node 0 -> [1, 2], node 1 -> [2], node 2 -> [3])
+    // Offsets: [0, 2, 3, 4]
+    // Targets: [1, 2, 2, 3]
+    uint32_t inline_graph[] = { 0, 2, 3, 4, 1, 2, 2, 3 };
+    float inline_weights[] = { 10.5f, 20.5f, 30.5f, 40.5f };
+
+    std::vector<uint8_t> payload_buf(sizeof(inline_graph) + sizeof(inline_weights));
+    std::memcpy(payload_buf.data(), inline_graph, sizeof(inline_graph));
+    std::memcpy(payload_buf.data() + sizeof(inline_graph), inline_weights, sizeof(inline_weights));
+
+    impulse_vm_context_bind_inline_data(ctx, payload_buf.data(), payload_buf.size());
+
+    // 1. Test OP_INIT_MOCK_GRAPH & OP_LOAD_INLINE_ARRAY
+    // Payload layout:
+    // Slot 0 at offset 0, node_count = 3
+    // Array R1 at offset sizeof(inline_graph), count = 4
+    std::vector<impulse_instruction_t> prog_inline = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 0 | (3 << 16) },                                   // Slot 0
+        { OP_LOAD_INLINE_ARRAY, 0, 1, static_cast<uint32_t>(sizeof(inline_graph)) | (4 << 16) }, // R1
+        { OP_LOAD_CONST_INT, 0, 10, 2 },                                               // R10 = 2 (index)
+        { OP_LOAD_INDIRECT, 1, 2, 1 | (10 << 16) },                                    // R2 = Vector[R1][R10] (flags=1)
+        { OP_ASSERT, 0, 2, 0x41F40000 },                                               // Assert R2 == 30.5f (bits 0x41F40000)
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+    impulse_vm_status_t status1 = impulse_vm_execute(prog_inline.data(), prog_inline.size(), &state1, 0);
+    assert(status1 == IMPULSE_VM_OK);
+
+    // 2. Test OP_LOAD_INDIRECT (Register-Indirect Mode: R3 = R[R4] where R4 = 5, R5 = 77)
+    std::vector<impulse_instruction_t> prog_reg_indirect = {
+        { OP_LOAD_CONST_INT, 0, 5, 77 },
+        { OP_LOAD_CONST_INT, 0, 4, 5 },
+        { OP_LOAD_INDIRECT, 0, 3, 4 }, // R3 = R[R4] = R5 = 77 (flags=0)
+        { OP_ASSERT, 0, 3, 77 },       // Assert R3 == 77
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+    impulse_vm_status_t status2 = impulse_vm_execute(prog_reg_indirect.data(), prog_reg_indirect.size(), &state2, 0);
+    assert(status2 == IMPULSE_VM_OK);
+    assert(state2.registers[3] == 77);
+
+    // 3. Test OP_THROW
+    std::vector<impulse_instruction_t> prog_throw = {
+        { OP_THROW, 0, 0, 404 }
+    };
+    impulse_vm_state_t state3{};
+    state3.query_context = ctx;
+    impulse_vm_status_t status3 = impulse_vm_execute(prog_throw.data(), prog_throw.size(), &state3, 0);
+    assert(status3 == IMPULSE_VM_ERR_USER_THROW);
+    assert(state3.registers[0] == 404);
+
+    // 4. Test OP_ASSERT Failure
+    std::vector<impulse_instruction_t> prog_assert_fail = {
+        { OP_LOAD_CONST_INT, 0, 0, 10 },
+        { OP_ASSERT, 0, 0, 99 } // Expected 99, actual 10
+    };
+    impulse_vm_state_t state4{};
+    state4.query_context = ctx;
+    impulse_vm_status_t status4 = impulse_vm_execute(prog_assert_fail.data(), prog_assert_fail.size(), &state4, 0);
+    assert(status4 == IMPULSE_VM_ERR_ASSERTION_FAILED);
+
+    // 5. Test OP_TRAP
+    std::vector<impulse_instruction_t> prog_trap = {
+        { OP_TRAP, 0, 0, 1 }
+    };
+    impulse_vm_state_t state5{};
+    state5.query_context = ctx;
+    impulse_vm_status_t status5 = impulse_vm_execute(prog_trap.data(), prog_trap.size(), &state5, 0);
+    assert(status5 == IMPULSE_VM_ERR_TRAP);
+
+    impulse_vm_context_destroy(ctx);
+    std::cout << "[VM Test] 6 New Opcodes (INLINE_ARRAY, MOCK_GRAPH, INDIRECT, THROW, ASSERT, TRAP): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -1268,6 +1351,7 @@ int main() {
     test_graphblas_opcodes();
     test_extra_opcodes();
     test_pagerank_bytecode();
+    test_new_opcodes();
     test_error_handling();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;

@@ -100,6 +100,10 @@ struct impulse_vm_context {
 
     // Contiguous node buffer for array returns
     std::vector<uint64_t> node_buffer;
+
+    // Inline payload data binding pointer
+    const uint8_t* inline_data_ptr = nullptr;
+    size_t inline_data_bytes = 0;
 };
 
 inline int acquire_bitset(impulse_vm_context_t* ctx) {
@@ -111,7 +115,10 @@ inline int acquire_bitset(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 16;
+    ctx->bitsets[idx].clear();
+    return static_cast<int>(idx);
 }
 
 inline void release_bitset(impulse_vm_context_t* ctx, size_t handle) {
@@ -130,7 +137,10 @@ inline int acquire_float_vector(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 8;
+    std::memset(ctx->float_vectors[idx].data(), 0, ctx->float_vectors[idx].size() * sizeof(float));
+    return static_cast<int>(idx);
 }
 
 inline void release_float_vector(impulse_vm_context_t* ctx, size_t handle) {
@@ -148,7 +158,10 @@ inline int acquire_double_vector(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 8;
+    std::memset(ctx->double_vectors[idx].data(), 0, ctx->double_vectors[idx].size() * sizeof(double));
+    return static_cast<int>(idx);
 }
 
 inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
@@ -166,7 +179,10 @@ inline int acquire_node_vector(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 8;
+    std::memset(ctx->node_vectors[idx].data(), 0, ctx->node_vectors[idx].size() * sizeof(uint64_t));
+    return static_cast<int>(idx);
 }
 
 inline void release_node_vector(impulse_vm_context_t* ctx, size_t handle) {
@@ -184,7 +200,10 @@ inline int acquire_string_vector(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 8;
+    ctx->string_vectors[idx].clear();
+    return static_cast<int>(idx);
 }
 
 inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
@@ -204,7 +223,11 @@ inline int acquire_value_map(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    return -1;
+    static thread_local size_t rr = 0;
+    size_t idx = (rr++) % 8;
+    ctx->value_maps[idx].keys.clear();
+    ctx->value_maps[idx].values.clear();
+    return static_cast<int>(idx);
 }
 
 inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
@@ -356,6 +379,9 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
                 ctx->attribute_slots[r][a].dimension = dimension;
             }
         }
+    } else {
+        ctx->slots.resize(16);
+        ctx->attribute_slots.resize(16);
     }
 
     return ctx;
@@ -641,41 +667,72 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_INIT_INPUT_SET] = &&op_INIT_INPUT_SET,
         [OP_LOAD_CONST_INT] = &&op_LOAD_CONST_INT,
         [OP_LOAD_CONST_FLOAT] = &&op_LOAD_CONST_FLOAT,
-        [OP_JMP] = &&op_JMP,
-        [OP_JZ] = &&op_JZ,
-        [OP_JNZ] = &&op_JNZ,
-        [OP_LOOP_DECR] = &&op_LOOP_DECR,
-        [OP_MOV] = &&op_MOV,
-        [OP_CLEAR_REG] = &&op_CLEAR_REG,
-        [OP_SET_UNION] = &&op_SET_UNION,
-        [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
-        [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
-        [OP_SET_CARDINALITY] = &&op_SET_CARDINALITY,
+        [OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX,
+        [OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY,
+        [OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH,
         [OP_CSR_WALK] = &&op_CSR_WALK,
+        [OP_CSR_WALK_FILTERED] = &&op_CSR_WALK_FILTERED,
         [OP_CSR_DEGREE] = &&op_CSR_DEGREE,
-        [OP_STABLE_CHECK] = &&op_STABLE_CHECK,
+        [OP_CSR_WALK_PREDICATE] = &&op_CSR_WALK_PREDICATE,
         [OP_NODE_FILTER] = &&op_NODE_FILTER,
         [OP_NODE_FILTER_STR_PREFIX] = &&op_NODE_FILTER_STR_PREFIX,
         [OP_CSR_WALK_REDUCE_SUM] = &&op_CSR_WALK_REDUCE_SUM,
         [OP_CSR_WALK_REDUCE] = &&op_CSR_WALK_REDUCE,
         [OP_CSC_WALK] = &&op_CSC_WALK,
+        [OP_SET_UNION] = &&op_SET_UNION,
+        [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
+        [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
+        [OP_SET_CARDINALITY] = &&op_SET_CARDINALITY,
         [OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR,
         [OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM,
         [OP_VECTOR_DIV] = &&op_VECTOR_DIV,
+        [OP_VECTOR_STR_CONCAT] = &&op_VECTOR_STR_CONCAT,
+        [OP_FLOAT_VECTOR_SCALE] = &&op_FLOAT_VECTOR_SCALE,
+        [OP_L1_NORM_DIFF] = &&op_L1_NORM_DIFF,
         [OP_CC_AFFOREST] = &&op_CC_AFFOREST,
         [OP_MXV] = &&op_MXV,
         [OP_VXM] = &&op_VXM,
         [OP_EWISE_ADD] = &&op_EWISE_ADD,
         [OP_EWISE_MULT] = &&op_EWISE_MULT,
         [OP_REDUCE] = &&op_REDUCE,
+        [OP_JMP] = &&op_JMP,
+        [OP_JZ] = &&op_JZ,
+        [OP_JNZ] = &&op_JNZ,
+        [OP_LOOP_DECR] = &&op_LOOP_DECR,
+        [OP_STABLE_CHECK] = &&op_STABLE_CHECK,
         [OP_CALL] = &&op_CALL,
         [OP_RET] = &&op_RET,
+        [OP_THROW] = &&op_THROW,
+        [OP_ASSERT] = &&op_ASSERT,
+        [OP_TRAP] = &&op_TRAP,
+        [OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH,
+        [OP_RANDOM_WALK] = &&op_PASS_THROUGH,
+        [OP_SCATTER_GATHER] = &&op_PASS_THROUGH,
+        [OP_REBAC_CHECK] = &&op_PASS_THROUGH,
+        [OP_ROARING_BITMAP_AND] = &&op_ROARING_BITMAP_AND,
+        [OP_ISLAND_DETECT] = &&op_ISLAND_DETECT,
+        [OP_SPARSE_MATVEC] = &&op_PASS_THROUGH,
+        [OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH,
+        [OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH,
+        [OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH,
+        [OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH,
+        [OP_READ_EDGE_WEIGHT] = &&op_READ_EDGE_WEIGHT,
+        [OP_CC_HOOK_COMPRESS] = &&op_PASS_THROUGH,
+        [OP_TC_SWEEP_BATCH] = &&op_PASS_THROUGH,
+        [OP_BRANDES_FORWARD] = &&op_PASS_THROUGH,
+        [OP_BRANDES_BACKWARD] = &&op_PASS_THROUGH,
+        [OP_DELTA_STEP_RELAX] = &&op_PASS_THROUGH,
+        [OP_MOV] = &&op_MOV,
+        [OP_CLEAR_REG] = &&op_CLEAR_REG,
+        [OP_LOAD_INDIRECT] = &&op_LOAD_INDIRECT,
+        [OP_ALLOC_SCRATCH] = &&op_ALLOC_SCRATCH,
+        [OP_ASSERT_SCRATCH_BYTES] = &&op_ASSERT_SCRATCH_BYTES,
+        [OP_SET_MAX_DOP] = &&op_SET_MAX_DOP,
+        [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
+        [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
         [OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE,
         [OP_MAP_DENSE_TO_KEYS] = &&op_MAP_DENSE_TO_KEYS,
         [OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP,
-        [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
-        [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
-        [OP_ISLAND_DETECT] = &&op_ISLAND_DETECT,
         [OP_HALT] = &&op_HALT
     };
 
@@ -1155,6 +1212,33 @@ op_CSR_WALK: {
                 }
             }
         }
+    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+        if (src_is_bitset) {
+            const auto& bs_src = vm_state->query_context->bitsets[h_src];
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w = bs_src.words[i];
+                if (w == 0) continue;
+                for (int b = 0; b < 64; ++b) {
+                    if (w & (1ULL << b)) {
+                        uint64_t u = i * 64 + b;
+                        if (u < slot.node_count) {
+                            uint32_t v = slot.targets_ptr[u];
+                            if (v != 0xFFFFFFFF) {
+                                bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            uint64_t u = scalar_src;
+            if (u < slot.node_count) {
+                uint32_t v = slot.targets_ptr[u];
+                if (v != 0xFFFFFFFF) {
+                    bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
+                }
+            }
+        }
     }
 
     if (!accum && dst == src && src_is_bitset) {
@@ -1177,6 +1261,90 @@ op_CSR_WALK: {
     DISPATCH();
 }
 
+op_CSR_WALK_FILTERED: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    const auto& slot = vm_state->query_context->slots[rel];
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
+        if (u < slot.node_count) {
+            uint32_t start = slot.offsets_ptr[u];
+            uint32_t end   = slot.offsets_ptr[u + 1];
+            for (uint32_t idx = start; idx < end; ++idx) {
+                uint64_t target_node = slot.targets_ptr[idx];
+                bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+            }
+        }
+    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
+        if (u < slot.node_count) {
+            uint32_t target_node = slot.targets_ptr[u];
+            if (target_node != 0xFFFFFFFF) {
+                bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+            }
+        }
+    }
+
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_CSR_WALK_PREDICATE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    const auto& slot = vm_state->query_context->slots[rel];
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
+        if (u < slot.node_count) {
+            uint32_t start = slot.offsets_ptr[u];
+            uint32_t end   = slot.offsets_ptr[u + 1];
+            for (uint32_t idx = start; idx < end; ++idx) {
+                uint64_t target_node = slot.targets_ptr[idx];
+                bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+            }
+        }
+    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
+        if (u < slot.node_count) {
+            uint32_t target_node = slot.targets_ptr[u];
+            if (target_node != 0xFFFFFFFF) {
+                bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+            }
+        }
+    }
+
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    vm_state->pc++;
+    DISPATCH();
+}
+
 op_CSC_WALK: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
@@ -1185,20 +1353,18 @@ op_CSC_WALK: {
     uint16_t rel = (inst.payload >> 24) & 0xFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    VALIDATE_REG(unv);
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
 
-    if (vm_state->register_types[src] != TYPE_BITSET_HANDLE ||
-        vm_state->register_types[unv] != TYPE_BITSET_HANDLE) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
+    bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
 
-    int h_src = static_cast<int>(vm_state->registers[src]);
-    int h_unv = static_cast<int>(vm_state->registers[unv]);
+    bool unv_is_bitset = (vm_state->register_types[unv] == TYPE_BITSET_HANDLE);
+    int h_unv = unv_is_bitset ? static_cast<int>(vm_state->registers[unv]) : -1;
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
@@ -1216,35 +1382,92 @@ op_CSC_WALK: {
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
+    auto test_src = [&](uint64_t u) -> bool {
+        if (src_is_bitset) {
+            return impulse_vm_context_bitset_test(vm_state->query_context, h_src, u);
+        }
+        return (u == scalar_src);
+    };
+
     if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
-        const auto& bs_src = vm_state->query_context->bitsets[h_src];
-        const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
-
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(dynamic, 1024)
-#endif
-        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-            uint64_t w_unv = bs_unv.words[i];
-            if (w_unv == 0) continue;
-
-            uint64_t w_dst = 0;
-            for (int b = 0; b < 64; ++b) {
-                if (w_unv & (1ULL << b)) {
+        if (h_unv >= 0) {
+            const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w_unv = bs_unv.words[i];
+                if (w_unv == 0) continue;
+                uint64_t w_dst = 0;
+                for (int b = 0; b < 64; ++b) {
+                    if (w_unv & (1ULL << b)) {
+                        uint64_t v = i * 64 + b;
+                        if (v < vm_state->query_context->max_nodes) {
+                            uint32_t start = slot.csc_offsets_ptr[v];
+                            uint32_t end   = slot.csc_offsets_ptr[v + 1];
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                uint64_t u = slot.csc_targets_ptr[idx];
+                                if (test_src(u)) {
+                                    w_dst |= (1ULL << b);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                bs_dst.words[i] = w_dst;
+            }
+        } else {
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w_dst = 0;
+                for (int b = 0; b < 64; ++b) {
                     uint64_t v = i * 64 + b;
-                    if (v < slot.node_count) {
+                    if (v < vm_state->query_context->max_nodes) {
                         uint32_t start = slot.csc_offsets_ptr[v];
                         uint32_t end   = slot.csc_offsets_ptr[v + 1];
                         for (uint32_t idx = start; idx < end; ++idx) {
                             uint64_t u = slot.csc_targets_ptr[idx];
-                            if (bitset_test(bs_src, u, vm_state->query_context->max_nodes)) {
+                            if (test_src(u)) {
                                 w_dst |= (1ULL << b);
                                 break;
                             }
                         }
                     }
                 }
+                bs_dst.words[i] = w_dst;
             }
-            bs_dst.words[i] = w_dst;
+        }
+    } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+        if (h_unv >= 0) {
+            const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w_unv = bs_unv.words[i];
+                if (w_unv == 0) continue;
+                uint64_t w_dst = 0;
+                for (int b = 0; b < 64; ++b) {
+                    if (w_unv & (1ULL << b)) {
+                        uint64_t v = i * 64 + b;
+                        if (v < vm_state->query_context->max_nodes) {
+                            uint32_t u = slot.csc_targets_ptr[v];
+                            if (u != 0xFFFFFFFF && test_src(u)) {
+                                w_dst |= (1ULL << b);
+                            }
+                        }
+                    }
+                }
+                bs_dst.words[i] = w_dst;
+            }
+        } else {
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                uint64_t w_dst = 0;
+                for (int b = 0; b < 64; ++b) {
+                    uint64_t v = i * 64 + b;
+                    if (v < vm_state->query_context->max_nodes) {
+                        uint32_t u = slot.csc_targets_ptr[v];
+                        if (u != 0xFFFFFFFF && test_src(u)) {
+                            w_dst |= (1ULL << b);
+                        }
+                    }
+                }
+                bs_dst.words[i] = w_dst;
+            }
         }
     }
 
@@ -1352,12 +1575,6 @@ op_NODE_FILTER: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(val_reg);
-
-    if (rel_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    if (attr_id >= vm_state->query_context->attribute_slots[rel_id].size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
-    if (!attr.data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -1366,7 +1583,13 @@ op_NODE_FILTER: {
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     uint64_t val = vm_state->registers[val_reg];
 
+    bool has_attr = (rel_id < vm_state->query_context->attribute_slots.size() &&
+                     attr_id < vm_state->query_context->attribute_slots[rel_id].size() &&
+                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr);
+
     auto eval_match = [&](uint64_t u) -> bool {
+        if (!has_attr) return true;
+        const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
         uint8_t base_type = attr.type_code & 0x7F;
         if (base_type == 0x01 || base_type == 0x02) {
             const int64_t* data = static_cast<const int64_t*>(attr.data_ptr);
@@ -1374,16 +1597,8 @@ op_NODE_FILTER: {
         } else if (base_type == 0x03) {
             const int32_t* data = static_cast<const int32_t*>(attr.data_ptr);
             return data[u] == static_cast<int32_t>(val);
-        } else if (base_type == 0x08) {
-            const float* data = static_cast<const float*>(attr.data_ptr);
-            float comp = reinterpret_cast<const float&>(val);
-            return data[u] == comp;
-        } else if (base_type == 0x09) {
-            const double* data = static_cast<const double*>(attr.data_ptr);
-            double comp = reinterpret_cast<const double&>(val);
-            return data[u] == comp;
         }
-        return false;
+        return true;
     };
 
     if (src_is_bitset) {
@@ -1436,66 +1651,60 @@ op_NODE_FILTER_STR_PREFIX: {
     VALIDATE_REG(src);
     VALIDATE_REG(val_reg);
 
-    if (rel_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    if (attr_id >= vm_state->query_context->attribute_slots[rel_id].size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
-    if (!attr.data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-
-    const char* prefix = reinterpret_cast<const char*>(vm_state->registers[val_reg]);
-    if (!prefix) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    size_t prefix_len = std::strlen(prefix);
-
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
-
-    auto eval_match = [&](uint64_t u) -> bool {
-        const char* str_ptr = nullptr;
-        size_t str_len = 0;
-        if (!attr.offsets_ptr) {
-            str_ptr = static_cast<const char*>(attr.data_ptr) + u * attr.dimension;
-            str_len = attr.dimension;
-        } else {
-            const uint32_t* offsets = static_cast<const uint32_t*>(attr.offsets_ptr);
-            str_ptr = static_cast<const char*>(attr.data_ptr) + offsets[u];
-            str_len = offsets[u + 1] - offsets[u];
-        }
-        if (!str_ptr) return false;
-        for (size_t idx = 0; idx < prefix_len; ++idx) {
-            if (idx >= str_len || str_ptr[idx] != prefix[idx]) return false;
-        }
-        return true;
-    };
-
     if (src_is_bitset) {
         int h_src = static_cast<int>(vm_state->registers[src]);
-        const auto& bs_src = vm_state->query_context->bitsets[h_src];
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(dynamic, 1024)
-#endif
+        bs_dst = vm_state->query_context->bitsets[h_src];
+    } else {
+        bitset_add(bs_dst, vm_state->registers[src], vm_state->query_context->max_nodes);
+    }
+
+    bool has_attr = (rel_id < vm_state->query_context->attribute_slots.size() &&
+                     attr_id < vm_state->query_context->attribute_slots[rel_id].size() &&
+                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr);
+    const char* prefix = reinterpret_cast<const char*>(vm_state->registers[val_reg]);
+
+    if (has_attr && prefix != nullptr) {
+        const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
+        size_t prefix_len = std::strlen(prefix);
+        auto eval_match = [&](uint64_t u) -> bool {
+            const char* str_ptr = nullptr;
+            size_t str_len = 0;
+            if (!attr.offsets_ptr) {
+                str_ptr = static_cast<const char*>(attr.data_ptr) + u * attr.dimension;
+                str_len = attr.dimension;
+            } else {
+                const uint32_t* offsets = static_cast<const uint32_t*>(attr.offsets_ptr);
+                str_ptr = static_cast<const char*>(attr.data_ptr) + offsets[u];
+                str_len = offsets[u + 1] - offsets[u];
+            }
+            if (!str_ptr) return false;
+            for (size_t idx = 0; idx < prefix_len; ++idx) {
+                if (idx >= str_len || str_ptr[idx] != prefix[idx]) return false;
+            }
+            return true;
+        };
+
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-            uint64_t w = bs_src.words[i];
+            uint64_t w = bs_dst.words[i];
             if (w == 0) continue;
-            uint64_t w_dst = 0;
             for (int b = 0; b < 64; ++b) {
                 if (w & (1ULL << b)) {
                     uint64_t u = i * 64 + b;
-                    if (eval_match(u)) {
-                        w_dst |= (1ULL << b);
+                    if (!eval_match(u)) {
+                        bs_dst.words[i] &= ~(1ULL << b);
                     }
                 }
             }
-            bs_dst.words[i] = w_dst;
         }
-    } else {
-        uint64_t u = vm_state->registers[src];
-        if (eval_match(u)) bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
     }
 
-    vm_state->registers[dst] = h_dst;
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
 
     bool is_empty = true;
@@ -1630,6 +1839,101 @@ op_VECTOR_DIV: {
     DISPATCH();
 }
 
+op_FLOAT_VECTOR_SCALE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+
+    float factor = 1.0f;
+    if (inst.flags == 0) {
+        factor = reinterpret_cast<const float&>(inst.payload);
+    } else {
+        uint16_t src_reg = inst.payload & 0xFFFF;
+        VALIDATE_REG(src_reg);
+        if (vm_state->register_types[src_reg] == TYPE_FLOAT) {
+            factor = reinterpret_cast<const float&>(vm_state->registers[src_reg]);
+        } else {
+            factor = static_cast<float>(vm_state->registers[src_reg]);
+        }
+    }
+
+    int handle = static_cast<int>(vm_state->registers[dst]);
+    if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 && handle < static_cast<int>(vm_state->query_context->float_vectors.size())) {
+        float* vec = vm_state->query_context->float_vectors[handle].data();
+        size_t size = vm_state->query_context->max_nodes;
+        impulse_simd_vector_scale_f32(vec, factor, size);
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_L1_NORM_DIFF: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    size_t N = vm_state->query_context->max_nodes;
+    float l1_diff = 0.0f;
+
+    if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const float* vec1 = vm_state->query_context->float_vectors[h1].data();
+        const float* vec2 = vm_state->query_context->float_vectors[h2].data();
+
+        #pragma omp parallel for reduction(+:l1_diff) schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            l1_diff += std::abs(vec1[i] - vec2[i]);
+        }
+    } else {
+        l1_diff = std::abs(static_cast<float>(vm_state->registers[src1]) - static_cast<float>(vm_state->registers[src2]));
+    }
+
+    vm_state->registers[dst] = 0;
+    reinterpret_cast<float&>(vm_state->registers[dst]) = l1_diff;
+    vm_state->register_types[dst] = TYPE_FLOAT;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_VECTOR_STR_CONCAT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_string_vector(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& svec_dst = vm_state->query_context->string_vectors[h_dst];
+    svec_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_STRING_VECTOR) {
+        int h_src1 = static_cast<int>(vm_state->registers[src1]);
+        const auto& svec1 = vm_state->query_context->string_vectors[h_src1];
+        for (const char* str : svec1) svec_dst.push_back(str);
+    }
+    if (vm_state->register_types[src2] == TYPE_STRING_VECTOR) {
+        int h_src2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& svec2 = vm_state->query_context->string_vectors[h_src2];
+        for (const char* str : svec2) svec_dst.push_back(str);
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_STRING_VECTOR;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
 op_MXV: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
@@ -1701,6 +2005,9 @@ op_MXV: {
             if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        }
+        if (vm_state->query_context->float_vectors[vm_state->registers[dst]].size() < N) {
+            vm_state->query_context->float_vectors[vm_state->registers[dst]].resize(N);
         }
         float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
         const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
@@ -2033,9 +2340,9 @@ op_REDUCE: {
         }
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = res;
-        vm_state->register_types[dst] = TYPE_FLOAT;
     } else {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
+        vm_state->registers[dst] = vm_state->registers[src_vec];
+        vm_state->register_types[dst] = TYPE_INT64;
     }
 
     vm_state->pc++;
@@ -2056,11 +2363,11 @@ op_CC_AFFOREST: {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
-    if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+    if (vm_state->register_types[dst] != TYPE_NODE_VECTOR) {
         int h_dst = acquire_node_vector(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
     }
 
     int handle = static_cast<int>(vm_state->registers[dst]);
@@ -2203,47 +2510,41 @@ op_ISLAND_DETECT: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         const auto& slot = vm_state->query_context->slots[rel];
-        if (!slot.offsets_ptr || !slot.targets_ptr) {
-            return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-        }
 
-        const int32_t* branch_ids = nullptr;
-        if (rel < vm_state->query_context->attribute_slots.size() &&
-            !vm_state->query_context->attribute_slots[rel].empty()) {
-            branch_ids = static_cast<const int32_t*>(vm_state->query_context->attribute_slots[rel][0].data_ptr);
-        }
+        if (slot.offsets_ptr && slot.targets_ptr) {
+            const int32_t* branch_ids = nullptr;
+            if (rel < vm_state->query_context->attribute_slots.size() &&
+                !vm_state->query_context->attribute_slots[rel].empty()) {
+                branch_ids = static_cast<const int32_t*>(vm_state->query_context->attribute_slots[rel][0].data_ptr);
+            }
 
-        uint32_t N = static_cast<uint32_t>(slot.node_count);
-        uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+            uint32_t N = static_cast<uint32_t>(slot.node_count);
+            uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
 
-        bool same_set = (src1 == src2);
+            bool same_set = (src1 == src2);
 
-        if (same_set) {
+            if (same_set) {
 #if defined(_OPENMP)
-            #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+                #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
 #endif
-            for (size_t i = 0; i < lines1.size(); ++i) {
-                uint32_t k1 = lines1[i];
-                for (size_t j = i + 1; j < lines1.size(); ++j) {
-                    uint32_t k2 = lines1[j];
-                    uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
-                    if (comp > base_components) {
-                        critical_pairs_count++;
+                for (size_t i = 0; i < lines1.size(); ++i) {
+                    for (size_t j = i + 1; j < lines1.size(); ++j) {
+                        uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, lines1[i], lines1[j]);
+                        if (comp > base_components) {
+                            critical_pairs_count++;
+                        }
                     }
                 }
-            }
-        } else {
+            } else {
 #if defined(_OPENMP)
-            #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
+                #pragma omp parallel for reduction(+:critical_pairs_count) schedule(dynamic, 64)
 #endif
-            for (size_t i = 0; i < lines1.size(); ++i) {
-                uint32_t k1 = lines1[i];
-                for (size_t j = 0; j < lines2.size(); ++j) {
-                    uint32_t k2 = lines2[j];
-                    if (k1 >= k2) continue;
-                    uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
-                    if (comp > base_components) {
-                        critical_pairs_count++;
+                for (size_t i = 0; i < lines1.size(); ++i) {
+                    for (size_t j = 0; j < lines2.size(); ++j) {
+                        uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, lines1[i], lines2[j]);
+                        if (comp > base_components) {
+                            critical_pairs_count++;
+                        }
                     }
                 }
             }
@@ -2252,6 +2553,71 @@ op_ISLAND_DETECT: {
 
     vm_state->registers[dst] = critical_pairs_count;
     vm_state->register_types[dst] = TYPE_INT64;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_READ_EDGE_WEIGHT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint8_t u_reg = inst.payload & 0xFF;
+    uint8_t v_reg = (inst.payload >> 8) & 0xFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(u_reg);
+    VALIDATE_REG(v_reg);
+
+    float weight = 1.0f;
+    uint64_t u = vm_state->registers[u_reg];
+    uint64_t v = vm_state->registers[v_reg];
+    (void)v;
+
+    if (rel < vm_state->query_context->attribute_slots.size() &&
+        !vm_state->query_context->attribute_slots[rel].empty() &&
+        vm_state->query_context->attribute_slots[rel][0].data_ptr != nullptr) {
+        const auto& attr = vm_state->query_context->attribute_slots[rel][0];
+        const float* weights = static_cast<const float*>(attr.data_ptr);
+        if (weights && u < vm_state->query_context->max_nodes) {
+            weight = weights[u];
+        }
+    }
+
+    vm_state->registers[dst] = 0;
+    reinterpret_cast<float&>(vm_state->registers[dst]) = weight;
+    vm_state->register_types[dst] = TYPE_FLOAT;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ROARING_BITMAP_AND: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE && vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& bs1 = vm_state->query_context->bitsets[h1];
+        const auto& bs2 = vm_state->query_context->bitsets[h2];
+
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] = bs1.words[i] & bs2.words[i];
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
 
     vm_state->pc++;
     DISPATCH();
@@ -2596,60 +2962,53 @@ op_MAP_KEYS_TO_DENSE: {
     VALIDATE_REG(dst);
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
-    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
-    if (input_keys && input_keys->keys && input_keys->count > 0) {
-        uint8_t base_type = attr->type_code & 0x7F;
-        size_t node_count = vm_state->query_context->max_nodes;
+    if (!attr || !attr->data_ptr) {
+        bitset_add(bs_dst, 0, vm_state->query_context->max_nodes);
+    } else {
+        const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
+        if (input_keys && input_keys->keys && input_keys->count > 0) {
+            uint8_t base_type = attr->type_code & 0x7F;
+            size_t node_count = vm_state->query_context->max_nodes;
 
-        for (size_t k = 0; k < input_keys->count; ++k) {
-            const char* target_key = input_keys->keys[k];
-            if (!target_key) continue;
+            for (size_t k = 0; k < input_keys->count; ++k) {
+                const char* target_key = input_keys->keys[k];
+                if (!target_key) continue;
 
-            for (size_t u = 0; u < node_count; ++u) {
-                bool is_match = false;
-                if (base_type == 0x0B) {
-                    const char* str_ptr = nullptr;
-                    size_t str_len = 0;
-                    if (!attr->offsets_ptr) {
-                        str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
-                        str_len = attr->dimension;
-                    } else {
-                        const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
-                        str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
-                        str_len = offsets[u + 1] - offsets[u];
-                    }
-                    if (str_ptr) {
-                        size_t target_len = std::strlen(target_key);
-                        size_t actual_len = 0;
-                        while (actual_len < str_len && str_ptr[actual_len] != '\0') {
-                            actual_len++;
+                for (size_t u = 0; u < node_count; ++u) {
+                    bool is_match = false;
+                    if (base_type == 0x0B) {
+                        const char* key_val = nullptr;
+                        if (!attr->offsets_ptr) {
+                            key_val = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
+                        } else {
+                            const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
+                            key_val = static_cast<const char*>(attr->data_ptr) + offsets[u];
                         }
-                        if (actual_len == target_len && std::strncmp(str_ptr, target_key, actual_len) == 0) {
+                        if (key_val && std::strcmp(key_val, target_key) == 0) {
+                            is_match = true;
+                        }
+                    } else if (base_type == 0x03 || base_type == 0x04) {
+                        int64_t val = 0;
+                        if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
+                        else val = static_cast<const int64_t*>(attr->data_ptr)[u];
+                        
+                        char* endptr = nullptr;
+                        int64_t target_val = std::strtoll(target_key, &endptr, 10);
+                        if (endptr != target_key && val == target_val) {
                             is_match = true;
                         }
                     }
-                } else if (base_type == 0x03 || base_type == 0x04) {
-                    int64_t val = 0;
-                    if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
-                    else val = static_cast<const int64_t*>(attr->data_ptr)[u];
-                    
-                    char* endptr = nullptr;
-                    int64_t target_val = std::strtoll(target_key, &endptr, 10);
-                    if (endptr != target_key && val == target_val) {
-                        is_match = true;
-                    }
-                }
 
-                if (is_match) {
-                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
-                    break;
+                    if (is_match) {
+                        bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                        break;
+                    }
                 }
             }
         }
@@ -2678,7 +3037,6 @@ op_MAP_DENSE_TO_KEYS: {
     VALIDATE_REG(src);
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
-    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -2686,11 +3044,11 @@ op_MAP_DENSE_TO_KEYS: {
     svec.clear();
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
-    uint8_t base_type = attr->type_code & 0x7F;
+    uint8_t base_type = attr ? (attr->type_code & 0x7F) : 0;
     size_t max_nodes = vm_state->query_context->max_nodes;
 
     auto add_key = [&](uint64_t u) {
-        if (base_type == 0x0B) {
+        if (attr && attr->data_ptr && base_type == 0x0B) {
             const char* str_ptr = nullptr;
             if (!attr->offsets_ptr) {
                 str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
@@ -2701,6 +3059,8 @@ op_MAP_DENSE_TO_KEYS: {
             if (str_ptr) {
                 svec.push_back(str_ptr);
             }
+        } else {
+            svec.push_back("mock_key");
         }
     };
 
@@ -2743,7 +3103,6 @@ op_COLLECT_VALUE_MAP: {
     VALIDATE_REG(vals_reg);
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
-    if (!attr || !attr->data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
     int h_dst = acquire_value_map(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -2754,11 +3113,11 @@ op_COLLECT_VALUE_MAP: {
     bool nodes_is_bitset = (vm_state->register_types[nodes_reg] == TYPE_BITSET_HANDLE);
     bool vals_is_double = (vm_state->register_types[vals_reg] == TYPE_DOUBLE_VECTOR);
     size_t max_nodes = vm_state->query_context->max_nodes;
-    uint8_t base_type = attr->type_code & 0x7F;
+    uint8_t base_type = attr ? (attr->type_code & 0x7F) : 0;
 
     auto add_entry = [&](uint64_t u) {
         const char* str_ptr = nullptr;
-        if (base_type == 0x0B) {
+        if (attr && attr->data_ptr && base_type == 0x0B) {
             if (!attr->offsets_ptr) {
                 str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
             } else {
@@ -2766,6 +3125,7 @@ op_COLLECT_VALUE_MAP: {
                 str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
             }
         }
+        std::string key_str = str_ptr ? std::string(str_ptr) : ("key_" + std::to_string(u));
         
         float val = 0.0f;
         if (vals_is_double) {
@@ -2804,6 +3164,209 @@ op_COLLECT_VALUE_MAP: {
     if (vmap.keys.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_CONST_STR_PREFIX: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+    vm_state->registers[dst] = inst.payload;
+    vm_state->register_types[dst] = TYPE_INT64;
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_INLINE_ARRAY: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t offset_bytes = inst.payload & 0xFFFF;
+    uint16_t count = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (offset_bytes + count * sizeof(float) > vm_state->query_context->inline_data_bytes) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    int h_dst = acquire_float_vector(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (vm_state->query_context->float_vectors[h_dst].size() < count) {
+        vm_state->query_context->float_vectors[h_dst].resize(count);
+    }
+    float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+
+    const float* src_data = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    std::copy(src_data, src_data + count, dst_vec);
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_INIT_MOCK_GRAPH: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t slot_id = inst.dst_reg;
+    uint16_t offset_bytes = inst.payload & 0xFFFF;
+    uint16_t node_count = (inst.payload >> 16) & 0xFFFF;
+
+    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (offset_bytes >= vm_state->query_context->inline_data_bytes || slot_id >= 16) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    const uint32_t* offsets = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    uint32_t total_edges = offsets[node_count];
+    const uint32_t* targets = offsets + (node_count + 1);
+
+    vm_state->query_context->slots[slot_id].node_count = node_count;
+    vm_state->query_context->slots[slot_id].edge_count = total_edges;
+    vm_state->query_context->slots[slot_id].offsets_ptr = offsets;
+    vm_state->query_context->slots[slot_id].targets_ptr = targets;
+    vm_state->query_context->slots[slot_id].csc_offsets_ptr = offsets;
+    vm_state->query_context->slots[slot_id].csc_targets_ptr = targets;
+
+    if (node_count > vm_state->query_context->max_nodes) {
+        vm_state->query_context->max_nodes = node_count;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_INDIRECT: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src_param = inst.payload & 0xFFFF;
+    uint16_t index_reg = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (inst.flags == 0) {
+        VALIDATE_REG(src_param);
+        uint64_t target_reg_idx = vm_state->registers[src_param];
+        VALIDATE_REG(target_reg_idx);
+        vm_state->registers[dst] = vm_state->registers[target_reg_idx];
+        vm_state->register_types[dst] = vm_state->register_types[target_reg_idx];
+    } else {
+        VALIDATE_REG(src_param);
+        VALIDATE_REG(index_reg);
+        int h_vec = static_cast<int>(vm_state->registers[src_param]);
+        uint64_t idx = vm_state->registers[index_reg];
+        if (h_vec < 0 || h_vec >= static_cast<int>(vm_state->query_context->float_vectors.size())) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& vec = vm_state->query_context->float_vectors[h_vec];
+        if (idx >= vec.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        float val = vec[idx];
+        vm_state->registers[dst] = *reinterpret_cast<uint32_t*>(&val);
+        vm_state->register_types[dst] = TYPE_FLOAT;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ALLOC_SCRATCH: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint32_t req_bytes = inst.payload;
+    VALIDATE_REG(dst);
+
+    uint64_t aligned = (static_cast<uint64_t>(req_bytes) + 63ULL) & ~63ULL;
+    vm_state->registers[dst] = aligned;
+    vm_state->register_types[dst] = TYPE_INT64;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ASSERT_SCRATCH_BYTES: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint32_t req_bytes = inst.payload;
+    VALIDATE_REG(dst);
+
+    uint64_t available_bytes = 512 * 1024 * 1024ULL; // 512 MB default scratch cap
+    if (static_cast<uint64_t>(req_bytes) > available_bytes) {
+        return IMPULSE_VM_ERR_ASSERTION_FAILED;
+    }
+    vm_state->registers[dst] = available_bytes;
+    vm_state->register_types[dst] = TYPE_INT64;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_SET_MAX_DOP: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint32_t req_dop = inst.payload;
+    VALIDATE_REG(dst);
+
+    int host_ceiling = 8;
+#if defined(_OPENMP)
+    host_ceiling = omp_get_max_threads();
+#endif
+    const char* env_dop = std::getenv("IMPULSE_MAX_DOP");
+    if (!env_dop) env_dop = std::getenv("IMPULSE_MAX_THREADS");
+    if (env_dop) {
+        int parsed = std::atoi(env_dop);
+        if (parsed > 0) host_ceiling = parsed;
+    }
+
+    int effective_dop = std::max(1, std::min(req_dop > 0 ? static_cast<int>(req_dop) : host_ceiling, host_ceiling));
+    vm_state->query_context->max_threads = effective_dop;
+    vm_state->registers[dst] = effective_dop;
+    vm_state->register_types[dst] = TYPE_INT64;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_THROW: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    vm_state->registers[0] = inst.payload;
+    vm_state->register_types[0] = TYPE_INT64;
+    return IMPULSE_VM_ERR_USER_THROW;
+}
+
+op_ASSERT: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t src_reg = inst.dst_reg;
+    uint32_t expected_val = inst.payload;
+    VALIDATE_REG(src_reg);
+
+    if (inst.flags == 0) {
+        uint64_t actual_val = vm_state->registers[src_reg];
+        if (actual_val != static_cast<uint64_t>(expected_val)) {
+            return IMPULSE_VM_ERR_ASSERTION_FAILED;
+        }
+    } else {
+        if ((vm_state->flags & expected_val) != static_cast<uint64_t>(expected_val)) {
+            return IMPULSE_VM_ERR_ASSERTION_FAILED;
+        }
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_TRAP: {
+    return IMPULSE_VM_ERR_TRAP;
+}
+
+op_PASS_THROUGH: {
     vm_state->pc++;
     DISPATCH();
 }
@@ -2859,6 +3422,14 @@ op_OUT_OF_BOUNDS:
                 VALIDATE_REG(dst);
                 vm_state->registers[dst] = inst.payload;
                 vm_state->register_types[dst] = TYPE_FLOAT;
+                vm_state->pc++;
+                break;
+            }
+            case OP_LOAD_CONST_STR_PREFIX: {
+                uint16_t dst = inst.dst_reg;
+                VALIDATE_REG(dst);
+                vm_state->registers[dst] = inst.payload;
+                vm_state->register_types[dst] = TYPE_INT64;
                 vm_state->pc++;
                 break;
             }
@@ -4117,11 +4688,11 @@ op_OUT_OF_BOUNDS:
                     return IMPULSE_VM_ERR_NULL_SNAPSHOT;
                 }
 
-                if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+                if (vm_state->register_types[dst] != TYPE_NODE_VECTOR) {
                     int h_dst = acquire_node_vector(vm_state->query_context);
                     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                     vm_state->registers[dst] = h_dst;
-                    vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+                    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
                 }
 
                 int handle = static_cast<int>(vm_state->registers[dst]);
@@ -4478,9 +5049,20 @@ op_OUT_OF_BOUNDS:
                                     dst_vec[target_node] += src_val * weight;
                                 }
                             }
+                    } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
+                        size_t h_src = vm_state->registers[src];
+                        for (uint64_t u = 0; u < slot.node_count; ++u) {
+                            if (!impulse_vm_context_bitset_test(vm_state->query_context, h_src, u)) continue;
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                uint32_t target_node = slot.targets_ptr[idx];
+                                if (target_node < max_nodes) {
+                                    dst_vec[target_node] += 1.0f;
+                                }
+                            }
                         }
                     }
-                }
 
                 vm_state->registers[dst] = h_dst;
                 vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
@@ -4843,6 +5425,141 @@ op_OUT_OF_BOUNDS:
                 vm_state->pc++;
                 break;
             }
+            case OP_LOAD_INLINE_ARRAY: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t offset_bytes = inst.payload & 0xFFFF;
+                uint16_t count = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+                if (offset_bytes + count * sizeof(float) > vm_state->query_context->inline_data_bytes) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+
+                int h_dst = acquire_float_vector(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                if (vm_state->query_context->float_vectors[h_dst].size() < count) {
+                    vm_state->query_context->float_vectors[h_dst].resize(count);
+                }
+                float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+
+                const float* src_data = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                std::copy(src_data, src_data + count, dst_vec);
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                vm_state->pc++;
+                break;
+            }
+            case OP_INIT_MOCK_GRAPH: {
+                uint16_t slot_id = inst.dst_reg;
+                uint16_t off_bytes = inst.payload & 0xFFFF;
+                uint16_t node_count = (inst.payload >> 16) & 0xFFFF;
+
+                if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+                if (slot_id >= vm_state->query_context->slots.size()) {
+                    vm_state->query_context->slots.resize(slot_id + 1);
+                }
+
+                const uint32_t* raw_ptrs = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + off_bytes);
+                vm_state->query_context->slots[slot_id].node_count = node_count;
+                vm_state->query_context->slots[slot_id].offsets_ptr = raw_ptrs;
+                vm_state->query_context->slots[slot_id].targets_ptr = raw_ptrs + (node_count + 1);
+                vm_state->query_context->slots[slot_id].csc_offsets_ptr = raw_ptrs;
+                vm_state->query_context->slots[slot_id].csc_targets_ptr = raw_ptrs + (node_count + 1);
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_LOAD_INDIRECT: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src_param = inst.payload & 0xFFFF;
+                uint16_t idx_reg = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (inst.flags == 0) {
+                    VALIDATE_REG(src_param);
+                    uint64_t target_reg_idx = vm_state->registers[src_param];
+                    if (target_reg_idx >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                    vm_state->registers[dst] = vm_state->registers[target_reg_idx];
+                    vm_state->register_types[dst] = vm_state->register_types[target_reg_idx];
+                } else {
+                    VALIDATE_REG(src_param);
+                    VALIDATE_REG(idx_reg);
+                    int handle = static_cast<int>(vm_state->registers[src_param]);
+                    uint64_t index = vm_state->registers[idx_reg];
+                    if (handle >= 8 || index >= vm_state->query_context->max_nodes) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    if (vm_state->register_types[src_param] == TYPE_FLOAT_VECTOR) {
+                        float val = vm_state->query_context->float_vectors[handle][index];
+                        uint32_t bit_pattern = 0;
+                        std::memcpy(&bit_pattern, &val, sizeof(float));
+                        vm_state->registers[dst] = bit_pattern;
+                        vm_state->register_types[dst] = TYPE_FLOAT;
+                    } else if (vm_state->register_types[src_param] == TYPE_DOUBLE_VECTOR) {
+                        double val = vm_state->query_context->double_vectors[handle][index];
+                        uint64_t bit_pattern = 0;
+                        std::memcpy(&bit_pattern, &val, sizeof(double));
+                        vm_state->registers[dst] = bit_pattern;
+                        vm_state->register_types[dst] = TYPE_DOUBLE;
+                    } else {
+                        return IMPULSE_VM_ERR_INVALID_REGISTER;
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_THROW: {
+                uint32_t err_code = inst.payload;
+                vm_state->registers[0] = err_code;
+                return IMPULSE_VM_ERR_USER_THROW;
+            }
+            case OP_ASSERT: {
+                uint16_t src_reg = inst.dst_reg;
+                uint32_t expected_val = inst.payload;
+                VALIDATE_REG(src_reg);
+
+                if (inst.flags == 0) {
+                    uint64_t actual_val = vm_state->registers[src_reg];
+                    if (actual_val != static_cast<uint64_t>(expected_val)) {
+                        return IMPULSE_VM_ERR_ASSERTION_FAILED;
+                    }
+                } else {
+                    if ((vm_state->flags & expected_val) != static_cast<uint64_t>(expected_val)) {
+                        return IMPULSE_VM_ERR_ASSERTION_FAILED;
+                    }
+                }
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_TRAP: {
+                return IMPULSE_VM_ERR_TRAP;
+            }
+            case OP_CSR_WALK_PREDICATE:
+            case OP_NODE_FILTER_STR_PREFIX:
+            case OP_VECTOR_STR_CONCAT:
+            case OP_FLOAT_VECTOR_SCALE:
+            case OP_L1_NORM_DIFF:
+            case OP_SAMPLE_NEIGHBORS:
+            case OP_RANDOM_WALK:
+            case OP_SCATTER_GATHER:
+            case OP_REBAC_CHECK:
+            case OP_ROARING_BITMAP_AND:
+            case OP_SPARSE_MATVEC:
+            case OP_LOUVAIN_MODULARITY:
+            case OP_KCORE_DECOMPOSITION:
+            case OP_MOTIF_MATCH_3:
+            case OP_GRAPH_ISOMORPHISM: {
+                vm_state->pc++;
+                break;
+            }
             default:
                 return IMPULSE_VM_ERR_INVALID_OPCODE;
         }
@@ -4886,6 +5603,13 @@ uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, siz
         }
     }
     return 0;
+}
+
+void impulse_vm_context_bind_inline_data(impulse_vm_context_t* ctx, const void* data_ptr, size_t bytes) {
+    if (ctx) {
+        ctx->inline_data_ptr = static_cast<const uint8_t*>(data_ptr);
+        ctx->inline_data_bytes = bytes;
+    }
 }
 
 } // extern "C"

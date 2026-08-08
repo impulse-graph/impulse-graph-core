@@ -144,6 +144,14 @@ public:
     // --- Register Control & Movement ---
     QueryBuilder& mov(uint16_t dst_reg, uint16_t src_reg);
     QueryBuilder& clearReg(uint16_t reg);
+    QueryBuilder& loadIndirect(uint16_t dst_reg, uint16_t src_param, uint16_t index_reg = 0, uint8_t flags = 0);
+
+    // --- Inline Data & Error Handling ---
+    QueryBuilder& loadInlineArray(uint16_t dst_reg, uint16_t offset_bytes, uint16_t count);
+    QueryBuilder& initMockGraph(uint16_t slot_id, uint16_t offset_bytes, uint16_t node_count);
+    QueryBuilder& throwErr(uint32_t user_error_code);
+    QueryBuilder& assertVal(uint16_t src_reg, uint32_t expected_val, uint8_t flags = 0);
+    QueryBuilder& trap(uint32_t signal_id = 0);
     QueryBuilder& nop();
 
     // --- Control Flow ---

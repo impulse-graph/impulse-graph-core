@@ -10,24 +10,28 @@ pub extern "C" fn impulse_rust_version() -> u32 {
     IMPULSE_VERSION_PACKED as u32
 }
 
+/// Opens an Impulse snapshot file via C-ABI FFI.
+///
+/// # Safety
+/// Caller must ensure `file_path` is a valid null-terminated C string pointer and `out_status` points to valid memory or is null.
 #[no_mangle]
-pub extern "C" fn impulse_snapshot_open_rs(
+pub unsafe extern "C" fn impulse_snapshot_open_rs(
     file_path: *const c_char,
     out_status: *mut ImpulseError,
 ) -> *mut SnapshotReader {
     if file_path.is_null() {
         if !out_status.is_null() {
-            unsafe { *out_status = ImpulseError::InvalidArgument };
+            *out_status = ImpulseError::InvalidArgument;
         }
         return std::ptr::null_mut();
     }
 
-    let c_str = unsafe { CStr::from_ptr(file_path) };
+    let c_str = CStr::from_ptr(file_path);
     let path_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => {
             if !out_status.is_null() {
-                unsafe { *out_status = ImpulseError::InvalidArgument };
+                *out_status = ImpulseError::InvalidArgument;
             }
             return std::ptr::null_mut();
         }
@@ -36,30 +40,36 @@ pub extern "C" fn impulse_snapshot_open_rs(
     match SnapshotReader::open(path_str) {
         Ok(reader) => {
             if !out_status.is_null() {
-                unsafe { *out_status = ImpulseError::Ok };
+                *out_status = ImpulseError::Ok;
             }
             Box::into_raw(Box::new(reader))
         }
         Err(err) => {
             if !out_status.is_null() {
-                unsafe { *out_status = err };
+                *out_status = err;
             }
             std::ptr::null_mut()
         }
     }
 }
 
+/// Closes a SnapshotReader handle previously returned by `impulse_snapshot_open_rs`.
+///
+/// # Safety
+/// Caller must ensure `reader` was created by `impulse_snapshot_open_rs` and is not dereferenced after closing.
 #[no_mangle]
-pub extern "C" fn impulse_snapshot_close_rs(reader: *mut SnapshotReader) {
+pub unsafe extern "C" fn impulse_snapshot_close_rs(reader: *mut SnapshotReader) {
     if !reader.is_null() {
-        unsafe {
-            let _ = Box::from_raw(reader);
-        }
+        let _ = Box::from_raw(reader);
     }
 }
 
+/// Queries whether an edge exists between `src_id` and `tgt_id` in the specified relation.
+///
+/// # Safety
+/// Caller must ensure `reader` points to a valid `SnapshotReader` instance or is null.
 #[no_mangle]
-pub extern "C" fn impulse_snapshot_is_adjacent_rs(
+pub unsafe extern "C" fn impulse_snapshot_is_adjacent_rs(
     reader: *const SnapshotReader,
     relation_index: usize,
     src_id: u64,
@@ -68,7 +78,7 @@ pub extern "C" fn impulse_snapshot_is_adjacent_rs(
     if reader.is_null() {
         return false;
     }
-    let reader_ref = unsafe { &*reader };
+    let reader_ref = &*reader;
     reader_ref.is_adjacent(relation_index as u16, src_id, tgt_id).unwrap_or(false)
 }
 

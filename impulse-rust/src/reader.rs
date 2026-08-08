@@ -84,14 +84,14 @@ impl SnapshotReader {
             return Err(ImpulseError::UnsupportedVersion);
         }
 
-        if ver == 9 || ver == 0x0009 {
+        if ver == 9 {
             let computed_crc = compute_crc16(&slice[0..0x3E]);
             if computed_crc != header.header_checksum() {
                 return Err(ImpulseError::CorruptChecksum);
             }
         }
 
-        let dir_offset = if (ver == 9 || ver == 0x0009) && header.footer_directory_offset() > 0 && (header.footer_directory_offset() as usize) < slice.len() {
+        let dir_offset = if ver == 9 && header.footer_directory_offset() > 0 && (header.footer_directory_offset() as usize) < slice.len() {
             header.footer_directory_offset() as usize
         } else {
             header.data_offset() as usize
@@ -108,7 +108,7 @@ impl SnapshotReader {
         let mut domains = Vec::with_capacity(domain_count);
         let mut relations = Vec::with_capacity(relation_count);
 
-        if ver == 9 || ver == 0x0009 {
+        if ver == 9 {
             // Parse Shared String Table
             if cur + 4 > slice.len() {
                 return Err(ImpulseError::BufferOverflow);

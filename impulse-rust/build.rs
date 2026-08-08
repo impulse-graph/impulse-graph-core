@@ -52,7 +52,7 @@ fn main() {
     // Archive into a single static library
     let lib_file = format!("{}/libimpulse_native.a", out_dir);
     let status_ar = Command::new("ar")
-        .args(&["rcs", &lib_file, &obj_simd, &obj_vm, &obj_graph])
+        .args(["rcs", &lib_file, &obj_simd, &obj_vm, &obj_graph])
         .status();
         
     assert!(

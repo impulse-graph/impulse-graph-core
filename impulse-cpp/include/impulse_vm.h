@@ -47,6 +47,8 @@ extern "C" {
 #define OP_MAP_KEYS_TO_DENSE        0x04
 #define OP_LOAD_CONST_FLOAT         0x05
 #define OP_LOAD_CONST_STR_PREFIX    0x06
+#define OP_LOAD_INLINE_ARRAY        0x07
+#define OP_INIT_MOCK_GRAPH          0x08
 
 #define OP_CSR_WALK                 0x10
 #define OP_CSR_WALK_FILTERED        0x11
@@ -102,9 +104,16 @@ extern "C" {
 #define OP_STABLE_CHECK             0x54
 #define OP_CALL                     0x55
 #define OP_RET                      0x56
+#define OP_THROW                    0x5A
+#define OP_ASSERT                   0x5B
+#define OP_TRAP                     0x5C
 
 #define OP_MOV                      0x70
 #define OP_CLEAR_REG                0x71
+#define OP_LOAD_INDIRECT            0x72
+#define OP_ALLOC_SCRATCH            0x73
+#define OP_ASSERT_SCRATCH_BYTES     0x74
+#define OP_SET_MAX_DOP              0x75
 
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0
@@ -153,7 +162,10 @@ typedef enum {
     IMPULSE_VM_ERR_NULL_SNAPSHOT = 3,
     IMPULSE_VM_ERR_STACK_OVERFLOW = 4,
     IMPULSE_VM_ERR_STACK_UNDERFLOW = 5,
-    IMPULSE_VM_ERR_INVALID_REGISTER = 6
+    IMPULSE_VM_ERR_INVALID_REGISTER = 6,
+    IMPULSE_VM_ERR_USER_THROW = 7,
+    IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
+    IMPULSE_VM_ERR_TRAP = 9
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN
@@ -219,6 +231,7 @@ IMPULSE_API void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, 
 IMPULSE_API int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
+IMPULSE_API void impulse_vm_context_bind_inline_data(impulse_vm_context_t* ctx, const void* data_ptr, size_t bytes);
 IMPULSE_API int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle);

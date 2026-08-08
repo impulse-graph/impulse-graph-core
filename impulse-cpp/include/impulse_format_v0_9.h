@@ -23,6 +23,29 @@ extern "C" {
 #define IMPULSE_TYPE_MASK 0x7F
 #define IMPULSE_NULLABLE_FLAG 0x80
 
+// Relation Feature Bitmask Constants (SectionFeatures 64-bit)
+#define IMPULSE_REL_FEATURE_CSC          (1ULL << 0) // Bit 0: CSC Transpose Index Present
+#define IMPULSE_REL_FEATURE_WEIGHTED     (1ULL << 1) // Bit 1: Edge Weights Present
+#define IMPULSE_REL_FEATURE_VIRTUAL      (1ULL << 2) // Bit 2: Virtual Super-Relation (No physical arrays on disk)
+
+// Multiplicity Bitmask (Bits 3..4)
+#define IMPULSE_REL_CARDINALITY_MASK     (3ULL << 3) // Bitmask for relation multiplicity
+#define IMPULSE_REL_CARDINALITY_M_N      (0ULL << 3) // Many-to-Many (Default CSR/CSC layout)
+#define IMPULSE_REL_CARDINALITY_M_1      (1ULL << 3) // Many-to-One  (Flat target array)
+#define IMPULSE_REL_CARDINALITY_1_M      (2ULL << 3) // One-to-Many  (Forward CSR, reverse flat CSC)
+#define IMPULSE_REL_CARDINALITY_1_1      (3ULL << 3) // One-to-One   (Flat bi-directional target arrays)
+
+// Virtual Super-Relation Descriptor Payload (Overloads reserved2[22] in 128B Relation Directory Entry)
+typedef struct impulse_virtual_relation_payload_v0_9_t {
+    uint16_t component_count;    // Number of constituent physical relation IDs (1 <= C <= 10)
+    uint16_t component_ids[10];  // Inline array of constituent physical RelationIDs
+} impulse_virtual_relation_payload_v0_9_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(impulse_virtual_relation_payload_v0_9_t) == 22,
+              "impulse_virtual_relation_payload_v0_9_t size mismatch with reserved2 padding");
+#endif
+
 #pragma pack(push, 1)
 
 // Section 1 Header Page 0 (4096 Bytes Baseline)
