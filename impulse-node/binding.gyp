@@ -4,7 +4,10 @@
       "target_name": "impulse_node_native",
       "sources": [
         "src/impulse_node.cpp",
-        "../impulse-cpp/src/impulse_graph.cpp"
+        "../impulse-cpp/src/impulse_graph.cpp",
+        "../impulse-cpp/src/impulse_vm.cpp",
+        "../impulse-cpp/src/impulse_vm_fluent.cpp",
+        "../impulse-cpp/src/impulse_simd.cpp"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",

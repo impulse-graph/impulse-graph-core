@@ -13,6 +13,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#ifndef __cplusplus
+  #include <stdalign.h>
+#endif
+
 
 
 #ifdef __cplusplus
@@ -152,10 +156,20 @@ typedef enum {
     IMPULSE_VM_ERR_INVALID_REGISTER = 6
 } impulse_vm_status_t;
 
+#ifndef IMPULSE_ALIGN
+  #if defined(__cplusplus)
+    #define IMPULSE_ALIGN(x) alignas(x)
+  #elif defined(_MSC_VER)
+    #define IMPULSE_ALIGN(x) __declspec(align(x))
+  #else
+    #define IMPULSE_ALIGN(x) __attribute__((aligned(x)))
+  #endif
+#endif
+
 /**
  * @brief Fixed 64-bit Instruction Structure Layout.
  */
-typedef struct alignas(8) {
+typedef struct IMPULSE_ALIGN(8) {
     uint8_t  opcode;    /**< Opcode byte (0x00..0xFF) */
     uint8_t  flags;     /**< Instruction modifier flags */
     uint16_t dst_reg;   /**< Destination register index (R0..R63) */
@@ -175,7 +189,7 @@ typedef struct {
  *
  * Matches the layout of the Java 25 FFM MemorySegment representation.
  */
-typedef struct alignas(64) {
+typedef struct IMPULSE_ALIGN(64) {
     uint32_t pc;                                  /**< Program Counter offset (0) */
     uint32_t reserved;                            /**< Alignment padding (4) */
     uint64_t flags;                               /**< Status flags register (ZF, LT, GT, EQ, ST) (8) */

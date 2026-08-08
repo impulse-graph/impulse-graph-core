@@ -59,6 +59,70 @@ class Snapshot:
         native_query = getattr(query, "_native", query)
         return vm.QueryResult(self._native.execute_query(native_query, input_param))
 
+    def to_scipy_csr(self, relation_index: int = 0):
+        """Convert snapshot CSR topology to a zero-copy scipy.sparse.csr_matrix."""
+        import scipy.sparse as sp
+        rel = self.get_relation(relation_index)
+        indptr = self.get_row_offsets_array(relation_index)
+        indices = self.get_col_indices_array(relation_index)
+        data = np.ones(len(indices), dtype=np.float32)
+        shape = (rel["node_count"], rel["node_count"])
+        return sp.csr_matrix((data, indices, indptr), shape=shape)
+
+    def to_torch_csr(self, relation_index: int = 0, device: str = "cpu"):
+        """Convert snapshot CSR topology to a zero-copy torch.sparse_csr_tensor."""
+        import torch
+        rel = self.get_relation(relation_index)
+        crow_indices = torch.from_numpy(self.get_row_offsets_array(relation_index)).to(torch.int64)
+        col_indices = torch.from_numpy(self.get_col_indices_array(relation_index)).to(torch.int64)
+        values = torch.ones(col_indices.shape[0], dtype=torch.float32)
+        size = (rel["node_count"], rel["node_count"])
+        tensor = torch.sparse_csr_tensor(crow_indices, col_indices, values, size=size)
+        return tensor.to(device) if device != "cpu" else tensor
+
+    def to_torch_edge_index(self, relation_index: int = 0, device: str = "cpu"):
+        """Convert snapshot CSR topology to PyTorch Geometric COO edge_index tensor (2, num_edges)."""
+        import torch
+        indptr = self.get_row_offsets_array(relation_index)
+        indices = self.get_col_indices_array(relation_index)
+        degrees = np.diff(indptr)
+        src = np.repeat(np.arange(len(degrees), dtype=np.int64), degrees)
+        dst = indices.astype(np.int64)
+        edge_index = torch.tensor(np.vstack([src, dst]), dtype=torch.int64)
+        return edge_index.to(device) if device != "cpu" else edge_index
+
+    def to_networkx(self, relation_index: int = 0, create_using=None):
+        """Convert snapshot CSR topology to a NetworkX Graph or DiGraph."""
+        import networkx as nx
+        if create_using is None:
+            create_using = nx.DiGraph
+        indptr = self.get_row_offsets_array(relation_index)
+        indices = self.get_col_indices_array(relation_index)
+        G = create_using()
+        for u in range(len(indptr) - 1):
+            for v in indices[indptr[u]:indptr[u+1]]:
+                G.add_edge(u, int(v))
+        return G
+
+    def to_polars(self, relation_index: int = 0):
+        """Convert snapshot CSR topology into a Polars DataFrame with columns ['src', 'dst']."""
+        import polars as pl
+        indptr = self.get_row_offsets_array(relation_index)
+        indices = self.get_col_indices_array(relation_index)
+        degrees = np.diff(indptr)
+        src = np.repeat(np.arange(len(degrees), dtype=np.uint32), degrees)
+        return pl.DataFrame({"src": src, "dst": indices})
+
+    def to_pandas(self, relation_index: int = 0):
+        """Convert snapshot CSR topology into a Pandas DataFrame with columns ['src', 'dst']."""
+        import pandas as pd
+        indptr = self.get_row_offsets_array(relation_index)
+        indices = self.get_col_indices_array(relation_index)
+        degrees = np.diff(indptr)
+        src = np.repeat(np.arange(len(degrees), dtype=np.uint32), degrees)
+        return pd.DataFrame({"src": src, "dst": indices})
+
+
 
 class Writer:
     def __init__(self, output_path: str, global_features: int = 1):
