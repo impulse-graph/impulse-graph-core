@@ -1358,6 +1358,9 @@ op_CSC_WALK: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
+    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
