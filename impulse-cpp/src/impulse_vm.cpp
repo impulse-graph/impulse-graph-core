@@ -8,6 +8,8 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <limits>
+#include <string>
 
 #if defined(_OPENMP)
 #include <omp.h>

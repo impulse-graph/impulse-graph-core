@@ -23,9 +23,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup CMake & Ninja
-        uses: ninja-build/setup-ninja@v5
-
       - name: Build C++20 Core Kernel
         run: |
           cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
