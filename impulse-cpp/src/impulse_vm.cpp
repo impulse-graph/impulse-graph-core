@@ -2945,6 +2945,18 @@ op_CALL: {
     uint32_t func_offset = inst.payload;
     if (vm_state->call_stack_depth >= 8) return IMPULSE_VM_ERR_STACK_OVERFLOW;
     vm_state->call_stack[vm_state->call_stack_depth++] = vm_state->pc + 1;
+    
+    // Register Windowing: Pass Out registers (R12..R15) to Callee In registers (R0..R3)
+    uint64_t arg0 = vm_state->registers[12];
+    uint64_t arg1 = vm_state->registers[13];
+    uint64_t arg2 = vm_state->registers[14];
+    uint64_t arg3 = vm_state->registers[15];
+
+    vm_state->registers[0] = arg0;
+    vm_state->registers[1] = arg1;
+    vm_state->registers[2] = arg2;
+    vm_state->registers[3] = arg3;
+
     vm_state->pc = func_offset;
     DISPATCH();
 }
@@ -5204,6 +5216,17 @@ op_OUT_OF_BOUNDS:
                 uint32_t func_offset = inst.payload;
                 if (vm_state->call_stack_depth >= 8) return IMPULSE_VM_ERR_STACK_OVERFLOW;
                 vm_state->call_stack[vm_state->call_stack_depth++] = vm_state->pc + 1;
+                
+                uint64_t arg0 = vm_state->registers[12];
+                uint64_t arg1 = vm_state->registers[13];
+                uint64_t arg2 = vm_state->registers[14];
+                uint64_t arg3 = vm_state->registers[15];
+
+                vm_state->registers[0] = arg0;
+                vm_state->registers[1] = arg1;
+                vm_state->registers[2] = arg2;
+                vm_state->registers[3] = arg3;
+
                 vm_state->pc = func_offset;
                 break;
             }
