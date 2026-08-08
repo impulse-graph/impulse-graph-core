@@ -59,6 +59,10 @@ extern "C" {
 #define OP_CSR_WALK_REDUCE_SUM      0x16
 #define OP_CSR_WALK_REDUCE          0x17
 #define OP_CSC_WALK                 0x18
+#define OP_HAS_CSR                  0x19
+#define OP_HAS_CSC                  0x1A
+#define OP_HAS_COO                  0x1B
+#define OP_HAS_KEY_CATALOG          0x1C
 
 #define OP_SET_UNION                0x30
 #define OP_SET_INTERSECT            0x31

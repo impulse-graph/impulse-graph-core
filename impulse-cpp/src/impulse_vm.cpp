@@ -679,6 +679,10 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_CSR_WALK_REDUCE_SUM] = &&op_CSR_WALK_REDUCE_SUM,
         [OP_CSR_WALK_REDUCE] = &&op_CSR_WALK_REDUCE,
         [OP_CSC_WALK] = &&op_CSC_WALK,
+        [OP_HAS_CSR] = &&op_HAS_CSR,
+        [OP_HAS_CSC] = &&op_HAS_CSC,
+        [OP_HAS_COO] = &&op_HAS_COO,
+        [OP_HAS_KEY_CATALOG] = &&op_HAS_KEY_CATALOG,
         [OP_SET_UNION] = &&op_SET_UNION,
         [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
         [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
@@ -1485,6 +1489,93 @@ op_CSC_WALK: {
         }
     }
     if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_HAS_CSR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t rel = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    bool present = false;
+    if (rel < vm_state->query_context->slots.size()) {
+        const auto& slot = vm_state->query_context->slots[rel];
+        present = (slot.offsets_ptr != nullptr && slot.targets_ptr != nullptr);
+    }
+
+    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->register_types[dst] = TYPE_INT64;
+
+    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_HAS_CSC: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t rel = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    bool present = false;
+    if (rel < vm_state->query_context->slots.size()) {
+        const auto& slot = vm_state->query_context->slots[rel];
+        present = (slot.csc_offsets_ptr != nullptr && slot.csc_targets_ptr != nullptr);
+    }
+
+    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->register_types[dst] = TYPE_INT64;
+
+    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_HAS_COO: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t rel = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    bool present = false;
+    if (rel < vm_state->query_context->slots.size()) {
+        const auto& slot = vm_state->query_context->slots[rel];
+        present = (slot.offsets_ptr != nullptr && slot.targets_ptr != nullptr);
+    }
+
+    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->register_types[dst] = TYPE_INT64;
+
+    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_HAS_KEY_CATALOG: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t domain_id = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    bool present = true;
+    if (vm_state->query_context && domain_id < vm_state->query_context->string_vectors.size()) {
+        present = !vm_state->query_context->string_vectors[domain_id].empty();
+    }
+
+    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->register_types[dst] = TYPE_INT64;
+
+    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
