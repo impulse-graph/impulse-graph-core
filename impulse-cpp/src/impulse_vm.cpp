@@ -714,9 +714,9 @@ impulse_vm_status_t impulse_vm_execute(
         [OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH,
         [OP_RANDOM_WALK] = &&op_PASS_THROUGH,
         [OP_SCATTER_GATHER] = &&op_PASS_THROUGH,
-        [OP_REBAC_CHECK] = &&op_PASS_THROUGH,
+        [OP_ROARING_BITMAP_OR] = &&op_ROARING_BITMAP_OR,
         [OP_ROARING_BITMAP_AND] = &&op_ROARING_BITMAP_AND,
-        [OP_ISLAND_DETECT] = &&op_ISLAND_DETECT,
+        [OP_ROARING_BITMAP_AND_NOT] = &&op_ROARING_BITMAP_AND_NOT,
         [OP_SPARSE_MATVEC] = &&op_PASS_THROUGH,
         [OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH,
         [OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH,
@@ -2709,6 +2709,70 @@ op_ROARING_BITMAP_AND: {
 
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] = bs1.words[i] & bs2.words[i];
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ROARING_BITMAP_OR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE && vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& bs1 = vm_state->query_context->bitsets[h1];
+        const auto& bs2 = vm_state->query_context->bitsets[h2];
+
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] = bs1.words[i] | bs2.words[i];
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ROARING_BITMAP_AND_NOT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE && vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& bs1 = vm_state->query_context->bitsets[h1];
+        const auto& bs2 = vm_state->query_context->bitsets[h2];
+
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] = bs1.words[i] & ~bs2.words[i];
         }
     }
 
@@ -5670,7 +5734,9 @@ op_OUT_OF_BOUNDS:
             case OP_RANDOM_WALK:
             case OP_SCATTER_GATHER:
             case OP_REBAC_CHECK:
+            case OP_ROARING_BITMAP_OR:
             case OP_ROARING_BITMAP_AND:
+            case OP_ROARING_BITMAP_AND_NOT:
             case OP_SPARSE_MATVEC:
             case OP_LOUVAIN_MODULARITY:
             case OP_KCORE_DECOMPOSITION:

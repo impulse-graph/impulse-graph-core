@@ -68,6 +68,9 @@ extern "C" {
 #define OP_SET_INTERSECT            0x31
 #define OP_SET_DIFFERENCE           0x32
 #define OP_SET_CARDINALITY          0x33
+#define OP_ROARING_BITMAP_OR        OP_SET_UNION
+#define OP_ROARING_BITMAP_AND       OP_SET_INTERSECT
+#define OP_ROARING_BITMAP_AND_NOT   OP_SET_DIFFERENCE
 #define OP_VECTOR_MUL_ATTR          0x34
 #define OP_VECTOR_REDUCE_SUM        0x35
 #define OP_VECTOR_DIV               0x36
