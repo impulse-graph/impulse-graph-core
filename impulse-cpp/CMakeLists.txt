@@ -18,20 +18,35 @@ if(IMPULSE_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+# --- Dependencies: Google Highway --------------------------------------
+include(FetchContent)
+FetchContent_Declare(
+    highway
+    GIT_REPOSITORY https://github.com/google/highway.git
+    GIT_TAG 1.2.0
+)
+set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(highway)
+
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
 add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(impulse_graph PUBLIC hwy)
 
 # --- Static Library (.a / .lib) ------------------------------------------
 add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(impulse_graph_static PUBLIC hwy)
 
 # --- Install Targets & Exports -------------------------------------------
 install(TARGETS impulse_graph impulse_graph_static

@@ -11,6 +11,9 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
         "-fPIC",
         "-c", src,
         "-I", include_dir,
+        "-I", "../impulse-cpp/src",
+        "-I", "../impulse-cpp/src",
+        "-I", "/opt/homebrew/include",
         "-o", &obj_file
     ];
     if has_omp {
@@ -61,7 +64,9 @@ fn main() {
     );
 
     println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
     println!("cargo:rustc-link-lib=static=impulse_native");
+    println!("cargo:rustc-link-lib=dylib=hwy");
     println!("cargo:rustc-link-lib=dylib=c++");
     
     if has_omp {
