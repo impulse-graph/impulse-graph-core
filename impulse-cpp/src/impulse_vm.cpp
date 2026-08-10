@@ -5784,7 +5784,9 @@ op_OUT_OF_BOUNDS:
             case OP_LOUVAIN_MODULARITY:
             case OP_KCORE_DECOMPOSITION:
             case OP_MOTIF_MATCH_3:
-            case OP_GRAPH_ISOMORPHISM: {
+            case OP_GRAPH_ISOMORPHISM:
+            case OP_ENTER_FRAME:
+            case OP_LEAVE_FRAME: {
                 vm_state->pc++;
                 break;
             }
@@ -5792,7 +5794,7 @@ op_OUT_OF_BOUNDS:
             case OP_RESERVED_1D: case OP_RESERVED_1E: case OP_RESERVED_1F: case OP_RESERVED_20: case OP_RESERVED_21: case OP_RESERVED_22: case OP_RESERVED_23: case OP_RESERVED_24: case OP_RESERVED_25: case OP_RESERVED_26: case OP_RESERVED_27: case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2A: case OP_RESERVED_2B: case OP_RESERVED_2C: case OP_RESERVED_2D: case OP_RESERVED_2E: case OP_RESERVED_2F:
             case OP_RESERVED_3A: case OP_RESERVED_3B: case OP_RESERVED_3C: case OP_RESERVED_3D: case OP_RESERVED_3E: case OP_RESERVED_3F:
             case OP_RESERVED_4C: case OP_RESERVED_4D: case OP_RESERVED_4E: case OP_RESERVED_4F:
-            case OP_RESERVED_57: case OP_RESERVED_58: case OP_RESERVED_59:
+            case OP_RESERVED_59:
             case OP_RESERVED_5D: case OP_RESERVED_5E: case OP_RESERVED_5F:
             case OP_RESERVED_6D: case OP_RESERVED_6E: case OP_RESERVED_6F:
             case OP_RESERVED_76: case OP_RESERVED_77: case OP_RESERVED_78: case OP_RESERVED_79: case OP_RESERVED_7A: case OP_RESERVED_7B: case OP_RESERVED_7C: case OP_RESERVED_7D: case OP_RESERVED_7E: case OP_RESERVED_7F: case OP_RESERVED_80: case OP_RESERVED_81: case OP_RESERVED_82: case OP_RESERVED_83: case OP_RESERVED_84: case OP_RESERVED_85: case OP_RESERVED_86: case OP_RESERVED_87: case OP_RESERVED_88: case OP_RESERVED_89: case OP_RESERVED_8A: case OP_RESERVED_8B: case OP_RESERVED_8C: case OP_RESERVED_8D: case OP_RESERVED_8E: case OP_RESERVED_8F:
