@@ -133,6 +133,31 @@ HWY_EXPORT(IntersectSortedU32);
 const char* GetTargetName() {
     return hwy::TargetName(HWY_TARGET);
 }
+
+float DispatchDotProductF32(const float* a, const float* b, size_t len) {
+    return HWY_DYNAMIC_DISPATCH(DotProductF32)(a, b, len);
+}
+
+void DispatchVectorSumF32(const float* a, const float* b, float* out, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorSumF32)(a, b, out, len);
+}
+
+size_t DispatchIntersectSortedU32(const uint32_t* a, size_t len_a, const uint32_t* b, size_t len_b, uint32_t* out_intersection) {
+    return HWY_DYNAMIC_DISPATCH(IntersectSortedU32)(a, len_a, b, len_b, out_intersection);
+}
+
+float DispatchReduceSumF32(const float* a, size_t len) {
+    return HWY_DYNAMIC_DISPATCH(ReduceSumF32)(a, len);
+}
+
+void DispatchVectorScaleF32(float* a, float scalar, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorScaleF32)(a, scalar, len);
+}
+
+void DispatchVectorMulF32(float* a, const float* b, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorMulF32)(a, b, len);
+}
+
 }  // namespace impulse
 
 extern "C" {
@@ -143,13 +168,13 @@ IMPULSE_API const char* impulse_simd_get_target_name(void) {
 
 IMPULSE_API float impulse_simd_dot_product_f32(const float* a, const float* b, size_t len) {
     if (!a || !b || len == 0) return 0.0f;
-    return HWY_DYNAMIC_DISPATCH(impulse::DotProductF32)(a, b, len);
+    return impulse::DispatchDotProductF32(a, b, len);
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_sum_f32(const float* a, const float* b, float* out, size_t len) {
     if (!a || !b || !out) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-    HWY_DYNAMIC_DISPATCH(impulse::VectorSumF32)(a, b, out, len);
+    impulse::DispatchVectorSumF32(a, b, out, len);
     return IMPULSE_OK;
 }
 
@@ -160,26 +185,26 @@ IMPULSE_API impulse_status_t impulse_simd_intersect_sorted_u32(
     size_t* out_count
 ) {
     if (!a || !b || !out_intersection || !out_count) return IMPULSE_ERR_INVALID_ARGUMENT;
-    *out_count = HWY_DYNAMIC_DISPATCH(impulse::IntersectSortedU32)(a, len_a, b, len_b, out_intersection);
+    *out_count = impulse::DispatchIntersectSortedU32(a, len_a, b, len_b, out_intersection);
     return IMPULSE_OK;
 }
 
 IMPULSE_API float impulse_simd_reduce_sum_f32(const float* a, size_t len) {
     if (!a || len == 0) return 0.0f;
-    return HWY_DYNAMIC_DISPATCH(impulse::ReduceSumF32)(a, len);
+    return impulse::DispatchReduceSumF32(a, len);
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_scale_f32(float* a, float scalar, size_t len) {
     if (!a) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-    HWY_DYNAMIC_DISPATCH(impulse::VectorScaleF32)(a, scalar, len);
+    impulse::DispatchVectorScaleF32(a, scalar, len);
     return IMPULSE_OK;
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_mul_f32(float* a, const float* b, size_t len) {
     if (!a || !b) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-    HWY_DYNAMIC_DISPATCH(impulse::VectorMulF32)(a, b, len);
+    impulse::DispatchVectorMulF32(a, b, len);
     return IMPULSE_OK;
 }
 

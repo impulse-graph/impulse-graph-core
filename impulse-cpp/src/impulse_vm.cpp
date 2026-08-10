@@ -2439,6 +2439,7 @@ op_REDUCE: {
         }
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = res;
+        vm_state->register_types[dst] = TYPE_FLOAT;
     } else {
         vm_state->registers[dst] = vm_state->registers[src_vec];
         vm_state->register_types[dst] = TYPE_INT64;
@@ -2466,7 +2467,7 @@ op_CC_AFFOREST: {
         int h_dst = acquire_node_vector(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
     }
 
     int handle = static_cast<int>(vm_state->registers[dst]);
@@ -3165,8 +3166,17 @@ op_MAP_KEYS_TO_DENSE: {
                             const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
                             key_val = static_cast<const char*>(attr->data_ptr) + offsets[u];
                         }
-                        if (key_val && std::strcmp(key_val, target_key) == 0) {
-                            is_match = true;
+                        if (key_val) {
+                            if (!attr->offsets_ptr) {
+                                size_t target_len = std::strlen(target_key);
+                                size_t match_len = std::min<size_t>(target_len, static_cast<size_t>(attr->dimension));
+                                if (std::strncmp(key_val, target_key, match_len) == 0 &&
+                                    (target_len <= static_cast<size_t>(attr->dimension) || key_val[match_len] == '\0')) {
+                                    is_match = true;
+                                }
+                            } else if (std::strcmp(key_val, target_key) == 0) {
+                                is_match = true;
+                            }
                         }
                     } else if (base_type == 0x03 || base_type == 0x04) {
                         int64_t val = 0;
