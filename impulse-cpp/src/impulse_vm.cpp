@@ -671,6 +671,16 @@ impulse_vm_status_t impulse_vm_execute(
     static bool dispatch_inited = false;
     if (!dispatch_inited) {
         for (int i = 0; i < 256; ++i) dispatch_table[i] = &&op_INVALID;
+        for (int i = 0x0A; i <= 0x0F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x1D; i <= 0x2F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x3A; i <= 0x3F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x4C; i <= 0x4F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x57; i <= 0x59; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x5D; i <= 0x5F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x6D; i <= 0x6F; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x76; i <= 0x8F; ++i) dispatch_table[i] = &&op_RESERVED;
+
+        dispatch_table[OP_HALT] = &&op_HALT;
         dispatch_table[OP_NOP] = &&op_NOP;
         dispatch_table[OP_INIT_INPUT_NODE] = &&op_INIT_INPUT_NODE;
         dispatch_table[OP_INIT_INPUT_SET] = &&op_INIT_INPUT_SET;
@@ -721,6 +731,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH;
         dispatch_table[OP_RANDOM_WALK] = &&op_PASS_THROUGH;
         dispatch_table[OP_SCATTER_GATHER] = &&op_PASS_THROUGH;
+        dispatch_table[OP_REBAC_CHECK] = &&op_PASS_THROUGH;
         dispatch_table[OP_ROARING_BITMAP_OR] = &&op_ROARING_BITMAP_OR;
         dispatch_table[OP_ROARING_BITMAP_AND] = &&op_ROARING_BITMAP_AND;
         dispatch_table[OP_ROARING_BITMAP_AND_NOT] = &&op_ROARING_BITMAP_AND_NOT;
@@ -729,6 +740,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH;
         dispatch_table[OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH;
         dispatch_table[OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH;
+        dispatch_table[OP_ISLAND_DETECT] = &&op_ISLAND_DETECT;
         dispatch_table[OP_READ_EDGE_WEIGHT] = &&op_READ_EDGE_WEIGHT;
         dispatch_table[OP_CC_HOOK_COMPRESS] = &&op_PASS_THROUGH;
         dispatch_table[OP_TC_SWEEP_BATCH] = &&op_PASS_THROUGH;
@@ -746,7 +758,6 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE;
         dispatch_table[OP_MAP_DENSE_TO_KEYS] = &&op_MAP_DENSE_TO_KEYS;
         dispatch_table[OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP;
-        dispatch_table[OP_HALT] = &&op_HALT;
         dispatch_inited = true;
     }
 
@@ -1416,7 +1427,7 @@ op_CSC_WALK: {
                 for (int b = 0; b < 64; ++b) {
                     if (w_unv & (1ULL << b)) {
                         uint64_t v = i * 64 + b;
-                        if (v < vm_state->query_context->max_nodes) {
+                        if (v < slot.node_count) {
                             uint32_t start = slot.csc_offsets_ptr[v];
                             uint32_t end   = slot.csc_offsets_ptr[v + 1];
                             for (uint32_t idx = start; idx < end; ++idx) {
@@ -1436,7 +1447,7 @@ op_CSC_WALK: {
                 uint64_t w_dst = 0;
                 for (int b = 0; b < 64; ++b) {
                     uint64_t v = i * 64 + b;
-                    if (v < vm_state->query_context->max_nodes) {
+                    if (v < slot.node_count) {
                         uint32_t start = slot.csc_offsets_ptr[v];
                         uint32_t end   = slot.csc_offsets_ptr[v + 1];
                         for (uint32_t idx = start; idx < end; ++idx) {
@@ -1461,7 +1472,7 @@ op_CSC_WALK: {
                 for (int b = 0; b < 64; ++b) {
                     if (w_unv & (1ULL << b)) {
                         uint64_t v = i * 64 + b;
-                        if (v < vm_state->query_context->max_nodes) {
+                        if (v < slot.node_count) {
                             uint32_t u = slot.csc_targets_ptr[v];
                             if (u != 0xFFFFFFFF && test_src(u)) {
                                 w_dst |= (1ULL << b);
@@ -1476,7 +1487,7 @@ op_CSC_WALK: {
                 uint64_t w_dst = 0;
                 for (int b = 0; b < 64; ++b) {
                     uint64_t v = i * 64 + b;
-                    if (v < vm_state->query_context->max_nodes) {
+                    if (v < slot.node_count) {
                         uint32_t u = slot.csc_targets_ptr[v];
                         if (u != 0xFFFFFFFF && test_src(u)) {
                             w_dst |= (1ULL << b);
@@ -3566,6 +3577,9 @@ op_HALT:
 
 op_INVALID:
     return IMPULSE_VM_ERR_INVALID_OPCODE;
+
+op_RESERVED:
+    return IMPULSE_VM_ERR_RESERVED_OPCODE;
 
 op_OUT_OF_BOUNDS:
     return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -5764,6 +5778,15 @@ op_OUT_OF_BOUNDS:
                 vm_state->pc++;
                 break;
             }
+            case OP_RESERVED_0A: case OP_RESERVED_0B: case OP_RESERVED_0C: case OP_RESERVED_0D: case OP_RESERVED_0E: case OP_RESERVED_0F:
+            case OP_RESERVED_1D: case OP_RESERVED_1E: case OP_RESERVED_1F: case OP_RESERVED_20: case OP_RESERVED_21: case OP_RESERVED_22: case OP_RESERVED_23: case OP_RESERVED_24: case OP_RESERVED_25: case OP_RESERVED_26: case OP_RESERVED_27: case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2A: case OP_RESERVED_2B: case OP_RESERVED_2C: case OP_RESERVED_2D: case OP_RESERVED_2E: case OP_RESERVED_2F:
+            case OP_RESERVED_3A: case OP_RESERVED_3B: case OP_RESERVED_3C: case OP_RESERVED_3D: case OP_RESERVED_3E: case OP_RESERVED_3F:
+            case OP_RESERVED_4C: case OP_RESERVED_4D: case OP_RESERVED_4E: case OP_RESERVED_4F:
+            case OP_RESERVED_57: case OP_RESERVED_58: case OP_RESERVED_59:
+            case OP_RESERVED_5D: case OP_RESERVED_5E: case OP_RESERVED_5F:
+            case OP_RESERVED_6D: case OP_RESERVED_6E: case OP_RESERVED_6F:
+            case OP_RESERVED_76: case OP_RESERVED_77: case OP_RESERVED_78: case OP_RESERVED_79: case OP_RESERVED_7A: case OP_RESERVED_7B: case OP_RESERVED_7C: case OP_RESERVED_7D: case OP_RESERVED_7E: case OP_RESERVED_7F: case OP_RESERVED_80: case OP_RESERVED_81: case OP_RESERVED_82: case OP_RESERVED_83: case OP_RESERVED_84: case OP_RESERVED_85: case OP_RESERVED_86: case OP_RESERVED_87: case OP_RESERVED_88: case OP_RESERVED_89: case OP_RESERVED_8A: case OP_RESERVED_8B: case OP_RESERVED_8C: case OP_RESERVED_8D: case OP_RESERVED_8E: case OP_RESERVED_8F:
+                return IMPULSE_VM_ERR_RESERVED_OPCODE;
             default:
                 return IMPULSE_VM_ERR_INVALID_OPCODE;
         }

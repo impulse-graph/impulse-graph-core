@@ -39,16 +39,24 @@ extern "C" {
 #define IMPULSE_VM_OP_FLAG_INVERT      0x04
 #define IMPULSE_VM_OP_FLAG_OFFHEAP     0x08
 
-// Opcodes Definitions
-#define OP_NOP                      0x00
-#define OP_INIT_INPUT_NODE          0x01
-#define OP_INIT_INPUT_SET           0x02
-#define OP_LOAD_CONST_INT           0x03
-#define OP_MAP_KEYS_TO_DENSE        0x04
-#define OP_LOAD_CONST_FLOAT         0x05
-#define OP_LOAD_CONST_STR_PREFIX    0x06
-#define OP_LOAD_INLINE_ARRAY        0x07
-#define OP_INIT_MOCK_GRAPH          0x08
+/// Opcodes Definitions
+#define OP_HALT                     0x00
+#define OP_NOP                      0x01
+#define OP_INIT_INPUT_NODE          0x02
+#define OP_INIT_INPUT_SET           0x03
+#define OP_LOAD_CONST_INT           0x04
+#define OP_MAP_KEYS_TO_DENSE        0x05
+#define OP_LOAD_CONST_FLOAT         0x06
+#define OP_LOAD_CONST_STR_PREFIX    0x07
+#define OP_LOAD_INLINE_ARRAY        0x08
+#define OP_INIT_MOCK_GRAPH          0x09
+
+#define OP_RESERVED_0A              0x0A
+#define OP_RESERVED_0B              0x0B
+#define OP_RESERVED_0C              0x0C
+#define OP_RESERVED_0D              0x0D
+#define OP_RESERVED_0E              0x0E
+#define OP_RESERVED_0F              0x0F
 
 #define OP_CSR_WALK                 0x10
 #define OP_CSR_WALK_FILTERED        0x11
@@ -64,18 +72,43 @@ extern "C" {
 #define OP_HAS_COO                  0x1B
 #define OP_HAS_KEY_CATALOG          0x1C
 
+#define OP_RESERVED_1D              0x1D
+#define OP_RESERVED_1E              0x1E
+#define OP_RESERVED_1F              0x1F
+#define OP_RESERVED_20              0x20
+#define OP_RESERVED_21              0x21
+#define OP_RESERVED_22              0x22
+#define OP_RESERVED_23              0x23
+#define OP_RESERVED_24              0x24
+#define OP_RESERVED_25              0x25
+#define OP_RESERVED_26              0x26
+#define OP_RESERVED_27              0x27
+#define OP_RESERVED_28              0x28
+#define OP_RESERVED_29              0x29
+#define OP_RESERVED_2A              0x2A
+#define OP_RESERVED_2B              0x2B
+#define OP_RESERVED_2C              0x2C
+#define OP_RESERVED_2D              0x2D
+#define OP_RESERVED_2E              0x2E
+#define OP_RESERVED_2F              0x2F
+
 #define OP_SET_UNION                0x30
 #define OP_SET_INTERSECT            0x31
 #define OP_SET_DIFFERENCE           0x32
 #define OP_SET_CARDINALITY          0x33
-#define OP_ROARING_BITMAP_OR        0x6B
-#define OP_ROARING_BITMAP_AND_NOT   0x6C
 #define OP_VECTOR_MUL_ATTR          0x34
 #define OP_VECTOR_REDUCE_SUM        0x35
 #define OP_VECTOR_DIV               0x36
 #define OP_VECTOR_STR_CONCAT        0x37
 #define OP_FLOAT_VECTOR_SCALE       0x38
 #define OP_L1_NORM_DIFF             0x39
+
+#define OP_RESERVED_3A              0x3A
+#define OP_RESERVED_3B              0x3B
+#define OP_RESERVED_3C              0x3C
+#define OP_RESERVED_3D              0x3D
+#define OP_RESERVED_3E              0x3E
+#define OP_RESERVED_3F              0x3F
 
 #define OP_CC_AFFOREST              0x40
 #define OP_MXV                      0x41
@@ -90,7 +123,32 @@ extern "C" {
 #define OP_DELTA_STEP_RELAX         0x4A
 #define OP_READ_EDGE_WEIGHT         0x4B
 
-// Extended Domain Opcodes (0x60 - 0x6A)
+#define OP_RESERVED_4C              0x4C
+#define OP_RESERVED_4D              0x4D
+#define OP_RESERVED_4E              0x4E
+#define OP_RESERVED_4F              0x4F
+
+#define OP_JMP                      0x50
+#define OP_JZ                       0x51
+#define OP_JNZ                      0x52
+#define OP_LOOP_DECR                0x53
+#define OP_STABLE_CHECK             0x54
+#define OP_CALL                     0x55
+#define OP_RET                      0x56
+
+#define OP_RESERVED_57              0x57
+#define OP_RESERVED_58              0x58
+#define OP_RESERVED_59              0x59
+
+#define OP_THROW                    0x5A
+#define OP_ASSERT                   0x5B
+#define OP_TRAP                     0x5C
+
+#define OP_RESERVED_5D              0x5D
+#define OP_RESERVED_5E              0x5E
+#define OP_RESERVED_5F              0x5F
+
+// Extended Domain Opcodes (0x60 - 0x6C)
 #define OP_SAMPLE_NEIGHBORS         0x60
 #define OP_RANDOM_WALK              0x61
 #define OP_SCATTER_GATHER           0x62
@@ -102,17 +160,12 @@ extern "C" {
 #define OP_KCORE_DECOMPOSITION      0x68
 #define OP_MOTIF_MATCH_3            0x69
 #define OP_GRAPH_ISOMORPHISM        0x6A
+#define OP_ROARING_BITMAP_OR        0x6B
+#define OP_ROARING_BITMAP_AND_NOT   0x6C
 
-#define OP_JMP                      0x50
-#define OP_JZ                       0x51
-#define OP_JNZ                      0x52
-#define OP_LOOP_DECR                0x53
-#define OP_STABLE_CHECK             0x54
-#define OP_CALL                     0x55
-#define OP_RET                      0x56
-#define OP_THROW                    0x5A
-#define OP_ASSERT                   0x5B
-#define OP_TRAP                     0x5C
+#define OP_RESERVED_6D              0x6D
+#define OP_RESERVED_6E              0x6E
+#define OP_RESERVED_6F              0x6F
 
 #define OP_MOV                      0x70
 #define OP_CLEAR_REG                0x71
@@ -120,6 +173,38 @@ extern "C" {
 #define OP_ALLOC_SCRATCH            0x73
 #define OP_ASSERT_SCRATCH_BYTES     0x74
 #define OP_SET_MAX_DOP              0x75
+
+#define OP_RESERVED_76              0x76
+#define OP_RESERVED_77              0x77
+#define OP_RESERVED_78              0x78
+#define OP_RESERVED_79              0x79
+#define OP_RESERVED_7A              0x7A
+#define OP_RESERVED_7B              0x7B
+#define OP_RESERVED_7C              0x7C
+#define OP_RESERVED_7D              0x7D
+#define OP_RESERVED_7E              0x7E
+#define OP_RESERVED_7F              0x7F
+#define OP_RESERVED_80              0x80
+#define OP_RESERVED_81              0x81
+#define OP_RESERVED_82              0x82
+#define OP_RESERVED_83              0x83
+#define OP_RESERVED_84              0x84
+#define OP_RESERVED_85              0x85
+#define OP_RESERVED_86              0x86
+#define OP_RESERVED_87              0x87
+#define OP_RESERVED_88              0x88
+#define OP_RESERVED_89              0x89
+#define OP_RESERVED_8A              0x8A
+#define OP_RESERVED_8B              0x8B
+#define OP_RESERVED_8C              0x8C
+#define OP_RESERVED_8D              0x8D
+#define OP_RESERVED_8E              0x8E
+#define OP_RESERVED_8F              0x8F
+
+#define OP_COLLECT_BITSET           0x90
+#define OP_COLLECT_ARRAY            0x91
+#define OP_MAP_DENSE_TO_KEYS        0x92
+#define OP_COLLECT_VALUE_MAP        0x93
 
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0
@@ -134,12 +219,6 @@ extern "C" {
 #define BINARY_OP_MAX               3
 #define BINARY_OP_AND               4
 #define BINARY_OP_OR                5
-
-#define OP_COLLECT_BITSET           0x90
-#define OP_COLLECT_ARRAY            0x91
-#define OP_MAP_DENSE_TO_KEYS        0x92
-#define OP_COLLECT_VALUE_MAP        0x93
-#define OP_HALT                     0xFF
 
 /** @brief Register Type Tags */
 typedef enum {
@@ -171,7 +250,8 @@ typedef enum {
     IMPULSE_VM_ERR_INVALID_REGISTER = 6,
     IMPULSE_VM_ERR_USER_THROW = 7,
     IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
-    IMPULSE_VM_ERR_TRAP = 9
+    IMPULSE_VM_ERR_TRAP = 9,
+    IMPULSE_VM_ERR_RESERVED_OPCODE = 10
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN
