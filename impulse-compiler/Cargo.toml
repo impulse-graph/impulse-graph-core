@@ -1,0 +1,13 @@
+[package]
+name = "impulse-compiler"
+version = "0.9.0"
+edition = "2021"
+description = "Impulse Graph Engine DSL Compiler & ImpScheme IR Processor Crate"
+license = "Apache-2.0"
+
+[lib]
+name = "impulse_compiler"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+impulse-graph = { path = "../impulse-rust" }
