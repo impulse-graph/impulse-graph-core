@@ -1,0 +1,50 @@
+# ==============================================================================
+# IMPULSE GRAPH CORE — LINUX/ARM64 BUILD & VERIFICATION CONTAINER
+# ==============================================================================
+
+FROM --platform=linux/arm64 ubuntu:24.04 AS verifier
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+
+# Install C++20 toolchain, CMake, Ninja, Git, OpenMP, Python, Go, Node.js, .NET SDK
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    g++ \
+    gcc \
+    cmake \
+    ninja-build \
+    git \
+    curl \
+    ca-certificates \
+    libgomp1 \
+    libomp-dev \
+    golang \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    nodejs \
+    npm \
+    dotnet-sdk-8.0 \
+    && rm -rf /var/lib/apt-get/lists/*
+
+# Install Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+WORKDIR /workspace/impulse-graph-core
+COPY . .
+
+# Create python virtualenv & install dependencies
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir setuptools pybind11 pytest numpy
+RUN npm install -g node-gyp@latest
+
+# Make verify script executable
+RUN chmod +x scripts/verify_arm64.sh
+
+CMD ["/workspace/impulse-graph-core/scripts/verify_arm64.sh"]

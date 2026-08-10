@@ -639,7 +639,12 @@ static void extract_active_bits(const VmBitSet& bs, std::vector<uint32_t>& out_b
     for (size_t w = 0; w < bs.word_count; ++w) {
         uint64_t val = bs.words[w];
         while (val > 0) {
+#if defined(_MSC_VER)
+            unsigned long tz = 0;
+            _BitScanForward64(&tz, val);
+#else
             int tz = __builtin_ctzll(val);
+#endif
             out_bits.push_back(static_cast<uint32_t>(w * 64 + tz));
             val &= val - 1;
         }
@@ -662,85 +667,88 @@ impulse_vm_status_t impulse_vm_execute(
 
 #if HAS_COMPUTED_GOTO
     // Jump table containing addresses of labels
-    static const void* dispatch_table[256] = {
-        [0 ... 255] = &&op_INVALID,
-        [OP_NOP] = &&op_NOP,
-        [OP_INIT_INPUT_NODE] = &&op_INIT_INPUT_NODE,
-        [OP_INIT_INPUT_SET] = &&op_INIT_INPUT_SET,
-        [OP_LOAD_CONST_INT] = &&op_LOAD_CONST_INT,
-        [OP_LOAD_CONST_FLOAT] = &&op_LOAD_CONST_FLOAT,
-        [OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX,
-        [OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY,
-        [OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH,
-        [OP_CSR_WALK] = &&op_CSR_WALK,
-        [OP_CSR_WALK_FILTERED] = &&op_CSR_WALK_FILTERED,
-        [OP_CSR_DEGREE] = &&op_CSR_DEGREE,
-        [OP_CSR_WALK_PREDICATE] = &&op_CSR_WALK_PREDICATE,
-        [OP_NODE_FILTER] = &&op_NODE_FILTER,
-        [OP_NODE_FILTER_STR_PREFIX] = &&op_NODE_FILTER_STR_PREFIX,
-        [OP_CSR_WALK_REDUCE_SUM] = &&op_CSR_WALK_REDUCE_SUM,
-        [OP_CSR_WALK_REDUCE] = &&op_CSR_WALK_REDUCE,
-        [OP_CSC_WALK] = &&op_CSC_WALK,
-        [OP_HAS_CSR] = &&op_HAS_CSR,
-        [OP_HAS_CSC] = &&op_HAS_CSC,
-        [OP_HAS_COO] = &&op_HAS_COO,
-        [OP_HAS_KEY_CATALOG] = &&op_HAS_KEY_CATALOG,
-        [OP_SET_UNION] = &&op_SET_UNION,
-        [OP_SET_INTERSECT] = &&op_SET_INTERSECT,
-        [OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE,
-        [OP_SET_CARDINALITY] = &&op_SET_CARDINALITY,
-        [OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR,
-        [OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM,
-        [OP_VECTOR_DIV] = &&op_VECTOR_DIV,
-        [OP_VECTOR_STR_CONCAT] = &&op_VECTOR_STR_CONCAT,
-        [OP_FLOAT_VECTOR_SCALE] = &&op_FLOAT_VECTOR_SCALE,
-        [OP_L1_NORM_DIFF] = &&op_L1_NORM_DIFF,
-        [OP_CC_AFFOREST] = &&op_CC_AFFOREST,
-        [OP_MXV] = &&op_MXV,
-        [OP_VXM] = &&op_VXM,
-        [OP_EWISE_ADD] = &&op_EWISE_ADD,
-        [OP_EWISE_MULT] = &&op_EWISE_MULT,
-        [OP_REDUCE] = &&op_REDUCE,
-        [OP_JMP] = &&op_JMP,
-        [OP_JZ] = &&op_JZ,
-        [OP_JNZ] = &&op_JNZ,
-        [OP_LOOP_DECR] = &&op_LOOP_DECR,
-        [OP_STABLE_CHECK] = &&op_STABLE_CHECK,
-        [OP_CALL] = &&op_CALL,
-        [OP_RET] = &&op_RET,
-        [OP_THROW] = &&op_THROW,
-        [OP_ASSERT] = &&op_ASSERT,
-        [OP_TRAP] = &&op_TRAP,
-        [OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH,
-        [OP_RANDOM_WALK] = &&op_PASS_THROUGH,
-        [OP_SCATTER_GATHER] = &&op_PASS_THROUGH,
-        [OP_REBAC_CHECK] = &&op_PASS_THROUGH,
-        [OP_ROARING_BITMAP_AND] = &&op_ROARING_BITMAP_AND,
-        [OP_ISLAND_DETECT] = &&op_ISLAND_DETECT,
-        [OP_SPARSE_MATVEC] = &&op_PASS_THROUGH,
-        [OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH,
-        [OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH,
-        [OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH,
-        [OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH,
-        [OP_READ_EDGE_WEIGHT] = &&op_READ_EDGE_WEIGHT,
-        [OP_CC_HOOK_COMPRESS] = &&op_PASS_THROUGH,
-        [OP_TC_SWEEP_BATCH] = &&op_PASS_THROUGH,
-        [OP_BRANDES_FORWARD] = &&op_PASS_THROUGH,
-        [OP_BRANDES_BACKWARD] = &&op_PASS_THROUGH,
-        [OP_DELTA_STEP_RELAX] = &&op_PASS_THROUGH,
-        [OP_MOV] = &&op_MOV,
-        [OP_CLEAR_REG] = &&op_CLEAR_REG,
-        [OP_LOAD_INDIRECT] = &&op_LOAD_INDIRECT,
-        [OP_ALLOC_SCRATCH] = &&op_ALLOC_SCRATCH,
-        [OP_ASSERT_SCRATCH_BYTES] = &&op_ASSERT_SCRATCH_BYTES,
-        [OP_SET_MAX_DOP] = &&op_SET_MAX_DOP,
-        [OP_COLLECT_BITSET] = &&op_COLLECT_BITSET,
-        [OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY,
-        [OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE,
-        [OP_MAP_DENSE_TO_KEYS] = &&op_MAP_DENSE_TO_KEYS,
-        [OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP,
-        [OP_HALT] = &&op_HALT
-    };
+    static const void* dispatch_table[256];
+    static bool dispatch_inited = false;
+    if (!dispatch_inited) {
+        for (int i = 0; i < 256; ++i) dispatch_table[i] = &&op_INVALID;
+        dispatch_table[OP_NOP] = &&op_NOP;
+        dispatch_table[OP_INIT_INPUT_NODE] = &&op_INIT_INPUT_NODE;
+        dispatch_table[OP_INIT_INPUT_SET] = &&op_INIT_INPUT_SET;
+        dispatch_table[OP_LOAD_CONST_INT] = &&op_LOAD_CONST_INT;
+        dispatch_table[OP_LOAD_CONST_FLOAT] = &&op_LOAD_CONST_FLOAT;
+        dispatch_table[OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX;
+        dispatch_table[OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY;
+        dispatch_table[OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH;
+        dispatch_table[OP_CSR_WALK] = &&op_CSR_WALK;
+        dispatch_table[OP_CSR_WALK_FILTERED] = &&op_CSR_WALK_FILTERED;
+        dispatch_table[OP_CSR_DEGREE] = &&op_CSR_DEGREE;
+        dispatch_table[OP_CSR_WALK_PREDICATE] = &&op_CSR_WALK_PREDICATE;
+        dispatch_table[OP_NODE_FILTER] = &&op_NODE_FILTER;
+        dispatch_table[OP_NODE_FILTER_STR_PREFIX] = &&op_NODE_FILTER_STR_PREFIX;
+        dispatch_table[OP_CSR_WALK_REDUCE_SUM] = &&op_CSR_WALK_REDUCE_SUM;
+        dispatch_table[OP_CSR_WALK_REDUCE] = &&op_CSR_WALK_REDUCE;
+        dispatch_table[OP_CSC_WALK] = &&op_CSC_WALK;
+        dispatch_table[OP_HAS_CSR] = &&op_HAS_CSR;
+        dispatch_table[OP_HAS_CSC] = &&op_HAS_CSC;
+        dispatch_table[OP_HAS_COO] = &&op_HAS_COO;
+        dispatch_table[OP_HAS_KEY_CATALOG] = &&op_HAS_KEY_CATALOG;
+        dispatch_table[OP_SET_UNION] = &&op_SET_UNION;
+        dispatch_table[OP_SET_INTERSECT] = &&op_SET_INTERSECT;
+        dispatch_table[OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE;
+        dispatch_table[OP_SET_CARDINALITY] = &&op_SET_CARDINALITY;
+        dispatch_table[OP_VECTOR_MUL_ATTR] = &&op_VECTOR_MUL_ATTR;
+        dispatch_table[OP_VECTOR_REDUCE_SUM] = &&op_VECTOR_REDUCE_SUM;
+        dispatch_table[OP_VECTOR_DIV] = &&op_VECTOR_DIV;
+        dispatch_table[OP_VECTOR_STR_CONCAT] = &&op_VECTOR_STR_CONCAT;
+        dispatch_table[OP_FLOAT_VECTOR_SCALE] = &&op_FLOAT_VECTOR_SCALE;
+        dispatch_table[OP_L1_NORM_DIFF] = &&op_L1_NORM_DIFF;
+        dispatch_table[OP_CC_AFFOREST] = &&op_CC_AFFOREST;
+        dispatch_table[OP_MXV] = &&op_MXV;
+        dispatch_table[OP_VXM] = &&op_VXM;
+        dispatch_table[OP_EWISE_ADD] = &&op_EWISE_ADD;
+        dispatch_table[OP_EWISE_MULT] = &&op_EWISE_MULT;
+        dispatch_table[OP_REDUCE] = &&op_REDUCE;
+        dispatch_table[OP_JMP] = &&op_JMP;
+        dispatch_table[OP_JZ] = &&op_JZ;
+        dispatch_table[OP_JNZ] = &&op_JNZ;
+        dispatch_table[OP_LOOP_DECR] = &&op_LOOP_DECR;
+        dispatch_table[OP_STABLE_CHECK] = &&op_STABLE_CHECK;
+        dispatch_table[OP_CALL] = &&op_CALL;
+        dispatch_table[OP_RET] = &&op_RET;
+        dispatch_table[OP_THROW] = &&op_THROW;
+        dispatch_table[OP_ASSERT] = &&op_ASSERT;
+        dispatch_table[OP_TRAP] = &&op_TRAP;
+        dispatch_table[OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH;
+        dispatch_table[OP_RANDOM_WALK] = &&op_PASS_THROUGH;
+        dispatch_table[OP_SCATTER_GATHER] = &&op_PASS_THROUGH;
+        dispatch_table[OP_ROARING_BITMAP_OR] = &&op_ROARING_BITMAP_OR;
+        dispatch_table[OP_ROARING_BITMAP_AND] = &&op_ROARING_BITMAP_AND;
+        dispatch_table[OP_ROARING_BITMAP_AND_NOT] = &&op_ROARING_BITMAP_AND_NOT;
+        dispatch_table[OP_SPARSE_MATVEC] = &&op_PASS_THROUGH;
+        dispatch_table[OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH;
+        dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH;
+        dispatch_table[OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH;
+        dispatch_table[OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH;
+        dispatch_table[OP_READ_EDGE_WEIGHT] = &&op_READ_EDGE_WEIGHT;
+        dispatch_table[OP_CC_HOOK_COMPRESS] = &&op_PASS_THROUGH;
+        dispatch_table[OP_TC_SWEEP_BATCH] = &&op_PASS_THROUGH;
+        dispatch_table[OP_BRANDES_FORWARD] = &&op_PASS_THROUGH;
+        dispatch_table[OP_BRANDES_BACKWARD] = &&op_PASS_THROUGH;
+        dispatch_table[OP_DELTA_STEP_RELAX] = &&op_PASS_THROUGH;
+        dispatch_table[OP_MOV] = &&op_MOV;
+        dispatch_table[OP_CLEAR_REG] = &&op_CLEAR_REG;
+        dispatch_table[OP_LOAD_INDIRECT] = &&op_LOAD_INDIRECT;
+        dispatch_table[OP_ALLOC_SCRATCH] = &&op_ALLOC_SCRATCH;
+        dispatch_table[OP_ASSERT_SCRATCH_BYTES] = &&op_ASSERT_SCRATCH_BYTES;
+        dispatch_table[OP_SET_MAX_DOP] = &&op_SET_MAX_DOP;
+        dispatch_table[OP_COLLECT_BITSET] = &&op_COLLECT_BITSET;
+        dispatch_table[OP_COLLECT_ARRAY] = &&op_COLLECT_ARRAY;
+        dispatch_table[OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE;
+        dispatch_table[OP_MAP_DENSE_TO_KEYS] = &&op_MAP_DENSE_TO_KEYS;
+        dispatch_table[OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP;
+        dispatch_table[OP_HALT] = &&op_HALT;
+        dispatch_inited = true;
+    }
 
     #define DISPATCH() \
         do { \
@@ -2436,6 +2444,7 @@ op_REDUCE: {
         }
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = res;
+        vm_state->register_types[dst] = TYPE_FLOAT;
     } else {
         vm_state->registers[dst] = vm_state->registers[src_vec];
         vm_state->register_types[dst] = TYPE_INT64;
@@ -2463,7 +2472,7 @@ op_CC_AFFOREST: {
         int h_dst = acquire_node_vector(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
     }
 
     int handle = static_cast<int>(vm_state->registers[dst]);
@@ -2709,6 +2718,70 @@ op_ROARING_BITMAP_AND: {
 
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             bs_dst.words[i] = bs1.words[i] & bs2.words[i];
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ROARING_BITMAP_OR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE && vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& bs1 = vm_state->query_context->bitsets[h1];
+        const auto& bs2 = vm_state->query_context->bitsets[h2];
+
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] = bs1.words[i] | bs2.words[i];
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_ROARING_BITMAP_AND_NOT: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE && vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        const auto& bs1 = vm_state->query_context->bitsets[h1];
+        const auto& bs2 = vm_state->query_context->bitsets[h2];
+
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] = bs1.words[i] & ~bs2.words[i];
         }
     }
 
@@ -3098,8 +3171,17 @@ op_MAP_KEYS_TO_DENSE: {
                             const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
                             key_val = static_cast<const char*>(attr->data_ptr) + offsets[u];
                         }
-                        if (key_val && std::strcmp(key_val, target_key) == 0) {
-                            is_match = true;
+                        if (key_val) {
+                            if (!attr->offsets_ptr) {
+                                size_t target_len = std::strlen(target_key);
+                                size_t match_len = std::min<size_t>(target_len, static_cast<size_t>(attr->dimension));
+                                if (std::strncmp(key_val, target_key, match_len) == 0 &&
+                                    (target_len <= static_cast<size_t>(attr->dimension) || key_val[match_len] == '\0')) {
+                                    is_match = true;
+                                }
+                            } else if (std::strcmp(key_val, target_key) == 0) {
+                                is_match = true;
+                            }
                         }
                     } else if (base_type == 0x03 || base_type == 0x04) {
                         int64_t val = 0;
@@ -5157,6 +5239,7 @@ op_OUT_OF_BOUNDS:
                                     dst_vec[target_node] += src_val * weight;
                                 }
                             }
+                        }
                     } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                         size_t h_src = vm_state->registers[src];
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
@@ -5171,6 +5254,7 @@ op_OUT_OF_BOUNDS:
                             }
                         }
                     }
+                }
 
                 vm_state->registers[dst] = h_dst;
                 vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
@@ -5662,7 +5746,6 @@ op_OUT_OF_BOUNDS:
                 return IMPULSE_VM_ERR_TRAP;
             }
             case OP_CSR_WALK_PREDICATE:
-            case OP_NODE_FILTER_STR_PREFIX:
             case OP_VECTOR_STR_CONCAT:
             case OP_FLOAT_VECTOR_SCALE:
             case OP_L1_NORM_DIFF:
@@ -5670,7 +5753,9 @@ op_OUT_OF_BOUNDS:
             case OP_RANDOM_WALK:
             case OP_SCATTER_GATHER:
             case OP_REBAC_CHECK:
+            case OP_ROARING_BITMAP_OR:
             case OP_ROARING_BITMAP_AND:
+            case OP_ROARING_BITMAP_AND_NOT:
             case OP_SPARSE_MATVEC:
             case OP_LOUVAIN_MODULARITY:
             case OP_KCORE_DECOMPOSITION:

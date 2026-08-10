@@ -6,8 +6,8 @@ from typing import List, Callable, Optional, Tuple, Union
 import numpy as np
 
 try:
-    import _impulse_native
-    from _impulse_native import (
+    from . import _impulse_native
+    from ._impulse_native import (
         QueryBuilder as _NativeQueryBuilder,
         CompiledQuery as _NativeCompiledQuery,
         QueryResult as _NativeQueryResult,
@@ -19,11 +19,26 @@ try:
         opcodes,
     )
 except ImportError:
-    _NativeQueryBuilder = None
-    _NativeCompiledQuery = None
-    _NativeQueryResult = None
-    _NativeVmContext = None
-    _NativeVmState = None
+    try:
+        import _impulse_native
+        from _impulse_native import (
+            QueryBuilder as _NativeQueryBuilder,
+            CompiledQuery as _NativeCompiledQuery,
+            QueryResult as _NativeQueryResult,
+            VmContext as _NativeVmContext,
+            VmState as _NativeVmState,
+            RegisterType,
+            VmStatus,
+            Instruction,
+            opcodes,
+        )
+    except ImportError:
+        _NativeQueryBuilder = None
+        _NativeCompiledQuery = None
+        _NativeQueryResult = None
+        _NativeVmContext = None
+        _NativeVmState = None
+        opcodes = None
     RegisterType = None
     VmStatus = None
     Instruction = None

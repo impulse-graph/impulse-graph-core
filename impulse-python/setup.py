@@ -10,32 +10,52 @@ local_cpp_dir = os.path.join(this_dir, "impulse-cpp")
 if os.path.exists(cpp_dir):
     if os.path.exists(local_cpp_dir):
         shutil.rmtree(local_cpp_dir)
+    inc_dir = os.path.abspath(os.path.join(cpp_dir, "include"))
+    src_dir = os.path.abspath(os.path.join(cpp_dir, "src"))
+    rel_src_prefix = "../impulse-cpp/src"
+elif os.path.exists(local_cpp_dir):
+    inc_dir = os.path.abspath(os.path.join(local_cpp_dir, "include"))
+    src_dir = os.path.abspath(os.path.join(local_cpp_dir, "src"))
+    rel_src_prefix = "impulse-cpp/src"
+else:
+    inc_dir = "../impulse-cpp/include"
+    src_dir = "../impulse-cpp/src"
+    rel_src_prefix = "../impulse-cpp/src"
+
+import subprocess
+
+hwy_dir = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-src"))
+if not os.path.exists(hwy_dir) and os.path.exists(os.path.join(cpp_dir, "CMakeLists.txt")):
     try:
-        shutil.copytree(cpp_dir, local_cpp_dir, ignore=shutil.ignore_patterns("build", "cmake-build-debug", ".git"))
+        subprocess.run(["cmake", "-B", "build", "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"], cwd=cpp_dir, check=True)
     except Exception:
         pass
 
+hwy_sources = []
+for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_allocator.cc", "timer.cc"]:
+    full_hwy_file = os.path.join(hwy_dir, "hwy", hwy_file)
+    if os.path.exists(full_hwy_file):
+        hwy_sources.append(full_hwy_file)
 
-if os.path.exists(local_cpp_dir):
-    inc_dir = "impulse-cpp/include"
-    src_prefix = "impulse-cpp/src"
-else:
-    inc_dir = "../impulse-cpp/include"
-    src_prefix = "../impulse-cpp/src"
+hwy_lib = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-build", "libhwy.a"))
+extra_objects = [hwy_lib] if os.path.exists(hwy_lib) else []
 
 ext_modules = [
     Pybind11Extension(
-        "_impulse_native",
+        "impulse_graph._impulse_native",
         [
             "src/impulse_python.cpp",
-            f"{src_prefix}/impulse_graph.cpp",
-            f"{src_prefix}/impulse_simd.cpp",
-            f"{src_prefix}/impulse_vm.cpp",
-            f"{src_prefix}/impulse_vm_fluent.cpp",
-        ],
+            f"{rel_src_prefix}/impulse_graph.cpp",
+            f"{rel_src_prefix}/impulse_simd.cpp",
+            f"{rel_src_prefix}/impulse_vm.cpp",
+            f"{rel_src_prefix}/impulse_vm_fluent.cpp",
+        ] + (hwy_sources if not extra_objects else []),
         include_dirs=[
             inc_dir,
+            src_dir,
+            hwy_dir,
         ],
+        extra_objects=extra_objects,
         cxx_std=20,
     ),
 ]

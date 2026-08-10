@@ -4,312 +4,101 @@
 #include <algorithm>
 #include <cstring>
 
-// Detect ISA architecture and intrinsic capabilities
-#if defined(__x86_64__) || defined(_M_X64)
-  #include <immintrin.h>
-  #define IMPULSE_ARCH_X86 1
-#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__ARM_NEON)
-  #include <arm_neon.h>
-  #define IMPULSE_ARCH_ARM 1
-#endif
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "impulse_simd.cpp"
+#include "hwy/foreach_target.h"
+#include "hwy/highway.h"
 
-namespace {
+HWY_BEFORE_NAMESPACE();
+namespace impulse {
+namespace HWY_NAMESPACE {
 
-enum class SimdTarget {
-    AVX512 = 0,
-    AVX2 = 1,
-    NEON = 2,
-    EMU128 = 3
-};
+namespace hn = hwy::HWY_NAMESPACE;
 
-SimdTarget detect_best_target() {
-#if defined(IMPULSE_ARCH_X86)
-  #if defined(__AVX512F__)
-    return SimdTarget::AVX512;
-  #elif defined(__AVX2__)
-    return SimdTarget::AVX2;
-  #else
-    // Dynamic runtime CPUID check if compiled without explicit target flags
-    #if defined(__GNUC__) || defined(__clang__)
-      if (__builtin_cpu_supports("avx512f")) return SimdTarget::AVX512;
-      if (__builtin_cpu_supports("avx2")) return SimdTarget::AVX2;
-    #endif
-    return SimdTarget::EMU128;
-  #endif
-#elif defined(IMPULSE_ARCH_ARM)
-    return SimdTarget::NEON;
-#else
-    return SimdTarget::EMU128;
-#endif
-}
-
-// ---------------------------------------------------------------------------
-// Kernel: Float32 Dot Product (Google Highway target templates)
-// ---------------------------------------------------------------------------
-
-float dot_product_emu128(const float* a, const float* b, size_t len) {
-    float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
+// Kernel 1: Float32 Dot Product
+float DotProductF32(const float* HWY_RESTRICT a, const float* HWY_RESTRICT b, size_t len) {
+    const hn::ScalableTag<float> d;
+    auto sum = hn::Zero(d);
+    const size_t N = hn::Lanes(d);
     size_t i = 0;
-    size_t vec_len = len & ~3ULL; // process 4 floats per loop
-
-    for (; i < vec_len; i += 4) {
-        sum0 += a[i + 0] * b[i + 0];
-        sum1 += a[i + 1] * b[i + 1];
-        sum2 += a[i + 2] * b[i + 2];
-        sum3 += a[i + 3] * b[i + 3];
+    for (; i + N <= len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        const auto vb = hn::LoadU(d, b + i);
+        sum = hn::MulAdd(va, vb, sum);
     }
-    float total = (sum0 + sum1) + (sum2 + sum3);
+    float total = hn::ReduceSum(d, sum);
     for (; i < len; ++i) {
         total += a[i] * b[i];
     }
     return total;
 }
 
-#if defined(IMPULSE_ARCH_ARM)
-float dot_product_neon(const float* a, const float* b, size_t len) {
-    float32x4_t vsum = vdupq_n_f32(0.0f);
+// Kernel 2: Float32 Vector Sum
+void VectorSumF32(const float* HWY_RESTRICT a, const float* HWY_RESTRICT b, float* HWY_RESTRICT out, size_t len) {
+    const hn::ScalableTag<float> d;
+    const size_t N = hn::Lanes(d);
     size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-
-    for (; i < vec_len; i += 4) {
-        float32x4_t va = vld1q_f32(a + i);
-        float32x4_t vb = vld1q_f32(b + i);
-        vsum = vmlaq_f32(vsum, va, vb);
-    }
-    float total = vaddvq_f32(vsum);
-    for (; i < len; ++i) {
-        total += a[i] * b[i];
-    }
-    return total;
-}
-#endif
-
-#if defined(IMPULSE_ARCH_X86)
-#if defined(__AVX2__)
-float dot_product_avx2(const float* a, const float* b, size_t len) {
-    __m256 vsum = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t vec_len = len & ~7ULL;
-
-    for (; i < vec_len; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        vsum = _mm256_fmadd_ps(va, vb, vsum);
-    }
-    alignas(32) float buf[8];
-    _mm256_storeu_ps(buf, vsum);
-    float total = 0.0f;
-    for (int k = 0; k < 8; ++k) total += buf[k];
-    for (; i < len; ++i) {
-        total += a[i] * b[i];
-    }
-    return total;
-}
-#endif
-#endif
-
-// ---------------------------------------------------------------------------
-// Kernel: Float32 Vector Sum
-// ---------------------------------------------------------------------------
-
-void vector_sum_emu128(const float* a, const float* b, float* out, size_t len) {
-    size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        out[i + 0] = a[i + 0] + b[i + 0];
-        out[i + 1] = a[i + 1] + b[i + 1];
-        out[i + 2] = a[i + 2] + b[i + 2];
-        out[i + 3] = a[i + 3] + b[i + 3];
+    for (; i + N <= len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        const auto vb = hn::LoadU(d, b + i);
+        hn::StoreU(hn::Add(va, vb), d, out + i);
     }
     for (; i < len; ++i) {
         out[i] = a[i] + b[i];
     }
 }
 
-#if defined(IMPULSE_ARCH_ARM)
-void vector_sum_neon(const float* a, const float* b, float* out, size_t len) {
+// Kernel 3: Float32 Reduce Sum
+float ReduceSumF32(const float* HWY_RESTRICT a, size_t len) {
+    const hn::ScalableTag<float> d;
+    auto sum = hn::Zero(d);
+    const size_t N = hn::Lanes(d);
     size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        float32x4_t va = vld1q_f32(a + i);
-        float32x4_t vb = vld1q_f32(b + i);
-        vst1q_f32(out + i, vaddq_f32(va, vb));
+    for (; i + N <= len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        sum = hn::Add(sum, va);
     }
-    for (; i < len; ++i) {
-        out[i] = a[i] + b[i];
-    }
-}
-#endif
-
-// ---------------------------------------------------------------------------
-// Kernel: Float32 Sum Reduction
-// ---------------------------------------------------------------------------
-
-float reduce_sum_emu128(const float* a, size_t len) {
-    float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
-    size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        sum0 += a[i + 0];
-        sum1 += a[i + 1];
-        sum2 += a[i + 2];
-        sum3 += a[i + 3];
-    }
-    float total = (sum0 + sum1) + (sum2 + sum3);
+    float total = hn::ReduceSum(d, sum);
     for (; i < len; ++i) {
         total += a[i];
     }
     return total;
 }
 
-#if defined(IMPULSE_ARCH_ARM)
-float reduce_sum_neon(const float* a, size_t len) {
-    float32x4_t vsum = vdupq_n_f32(0.0f);
+// Kernel 4: Float32 Vector Scale
+void VectorScaleF32(float* HWY_RESTRICT a, float scalar, size_t len) {
+    const hn::ScalableTag<float> d;
+    const auto vscalar = hn::Set(d, scalar);
+    const size_t N = hn::Lanes(d);
     size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        float32x4_t va = vld1q_f32(a + i);
-        vsum = vaddq_f32(vsum, va);
-    }
-    float total = vaddvq_f32(vsum);
-    for (; i < len; ++i) {
-        total += a[i];
-    }
-    return total;
-}
-#endif
-
-#if defined(IMPULSE_ARCH_X86)
-#if defined(__AVX2__)
-float reduce_sum_avx2(const float* a, size_t len) {
-    __m256 vsum = _mm256_setzero_ps();
-    size_t i = 0;
-    size_t vec_len = len & ~7ULL;
-    for (; i < vec_len; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        vsum = _mm256_add_ps(vsum, va);
-    }
-    alignas(32) float buf[8];
-    _mm256_storeu_ps(buf, vsum);
-    float total = 0.0f;
-    for (int k = 0; k < 8; ++k) total += buf[k];
-    for (; i < len; ++i) {
-        total += a[i];
-    }
-    return total;
-}
-#endif
-#endif
-
-// ---------------------------------------------------------------------------
-// Kernel: Float32 Vector Scale
-// ---------------------------------------------------------------------------
-
-void vector_scale_emu128(float* a, float scalar, size_t len) {
-    size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        a[i + 0] *= scalar;
-        a[i + 1] *= scalar;
-        a[i + 2] *= scalar;
-        a[i + 3] *= scalar;
+    for (; i + N <= len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        hn::StoreU(hn::Mul(va, vscalar), d, a + i);
     }
     for (; i < len; ++i) {
         a[i] *= scalar;
     }
 }
 
-#if defined(IMPULSE_ARCH_ARM)
-void vector_scale_neon(float* a, float scalar, size_t len) {
-    float32x4_t vscalar = vdupq_n_f32(scalar);
+// Kernel 5: Float32 Vector Multiply
+void VectorMulF32(float* HWY_RESTRICT a, const float* HWY_RESTRICT b, size_t len) {
+    const hn::ScalableTag<float> d;
+    const size_t N = hn::Lanes(d);
     size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        float32x4_t va = vld1q_f32(a + i);
-        vst1q_f32(a + i, vmulq_f32(va, vscalar));
-    }
-    for (; i < len; ++i) {
-        a[i] *= scalar;
-    }
-}
-#endif
-
-#if defined(IMPULSE_ARCH_X86)
-#if defined(__AVX2__)
-void vector_scale_avx2(float* a, float scalar, size_t len) {
-    __m256 vscalar = _mm256_set1_ps(scalar);
-    size_t i = 0;
-    size_t vec_len = len & ~7ULL;
-    for (; i < vec_len; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        _mm256_storeu_ps(a + i, _mm256_mul_ps(va, vscalar));
-    }
-    for (; i < len; ++i) {
-        a[i] *= scalar;
-    }
-}
-#endif
-#endif
-
-// ---------------------------------------------------------------------------
-// Kernel: Float32 Vector Multiply
-// ---------------------------------------------------------------------------
-
-void vector_mul_emu128(float* a, const float* b, size_t len) {
-    size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        a[i + 0] *= b[i + 0];
-        a[i + 1] *= b[i + 1];
-        a[i + 2] *= b[i + 2];
-        a[i + 3] *= b[i + 3];
+    for (; i + N <= len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        const auto vb = hn::LoadU(d, b + i);
+        hn::StoreU(hn::Mul(va, vb), d, a + i);
     }
     for (; i < len; ++i) {
         a[i] *= b[i];
     }
 }
 
-#if defined(IMPULSE_ARCH_ARM)
-void vector_mul_neon(float* a, const float* b, size_t len) {
-    size_t i = 0;
-    size_t vec_len = len & ~3ULL;
-    for (; i < vec_len; i += 4) {
-        float32x4_t va = vld1q_f32(a + i);
-        float32x4_t vb = vld1q_f32(b + i);
-        vst1q_f32(a + i, vmulq_f32(va, vb));
-    }
-    for (; i < len; ++i) {
-        a[i] *= b[i];
-    }
-}
-#endif
-
-#if defined(IMPULSE_ARCH_X86)
-#if defined(__AVX2__)
-void vector_mul_avx2(float* a, const float* b, size_t len) {
-    size_t i = 0;
-    size_t vec_len = len & ~7ULL;
-    for (; i < vec_len; i += 8) {
-        __m256 va = _mm256_loadu_ps(a + i);
-        __m256 vb = _mm256_loadu_ps(b + i);
-        _mm256_storeu_ps(a + i, _mm256_mul_ps(va, vb));
-    }
-    for (; i < len; ++i) {
-        a[i] *= b[i];
-    }
-}
-#endif
-#endif
-
-// ---------------------------------------------------------------------------
-// Kernel: Sorted Uint32 Array Intersection
-// ---------------------------------------------------------------------------
-
-size_t intersect_sorted_emu128(
-    const uint32_t* a, size_t len_a,
-    const uint32_t* b, size_t len_b,
-    uint32_t* out_intersection
-) {
+// Kernel 6: Sorted Uint32 Array Intersection
+size_t IntersectSortedU32(const uint32_t* HWY_RESTRICT a, size_t len_a,
+                           const uint32_t* HWY_RESTRICT b, size_t len_b,
+                           uint32_t* HWY_RESTRICT out_intersection) {
     size_t ia = 0, ib = 0, count = 0;
     while (ia < len_a && ib < len_b) {
         uint32_t val_a = a[ia];
@@ -327,54 +116,65 @@ size_t intersect_sorted_emu128(
     return count;
 }
 
-} // anonymous namespace
+}  // namespace HWY_NAMESPACE
+}  // namespace impulse
+HWY_AFTER_NAMESPACE();
 
-// ---------------------------------------------------------------------------
-// Dynamic Dispatch C-ABI Exported API
-// ---------------------------------------------------------------------------
+#if HWY_ONCE
+
+namespace impulse {
+HWY_EXPORT(DotProductF32);
+HWY_EXPORT(VectorSumF32);
+HWY_EXPORT(ReduceSumF32);
+HWY_EXPORT(VectorScaleF32);
+HWY_EXPORT(VectorMulF32);
+HWY_EXPORT(IntersectSortedU32);
+
+const char* GetTargetName() {
+    return hwy::TargetName(HWY_TARGET);
+}
+
+float DispatchDotProductF32(const float* a, const float* b, size_t len) {
+    return HWY_DYNAMIC_DISPATCH(DotProductF32)(a, b, len);
+}
+
+void DispatchVectorSumF32(const float* a, const float* b, float* out, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorSumF32)(a, b, out, len);
+}
+
+size_t DispatchIntersectSortedU32(const uint32_t* a, size_t len_a, const uint32_t* b, size_t len_b, uint32_t* out_intersection) {
+    return HWY_DYNAMIC_DISPATCH(IntersectSortedU32)(a, len_a, b, len_b, out_intersection);
+}
+
+float DispatchReduceSumF32(const float* a, size_t len) {
+    return HWY_DYNAMIC_DISPATCH(ReduceSumF32)(a, len);
+}
+
+void DispatchVectorScaleF32(float* a, float scalar, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorScaleF32)(a, scalar, len);
+}
+
+void DispatchVectorMulF32(float* a, const float* b, size_t len) {
+    HWY_DYNAMIC_DISPATCH(VectorMulF32)(a, b, len);
+}
+
+}  // namespace impulse
 
 extern "C" {
 
 IMPULSE_API const char* impulse_simd_get_target_name(void) {
-    SimdTarget target = detect_best_target();
-    switch (target) {
-        case SimdTarget::AVX512: return "AVX-512 (Highway HWY_AVX512)";
-        case SimdTarget::AVX2:   return "AVX2 (Highway HWY_AVX2)";
-        case SimdTarget::NEON:   return "ARM-NEON (Highway HWY_NEON)";
-        case SimdTarget::EMU128: return "EMU128-Scalar (Highway HWY_EMU128)";
-        default:                 return "Unknown Target";
-    }
+    return impulse::GetTargetName();
 }
 
 IMPULSE_API float impulse_simd_dot_product_f32(const float* a, const float* b, size_t len) {
     if (!a || !b || len == 0) return 0.0f;
-    SimdTarget target = detect_best_target();
-#if defined(IMPULSE_ARCH_ARM)
-    if (target == SimdTarget::NEON) {
-        return dot_product_neon(a, b, len);
-    }
-#elif defined(IMPULSE_ARCH_X86)
-  #if defined(__AVX2__)
-    if (target == SimdTarget::AVX2) {
-        return dot_product_avx2(a, b, len);
-    }
-  #endif
-#endif
-    return dot_product_emu128(a, b, len);
+    return impulse::DispatchDotProductF32(a, b, len);
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_sum_f32(const float* a, const float* b, float* out, size_t len) {
     if (!a || !b || !out) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-
-    SimdTarget target = detect_best_target();
-#if defined(IMPULSE_ARCH_ARM)
-    if (target == SimdTarget::NEON) {
-        vector_sum_neon(a, b, out, len);
-        return IMPULSE_OK;
-    }
-#endif
-    vector_sum_emu128(a, b, out, len);
+    impulse::DispatchVectorSumF32(a, b, out, len);
     return IMPULSE_OK;
 }
 
@@ -385,68 +185,29 @@ IMPULSE_API impulse_status_t impulse_simd_intersect_sorted_u32(
     size_t* out_count
 ) {
     if (!a || !b || !out_intersection || !out_count) return IMPULSE_ERR_INVALID_ARGUMENT;
-
-    *out_count = intersect_sorted_emu128(a, len_a, b, len_b, out_intersection);
+    *out_count = impulse::DispatchIntersectSortedU32(a, len_a, b, len_b, out_intersection);
     return IMPULSE_OK;
 }
 
 IMPULSE_API float impulse_simd_reduce_sum_f32(const float* a, size_t len) {
     if (!a || len == 0) return 0.0f;
-    SimdTarget target = detect_best_target();
-#if defined(IMPULSE_ARCH_ARM)
-    if (target == SimdTarget::NEON) {
-        return reduce_sum_neon(a, len);
-    }
-#elif defined(IMPULSE_ARCH_X86)
-  #if defined(__AVX2__)
-    if (target == SimdTarget::AVX2) {
-        return reduce_sum_avx2(a, len);
-    }
-  #endif
-#endif
-    return reduce_sum_emu128(a, len);
+    return impulse::DispatchReduceSumF32(a, len);
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_scale_f32(float* a, float scalar, size_t len) {
     if (!a) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-    SimdTarget target = detect_best_target();
-#if defined(IMPULSE_ARCH_ARM)
-    if (target == SimdTarget::NEON) {
-        vector_scale_neon(a, scalar, len);
-        return IMPULSE_OK;
-    }
-#elif defined(IMPULSE_ARCH_X86)
-  #if defined(__AVX2__)
-    if (target == SimdTarget::AVX2) {
-        vector_scale_avx2(a, scalar, len);
-        return IMPULSE_OK;
-    }
-  #endif
-#endif
-    vector_scale_emu128(a, scalar, len);
+    impulse::DispatchVectorScaleF32(a, scalar, len);
     return IMPULSE_OK;
 }
 
 IMPULSE_API impulse_status_t impulse_simd_vector_mul_f32(float* a, const float* b, size_t len) {
     if (!a || !b) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (len == 0) return IMPULSE_OK;
-    SimdTarget target = detect_best_target();
-#if defined(IMPULSE_ARCH_ARM)
-    if (target == SimdTarget::NEON) {
-        vector_mul_neon(a, b, len);
-        return IMPULSE_OK;
-    }
-#elif defined(IMPULSE_ARCH_X86)
-  #if defined(__AVX2__)
-    if (target == SimdTarget::AVX2) {
-        vector_mul_avx2(a, b, len);
-        return IMPULSE_OK;
-    }
-  #endif
-#endif
-    vector_mul_emu128(a, b, len);
+    impulse::DispatchVectorMulF32(a, b, len);
     return IMPULSE_OK;
 }
 
-} // extern "C"
+}  // extern "C"
+
+#endif  // HWY_ONCE

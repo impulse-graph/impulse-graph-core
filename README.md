@@ -7,10 +7,11 @@ Polyglot native core engine workspace for **Impulse Graph Engine**. Houses the h
 ## Subdirectories & Language Modules
 
 * `impulse-cpp/`: High-performance C++20 zero-copy memory-mapped snapshot kernel with Ed25519 signature checks, portable SHA-256 header validation, and zero-copy C-ABI neighborhood sampler.
-* `impulse-rust/`: Pure Rust engine crate implementing C-ABI Binary Snapshot v2.4 spec reader/writer.
+* `impulse-rust/`: Pure Rust engine crate implementing C-ABI Binary Snapshot v0.9.0 spec reader/writer (`impulse-graph`).
+* `impulse-compiler/`: Pure Rust DSL compiler crate (`impulse-compiler` / `libimpulse_compiler`) compiling `ImpK`, `ImpLog`, and `ImpScheme` IR to `ImpAsm` and `impOps` bytecode.
 * `impulse-python/`: Python PyTorch / PyG zero-copy `mmap` tensor integration and native C-ABI bindings.
 * `impulse-dotnet/`: C# / .NET 9 FFI bindings for `libimpulse_graph`.
-* `impulse-go/`: Go cgo bindings for `libimpulse_graph`.
+* `impulse-go/`: Go cgo bindings for `libimpulse_graph` and `libimpulse_compiler`.
 * `impulse-node/`: Node.js / Bun N-API C++ native addon bindings.
 
 ## Ecosystem Repositories
@@ -18,6 +19,12 @@ Polyglot native core engine workspace for **Impulse Graph Engine**. Houses the h
 * **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)**: Normative C-ABI Binary Snapshot v2.4 Specification and shared test vectors.
 * **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)**: Java 25 FFM off-heap core engine implementation.
 * **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)**: Developer utilities (`impulse-opt`, `impulse-inspect`, `impulse-compile`).
+
+## Documentation
+
+* **[Testing Process & Strategy](docs/test-process.md)**: Formalized testing pyramid, spec compliance, FFI binding contract strategy, and PR gate requirements.
+* **[Software Modules Guide](docs/software-modules.md)**: Comprehensive architecture guide for core modules.
+* **[Parallel VM Execution Engine](docs/VM_PARALLEL_EXECUTION.md)**: Deep dive into OpenMP and SIMD VM dispatch.
 
 ## Build Instructions
 

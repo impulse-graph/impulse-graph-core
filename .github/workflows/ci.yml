@@ -9,10 +9,43 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      cpp: ${{ steps.filter.outputs.cpp }}
+      rust: ${{ steps.filter.outputs.rust }}
+      ffi: ${{ steps.filter.outputs.ffi }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Path Filters
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cpp:
+              - 'impulse-cpp/**'
+              - '.github/workflows/ci.yml'
+            rust:
+              - 'impulse-rust/**'
+              - 'impulse-cpp/**'
+              - '.github/workflows/ci.yml'
+            ffi:
+              - 'impulse-go/**'
+              - 'impulse-python/**'
+              - 'impulse-node/**'
+              - 'impulse-dotnet/**'
+              - 'impulse-cpp/**'
+              - '.github/workflows/ci.yml'
+
   build-cpp-kernel:
     name: Build C++ Kernel (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cpp == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,6 +63,8 @@ jobs:
 
   test-rust-engine:
     name: Test Rust Engine Crate
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -45,6 +80,8 @@ jobs:
 
   test-ffi-bindings:
     name: Test Multi-Language FFI Bindings
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ffi == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -86,9 +123,14 @@ jobs:
 
   dispatch-downstream:
     name: Trigger Downstream Ecosystem Builds
-    needs: [build-cpp-kernel, test-rust-engine, test-ffi-bindings]
+    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: |
+      github.ref == 'refs/heads/main' && 
+      github.event_name == 'push' && 
+      (needs.detect-changes.outputs.cpp == 'true' || 
+       needs.detect-changes.outputs.rust == 'true' || 
+       needs.detect-changes.outputs.ffi == 'true')
     env:
       PAT_SECRET: ${{ secrets.ORGANIZATION_PAT }}
     steps:

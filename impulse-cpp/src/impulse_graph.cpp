@@ -1226,7 +1226,7 @@ impulse_status_t impulse_snapshot_sample_neighbors(
 
         if (deg == 0) continue;
 
-        int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : std::min(static_cast<int>(deg), k_samples);
+        int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : (std::min)(static_cast<int>(deg), k_samples);
 
         for (int k = 0; k < num_to_sample; ++k) {
             if (total_written >= out_capacity) {
