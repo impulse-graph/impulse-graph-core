@@ -70,7 +70,7 @@ static void test_all_30_spec_v0_9_test_vectors() {
                            manifest_content.find("\"SUCCESS\"") == std::string::npos;
 
         impulse_status_t status = IMPULSE_OK;
-        impulse_snapshot_t* snap = impulse_snapshot_open(imps_file.c_str(), &status);
+        impulse_snapshot_t* snap = impulse_snapshot_open(imps_file.string().c_str(), &status);
 
         if (is_rejection) {
             if (snap != nullptr || status == IMPULSE_OK) {
