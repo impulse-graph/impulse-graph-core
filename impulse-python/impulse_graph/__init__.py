@@ -3,13 +3,17 @@ Impulse Graph Engine Python SDK & C++ Bytecode VM Binding
 """
 
 import numpy as np
-from . import vm
 
 try:
-    from _impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
+    from ._impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
 except ImportError:
-    _NativeSnapshot = None
-    _NativeWriter = None
+    try:
+        from _impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
+    except ImportError as e:
+        _NativeSnapshot = None
+        _NativeWriter = None
+
+from . import vm
 
 
 class Snapshot:

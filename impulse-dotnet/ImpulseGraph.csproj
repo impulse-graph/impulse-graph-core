@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PackageId>ImpulseGraph</PackageId>
     <Version>2.4.0</Version>
     <Authors>Impulse Graph Team</Authors>
-    <Description>Impulse Graph Engine .NET C# & F# Zero-Copy C-ABI Binary Snapshot Binding</Description>
+    <Description>Impulse Graph Engine .NET C# &amp; F# Zero-Copy C-ABI Binary Snapshot Binding</Description>
   </PropertyGroup>
 </Project>

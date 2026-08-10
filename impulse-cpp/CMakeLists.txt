@@ -27,6 +27,7 @@ FetchContent_Declare(
 )
 set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(highway)
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------

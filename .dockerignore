@@ -1,0 +1,10 @@
+.git
+.github
+**/build
+**/cmake-build-debug
+**/target
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+**/dist

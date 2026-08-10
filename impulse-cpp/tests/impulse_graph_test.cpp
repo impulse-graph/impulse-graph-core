@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <string>
 
 #define TEST_FILE "__impulse_test_snapshot_v09.bin"
 
