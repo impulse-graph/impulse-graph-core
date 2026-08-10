@@ -675,7 +675,7 @@ impulse_vm_status_t impulse_vm_execute(
         for (int i = 0x1D; i <= 0x2F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x3A; i <= 0x3F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x4C; i <= 0x4F; ++i) dispatch_table[i] = &&op_RESERVED;
-        for (int i = 0x57; i <= 0x59; ++i) dispatch_table[i] = &&op_RESERVED;
+        for (int i = 0x59; i <= 0x59; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x5D; i <= 0x5F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x6D; i <= 0x6F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x76; i <= 0x8F; ++i) dispatch_table[i] = &&op_RESERVED;
@@ -728,6 +728,8 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_THROW] = &&op_THROW;
         dispatch_table[OP_ASSERT] = &&op_ASSERT;
         dispatch_table[OP_TRAP] = &&op_TRAP;
+        dispatch_table[OP_ENTER_FRAME] = &&op_ENTER_FRAME;
+        dispatch_table[OP_LEAVE_FRAME] = &&op_LEAVE_FRAME;
         dispatch_table[OP_SAMPLE_NEIGHBORS] = &&op_PASS_THROUGH;
         dispatch_table[OP_RANDOM_WALK] = &&op_PASS_THROUGH;
         dispatch_table[OP_SCATTER_GATHER] = &&op_PASS_THROUGH;
@@ -772,6 +774,14 @@ impulse_vm_status_t impulse_vm_execute(
     DISPATCH();
 
 op_NOP:
+    vm_state->pc++;
+    DISPATCH();
+
+op_ENTER_FRAME:
+    vm_state->pc++;
+    DISPATCH();
+
+op_LEAVE_FRAME:
     vm_state->pc++;
     DISPATCH();
 

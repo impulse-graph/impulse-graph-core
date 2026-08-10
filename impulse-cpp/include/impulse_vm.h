@@ -136,8 +136,8 @@ extern "C" {
 #define OP_CALL                     0x55
 #define OP_RET                      0x56
 
-#define OP_RESERVED_57              0x57
-#define OP_RESERVED_58              0x58
+#define OP_ENTER_FRAME              0x57
+#define OP_LEAVE_FRAME              0x58
 #define OP_RESERVED_59              0x59
 
 #define OP_THROW                    0x5A
