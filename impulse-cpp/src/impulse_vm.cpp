@@ -639,7 +639,12 @@ static void extract_active_bits(const VmBitSet& bs, std::vector<uint32_t>& out_b
     for (size_t w = 0; w < bs.word_count; ++w) {
         uint64_t val = bs.words[w];
         while (val > 0) {
+#if defined(_MSC_VER)
+            unsigned long tz = 0;
+            _BitScanForward64(&tz, val);
+#else
             int tz = __builtin_ctzll(val);
+#endif
             out_bits.push_back(static_cast<uint32_t>(w * 64 + tz));
             val &= val - 1;
         }
@@ -5741,7 +5746,6 @@ op_OUT_OF_BOUNDS:
                 return IMPULSE_VM_ERR_TRAP;
             }
             case OP_CSR_WALK_PREDICATE:
-            case OP_NODE_FILTER_STR_PREFIX:
             case OP_VECTOR_STR_CONCAT:
             case OP_FLOAT_VECTOR_SCALE:
             case OP_L1_NORM_DIFF:
