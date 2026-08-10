@@ -5234,6 +5234,7 @@ op_OUT_OF_BOUNDS:
                                     dst_vec[target_node] += src_val * weight;
                                 }
                             }
+                        }
                     } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
                         size_t h_src = vm_state->registers[src];
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
