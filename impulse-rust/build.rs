@@ -19,9 +19,13 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
     ];
 
     let hwy_inc = "../impulse-cpp/build/_deps/highway-src";
-    if !Path::new(hwy_inc).exists() {
+    let hwy_lib_file = "../impulse-cpp/build/_deps/highway-build/libhwy.a";
+    if !Path::new(hwy_lib_file).exists() {
         let _ = Command::new("cmake")
             .args(["-B", "../impulse-cpp/build", "-S", "../impulse-cpp"])
+            .status();
+        let _ = Command::new("cmake")
+            .args(["--build", "../impulse-cpp/build", "--target", "hwy"])
             .status();
     }
     if Path::new(hwy_inc).exists() {

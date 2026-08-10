@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Warnings -------------------------------------------------
 if(MSVC)
-    add_compile_options(/W4)
+    add_compile_options(/W4 /wd4189)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
