@@ -5246,9 +5246,9 @@ op_OUT_OF_BOUNDS:
                                 if (target_node < max_nodes) {
                                     dst_vec[target_node] += 1.0f;
                                 }
-                            }
                         }
                     }
+                }
 
                 vm_state->registers[dst] = h_dst;
                 vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
