@@ -242,6 +242,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
         return nullptr;
     }
+
+    // Asynchronously prefetch the graph into RAM to eliminate soft page fault latency
+#if defined(MADV_WILLNEED)
+    ::madvise(mmap_ptr, file_size, MADV_WILLNEED);
+#endif
 #endif
 
     const uint8_t* raw = static_cast<const uint8_t*>(mmap_ptr);
