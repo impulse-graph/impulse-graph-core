@@ -3,6 +3,7 @@
 
 pub mod impk;
 pub mod implog;
+pub mod cypher;
 
 use super::ir::ast::SExpr;
 use std::error::Error;
@@ -17,6 +18,8 @@ pub enum LanguageTarget {
     ImpK,
     /// Datalog Logic & ReBAC Rule DSL
     ImpLog,
+    /// Simplified openCypher DSL
+    Cypher,
 }
 
 /// @brief Parses source text of a given language target into ImpScheme IR AST expressions.
@@ -36,6 +39,11 @@ pub fn parse_to_ir(source: &str, target: LanguageTarget) -> Result<Vec<SExpr>, B
         LanguageTarget::ImpLog => {
             let exprs = implog::parse(source)?;
             Ok(exprs)
+        }
+        LanguageTarget::Cypher => {
+            let query = cypher::parse_cypher(source)?;
+            let ir = cypher::compile_cypher_to_impscm(&query);
+            Ok(vec![ir])
         }
     }
 }

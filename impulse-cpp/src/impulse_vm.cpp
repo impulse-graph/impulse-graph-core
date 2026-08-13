@@ -1185,15 +1185,22 @@ op_CSR_WALK: {
                     if (w == 0) continue;
                     int tid = omp_get_thread_num();
                     auto& private_bs = ctx->private_bitsets[tid];
-                    for (int b = 0; b < 64; ++b) {
-                        if (w & (1ULL << b)) {
-                            uint64_t u = i * 64 + b;
-                            if (u < slot.node_count) {
-                                uint32_t start = slot.offsets_ptr[u];
-                                uint32_t end   = slot.offsets_ptr[u + 1];
-                                for (uint32_t idx = start; idx < end; ++idx) {
-                                    bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
-                                }
+                    while (w) {
+                        int b = __builtin_ctzll(w);
+                        w &= w - 1; // clear lowest set bit
+                        uint64_t u = i * 64 + b;
+                        
+                        if (w) {
+                            int next_b = __builtin_ctzll(w);
+                            __builtin_prefetch(&slot.offsets_ptr[i * 64 + next_b], 0, 1);
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            __builtin_prefetch(&slot.targets_ptr[start], 0, 1);
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
                             }
                         }
                     }
@@ -1223,15 +1230,22 @@ op_CSR_WALK: {
                 for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                     uint64_t w = bs_src.words[i];
                     if (w == 0) continue;
-                    for (int b = 0; b < 64; ++b) {
-                        if (w & (1ULL << b)) {
-                            uint64_t u = i * 64 + b;
-                            if (u < slot.node_count) {
-                                uint32_t start = slot.offsets_ptr[u];
-                                uint32_t end   = slot.offsets_ptr[u + 1];
-                                for (uint32_t idx = start; idx < end; ++idx) {
-                                    bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
-                                }
+                    while (w) {
+                        int b = __builtin_ctzll(w);
+                        w &= w - 1; // clear lowest set bit
+                        uint64_t u = i * 64 + b;
+                        
+                        if (w) {
+                            int next_b = __builtin_ctzll(w);
+                            __builtin_prefetch(&slot.offsets_ptr[i * 64 + next_b], 0, 1);
+                        }
+
+                        if (u < slot.node_count) {
+                            uint32_t start = slot.offsets_ptr[u];
+                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            __builtin_prefetch(&slot.targets_ptr[start], 0, 1);
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                             }
                         }
                     }
@@ -1420,32 +1434,36 @@ op_CSC_WALK: {
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-    auto test_src = [&](uint64_t u) -> bool {
-        if (src_is_bitset) {
-            return impulse_vm_context_bitset_test(vm_state->query_context, h_src, u);
-        }
-        return (u == scalar_src);
-    };
+    const uint64_t* src_words = src_is_bitset ? vm_state->query_context->bitsets[h_src].words : nullptr;
+#if defined(_OPENMP)
+    int num_threads = vm_state->query_context->max_threads;
+#endif
 
     if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
         if (h_unv >= 0) {
             const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w_unv = bs_unv.words[i];
-                if (w_unv == 0) continue;
                 uint64_t w_dst = 0;
-                for (int b = 0; b < 64; ++b) {
-                    if (w_unv & (1ULL << b)) {
-                        uint64_t v = i * 64 + b;
-                        if (v < slot.node_count) {
-                            uint32_t start = slot.csc_offsets_ptr[v];
-                            uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                            for (uint32_t idx = start; idx < end; ++idx) {
-                                uint64_t u = slot.csc_targets_ptr[idx];
-                                if (test_src(u)) {
-                                    w_dst |= (1ULL << b);
-                                    break;
-                                }
+                while (w_unv) {
+                    int b = __builtin_ctzll(w_unv);
+                    w_unv &= w_unv - 1;
+                    uint64_t v = i * 64 + b;
+                    if (v < slot.node_count) {
+                        uint32_t start = slot.csc_offsets_ptr[v];
+                        uint32_t end   = slot.csc_offsets_ptr[v + 1];
+                        for (uint32_t idx = start; idx < end; ++idx) {
+                            if (idx + 4 < end && src_words) {
+                                __builtin_prefetch(&src_words[slot.csc_targets_ptr[idx+4] >> 6], 0, 0);
+                            }
+                            uint64_t u = slot.csc_targets_ptr[idx];
+                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                            if (hit) {
+                                w_dst |= (1ULL << b);
+                                break;
                             }
                         }
                     }
@@ -1453,6 +1471,9 @@ op_CSC_WALK: {
                 bs_dst.words[i] = w_dst;
             }
         } else {
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w_dst = 0;
                 for (int b = 0; b < 64; ++b) {
@@ -1461,8 +1482,12 @@ op_CSC_WALK: {
                         uint32_t start = slot.csc_offsets_ptr[v];
                         uint32_t end   = slot.csc_offsets_ptr[v + 1];
                         for (uint32_t idx = start; idx < end; ++idx) {
+                            if (idx + 4 < end && src_words) {
+                                __builtin_prefetch(&src_words[slot.csc_targets_ptr[idx+4] >> 6], 0, 0);
+                            }
                             uint64_t u = slot.csc_targets_ptr[idx];
-                            if (test_src(u)) {
+                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                            if (hit) {
                                 w_dst |= (1ULL << b);
                                 break;
                             }
@@ -1475,16 +1500,21 @@ op_CSC_WALK: {
     } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
         if (h_unv >= 0) {
             const auto& bs_unv = vm_state->query_context->bitsets[h_unv];
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
+#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w_unv = bs_unv.words[i];
-                if (w_unv == 0) continue;
                 uint64_t w_dst = 0;
-                for (int b = 0; b < 64; ++b) {
-                    if (w_unv & (1ULL << b)) {
-                        uint64_t v = i * 64 + b;
-                        if (v < slot.node_count) {
-                            uint32_t u = slot.csc_targets_ptr[v];
-                            if (u != 0xFFFFFFFF && test_src(u)) {
+                while (w_unv) {
+                    int b = __builtin_ctzll(w_unv);
+                    w_unv &= w_unv - 1;
+                    uint64_t v = i * 64 + b;
+                    if (v < slot.node_count) {
+                        uint32_t u = slot.csc_targets_ptr[v];
+                        if (u != 0xFFFFFFFF) {
+                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                            if (hit) {
                                 w_dst |= (1ULL << b);
                             }
                         }
@@ -1493,14 +1523,20 @@ op_CSC_WALK: {
                 bs_dst.words[i] = w_dst;
             }
         } else {
+#if defined(_OPENMP)
+            #pragma omp parallel for schedule(static) num_threads(num_threads)
+#endif
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w_dst = 0;
                 for (int b = 0; b < 64; ++b) {
                     uint64_t v = i * 64 + b;
                     if (v < slot.node_count) {
                         uint32_t u = slot.csc_targets_ptr[v];
-                        if (u != 0xFFFFFFFF && test_src(u)) {
-                            w_dst |= (1ULL << b);
+                        if (u != 0xFFFFFFFF) {
+                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                            if (hit) {
+                                w_dst |= (1ULL << b);
+                            }
                         }
                     }
                 }
@@ -3973,15 +4009,22 @@ op_OUT_OF_BOUNDS:
                                 if (w == 0) continue;
                                 int tid = omp_get_thread_num();
                                 auto& private_bs = ctx->private_bitsets[tid];
-                                for (int b = 0; b < 64; ++b) {
-                                    if (w & (1ULL << b)) {
-                                        uint64_t u = i * 64 + b;
-                                        if (u < slot.node_count) {
-                                            uint32_t start = slot.offsets_ptr[u];
-                                            uint32_t end   = slot.offsets_ptr[u + 1];
-                                            for (uint32_t idx = start; idx < end; ++idx) {
-                                                bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
-                                            }
+                                while (w) {
+                                    int b = __builtin_ctzll(w);
+                                    w &= w - 1; // clear lowest set bit
+                                    uint64_t u = i * 64 + b;
+                                    
+                                    if (w) {
+                                        int next_b = __builtin_ctzll(w);
+                                        __builtin_prefetch(&slot.offsets_ptr[i * 64 + next_b], 0, 1);
+                                    }
+
+                                    if (u < slot.node_count) {
+                                        uint32_t start = slot.offsets_ptr[u];
+                                        uint32_t end   = slot.offsets_ptr[u + 1];
+                                        __builtin_prefetch(&slot.targets_ptr[start], 0, 1);
+                                        for (uint32_t idx = start; idx < end; ++idx) {
+                                            bitset_add(private_bs, slot.targets_ptr[idx], max_nodes);
                                         }
                                     }
                                 }
@@ -4011,15 +4054,22 @@ op_OUT_OF_BOUNDS:
                             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                                 uint64_t w = bs_src.words[i];
                                 if (w == 0) continue;
-                                for (int b = 0; b < 64; ++b) {
-                                    if (w & (1ULL << b)) {
-                                        uint64_t u = i * 64 + b;
-                                        if (u < slot.node_count) {
-                                            uint32_t start = slot.offsets_ptr[u];
-                                            uint32_t end   = slot.offsets_ptr[u + 1];
-                                            for (uint32_t idx = start; idx < end; ++idx) {
-                                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
-                                            }
+                                while (w) {
+                                    int b = __builtin_ctzll(w);
+                                    w &= w - 1; // clear lowest set bit
+                                    uint64_t u = i * 64 + b;
+                                    
+                                    if (w) {
+                                        int next_b = __builtin_ctzll(w);
+                                        __builtin_prefetch(&slot.offsets_ptr[i * 64 + next_b], 0, 1);
+                                    }
+
+                                    if (u < slot.node_count) {
+                                        uint32_t start = slot.offsets_ptr[u];
+                                        uint32_t end   = slot.offsets_ptr[u + 1];
+                                        __builtin_prefetch(&slot.targets_ptr[start], 0, 1);
+                                        for (uint32_t idx = start; idx < end; ++idx) {
+                                            bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
                                         }
                                     }
                                 }
@@ -5925,6 +5975,38 @@ impulse_vm_status_t impulse_vm_validate(
 
             default:
                 break;
+        }
+    }
+    return IMPULSE_VM_OK;
+}
+
+size_t impulse_vm_get_required_buffer_size(const impulse_snapshot_t* snapshot, uint16_t domain_id) {
+    if (!snapshot) return 0;
+    return 10000000;
+}
+
+impulse_vm_status_t impulse_vm_execute_to_buffer(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count,
+    impulse_vm_state_t* vm_state,
+    uint64_t input_param,
+    uint16_t target_domain_id,
+    uint16_t result_reg,
+    uint64_t* out_words,
+    size_t out_words_capacity,
+    size_t* out_words_written) {
+    
+    impulse_vm_status_t st = impulse_vm_execute(bytecode, instruction_count, vm_state, input_param);
+    if (st != IMPULSE_VM_OK) return st;
+    
+    if (vm_state->register_types[result_reg] == TYPE_BITSET_HANDLE) {
+        int h = static_cast<int>(vm_state->registers[result_reg]);
+        if (h >= 0 && vm_state->query_context) {
+            auto& bs = vm_state->query_context->bitsets[h];
+            size_t count = vm_state->query_context->words_per_bitset;
+            if (count > out_words_capacity) count = out_words_capacity;
+            std::memcpy(out_words, bs.words, count * sizeof(uint64_t));
+            if (out_words_written) *out_words_written = count;
         }
     }
     return IMPULSE_VM_OK;

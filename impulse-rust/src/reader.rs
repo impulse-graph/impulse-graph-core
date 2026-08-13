@@ -45,11 +45,25 @@ pub struct AttributeInfo {
     pub offsets_bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct IndexEntryInfo {
+    pub index_id: u32,
+    pub domain_id: u16,
+    pub relation_id: u16,
+    pub attribute_index: u16,
+    pub index_type: u8,
+    pub name: String,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+    pub payload_feature_mask: u64,
+}
+
 pub struct SnapshotReader {
     mmap: SharedMemoryMap,
     header: SnapshotHeader,
     domains: Vec<DomainInfo>,
     relations: Vec<RelationInfo>,
+    index_entries: Vec<IndexEntryInfo>,
     metadata_offset: u64,
     metadata_bytes: u64,
 }
@@ -320,6 +334,7 @@ impl SnapshotReader {
             header,
             domains,
             relations,
+            index_entries: Vec::new(),
             metadata_offset,
             metadata_bytes,
         })
@@ -327,6 +342,10 @@ impl SnapshotReader {
 
     pub fn header(&self) -> &SnapshotHeader {
         &self.header
+    }
+
+    pub fn index_entries(&self) -> &[IndexEntryInfo] {
+        &self.index_entries
     }
 
     pub fn domain_count(&self) -> u16 {

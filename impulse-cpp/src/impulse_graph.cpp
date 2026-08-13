@@ -114,6 +114,17 @@ struct pcg32_fast {
 
 } // anonymous namespace
 
+struct impulse_writer_index {
+    uint32_t index_id;
+    uint16_t domain_id;
+    uint16_t relation_id;
+    uint16_t attribute_index;
+    uint8_t index_type;
+    std::string index_name;
+    std::vector<uint8_t> data;
+    uint64_t payload_feature_mask;
+};
+
 struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t file_size = 0;
@@ -122,6 +133,8 @@ struct impulse_snapshot {
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
+    std::vector<impulse_index_directory_entry_v0_9_t> indexes;
+    std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -156,6 +169,7 @@ struct impulse_writer {
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_writer_relation> relations;
+    std::vector<impulse_writer_index> indexes;
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -785,9 +799,71 @@ impulse_status_t impulse_writer_add_attribute(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_writer_add_index(
+    impulse_writer_t* writer,
+    uint16_t domain_id,
+    uint16_t relation_id,
+    uint16_t attribute_index,
+    uint8_t index_type,
+    const char* index_name,
+    const void* index_data, uint64_t index_bytes,
+    uint64_t payload_feature_mask
+) {
+    if (!writer || !index_name) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    impulse_writer_index idx;
+    idx.index_id = static_cast<uint32_t>(writer->indexes.size());
+    idx.domain_id = domain_id;
+    idx.relation_id = relation_id;
+    idx.attribute_index = attribute_index;
+    idx.index_type = index_type;
+    idx.index_name = index_name;
+    idx.payload_feature_mask = payload_feature_mask;
+
+    if (index_data && index_bytes > 0) {
+        idx.data.resize(index_bytes);
+        std::memcpy(idx.data.data(), index_data, index_bytes);
+    }
+
+    writer->indexes.push_back(std::move(idx));
+    return IMPULSE_OK;
+}
+
 impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value) {
     if (!writer || !key || !value) return IMPULSE_ERR_INVALID_ARGUMENT;
     writer->metadata[key] = value;
+    return IMPULSE_OK;
+}
+
+uint16_t impulse_snapshot_get_index_count(const impulse_snapshot_t* snapshot) {
+    if (!snapshot) return 0;
+    return static_cast<uint16_t>(snapshot->indexes.size());
+}
+
+impulse_status_t impulse_snapshot_get_index(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index_idx,
+    uint32_t* index_id,
+    uint16_t* domain_id,
+    uint16_t* relation_id,
+    uint16_t* attribute_index,
+    uint8_t* index_type,
+    const char** index_name,
+    const void** index_data,
+    uint64_t* index_bytes
+) {
+    if (!snapshot || index_idx >= snapshot->indexes.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    const auto& entry = snapshot->indexes[index_idx];
+    if (index_id) *index_id = entry.index_id;
+    if (domain_id) *domain_id = entry.domain_id;
+    if (relation_id) *relation_id = entry.relation_id;
+    if (attribute_index) *attribute_index = entry.attribute_index;
+    if (index_type) *index_type = entry.index_type;
+    if (index_name && index_idx < snapshot->index_names.size()) *index_name = snapshot->index_names[index_idx].c_str();
+    if (index_data) *index_data = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + entry.data_offset;
+    if (index_bytes) *index_bytes = entry.data_bytes;
+
     return IMPULSE_OK;
 }
 

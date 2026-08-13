@@ -71,12 +71,11 @@ extern "C" {
 #define OP_HAS_CSC                  0x1A
 #define OP_HAS_COO                  0x1B
 #define OP_HAS_KEY_CATALOG          0x1C
-
-#define OP_RESERVED_1D              0x1D
-#define OP_RESERVED_1E              0x1E
-#define OP_RESERVED_1F              0x1F
-#define OP_RESERVED_20              0x20
-#define OP_RESERVED_21              0x21
+#define OP_DENSE_WALK               0x1D
+#define OP_CREATE_SCRATCH_INDEX     0x1E
+#define OP_DROP_SCRATCH_INDEX       0x1F
+#define OP_HAS_DENSE                0x20
+#define OP_CSR_WALK_SHARDED         0x21
 #define OP_RESERVED_22              0x22
 #define OP_RESERVED_23              0x23
 #define OP_RESERVED_24              0x24
@@ -106,7 +105,7 @@ extern "C" {
 #define OP_RESERVED_3A              0x3A
 #define OP_RESERVED_3B              0x3B
 #define OP_RESERVED_3C              0x3C
-#define OP_RESERVED_3D              0x3D
+#define OP_VECTOR_TIME_VALID_AT     0x3D
 #define OP_RESERVED_3E              0x3E
 #define OP_RESERVED_3F              0x3F
 
@@ -251,7 +250,8 @@ typedef enum {
     IMPULSE_VM_ERR_USER_THROW = 7,
     IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
     IMPULSE_VM_ERR_TRAP = 9,
-    IMPULSE_VM_ERR_RESERVED_OPCODE = 10
+    IMPULSE_VM_ERR_RESERVED_OPCODE = 10,
+    IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN
@@ -366,6 +366,23 @@ IMPULSE_API impulse_vm_status_t impulse_vm_execute(
     size_t instruction_count,
     impulse_vm_state_t* vm_state,
     uint64_t input_param
+);
+
+IMPULSE_API size_t impulse_vm_get_required_buffer_size(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id
+);
+
+IMPULSE_API impulse_vm_status_t impulse_vm_execute_to_buffer(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count,
+    impulse_vm_state_t* vm_state,
+    uint64_t input_param,
+    uint16_t target_domain_id,
+    uint16_t result_reg,
+    uint64_t* out_words,
+    size_t out_words_capacity,
+    size_t* out_words_written
 );
 
 #ifdef __cplusplus

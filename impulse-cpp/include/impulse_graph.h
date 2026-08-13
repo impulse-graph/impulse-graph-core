@@ -203,9 +203,33 @@ IMPULSE_API impulse_status_t impulse_writer_add_attribute(
     const void* data, uint64_t data_bytes,
     const void* offsets, uint64_t offsets_bytes
 );
+IMPULSE_API impulse_status_t impulse_writer_add_index(
+    impulse_writer_t* writer,
+    uint16_t domain_id,
+    uint16_t relation_id,
+    uint16_t attribute_index,
+    uint8_t index_type,
+    const char* index_name,
+    const void* index_data, uint64_t index_bytes,
+    uint64_t payload_feature_mask
+);
 IMPULSE_API impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value);
 IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
+
+IMPULSE_API uint16_t impulse_snapshot_get_index_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API impulse_status_t impulse_snapshot_get_index(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index_idx,
+    uint32_t* index_id,
+    uint16_t* domain_id,
+    uint16_t* relation_id,
+    uint16_t* attribute_index,
+    uint8_t* index_type,
+    const char** index_name,
+    const void** index_data,
+    uint64_t* index_bytes
+);
 
 // Live Overlay Delta Layer API (Thread-Safe Concurrent Edge Additions & Tombstones)
 IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name);
