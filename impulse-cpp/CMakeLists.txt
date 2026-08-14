@@ -132,4 +132,8 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(bench_cpp_compiler_ablation tests/bench_cpp_compiler_ablation.cpp)
     target_link_libraries(bench_cpp_compiler_ablation PRIVATE impulse_graph_static)
     add_test(NAME bench_cpp_compiler_ablation COMMAND bench_cpp_compiler_ablation)
+
+    add_executable(bench_prefetch_distance tests/bench_prefetch_distance.cpp)
+    target_link_libraries(bench_prefetch_distance PRIVATE impulse_graph_static)
+    add_test(NAME bench_prefetch_distance COMMAND bench_prefetch_distance)
 endif()

@@ -1252,21 +1252,11 @@ op_CSR_WALK_2HOP: {
                         uint32_t start1 = slot1.offsets_ptr[u];
                         uint32_t end1 = slot1.offsets_ptr[u + 1];
                         for (uint32_t i = start1; i < end1; ++i) {
-                            if (i + 4 < end1) {
-                                uint32_t next_v = slot1.targets_ptr[i + 4];
-                                if (next_v < slot2.node_count) {
-                                    __builtin_prefetch(&slot2.offsets_ptr[next_v], 0, 1);
-                                }
-                            }
                             uint32_t v = slot1.targets_ptr[i];
                             if (v < slot2.node_count) {
                                 uint32_t start2 = slot2.offsets_ptr[v];
                                 uint32_t end2 = slot2.offsets_ptr[v + 1];
                                 for (uint32_t j = start2; j < end2; ++j) {
-                                    if (j + 8 < end2) {
-                                        __builtin_prefetch(&slot2.targets_ptr[j + 8], 0, 1);
-                                        __builtin_prefetch(&bs_dst.words[slot2.targets_ptr[j + 4] >> 6], 1, 3);
-                                    }
                                     bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
                                 }
                             }
@@ -1280,21 +1270,11 @@ op_CSR_WALK_2HOP: {
                 uint32_t start1 = slot1.offsets_ptr[u];
                 uint32_t end1 = slot1.offsets_ptr[u + 1];
                 for (uint32_t i = start1; i < end1; ++i) {
-                    if (i + 4 < end1) {
-                        uint32_t next_v = slot1.targets_ptr[i + 4];
-                        if (next_v < slot2.node_count) {
-                            __builtin_prefetch(&slot2.offsets_ptr[next_v], 0, 1);
-                        }
-                    }
                     uint32_t v = slot1.targets_ptr[i];
                     if (v < slot2.node_count) {
                         uint32_t start2 = slot2.offsets_ptr[v];
                         uint32_t end2 = slot2.offsets_ptr[v + 1];
                         for (uint32_t j = start2; j < end2; ++j) {
-                            if (j + 8 < end2) {
-                                __builtin_prefetch(&slot2.targets_ptr[j + 8], 0, 1);
-                                __builtin_prefetch(&bs_dst.words[slot2.targets_ptr[j + 4] >> 6], 1, 3);
-                            }
                             bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
                         }
                     }
@@ -1444,10 +1424,6 @@ op_CSR_WALK: {
                             uint32_t start = slot.offsets_ptr[u];
                             uint32_t end = slot.offsets_ptr[u + 1];
                             for (uint32_t i = start; i < end; ++i) {
-                                if (i + 8 < end) {
-                                    __builtin_prefetch(&slot.targets_ptr[i + 8], 0, 1);
-                                    __builtin_prefetch(&bs_dst.words[slot.targets_ptr[i + 4] >> 6], 1, 3);
-                                }
                                 bitset_add(bs_dst, slot.targets_ptr[i], vm_state->query_context->max_nodes);
                             }
                         }
@@ -1460,10 +1436,6 @@ op_CSR_WALK: {
                 uint32_t start = slot.offsets_ptr[u];
                 uint32_t end = slot.offsets_ptr[u + 1];
                 for (uint32_t i = start; i < end; ++i) {
-                    if (i + 8 < end) {
-                        __builtin_prefetch(&slot.targets_ptr[i + 8], 0, 1);
-                        __builtin_prefetch(&bs_dst.words[slot.targets_ptr[i + 4] >> 6], 1, 3);
-                    }
                     bitset_add(bs_dst, slot.targets_ptr[i], vm_state->query_context->max_nodes);
                 }
             }
@@ -1680,9 +1652,6 @@ op_CSC_WALK: {
                         uint32_t start = slot.csc_offsets_ptr[v];
                         uint32_t end   = slot.csc_offsets_ptr[v + 1];
                         for (uint32_t idx = start; idx < end; ++idx) {
-                            if (idx + 4 < end && src_words) {
-                                __builtin_prefetch(&src_words[slot.csc_targets_ptr[idx+4] >> 6], 0, 0);
-                            }
                             uint64_t u = slot.csc_targets_ptr[idx];
                             bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
                             if (hit) {
