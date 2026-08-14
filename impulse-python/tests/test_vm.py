@@ -5,11 +5,11 @@ import numpy as np
 from impulse_graph import Snapshot, Writer, vm
 
 def test_vm_constants():
-    assert vm.opcodes.OP_NOP == 0x00
-    assert vm.opcodes.OP_INIT_INPUT_NODE == 0x01
+    assert vm.opcodes.OP_NOP == 0x01
+    assert vm.opcodes.OP_INIT_INPUT_NODE == 0x02
     assert vm.opcodes.OP_CSR_WALK == 0x10
     assert vm.opcodes.OP_SET_UNION == 0x30
-    assert vm.opcodes.OP_HALT == 0xFF
+    assert vm.opcodes.OP_HALT == 0x00
 
     assert vm.RegisterType.TYPE_NULL == 0x00
     assert vm.RegisterType.TYPE_INT64 == 0x01
