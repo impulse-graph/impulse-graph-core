@@ -95,6 +95,67 @@ typedef enum {
     MATH_FUNC_ISFINITE     = 0x36   /**< isfinite(x) ? 1.0 : 0.0 */
 } impulse_math_func_id_t;
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+static inline uint32_t impulse_builtin_popcount32(uint32_t x) {
+    return (uint32_t)__popcnt(x);
+}
+static inline uint32_t impulse_builtin_clz32(uint32_t x) {
+    unsigned long idx;
+    return _BitScanReverse(&idx, x) ? (31 - idx) : 32;
+}
+static inline uint32_t impulse_builtin_ctz32(uint32_t x) {
+    unsigned long idx;
+    return _BitScanForward(&idx, x) ? idx : 32;
+}
+static inline uint32_t impulse_builtin_popcount64(uint64_t x) {
+#if defined(_M_X64) || defined(_M_ARM64)
+    return (uint32_t)__popcnt64(x);
+#else
+    return (uint32_t)(__popcnt((uint32_t)x) + __popcnt((uint32_t)(x >> 32)));
+#endif
+}
+static inline uint32_t impulse_builtin_clz64(uint64_t x) {
+#if defined(_M_X64) || defined(_M_ARM64)
+    unsigned long idx;
+    return _BitScanReverse64(&idx, x) ? (63 - idx) : 64;
+#else
+    uint32_t high = (uint32_t)(x >> 32);
+    if (high != 0) return impulse_builtin_clz32(high);
+    return 32 + impulse_builtin_clz32((uint32_t)x);
+#endif
+}
+static inline uint32_t impulse_builtin_ctz64(uint64_t x) {
+#if defined(_M_X64) || defined(_M_ARM64)
+    unsigned long idx;
+    return _BitScanForward64(&idx, x) ? idx : 64;
+#else
+    uint32_t low = (uint32_t)x;
+    if (low != 0) return impulse_builtin_ctz32(low);
+    return 32 + impulse_builtin_ctz32((uint32_t)(x >> 32));
+#endif
+}
+#else
+static inline uint32_t impulse_builtin_popcount32(uint32_t x) {
+    return (uint32_t)__builtin_popcount((unsigned int)x);
+}
+static inline uint32_t impulse_builtin_clz32(uint32_t x) {
+    return x == 0 ? 32 : (uint32_t)__builtin_clz((unsigned int)x);
+}
+static inline uint32_t impulse_builtin_ctz32(uint32_t x) {
+    return x == 0 ? 32 : (uint32_t)__builtin_ctz((unsigned int)x);
+}
+static inline uint32_t impulse_builtin_popcount64(uint64_t x) {
+    return (uint32_t)__builtin_popcountll((unsigned long long)x);
+}
+static inline uint32_t impulse_builtin_clz64(uint64_t x) {
+    return x == 0 ? 64 : (uint32_t)__builtin_clzll((unsigned long long)x);
+}
+static inline uint32_t impulse_builtin_ctz64(uint64_t x) {
+    return x == 0 ? 64 : (uint32_t)__builtin_ctzll((unsigned long long)x);
+}
+#endif
+
 /**
  * @brief Evaluates a scalar unary math operation on float.
  */
@@ -142,9 +203,9 @@ static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
         case MATH_FUNC_ERF:        return erff(x);
         case MATH_FUNC_ERFC:       return erfcf(x);
         case MATH_FUNC_LGAMMA:     return lgammaf(x);
-        case MATH_FUNC_POPCOUNT:   return (float)__builtin_popcount((unsigned int)(uint32_t)x);
-        case MATH_FUNC_CLZ:        return (float)__builtin_clz((unsigned int)(uint32_t)x);
-        case MATH_FUNC_CTZ:        return (float)__builtin_ctz((unsigned int)(uint32_t)x);
+        case MATH_FUNC_POPCOUNT:   return (float)impulse_builtin_popcount32((uint32_t)x);
+        case MATH_FUNC_CLZ:        return (float)impulse_builtin_clz32((uint32_t)x);
+        case MATH_FUNC_CTZ:        return (float)impulse_builtin_ctz32((uint32_t)x);
         case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0f : 0.0f;
         case MATH_FUNC_ISINF:      return isinf(x) ? 1.0f : 0.0f;
         case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0f : 0.0f;
@@ -199,9 +260,9 @@ static inline double impulse_math_unary_f64(uint8_t func_id, double x) {
         case MATH_FUNC_ERF:        return erf(x);
         case MATH_FUNC_ERFC:       return erfc(x);
         case MATH_FUNC_LGAMMA:     return lgamma(x);
-        case MATH_FUNC_POPCOUNT:   return (double)__builtin_popcountll((unsigned long long)(uint64_t)x);
-        case MATH_FUNC_CLZ:        return (double)__builtin_clzll((unsigned long long)(uint64_t)x);
-        case MATH_FUNC_CTZ:        return (double)__builtin_ctzll((unsigned long long)(uint64_t)x);
+        case MATH_FUNC_POPCOUNT:   return (double)impulse_builtin_popcount64((uint64_t)x);
+        case MATH_FUNC_CLZ:        return (double)impulse_builtin_clz64((uint64_t)x);
+        case MATH_FUNC_CTZ:        return (double)impulse_builtin_ctz64((uint64_t)x);
         case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0 : 0.0;
         case MATH_FUNC_ISINF:      return isinf(x) ? 1.0 : 0.0;
         case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0 : 0.0;
