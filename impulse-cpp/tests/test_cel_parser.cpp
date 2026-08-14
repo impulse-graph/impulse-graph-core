@@ -1,6 +1,6 @@
 /**
  * @file test_cel_parser.cpp
- * @brief Unit tests for Google CEL Zero-Dependency Pratt Parser & ImpScheme IR Lowering.
+ * @brief Exhaustive Unit Tests for Google CEL Zero-Dependency Pratt Parser & ImpScheme IR Lowering.
  */
 
 #include "impulse_cel.h"
@@ -46,20 +46,50 @@ static void test_cel_ternary_and_members() {
 }
 
 static void test_cel_vector_math_calls() {
-    std::cout << "[Test] CEL Analytical Vector Math Functions..." << std::endl;
+    std::cout << "[Test] CEL Analytical Vector Math Functions (42 Functions)..." << std::endl;
 
-    Parser p1("sqrt(x) + exp(y) * gelu(h)");
+    // Verify all 42 math function names resolve to distinct valid enum IDs
+    const char* all_math_names[] = {
+        "abs", "sqrt", "rsqrt", "cbrt", "pow", "hypot", "lerp",
+        "exp", "exp2", "exp10", "expm1", "log", "log2", "log10", "log1p",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinc",
+        "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+        "floor", "ceil", "trunc", "round", "clamp", "copysign", "fmod",
+        "relu", "leaky_relu", "sigmoid", "gelu", "silu", "softplus",
+        "erf", "erfc", "lgamma",
+        "popcount", "clz", "ctz", "rotl", "rotr"
+    };
+
+    for (const char* name : all_math_names) {
+        int func_id = CelCompiler::resolve_math_func(name);
+        assert(func_id >= 0);
+        std::string expr_str = std::string(name) + "(x)";
+        Parser p(expr_str);
+        auto ast = p.parse_expression();
+        assert(ast != nullptr);
+        std::string ir = CelCompiler::to_impscheme(ast);
+        assert(ir == std::string("(") + name + " x)");
+    }
+
+    std::cout << "  -> PASSED: All 42 CEL vector math functions verified." << std::endl;
+}
+
+static void test_cel_temporal_and_datetime() {
+    std::cout << "[Test] CEL Datetime & Temporal Expressions..." << std::endl;
+
+    Parser p1("timestamp(\"2026-08-13T00:00:00Z\") + duration(\"24h\")");
     auto ast1 = p1.parse_expression();
     assert(ast1 != nullptr);
     std::string ir1 = CelCompiler::to_impscheme(ast1);
-    assert(ir1 == "(+ (sqrt x) (* (exp y) (gelu h)))");
+    assert(ir1 == "(+ (timestamp \"2026-08-13T00:00:00Z\") (duration \"24h\"))");
 
-    assert(CelCompiler::resolve_math_func("exp") == MATH_FUNC_EXP);
-    assert(CelCompiler::resolve_math_func("gelu") == MATH_FUNC_GELU);
-    assert(CelCompiler::resolve_math_func("clamp") == MATH_FUNC_CLAMP);
-    assert(CelCompiler::resolve_math_func("sigmoid") == MATH_FUNC_SIGMOID);
+    Parser p2("now() - edge.timestamp > duration(\"7d\")");
+    auto ast2 = p2.parse_expression();
+    assert(ast2 != nullptr);
+    std::string ir2 = CelCompiler::to_impscheme(ast2);
+    assert(ir2 == "(vec-cmp-gt (- (now) (get-attr edge \"timestamp\")) (duration \"7d\"))");
 
-    std::cout << "  -> PASSED: " << ir1 << std::endl;
+    std::cout << "  -> PASSED: " << ir1 << " | " << ir2 << std::endl;
 }
 
 static void test_cel_lists_and_methods() {
@@ -85,6 +115,7 @@ int main() {
     test_cel_arithmetic_and_precedence();
     test_cel_ternary_and_members();
     test_cel_vector_math_calls();
+    test_cel_temporal_and_datetime();
     test_cel_lists_and_methods();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;

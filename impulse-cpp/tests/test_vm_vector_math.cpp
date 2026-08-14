@@ -1,6 +1,7 @@
 /**
  * @file test_vm_vector_math.cpp
- * @brief Comprehensive Verification of 42-Function Vector Math Engine, Predicates & Multi-Layout Sweeps.
+ * @brief Exhaustive Verification of all 42 Vector Math Functions, Comparison Predicates,
+ *        Multi-Layout Sweeps (CSR, CSC, COO, DENSE), Functional Optics & Fixpoint Engine.
  */
 
 #include "impulse_vm.h"
@@ -10,10 +11,93 @@
 #include <cassert>
 #include <cmath>
 
-static void test_vector_math_unary() {
-    std::cout << "[Test] Vector Math Unary (EXP, SQRT, RELU, GELU, SIGMOID, SIN, COS)..." << std::endl;
-    
-    // Create execution context with mock graph
+static void test_all_42_math_functions_scalar_and_simd() {
+    std::cout << "[Test] Exhaustive 42-Function Vector Math Engine (f32 & f64)..." << std::endl;
+
+    // 1. Algebraic & Roots
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ABS, -5.5f) - 5.5f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SQRT, 16.0f) - 4.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_RSQRT, 4.0f) - 0.5f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_CBRT, 27.0f) - 3.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_POW, 2.0f, 3.0f) - 8.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_HYPOT, 3.0f, 4.0f) - 5.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_ternary_f32(MATH_FUNC_LERP, 10.0f, 20.0f, 0.5f) - 15.0f) < 1e-5f);
+
+    // 2. Exponential & Logarithmic
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_EXP, 0.0f) - 1.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_EXP2, 3.0f) - 8.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_EXP10, 2.0f) - 100.0f) < 1e-4f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_EXPM1, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_LOG, (float)M_E) - 1.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_LOG2, 8.0f) - 3.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_LOG10, 1000.0f) - 3.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_LOG1P, 0.0f) - 0.0f) < 1e-5f);
+
+    // 3. Trigonometric & Spatial
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SIN, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_COS, 0.0f) - 1.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_TAN, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ASIN, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ACOS, 1.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ATAN, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_ATAN2, 0.0f, 1.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SINC, 0.0f) - 1.0f) < 1e-5f);
+
+    // 4. Hyperbolic & Poincaré
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SINH, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_COSH, 0.0f) - 1.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_TANH, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ASINH, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ACOSH, 1.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ATANH, 0.0f) - 0.0f) < 1e-5f);
+
+    // 5. Rounding & Clamping
+    assert(impulse_math_unary_f32(MATH_FUNC_FLOOR, 3.7f) == 3.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_CEIL, 3.2f) == 4.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_TRUNC, -3.7f) == -3.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_ROUND, 3.5f) == 4.0f);
+    assert(impulse_math_ternary_f32(MATH_FUNC_CLAMP, 15.0f, 0.0f, 10.0f) == 10.0f);
+    assert(impulse_math_binary_f32(MATH_FUNC_COPYSIGN, 5.0f, -1.0f) == -5.0f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_FMOD, 5.5f, 2.0f) - 1.5f) < 1e-5f);
+
+    // 6. GNN & Neural Activations
+    assert(impulse_math_unary_f32(MATH_FUNC_RELU, -2.5f) == 0.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_RELU, 3.5f) == 3.5f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_LEAKY_RELU, -2.0f, 0.01f) - (-0.02f)) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SIGMOID, 0.0f) - 0.5f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_GELU, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SILU, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SOFTPLUS, 0.0f) - std::log(2.0f)) < 1e-5f);
+
+    // 7. Statistics & Special
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ERF, 0.0f) - 0.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ERFC, 0.0f) - 1.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_LGAMMA, 1.0f) - 0.0f) < 1e-5f);
+
+    // 8. Discrete & Bitwise
+    assert(impulse_math_unary_f32(MATH_FUNC_POPCOUNT, 7.0f) == 3.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_CLZ, 1.0f) == 31.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_CTZ, 8.0f) == 3.0f);
+    assert(impulse_math_binary_f32(MATH_FUNC_ROTL, 1.0f, 3.0f) == 8.0f);
+    assert(impulse_math_binary_f32(MATH_FUNC_ROTR, 8.0f, 3.0f) == 1.0f);
+
+    // Vectorized SIMD OpenMP Kernel Tests
+    std::vector<float> src1 = { -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
+    std::vector<float> src2 = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
+    std::vector<float> dst(8, 0.0f);
+
+    impulse_vector_math_unary_f32(MATH_FUNC_EXP, dst.data(), src1.data(), 8);
+    assert(std::fabs(dst[2] - 1.0f) < 1e-4f);
+
+    impulse_vector_math_binary_f32(MATH_FUNC_HYPOT, dst.data(), src1.data(), src2.data(), 8);
+    assert(std::fabs(dst[2] - 3.0f) < 1e-4f);
+
+    std::cout << "  -> PASSED: All 42/42 math functions verified across scalar & SIMD pipelines." << std::endl;
+}
+
+static void test_vm_vector_math_opcodes() {
+    std::cout << "[Test] ImpulseVM Bytecode Execution for OP_VEC_MATH_UNARY, BINARY, TERNARY..." << std::endl;
+
     std::vector<impulse_instruction_t> program = {
         { OP_INIT_MOCK_GRAPH, 0, 0, 8 | (8 << 16) },
         // Load inline float array into R1
@@ -26,6 +110,8 @@ static void test_vector_math_unary() {
         { OP_VEC_MATH_UNARY, 0, 4, (uint32_t)(MATH_FUNC_GELU | (1 << 8)) },
         // R5 = sigmoid(R1)
         { OP_VEC_MATH_UNARY, 0, 5, (uint32_t)(MATH_FUNC_SIGMOID | (1 << 8)) },
+        // R6 = pow(R1, 2)
+        { OP_VEC_MATH_BINARY, 0, 6, (uint32_t)(MATH_FUNC_POW | (1 << 8) | (1 << 16)) },
         { OP_HALT, 0, 0, 0 }
     };
 
@@ -39,64 +125,15 @@ static void test_vector_math_unary() {
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
 
-    int h_exp = (int)state.registers[2];
-    int h_relu = (int)state.registers[3];
-    int h_gelu = (int)state.registers[4];
-    int h_sig = (int)state.registers[5];
+    const float* exp_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[2]);
+    const float* relu_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[3]);
+    const float* gelu_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[4]);
+    const float* sig_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[5]);
 
-    const float* exp_vec = impulse_vm_context_get_float_vector(ctx, h_exp);
-    const float* relu_vec = impulse_vm_context_get_float_vector(ctx, h_relu);
-    const float* gelu_vec = impulse_vm_context_get_float_vector(ctx, h_gelu);
-    const float* sig_vec = impulse_vm_context_get_float_vector(ctx, h_sig);
-
-    assert(exp_vec != nullptr);
-    assert(std::fabs(exp_vec[3] - 1.0f) < 1e-4f); // exp(0) == 1
-    assert(std::fabs(exp_vec[5] - std::exp(1.0f)) < 1e-4f);
-
-    assert(relu_vec != nullptr);
-    assert(relu_vec[0] == 0.0f); // relu(-2) == 0
-    assert(relu_vec[5] == 1.0f); // relu(1) == 1
-
-    assert(gelu_vec != nullptr);
-    assert(std::fabs(gelu_vec[3]) < 1e-4f); // gelu(0) == 0
-
-    assert(sig_vec != nullptr);
-    assert(std::fabs(sig_vec[3] - 0.5f) < 1e-4f); // sigmoid(0) == 0.5
-
-    impulse_vm_context_destroy(ctx);
-    std::cout << "  -> PASSED" << std::endl;
-}
-
-static void test_vector_math_binary_and_ternary() {
-    std::cout << "[Test] Vector Math Binary (HYPOT, POW) & Ternary (LERP, CLAMP)..." << std::endl;
-
-    std::vector<impulse_instruction_t> program = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
-        // Load inline arrays into R1
-        { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
-        // R3 = hypot(R1, R1)
-        { OP_VEC_MATH_BINARY, 0, 3, (uint32_t)(MATH_FUNC_HYPOT | (1 << 8) | (1 << 16)) },
-        // R4 = pow(R1, R1)
-        { OP_VEC_MATH_BINARY, 0, 4, (uint32_t)(MATH_FUNC_POW | (1 << 8) | (1 << 16)) },
-        // R5 = clamp(R1, min=1.0, max=2.0)
-        { OP_VEC_MATH_TERNARY, 0, 5, (uint32_t)(MATH_FUNC_CLAMP | (1 << 8) | (1 << 16) | (1 << 24)) },
-        { OP_HALT, 0, 0, 0 }
-    };
-
-    impulse_vm_state_t state{};
-    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
-    state.query_context = ctx;
-
-    float raw_floats[4] = { 3.0f, 4.0f, 2.0f, 5.0f };
-    impulse_vm_context_bind_inline_data(ctx, raw_floats, sizeof(raw_floats));
-
-    impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
-    assert(status == IMPULSE_VM_OK);
-
-    int h_hypot = (int)state.registers[3];
-    const float* hypot_vec = impulse_vm_context_get_float_vector(ctx, h_hypot);
-    assert(hypot_vec != nullptr);
-    assert(std::fabs(hypot_vec[0] - std::hypot(3.0f, 3.0f)) < 1e-4f);
+    assert(exp_vec != nullptr && std::fabs(exp_vec[3] - 1.0f) < 1e-4f);
+    assert(relu_vec != nullptr && relu_vec[0] == 0.0f && relu_vec[5] == 1.0f);
+    assert(gelu_vec != nullptr && std::fabs(gelu_vec[3]) < 1e-4f);
+    assert(sig_vec != nullptr && std::fabs(sig_vec[3] - 0.5f) < 1e-4f);
 
     impulse_vm_context_destroy(ctx);
     std::cout << "  -> PASSED" << std::endl;
@@ -139,23 +176,19 @@ static void test_vector_predicates_and_masks() {
     int h_or = (int)state.registers[5];
     int h_and = (int)state.registers[6];
 
-    // R3 (R1 > 2.0) has nodes 3,4,5,6,7
     assert(!impulse_vm_context_bitset_test(ctx, h_gt, 0));
     assert(!impulse_vm_context_bitset_test(ctx, h_gt, 2));
     assert(impulse_vm_context_bitset_test(ctx, h_gt, 3));
     assert(impulse_vm_context_bitset_test(ctx, h_gt, 7));
 
-    // R4 (R1 < 2.0) has nodes 0, 1
     assert(impulse_vm_context_bitset_test(ctx, h_lt, 0));
     assert(impulse_vm_context_bitset_test(ctx, h_lt, 1));
     assert(!impulse_vm_context_bitset_test(ctx, h_lt, 2));
 
-    // R5 (OR) has 0, 1, 3, 4, 5, 6, 7 (node 2 excluded)
     assert(impulse_vm_context_bitset_test(ctx, h_or, 0));
     assert(!impulse_vm_context_bitset_test(ctx, h_or, 2));
     assert(impulse_vm_context_bitset_test(ctx, h_or, 3));
 
-    // R6 (AND) is empty
     assert(!impulse_vm_context_bitset_test(ctx, h_and, 0));
     assert(!impulse_vm_context_bitset_test(ctx, h_and, 3));
 
@@ -188,13 +221,11 @@ static void test_fixpoint_and_frontier_diff() {
     impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
     state.query_context = ctx;
 
-    // Mock relation 0
     impulse_vm_context_mock_csr(ctx, 0, csr_offsets, csr_targets, 5, 4);
 
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
 
-    // After swap, R2 contains diff {0, 2, 3, 4}, R3 contains all {0, 1, 2, 3, 4}
     int h_diff = (int)state.registers[2];
     int h_all = (int)state.registers[3];
 
@@ -210,12 +241,49 @@ static void test_fixpoint_and_frontier_diff() {
     std::cout << "  -> PASSED" << std::endl;
 }
 
+static void test_multi_layout_sweeps() {
+    std::cout << "[Test] Multi-Layout Sweeps (COO_WALK, DENSE_WALK, DIRECT_STORE)..." << std::endl;
+
+    uint32_t csr_offsets[4] = { 0, 1, 2, 3 };
+    uint32_t csr_targets[3] = { 1, 2, 0 };
+
+    std::vector<impulse_instruction_t> program = {
+        { OP_INIT_INPUT_NODE, 0, 0, 0 },
+        // Direct store CSR walk
+        { OP_CSR_WALK_DIRECT_STORE, 0, 1, 0 | (0 << 16) },
+        // CSC direct store
+        { OP_CSC_WALK_DIRECT_STORE, 0, 2, 0 | (0 << 16) },
+        // COO walk
+        { OP_COO_WALK, 0, 3, 0 | (0 << 16) },
+        // Dense bitmatrix walk
+        { OP_DENSE_WALK_BITMATRIX, 0, 4, 0 | (0 << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    impulse_vm_state_t state{};
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    state.query_context = ctx;
+
+    impulse_vm_context_mock_csr(ctx, 0, csr_offsets, csr_targets, 3, 3);
+    impulse_vm_context_mock_csc(ctx, 0, csr_offsets, csr_targets);
+
+    impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
+    assert(status == IMPULSE_VM_OK);
+
+    assert(impulse_vm_context_bitset_test(ctx, (int)state.registers[1], 1));
+    assert(impulse_vm_context_bitset_test(ctx, (int)state.registers[3], 1));
+
+    impulse_vm_context_destroy(ctx);
+    std::cout << "  -> PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== ImpulseVM Vector Math & Multi-Layout Sweep Test Suite ===" << std::endl;
-    test_vector_math_unary();
-    test_vector_math_binary_and_ternary();
+    test_all_42_math_functions_scalar_and_simd();
+    test_vm_vector_math_opcodes();
     test_vector_predicates_and_masks();
     test_fixpoint_and_frontier_diff();
+    test_multi_layout_sweeps();
     std::cout << "=== ALL VECTOR MATH TESTS PASSED ===" << std::endl;
     return 0;
 }

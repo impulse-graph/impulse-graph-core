@@ -207,6 +207,7 @@ static inline float impulse_math_binary_f32(uint8_t func_id, float x, float y) {
         case MATH_FUNC_ATAN2:      return atan2f(x, y);
         case MATH_FUNC_COPYSIGN:   return copysignf(x, y);
         case MATH_FUNC_FMOD:       return fmodf(x, y);
+        case MATH_FUNC_LEAKY_RELU: return (x > 0.0f) ? x : (y * x);
         case MATH_FUNC_ROTL: {
             uint32_t ux = (uint32_t)x;
             uint32_t s = (uint32_t)y & 31;
@@ -231,6 +232,7 @@ static inline double impulse_math_binary_f64(uint8_t func_id, double x, double y
         case MATH_FUNC_ATAN2:      return atan2(x, y);
         case MATH_FUNC_COPYSIGN:   return copysign(x, y);
         case MATH_FUNC_FMOD:       return fmod(x, y);
+        case MATH_FUNC_LEAKY_RELU: return (x > 0.0) ? x : (y * x);
         case MATH_FUNC_ROTL: {
             uint64_t ux = (uint64_t)x;
             uint32_t s = (uint32_t)y & 63;

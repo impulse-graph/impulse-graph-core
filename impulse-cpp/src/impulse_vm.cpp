@@ -4209,20 +4209,32 @@ op_CSR_WALK_DIRECT_STORE: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
-    int h_src = static_cast<int>(vm_state->registers[src]);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
-    const auto& bs_src = vm_state->query_context->bitsets[h_src];
     bs_dst.clear();
 
-    size_t N = vm_state->query_context->max_nodes;
-    #pragma omp parallel for schedule(static)
-    for (size_t u = 0; u < N; ++u) {
-        if (bs_src.test(u)) {
+    if (vm_state->register_types[src] == TYPE_NODE_ID) {
+        uint64_t u = vm_state->registers[src];
+        if (u < slot.node_count || slot.node_count == 0) {
             uint32_t start = slot.offsets_ptr[u];
             uint32_t end = slot.offsets_ptr[u + 1];
             for (uint32_t e = start; e < end; ++e) {
                 uint32_t v = slot.targets_ptr[e];
                 bs_dst.set(v);
+            }
+        }
+    } else {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (bs_src.test(u)) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end = slot.offsets_ptr[u + 1];
+                for (uint32_t e = start; e < end; ++e) {
+                    uint32_t v = slot.targets_ptr[e];
+                    bs_dst.set(v);
+                }
             }
         }
     }
@@ -4249,20 +4261,32 @@ op_CSR_WALK_DENSE_STREAM: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
-    int h_src = static_cast<int>(vm_state->registers[src]);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
-    const auto& bs_src = vm_state->query_context->bitsets[h_src];
     bs_dst.clear();
 
-    size_t N = vm_state->query_context->max_nodes;
-    #pragma omp parallel for schedule(static)
-    for (size_t u = 0; u < N; ++u) {
-        if (bs_src.test(u)) {
+    if (vm_state->register_types[src] == TYPE_NODE_ID) {
+        uint64_t u = vm_state->registers[src];
+        if (u < slot.node_count || slot.node_count == 0) {
             uint32_t start = slot.offsets_ptr[u];
             uint32_t end = slot.offsets_ptr[u + 1];
             for (uint32_t e = start; e < end; ++e) {
                 uint32_t v = slot.targets_ptr[e];
                 bs_dst.set(v);
+            }
+        }
+    } else {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+        #pragma omp parallel for schedule(static)
+        for (size_t u = 0; u < N; ++u) {
+            if (bs_src.test(u)) {
+                uint32_t start = slot.offsets_ptr[u];
+                uint32_t end = slot.offsets_ptr[u + 1];
+                for (uint32_t e = start; e < end; ++e) {
+                    uint32_t v = slot.targets_ptr[e];
+                    bs_dst.set(v);
+                }
             }
         }
     }
@@ -4289,21 +4313,37 @@ op_CSC_WALK_DIRECT_STORE: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
-    int h_src = static_cast<int>(vm_state->registers[src]);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
-    const auto& bs_src = vm_state->query_context->bitsets[h_src];
     bs_dst.clear();
 
-    size_t N = vm_state->query_context->max_nodes;
-    #pragma omp parallel for schedule(static)
-    for (size_t v = 0; v < N; ++v) {
-        uint32_t start = slot.csc_offsets_ptr[v];
-        uint32_t end = slot.csc_offsets_ptr[v + 1];
-        for (uint32_t e = start; e < end; ++e) {
-            uint32_t u = slot.csc_targets_ptr[e];
-            if (bs_src.test(u)) {
-                bs_dst.set(v);
-                break;
+    size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+    if (vm_state->register_types[src] == TYPE_NODE_ID) {
+        uint64_t target_u = vm_state->registers[src];
+        #pragma omp parallel for schedule(static)
+        for (size_t v = 0; v < N; ++v) {
+            uint32_t start = slot.csc_offsets_ptr[v];
+            uint32_t end = slot.csc_offsets_ptr[v + 1];
+            for (uint32_t e = start; e < end; ++e) {
+                uint32_t u = slot.csc_targets_ptr[e];
+                if (u == target_u) {
+                    bs_dst.set(v);
+                    break;
+                }
+            }
+        }
+    } else {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        #pragma omp parallel for schedule(static)
+        for (size_t v = 0; v < N; ++v) {
+            uint32_t start = slot.csc_offsets_ptr[v];
+            uint32_t end = slot.csc_offsets_ptr[v + 1];
+            for (uint32_t e = start; e < end; ++e) {
+                uint32_t u = slot.csc_targets_ptr[e];
+                if (bs_src.test(u)) {
+                    bs_dst.set(v);
+                    break;
+                }
             }
         }
     }
@@ -4327,22 +4367,33 @@ op_COO_WALK_DIRECT_STORE: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
-    int h_src = static_cast<int>(vm_state->registers[src]);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
-    const auto& bs_src = vm_state->query_context->bitsets[h_src];
     bs_dst.clear();
 
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = vm_state->query_context->max_nodes;
-            #pragma omp parallel for schedule(static)
-            for (size_t u = 0; u < N; ++u) {
-                if (bs_src.test(u)) {
+            if (vm_state->register_types[src] == TYPE_NODE_ID) {
+                uint64_t u = vm_state->registers[src];
+                if (u < slot.node_count || slot.node_count == 0) {
                     uint32_t start = slot.offsets_ptr[u];
                     uint32_t end = slot.offsets_ptr[u + 1];
                     for (uint32_t e = start; e < end; ++e) {
                         bs_dst.set(slot.targets_ptr[e]);
+                    }
+                }
+            } else {
+                int h_src = static_cast<int>(vm_state->registers[src]);
+                const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+                #pragma omp parallel for schedule(static)
+                for (size_t u = 0; u < N; ++u) {
+                    if (bs_src.test(u)) {
+                        uint32_t start = slot.offsets_ptr[u];
+                        uint32_t end = slot.offsets_ptr[u + 1];
+                        for (uint32_t e = start; e < end; ++e) {
+                            bs_dst.set(slot.targets_ptr[e]);
+                        }
                     }
                 }
             }
@@ -4379,7 +4430,7 @@ op_COO_WALK_FILTERED: {
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = vm_state->query_context->max_nodes;
+            size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
             #pragma omp parallel for schedule(static)
             for (size_t u = 0; u < N; ++u) {
                 if (bs_src.test(u)) {
@@ -4421,7 +4472,7 @@ op_COO_WALK_REDUCE: {
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = vm_state->query_context->max_nodes;
+            size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
             #pragma omp parallel for schedule(static)
             for (size_t u = 0; u < N; ++u) {
                 if (bs_src.test(u)) {
@@ -4457,22 +4508,33 @@ op_DENSE_WALK_DIRECT_STORE: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
-    int h_src = static_cast<int>(vm_state->registers[src]);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
-    const auto& bs_src = vm_state->query_context->bitsets[h_src];
     bs_dst.clear();
 
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = vm_state->query_context->max_nodes;
-            #pragma omp parallel for schedule(static)
-            for (size_t u = 0; u < N; ++u) {
-                if (bs_src.test(u)) {
+            if (vm_state->register_types[src] == TYPE_NODE_ID) {
+                uint64_t u = vm_state->registers[src];
+                if (u < slot.node_count || slot.node_count == 0) {
                     uint32_t start = slot.offsets_ptr[u];
                     uint32_t end = slot.offsets_ptr[u + 1];
                     for (uint32_t e = start; e < end; ++e) {
                         bs_dst.set(slot.targets_ptr[e]);
+                    }
+                }
+            } else {
+                int h_src = static_cast<int>(vm_state->registers[src]);
+                const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+                #pragma omp parallel for schedule(static)
+                for (size_t u = 0; u < N; ++u) {
+                    if (bs_src.test(u)) {
+                        uint32_t start = slot.offsets_ptr[u];
+                        uint32_t end = slot.offsets_ptr[u + 1];
+                        for (uint32_t e = start; e < end; ++e) {
+                            bs_dst.set(slot.targets_ptr[e]);
+                        }
                     }
                 }
             }
