@@ -125,6 +125,10 @@ struct impulse_vm_context {
     // Inline payload data binding pointer
     const uint8_t* inline_data_ptr = nullptr;
     size_t inline_data_bytes = 0;
+
+    // Fuel counter for unbounded loop & gas protection
+    uint64_t fuel = 0;
+    bool fuel_enabled = false;
 };
 
 inline int acquire_bitset(impulse_vm_context_t* ctx) {
@@ -413,6 +417,13 @@ void impulse_vm_context_destroy(impulse_vm_context_t* ctx) {
         delete[] ctx->private_arena_memory;
         delete[] ctx->arena_memory;
         delete ctx;
+    }
+}
+
+void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel) {
+    if (ctx) {
+        ctx->fuel = fuel;
+        ctx->fuel_enabled = (fuel > 0);
     }
 }
 
@@ -819,6 +830,10 @@ impulse_vm_status_t impulse_vm_execute(
     #define DISPATCH() \
         do { \
             if (vm_state->pc >= instruction_count) goto op_OUT_OF_BOUNDS; \
+            if (vm_state->query_context && vm_state->query_context->fuel_enabled) { \
+                if (vm_state->query_context->fuel == 0) goto op_GAS_EXHAUSTED; \
+                vm_state->query_context->fuel--; \
+            } \
             uint8_t op = bytecode[vm_state->pc].opcode; \
             goto *dispatch_table[op]; \
         } while(0)
@@ -4765,9 +4780,16 @@ op_RESERVED:
 op_OUT_OF_BOUNDS:
     return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
+op_GAS_EXHAUSTED:
+    return IMPULSE_VM_ERR_GAS_EXHAUSTED;
+
 #else
     // Fallback switch-case loop for compilers without computed goto (MSVC)
     while (vm_state->pc < instruction_count) {
+        if (vm_state->query_context && vm_state->query_context->fuel_enabled) {
+            if (vm_state->query_context->fuel == 0) return IMPULSE_VM_ERR_GAS_EXHAUSTED;
+            vm_state->query_context->fuel--;
+        }
         const auto& inst = bytecode[vm_state->pc];
         switch (inst.opcode) {
             case OP_NOP:

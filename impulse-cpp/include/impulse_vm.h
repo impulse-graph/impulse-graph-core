@@ -263,7 +263,8 @@ typedef enum {
     IMPULSE_VM_ERR_TRAP = 9,
     IMPULSE_VM_ERR_RESERVED_OPCODE = 10,
     IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11,
-    IMPULSE_VM_ERR_FLOATING_POINT = 12
+    IMPULSE_VM_ERR_FLOATING_POINT = 12,
+    IMPULSE_VM_ERR_GAS_EXHAUSTED = 13
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN
@@ -338,6 +339,7 @@ IMPULSE_API void impulse_vm_context_release_string_vector(impulse_vm_context_t* 
 IMPULSE_API void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
 IMPULSE_API size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+IMPULSE_API void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel);
 IMPULSE_API int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
