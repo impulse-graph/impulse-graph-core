@@ -91,6 +91,10 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_permutation_index PRIVATE impulse_graph_static)
     add_test(NAME test_permutation_index COMMAND test_permutation_index)
 
+    add_executable(test_vm_vector_math tests/test_vm_vector_math.cpp)
+    target_link_libraries(test_vm_vector_math PRIVATE impulse_graph_static)
+    add_test(NAME test_vm_vector_math COMMAND test_vm_vector_math)
+
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)
 

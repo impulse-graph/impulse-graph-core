@@ -10,6 +10,7 @@
 #define IMPULSE_VM_H
 
 #include "impulse_graph.h"
+#include "impulse_math_ops.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -71,25 +72,29 @@ extern "C" {
 #define OP_HAS_CSC                  0x1A
 #define OP_HAS_COO                  0x1B
 #define OP_HAS_KEY_CATALOG          0x1C
-#define OP_DENSE_WALK               0x1D
+#define OP_DENSE_WALK_LEGACY        0x1D
 #define OP_CREATE_SCRATCH_INDEX     0x1E
 #define OP_DROP_SCRATCH_INDEX       0x1F
 #define OP_HAS_DENSE                0x20
 #define OP_CSR_WALK_SHARDED         0x21
-#define OP_RESERVED_22              0x22
-#define OP_RESERVED_23              0x23
-#define OP_RESERVED_24              0x24
-#define OP_RESERVED_25              0x25
-#define OP_RESERVED_26              0x26
-#define OP_RESERVED_27              0x27
+
+// Vector Predicate and SIMD Mask Opcodes (0x20 - 0x27)
+#define OP_VEC_CMP_EQ               0x20
+#define OP_VEC_CMP_GT               0x21
+#define OP_VEC_CMP_LT               0x22
+#define OP_VEC_CMP_BETWEEN          0x23
+#define OP_MASK_AND                 0x24
+#define OP_MASK_OR                  0x25
+#define OP_MASK_NOT                 0x26
+#define OP_VEC_BLEND                0x27
 #define OP_RESERVED_28              0x28
 #define OP_RESERVED_29              0x29
 #define OP_RESERVED_2A              0x2A
 #define OP_RESERVED_2B              0x2B
 #define OP_RESERVED_2C              0x2C
-#define OP_RESERVED_2D              0x2D
-#define OP_RESERVED_2E              0x2E
-#define OP_RESERVED_2F              0x2F
+#define OP_VEC_MATH_UNARY           0x2D
+#define OP_VEC_MATH_BINARY          0x2E
+#define OP_VEC_MATH_TERNARY         0x2F
 
 #define OP_SET_UNION                0x30
 #define OP_SET_INTERSECT            0x31
@@ -183,27 +188,33 @@ extern "C" {
 #define OP_RESERVED_7D              0x7D
 #define OP_RESERVED_7E              0x7E
 #define OP_RESERVED_7F              0x7F
-#define OP_RESERVED_80              0x80
-#define OP_RESERVED_81              0x81
-#define OP_RESERVED_82              0x82
-#define OP_RESERVED_83              0x83
-#define OP_RESERVED_84              0x84
-#define OP_RESERVED_85              0x85
-#define OP_RESERVED_86              0x86
-#define OP_RESERVED_87              0x87
-#define OP_RESERVED_88              0x88
-#define OP_RESERVED_89              0x89
-#define OP_RESERVED_8A              0x8A
-#define OP_RESERVED_8B              0x8B
-#define OP_RESERVED_8C              0x8C
-#define OP_RESERVED_8D              0x8D
-#define OP_RESERVED_8E              0x8E
-#define OP_RESERVED_8F              0x8F
+
+// Functional Optics & Columnar Gathers (0x80 - 0x83)
+#define OP_LOAD_COLUMN_VECTOR       0x80
+#define OP_GATHER_NODE_ATTR         0x81
+#define OP_GATHER_EDGE_ATTR         0x82
+#define OP_BRIN_ZONE_SKIP           0x83
+
+// Multiplicity Fast Paths & Multi-Layout Sweep (0x84 - 0x8F, 0x94 - 0x95)
+#define OP_CSR_WALK_DIRECT_STORE    0x84
+#define OP_CSR_WALK_DENSE_STREAM    0x85
+#define OP_COO_WALK                 0x86
+#define OP_CSC_WALK_DIRECT_STORE    0x87
+#define OP_FIXPOINT_KLEENE_STAR     0x88
+#define OP_SWAP_REG                 0x89
+#define OP_FRONTIER_DIFF            0x8A
+#define OP_COO_WALK_FILTERED        0x8B
+#define OP_COO_WALK_REDUCE          0x8C
+#define OP_COO_WALK_DIRECT_STORE    0x8D
+#define OP_DENSE_WALK               0x8E
+#define OP_DENSE_WALK_BITMATRIX     0x8F
 
 #define OP_COLLECT_BITSET           0x90
 #define OP_COLLECT_ARRAY            0x91
 #define OP_MAP_DENSE_TO_KEYS        0x92
 #define OP_COLLECT_VALUE_MAP        0x93
+#define OP_DENSE_WALK_REDUCE        0x94
+#define OP_DENSE_WALK_DIRECT_STORE  0x95
 
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0
@@ -331,6 +342,15 @@ IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx,
 IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 IMPULSE_API float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+
+IMPULSE_API void impulse_vm_context_mock_csr(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const uint32_t* csr_offsets,
+    const uint32_t* csr_targets,
+    uint64_t node_count,
+    uint64_t edge_count
+);
 
 IMPULSE_API void impulse_vm_context_mock_csc(
     impulse_vm_context_t* ctx,
