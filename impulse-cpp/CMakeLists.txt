@@ -54,7 +54,7 @@ install(TARGETS impulse_graph impulse_graph_static
     EXPORT ImpulseGraphTargets
     DESTINATION lib
 )
-install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h include/impulse_vm.h include/impulse_vm_fluent.hpp
+install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h include/impulse_vm.h include/impulse_vm_fluent.hpp include/impulse_compiler.hpp
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets
@@ -124,4 +124,12 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(bench_cel_compiler tests/bench_cel_compiler.cpp)
     target_link_libraries(bench_cel_compiler PRIVATE impulse_graph_static)
     add_test(NAME bench_cel_compiler COMMAND bench_cel_compiler)
+
+    add_executable(test_cpp_compiler_parity tests/test_cpp_compiler_parity.cpp)
+    target_link_libraries(test_cpp_compiler_parity PRIVATE impulse_graph_static)
+    add_test(NAME test_cpp_compiler_parity COMMAND test_cpp_compiler_parity)
+
+    add_executable(bench_cpp_compiler_ablation tests/bench_cpp_compiler_ablation.cpp)
+    target_link_libraries(bench_cpp_compiler_ablation PRIVATE impulse_graph_static)
+    add_test(NAME bench_cpp_compiler_ablation COMMAND bench_cpp_compiler_ablation)
 endif()

@@ -35,10 +35,11 @@ extern "C" {
 #define IMPULSE_VM_FLAG_ST (1ULL << 4) /**< Stable Flag: set by repeat checks when set generation converged */
 
 // Opcode Modifier Flags (FLAGS field in instruction)
-#define IMPULSE_VM_OP_FLAG_MODE_BITSET 0x01
-#define IMPULSE_VM_OP_FLAG_ACCUMULATE  0x02
-#define IMPULSE_VM_OP_FLAG_INVERT      0x04
-#define IMPULSE_VM_OP_FLAG_OFFHEAP     0x08
+#define IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY  0x01 /**< Early exit: jump to halt if output bitset is empty */
+#define IMPULSE_VM_OP_FLAG_INPUT_SEED     0x02 /**< Seed inlined: source is query input seed node */
+#define IMPULSE_VM_OP_FLAG_ACCUMULATE     0x04 /**< Accumulate destination bitset */
+#define IMPULSE_VM_OP_FLAG_INVERT         0x08 /**< Invert filter condition */
+#define IMPULSE_VM_OP_FLAG_OFFHEAP        0x10 /**< Off-heap mode */
 
 /// Opcodes Definitions
 #define OP_HALT                     0x00
@@ -56,7 +57,7 @@ extern "C" {
 #define OP_RESERVED_0B              0x0B
 #define OP_RESERVED_0C              0x0C
 #define OP_RESERVED_0D              0x0D
-#define OP_RESERVED_0E              0x0E
+#define OP_CSR_WALK_2HOP            0x0E
 #define OP_RESERVED_0F              0x0F
 
 #define OP_CSR_WALK                 0x10
