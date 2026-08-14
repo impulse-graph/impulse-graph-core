@@ -151,4 +151,8 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(bench_cypher_medical tests/bench_cypher_medical.cpp)
     target_link_libraries(bench_cypher_medical PRIVATE impulse_graph_static)
     add_test(NAME bench_cypher_medical COMMAND bench_cypher_medical)
+
+    add_executable(bench_cypher_all_diseases tests/bench_cypher_all_diseases.cpp)
+    target_link_libraries(bench_cypher_all_diseases PRIVATE impulse_graph_static)
+    add_test(NAME bench_cypher_all_diseases COMMAND bench_cypher_all_diseases)
 endif()
