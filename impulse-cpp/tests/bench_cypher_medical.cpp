@@ -92,6 +92,26 @@ static void run_cypher_benchmark(
     std::cout << "  Execution Throughput:  " << qps << " queries / second\n\n";
 }
 
+static uint32_t find_active_seed_node(const impulse_snapshot_t* snap, uint16_t rel_idx, bool is_reverse) {
+    if (!snap) return 0;
+    const uint32_t* offsets = nullptr;
+    const uint32_t* targets = nullptr;
+    uint64_t node_count = 0;
+    uint64_t edge_count = 0;
+    if (is_reverse) {
+        impulse_snapshot_get_relation_csc_buffers(snap, rel_idx, &offsets, &targets, &node_count, &edge_count);
+    } else {
+        impulse_snapshot_get_relation_buffers(snap, rel_idx, &offsets, &targets, &node_count, &edge_count);
+    }
+    if (!offsets) return 0;
+    for (uint32_t i = 0; i < node_count; ++i) {
+        if (offsets[i + 1] - offsets[i] >= 5) {
+            return i;
+        }
+    }
+    return 0;
+}
+
 int main() {
     std::cout << "=========================================================================================================\n";
     std::cout << "               DECLARATIVE OPENCYPHER MEDICAL KNOWLEDGE GRAPH BENCHMARK (C++20)                          \n";
@@ -116,6 +136,13 @@ int main() {
         catalog.register_relation("DlA", 14, 1.0);
         catalog.register_relation("AeG", 0, 1.0);
 
+        uint32_t seed_q1 = find_active_seed_node(het_snap, 7, false);
+        uint32_t seed_q2 = find_active_seed_node(het_snap, 17, false);
+        uint32_t seed_q3 = find_active_seed_node(het_snap, 9, true);
+        uint32_t seed_q4 = find_active_seed_node(het_snap, 14, false);
+
+        std::cout << "[Hetionet Dynamic Seed Nodes]: Q1=" << seed_q1 << ", Q2=" << seed_q2 << ", Q3=" << seed_q3 << ", Q4=" << seed_q4 << "\n\n";
+
         // Q1
         run_cypher_benchmark(
             "Cypher Q1: 4-Hop Pathway Drug Repurposing (CbGpPWpD)",
@@ -124,7 +151,7 @@ int main() {
             het_snap,
             het_ctx,
             catalog,
-            12
+            seed_q1
         );
 
         // Q2
@@ -135,7 +162,7 @@ int main() {
             het_snap,
             het_ctx,
             catalog,
-            12
+            seed_q2
         );
 
         // Q3
@@ -146,7 +173,7 @@ int main() {
             het_snap,
             het_ctx,
             catalog,
-            12
+            seed_q3
         );
 
         // Q4
@@ -157,7 +184,7 @@ int main() {
             het_snap,
             het_ctx,
             catalog,
-            12
+            seed_q4
         );
 
         impulse_vm_context_destroy(het_ctx);
@@ -175,6 +202,11 @@ int main() {
         catalog.register_relation("DRUGBANK::ddi_interactor_in", 0, 1.0);
         catalog.register_relation("GNBR::C", 0, 1.0);
 
+        uint32_t seed_q5 = find_active_seed_node(drkg_snap, 0, false);
+        uint32_t seed_q6 = find_active_seed_node(drkg_snap, 0, false);
+
+        std::cout << "[DRKG Dynamic Seed Nodes]: Q5=" << seed_q5 << ", Q6=" << seed_q6 << "\n\n";
+
         // Q5
         run_cypher_benchmark(
             "Cypher Q5: 3-Hop Precision Oncology Cascades (DRKG Multi-Source)",
@@ -183,7 +215,7 @@ int main() {
             drkg_snap,
             drkg_ctx,
             catalog,
-            50
+            seed_q5
         );
 
         // Q6
@@ -194,7 +226,7 @@ int main() {
             drkg_snap,
             drkg_ctx,
             catalog,
-            100
+            seed_q6
         );
 
         impulse_vm_context_destroy(drkg_ctx);
