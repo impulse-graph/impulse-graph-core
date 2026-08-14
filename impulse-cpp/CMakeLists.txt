@@ -95,6 +95,10 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_vm_vector_math PRIVATE impulse_graph_static)
     add_test(NAME test_vm_vector_math COMMAND test_vm_vector_math)
 
+    add_executable(test_cel_parser tests/test_cel_parser.cpp)
+    target_link_libraries(test_cel_parser PRIVATE impulse_graph_static)
+    add_test(NAME test_cel_parser COMMAND test_cel_parser)
+
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)
 
