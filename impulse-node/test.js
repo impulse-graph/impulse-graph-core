@@ -31,8 +31,8 @@ assert.strictEqual(typeof VmState, 'function', 'VmState class should be exported
 assert.strictEqual(typeof QueryBuilder, 'function', 'QueryBuilder class should be exported');
 assert.strictEqual(typeof executeBytecode, 'function', 'executeBytecode function should be exported');
 
-assert.strictEqual(Opcodes.OP_NOP, 0, 'OP_NOP should be 0');
-assert.strictEqual(Opcodes.OP_INIT_INPUT_NODE, 1, 'OP_INIT_INPUT_NODE should be 1');
+assert.strictEqual(Opcodes.OP_NOP, 1, 'OP_NOP should be 1');
+assert.strictEqual(Opcodes.OP_INIT_INPUT_NODE, 2, 'OP_INIT_INPUT_NODE should be 2');
 assert.strictEqual(Opcodes.OP_CSR_WALK, 0x10, 'OP_CSR_WALK should be 0x10');
 assert.strictEqual(Opcodes.OP_COLLECT_BITSET, 0x90, 'OP_COLLECT_BITSET should be 0x90');
 assert.strictEqual(RegisterType.TYPE_BITSET_HANDLE, 4, 'TYPE_BITSET_HANDLE should be 4');
