@@ -89,7 +89,7 @@ extern "C" {
 #define OP_VEC_BLEND                0x27
 #define OP_RESERVED_28              0x28
 #define OP_RESERVED_29              0x29
-#define OP_RESERVED_2A              0x2A
+#define OP_ASSERT_FINITE            0x2A
 #define OP_RESERVED_2B              0x2B
 #define OP_RESERVED_2C              0x2C
 #define OP_VEC_MATH_UNARY           0x2D
@@ -262,7 +262,8 @@ typedef enum {
     IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
     IMPULSE_VM_ERR_TRAP = 9,
     IMPULSE_VM_ERR_RESERVED_OPCODE = 10,
-    IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11
+    IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11,
+    IMPULSE_VM_ERR_FLOATING_POINT = 12
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN

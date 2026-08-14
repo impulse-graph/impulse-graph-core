@@ -691,7 +691,10 @@ impulse_vm_status_t impulse_vm_execute(
     if (!dispatch_inited) {
         for (int i = 0; i < 256; ++i) dispatch_table[i] = &&op_INVALID;
         for (int i = 0x0A; i <= 0x0F; ++i) dispatch_table[i] = &&op_RESERVED;
-        for (int i = 0x28; i <= 0x2C; ++i) dispatch_table[i] = &&op_RESERVED;
+        dispatch_table[0x28] = &&op_RESERVED;
+        dispatch_table[0x29] = &&op_RESERVED;
+        dispatch_table[0x2B] = &&op_RESERVED;
+        dispatch_table[0x2C] = &&op_RESERVED;
         for (int i = 0x3A; i <= 0x3F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x4C; i <= 0x4F; ++i) dispatch_table[i] = &&op_RESERVED;
         for (int i = 0x59; i <= 0x59; ++i) dispatch_table[i] = &&op_RESERVED;
@@ -704,6 +707,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_INIT_INPUT_NODE] = &&op_INIT_INPUT_NODE;
         dispatch_table[OP_INIT_INPUT_SET] = &&op_INIT_INPUT_SET;
         dispatch_table[OP_LOAD_CONST_INT] = &&op_LOAD_CONST_INT;
+        dispatch_table[OP_MAP_KEYS_TO_DENSE] = &&op_MAP_KEYS_TO_DENSE;
         dispatch_table[OP_LOAD_CONST_FLOAT] = &&op_LOAD_CONST_FLOAT;
         dispatch_table[OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX;
         dispatch_table[OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY;
@@ -729,6 +733,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_MASK_OR] = &&op_MASK_OR;
         dispatch_table[OP_MASK_NOT] = &&op_MASK_NOT;
         dispatch_table[OP_VEC_BLEND] = &&op_VEC_BLEND;
+        dispatch_table[OP_ASSERT_FINITE] = &&op_ASSERT_FINITE;
         dispatch_table[OP_VEC_MATH_UNARY] = &&op_VEC_MATH_UNARY;
         dispatch_table[OP_VEC_MATH_BINARY] = &&op_VEC_MATH_BINARY;
         dispatch_table[OP_VEC_MATH_TERNARY] = &&op_VEC_MATH_TERNARY;
@@ -3967,6 +3972,57 @@ op_VEC_BLEND: {
     DISPATCH();
 }
 
+op_ASSERT_FINITE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t target_reg = inst.dst_reg;
+    VALIDATE_REG(target_reg);
+
+    if (vm_state->register_types[target_reg] == TYPE_FLOAT) {
+        float v = *reinterpret_cast<const float*>(&vm_state->registers[target_reg]);
+        if (std::isnan(v) || std::isinf(v)) {
+            vm_state->registers[0] = 0;
+            return IMPULSE_VM_ERR_FLOATING_POINT;
+        }
+    } else if (vm_state->register_types[target_reg] == TYPE_DOUBLE) {
+        double v = *reinterpret_cast<const double*>(&vm_state->registers[target_reg]);
+        if (std::isnan(v) || std::isinf(v)) {
+            vm_state->registers[0] = 0;
+            return IMPULSE_VM_ERR_FLOATING_POINT;
+        }
+    } else if (vm_state->register_types[target_reg] == TYPE_FLOAT_VECTOR) {
+        int h = static_cast<int>(vm_state->registers[target_reg]);
+        if (!vm_state->query_context || h < 0 || h >= 8 || !vm_state->query_context->float_vectors_allocated[h]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const float* vec = vm_state->query_context->float_vectors[h].data();
+        size_t N = vm_state->query_context->max_nodes;
+        for (size_t i = 0; i < N; ++i) {
+            float v = vec[i];
+            if (std::isnan(v) || std::isinf(v)) {
+                vm_state->registers[0] = i;
+                return IMPULSE_VM_ERR_FLOATING_POINT;
+            }
+        }
+    } else if (vm_state->register_types[target_reg] == TYPE_DOUBLE_VECTOR) {
+        int h = static_cast<int>(vm_state->registers[target_reg]);
+        if (!vm_state->query_context || h < 0 || h >= 8 || !vm_state->query_context->double_vectors_allocated[h]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const double* vec = vm_state->query_context->double_vectors[h].data();
+        size_t N = vm_state->query_context->max_nodes;
+        for (size_t i = 0; i < N; ++i) {
+            double v = vec[i];
+            if (std::isnan(v) || std::isinf(v)) {
+                vm_state->registers[0] = i;
+                return IMPULSE_VM_ERR_FLOATING_POINT;
+            }
+        }
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
 op_VEC_MATH_UNARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
@@ -6908,6 +6964,7 @@ op_OUT_OF_BOUNDS:
             case OP_MASK_OR:
             case OP_MASK_NOT:
             case OP_VEC_BLEND:
+            case OP_ASSERT_FINITE:
             case OP_VEC_MATH_UNARY:
             case OP_VEC_MATH_BINARY:
             case OP_VEC_MATH_TERNARY:
@@ -6949,7 +7006,7 @@ op_OUT_OF_BOUNDS:
                 break;
             }
             case OP_RESERVED_0A: case OP_RESERVED_0B: case OP_RESERVED_0C: case OP_RESERVED_0D: case OP_RESERVED_0E: case OP_RESERVED_0F:
-            case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2A: case OP_RESERVED_2B: case OP_RESERVED_2C:
+            case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2B: case OP_RESERVED_2C:
             case OP_RESERVED_3A: case OP_RESERVED_3B: case OP_RESERVED_3C: case OP_RESERVED_3E: case OP_RESERVED_3F:
             case OP_RESERVED_4C: case OP_RESERVED_4D: case OP_RESERVED_4E: case OP_RESERVED_4F:
             case OP_RESERVED_59:
@@ -7058,6 +7115,7 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_THROW:
             case OP_ASSERT:
             case OP_TRAP:
+            case OP_ASSERT_FINITE:
             case OP_SET_MAX_DOP:
             case OP_ALLOC_SCRATCH:
             case OP_ASSERT_SCRATCH_BYTES:

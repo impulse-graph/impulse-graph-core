@@ -57,7 +57,8 @@ static void test_cel_vector_math_calls() {
         "floor", "ceil", "trunc", "round", "clamp", "copysign", "fmod",
         "relu", "leaky_relu", "sigmoid", "gelu", "silu", "softplus",
         "erf", "erfc", "lgamma",
-        "popcount", "clz", "ctz", "rotl", "rotr"
+        "popcount", "clz", "ctz", "rotl", "rotr",
+        "safeDiv", "isNan", "isInf", "isFinite"
     };
 
     for (const char* name : all_math_names) {
@@ -71,7 +72,7 @@ static void test_cel_vector_math_calls() {
         assert(ir == std::string("(") + name + " x)");
     }
 
-    std::cout << "  -> PASSED: All 42 CEL vector math functions verified." << std::endl;
+    std::cout << "  -> PASSED: All 46 CEL vector math and safe FP functions verified." << std::endl;
 }
 
 static void test_cel_temporal_and_datetime() {

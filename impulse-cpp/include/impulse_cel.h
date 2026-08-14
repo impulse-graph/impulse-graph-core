@@ -587,7 +587,11 @@ public:
             {"gelu", MATH_FUNC_GELU}, {"silu", MATH_FUNC_SILU}, {"softplus", MATH_FUNC_SOFTPLUS},
             {"erf", MATH_FUNC_ERF}, {"erfc", MATH_FUNC_ERFC}, {"lgamma", MATH_FUNC_LGAMMA},
             {"popcount", MATH_FUNC_POPCOUNT}, {"clz", MATH_FUNC_CLZ}, {"ctz", MATH_FUNC_CTZ},
-            {"rotl", MATH_FUNC_ROTL}, {"rotr", MATH_FUNC_ROTR}
+            {"rotl", MATH_FUNC_ROTL}, {"rotr", MATH_FUNC_ROTR},
+            {"safeDiv", MATH_FUNC_SAFE_DIV}, {"safe_div", MATH_FUNC_SAFE_DIV},
+            {"isNan", MATH_FUNC_ISNAN}, {"isnan", MATH_FUNC_ISNAN},
+            {"isInf", MATH_FUNC_ISINF}, {"isinf", MATH_FUNC_ISINF},
+            {"isFinite", MATH_FUNC_ISFINITE}, {"isfinite", MATH_FUNC_ISFINITE}
         };
         auto it = kMathMap.find(name);
         return it != kMathMap.end() ? it->second : -1;

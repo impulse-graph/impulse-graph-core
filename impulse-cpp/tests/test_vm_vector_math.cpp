@@ -277,6 +277,59 @@ static void test_multi_layout_sweeps() {
     std::cout << "  -> PASSED" << std::endl;
 }
 
+static void test_fp_assertions_and_safe_math() {
+    std::cout << "[Test] Floating-Point Assertions (OP_ASSERT_FINITE) & Safe Math (SAFE_DIV, ISNAN, ISINF)..." << std::endl;
+
+    // 1. Safe Div scalar and ternary
+    assert(impulse_math_binary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 0.0f) == 0.0f);
+    assert(impulse_math_binary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 2.0f) == 5.0f);
+    assert(impulse_math_ternary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 0.0f, -1.0f) == -1.0f);
+
+    // 2. IEEE 754 predicates
+    float nan_val = std::numeric_limits<float>::quiet_NaN();
+    float inf_val = std::numeric_limits<float>::infinity();
+    assert(impulse_math_unary_f32(MATH_FUNC_ISNAN, nan_val) == 1.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_ISNAN, 5.0f) == 0.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_ISINF, inf_val) == 1.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_ISFINITE, 5.0f) == 1.0f);
+    assert(impulse_math_unary_f32(MATH_FUNC_ISFINITE, nan_val) == 0.0f);
+
+    // 3. OP_ASSERT_FINITE on clean vector -> PASSED
+    std::vector<impulse_instruction_t> clean_prog = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
+        { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
+        { OP_ASSERT_FINITE, 0, 1, 0 },
+        { OP_HALT, 0, 0, 0 }
+    };
+    impulse_vm_state_t state1{};
+    impulse_vm_context_t* ctx1 = impulse_vm_context_create(nullptr);
+    state1.query_context = ctx1;
+    float clean_data[4] = { 1.0f, 2.0f, 3.0f, 4.0f };
+    impulse_vm_context_bind_inline_data(ctx1, clean_data, sizeof(clean_data));
+    impulse_vm_status_t st1 = impulse_vm_execute(clean_prog.data(), clean_prog.size(), &state1, 0);
+    assert(st1 == IMPULSE_VM_OK);
+    impulse_vm_context_destroy(ctx1);
+
+    // 4. OP_ASSERT_FINITE on NaN vector -> TRAPPED with IMPULSE_VM_ERR_FLOATING_POINT
+    std::vector<impulse_instruction_t> nan_prog = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
+        { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
+        { OP_ASSERT_FINITE, 0, 1, 0 },
+        { OP_HALT, 0, 0, 0 }
+    };
+    impulse_vm_state_t state2{};
+    impulse_vm_context_t* ctx2 = impulse_vm_context_create(nullptr);
+    state2.query_context = ctx2;
+    float nan_data[4] = { 1.0f, nan_val, 3.0f, 4.0f };
+    impulse_vm_context_bind_inline_data(ctx2, nan_data, sizeof(nan_data));
+    impulse_vm_status_t st2 = impulse_vm_execute(nan_prog.data(), nan_prog.size(), &state2, 0);
+    assert(st2 == IMPULSE_VM_ERR_FLOATING_POINT);
+    assert(state2.registers[0] == 1); // Exact offending index 1 captured!
+    impulse_vm_context_destroy(ctx2);
+
+    std::cout << "  -> PASSED: FP assertions, NaN traps, and safe division verified." << std::endl;
+}
+
 int main() {
     std::cout << "=== ImpulseVM Vector Math & Multi-Layout Sweep Test Suite ===" << std::endl;
     test_all_42_math_functions_scalar_and_simd();
@@ -284,6 +337,7 @@ int main() {
     test_vector_predicates_and_masks();
     test_fixpoint_and_frontier_diff();
     test_multi_layout_sweeps();
+    test_fp_assertions_and_safe_math();
     std::cout << "=== ALL VECTOR MATH TESTS PASSED ===" << std::endl;
     return 0;
 }

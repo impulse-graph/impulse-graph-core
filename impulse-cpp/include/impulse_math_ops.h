@@ -86,7 +86,13 @@ typedef enum {
     MATH_FUNC_CLZ          = 0x2F,  /**< count leading zeros */
     MATH_FUNC_CTZ          = 0x30,  /**< count trailing zeros */
     MATH_FUNC_ROTL         = 0x31,  /**< rotate left */
-    MATH_FUNC_ROTR         = 0x32   /**< rotate right */
+    MATH_FUNC_ROTR         = 0x32,  /**< rotate right */
+
+    // --- Safe Arithmetic & IEEE 754 Sanitizers (0x33 - 0x36) ---
+    MATH_FUNC_SAFE_DIV     = 0x33,  /**< y == 0 || isnan(y) ? fallback : (x / y) */
+    MATH_FUNC_ISNAN        = 0x34,  /**< isnan(x) ? 1.0 : 0.0 */
+    MATH_FUNC_ISINF        = 0x35,  /**< isinf(x) ? 1.0 : 0.0 */
+    MATH_FUNC_ISFINITE     = 0x36   /**< isfinite(x) ? 1.0 : 0.0 */
 } impulse_math_func_id_t;
 
 /**
@@ -139,6 +145,9 @@ static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
         case MATH_FUNC_POPCOUNT:   return (float)__builtin_popcount((unsigned int)(uint32_t)x);
         case MATH_FUNC_CLZ:        return (float)__builtin_clz((unsigned int)(uint32_t)x);
         case MATH_FUNC_CTZ:        return (float)__builtin_ctz((unsigned int)(uint32_t)x);
+        case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0f : 0.0f;
+        case MATH_FUNC_ISINF:      return isinf(x) ? 1.0f : 0.0f;
+        case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0f : 0.0f;
         default:                   return x;
     }
 }
@@ -193,6 +202,9 @@ static inline double impulse_math_unary_f64(uint8_t func_id, double x) {
         case MATH_FUNC_POPCOUNT:   return (double)__builtin_popcountll((unsigned long long)(uint64_t)x);
         case MATH_FUNC_CLZ:        return (double)__builtin_clzll((unsigned long long)(uint64_t)x);
         case MATH_FUNC_CTZ:        return (double)__builtin_ctzll((unsigned long long)(uint64_t)x);
+        case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0 : 0.0;
+        case MATH_FUNC_ISINF:      return isinf(x) ? 1.0 : 0.0;
+        case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0 : 0.0;
         default:                   return x;
     }
 }
@@ -208,6 +220,7 @@ static inline float impulse_math_binary_f32(uint8_t func_id, float x, float y) {
         case MATH_FUNC_COPYSIGN:   return copysignf(x, y);
         case MATH_FUNC_FMOD:       return fmodf(x, y);
         case MATH_FUNC_LEAKY_RELU: return (x > 0.0f) ? x : (y * x);
+        case MATH_FUNC_SAFE_DIV:   return (y == 0.0f || isnan(y)) ? 0.0f : (x / y);
         case MATH_FUNC_ROTL: {
             uint32_t ux = (uint32_t)x;
             uint32_t s = (uint32_t)y & 31;
@@ -233,6 +246,7 @@ static inline double impulse_math_binary_f64(uint8_t func_id, double x, double y
         case MATH_FUNC_COPYSIGN:   return copysign(x, y);
         case MATH_FUNC_FMOD:       return fmod(x, y);
         case MATH_FUNC_LEAKY_RELU: return (x > 0.0) ? x : (y * x);
+        case MATH_FUNC_SAFE_DIV:   return (y == 0.0 || isnan(y)) ? 0.0 : (x / y);
         case MATH_FUNC_ROTL: {
             uint64_t ux = (uint64_t)x;
             uint32_t s = (uint32_t)y & 63;
@@ -252,9 +266,10 @@ static inline double impulse_math_binary_f64(uint8_t func_id, double x, double y
  */
 static inline float impulse_math_ternary_f32(uint8_t func_id, float x, float y, float z) {
     switch (func_id) {
-        case MATH_FUNC_LERP:  return x + z * (y - x);
-        case MATH_FUNC_CLAMP: return (x < y) ? y : ((x > z) ? z : x);
-        default:              return x;
+        case MATH_FUNC_LERP:     return x + z * (y - x);
+        case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
+        case MATH_FUNC_SAFE_DIV: return (y == 0.0f || isnan(y)) ? z : (x / y);
+        default:                 return x;
     }
 }
 
@@ -263,9 +278,10 @@ static inline float impulse_math_ternary_f32(uint8_t func_id, float x, float y, 
  */
 static inline double impulse_math_ternary_f64(uint8_t func_id, double x, double y, double z) {
     switch (func_id) {
-        case MATH_FUNC_LERP:  return x + z * (y - x);
-        case MATH_FUNC_CLAMP: return (x < y) ? y : ((x > z) ? z : x);
-        default:              return x;
+        case MATH_FUNC_LERP:     return x + z * (y - x);
+        case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
+        case MATH_FUNC_SAFE_DIV: return (y == 0.0 || isnan(y)) ? z : (x / y);
+        default:                 return x;
     }
 }
 
