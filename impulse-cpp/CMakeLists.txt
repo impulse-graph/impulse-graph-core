@@ -143,4 +143,12 @@ if(IMPULSE_BUILD_TESTS)
         target_link_libraries(bench_all_drugs_medical PRIVATE OpenMP::OpenMP_CXX)
     endif()
     add_test(NAME bench_all_drugs_medical COMMAND bench_all_drugs_medical)
+
+    add_executable(test_cypher_compiler tests/test_cypher_compiler.cpp)
+    target_link_libraries(test_cypher_compiler PRIVATE impulse_graph_static)
+    add_test(NAME test_cypher_compiler COMMAND test_cypher_compiler)
+
+    add_executable(bench_cypher_medical tests/bench_cypher_medical.cpp)
+    target_link_libraries(bench_cypher_medical PRIVATE impulse_graph_static)
+    add_test(NAME bench_cypher_medical COMMAND bench_cypher_medical)
 endif()
