@@ -18,6 +18,16 @@
 #include <numeric>
 #include <algorithm>
 
+#if defined(_MSC_VER)
+#define IMPULSE_NOINLINE __declspec(noinline)
+#else
+#define IMPULSE_NOINLINE __attribute__((noinline))
+#endif
+
+IMPULSE_NOINLINE static void native_subroutine_impl(uint64_t& r4) {
+    r4 = 42;
+}
+
 struct BenchmarkResult {
     std::string name;
     size_t iterations;
@@ -303,14 +313,11 @@ static BenchmarkResult run_subroutine_trampoline_benchmark(size_t iterations) {
     impulse_vm_execute(prog.data(), prog.size(), &state, 0);
 
     // Native C++ Baseline
-    auto native_subroutine = [](uint64_t& r4) __attribute__((noinline)) {
-        r4 = 42;
-    };
     auto t_native_start = std::chrono::high_resolution_clock::now();
     uint64_t native_r8 = iterations;
     uint64_t native_r4 = 0;
     while (native_r8 > 0) {
-        native_subroutine(native_r4);
+        native_subroutine_impl(native_r4);
         native_r8 = native_r8 - 1;
     }
     auto t_native_end = std::chrono::high_resolution_clock::now();

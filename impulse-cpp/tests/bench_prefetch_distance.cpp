@@ -23,6 +23,15 @@
 #include <cstring>
 #include <cstdint>
 
+#if defined(_MSC_VER)
+#include <xmmintrin.h>
+#define IMPULSE_PREFETCH_READ(addr) _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0)
+#define IMPULSE_PREFETCH_WRITE(addr) _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0)
+#else
+#define IMPULSE_PREFETCH_READ(addr) __builtin_prefetch((addr), 0, 1)
+#define IMPULSE_PREFETCH_WRITE(addr) __builtin_prefetch((addr), 1, 3)
+#endif
+
 struct BenchmarkGraph {
     std::vector<uint32_t> offsets;
     std::vector<uint32_t> targets;
@@ -81,13 +90,13 @@ static inline void traverse_csr_prefetch(
                 for (uint32_t i = start; i < end; ++i) {
                     if constexpr (DISTANCE > 0) {
                         if (i + DISTANCE < end) {
-                            __builtin_prefetch(&targets[i + DISTANCE], 0, 1);
+                            IMPULSE_PREFETCH_READ(&targets[i + DISTANCE]);
                         }
                     }
                     if constexpr (PREFETCH_BITSET && DISTANCE > 0) {
                         if (i + (DISTANCE / 2) < end) {
                             uint32_t tgt_lookahead = targets[i + (DISTANCE / 2)];
-                            __builtin_prefetch(&dst_words[tgt_lookahead >> 6], 1, 3);
+                            IMPULSE_PREFETCH_WRITE(&dst_words[tgt_lookahead >> 6]);
                         }
                     }
                     uint32_t tgt = targets[i];
@@ -166,7 +175,7 @@ static inline void traverse_2hop_prefetch(
                         if (i + DISTANCE < end1) {
                             uint32_t next_v = targets1[i + DISTANCE];
                             if (next_v < node_count2) {
-                                __builtin_prefetch(&offsets2[next_v], 0, 1);
+                                IMPULSE_PREFETCH_READ(&offsets2[next_v]);
                             }
                         }
                     }
