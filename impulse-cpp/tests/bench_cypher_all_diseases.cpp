@@ -19,7 +19,6 @@
 using namespace impulse::compiler;
 
 static const char* HETIONET_PATH = "/Users/jesse/impulse/datasets/hetionet/hetionet.v09.imps";
-static const char* DRKG_PATH = "/Users/jesse/impulse/datasets/drkg/drkg.v09.imps";
 
 static void run_all_seeds_cypher_benchmark(
     const std::string& title,
