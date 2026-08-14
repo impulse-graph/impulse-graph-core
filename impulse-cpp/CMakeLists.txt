@@ -116,4 +116,8 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(bench_large_attribute_dataset /Users/jesse/impulse/datasets/bench_large_attribute_dataset.cpp)
     target_link_libraries(bench_large_attribute_dataset PRIVATE impulse_graph_static)
+
+    add_executable(bench_opcode_dispatch tests/bench_opcode_dispatch.cpp)
+    target_link_libraries(bench_opcode_dispatch PRIVATE impulse_graph_static)
+    add_test(NAME bench_opcode_dispatch COMMAND bench_opcode_dispatch)
 endif()
