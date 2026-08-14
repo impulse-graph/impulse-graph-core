@@ -181,10 +181,84 @@ static void test_cel_pathological_40_term_expression() {
     double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     double us_per_parse = (total_ms * 1000.0) / parse_iterations;
     double parses_per_sec = (parse_iterations / total_ms) * 1000.0;
-
     std::cout << "  -> Parse Performance: " << std::fixed << std::setprecision(2)
               << us_per_parse << " us/parse (" << static_cast<int>(parses_per_sec) << " parses/sec)" << std::endl;
     std::cout << "  -> PASSED: Zero-crash, precise operator associativity, deep AST lowering verified." << std::endl;
+}
+
+static void test_cel_ast_optimizer_and_constant_folding() {
+    std::cout << "[Test] AST Optimizer & Constant Folding Passes..." << std::endl;
+
+    // 1. Integer arithmetic constant folding
+    {
+        Parser p("2 + 3 * 4");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::LITERAL_INT);
+        assert(opt->int_val == 14);
+        assert(CelCompiler::to_impscheme(opt) == "14");
+    }
+
+    // 2. Algebraic identities (x * 1 + 0 -> x)
+    {
+        Parser p("x * 1 + 0");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::IDENTIFIER);
+        assert(opt->text == "x");
+        assert(CelCompiler::to_impscheme(opt) == "x");
+    }
+
+    // 3. Double negation elimination (!(!edge.valid) -> edge.valid)
+    {
+        Parser p("!(!edge.valid)");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::MEMBER_ACCESS);
+        assert(CelCompiler::to_impscheme(opt) == "(get-attr edge \"valid\")");
+    }
+
+    // 4. Dead branch elimination (true ? src.score : dest.score -> src.score)
+    {
+        Parser p("true ? src.score : dest.score");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::MEMBER_ACCESS);
+        assert(CelCompiler::to_impscheme(opt) == "(get-attr src \"score\")");
+    }
+
+    // 5. Transcendental math constant folding (sqrt(100.0) + pow(2.0, 3.0) -> 18.0)
+    {
+        Parser p("sqrt(100.0) + pow(2.0, 3.0)");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::LITERAL_FLOAT);
+        assert(std::abs(opt->float_val - 18.0) < 1e-6);
+        assert(CelCompiler::to_impscheme(opt) == "18.0");
+    }
+
+    // 6. Safe math constant folding (safeDiv(10.0, 0.0, -1.0) -> -1.0)
+    {
+        Parser p("safeDiv(10.0, 0.0, -1.0)");
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        assert(opt->kind == AstKind::LITERAL_FLOAT);
+        assert(opt->float_val == -1.0);
+    }
+
+    // 7. Optimization on Pathological Expression
+    {
+        std::string expr = "(10.0 > 0.0 && !false) ? sqrt(64.0) * edge.weight + (0.0 + edge.bias * 1.0) : -1.0";
+        Parser p(expr);
+        auto ast = p.parse_expression();
+        auto opt = AstOptimizer::optimize(ast);
+        std::string ir = CelCompiler::to_impscheme(opt);
+        // Condition folds to true -> dead branch eliminated -> (+ (* 8.0 edge.weight) edge.bias)
+        assert(ir == "(+ (* 8.0 (get-attr edge \"weight\")) (get-attr edge \"bias\"))");
+        std::cout << "  -> Optimized Pathological Subtree IR: " << ir << std::endl;
+    }
+
+    std::cout << "  -> PASSED: All AST constant folding and algebraic reduction passes verified." << std::endl;
 }
 
 int main() {
@@ -195,6 +269,7 @@ int main() {
     test_cel_temporal_and_datetime();
     test_cel_lists_and_methods();
     test_cel_pathological_40_term_expression();
+    test_cel_ast_optimizer_and_constant_folding();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;
 }

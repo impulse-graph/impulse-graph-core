@@ -598,6 +598,217 @@ public:
     }
 };
 
+/**
+ * @brief Zero-Dependency AST Optimizer & Constant Folder for CEL ASTs.
+ *
+ * Implements:
+ * 1. Constant folding across arithmetic, logical, comparison, and transcendental math functions.
+ * 2. Algebraic simplification & identity reduction (x + 0, x * 1, x * 0, !(!x), etc.).
+ * 3. Dead branch elimination for ternary expressions with constant conditions.
+ */
+class AstOptimizer {
+public:
+    static std::shared_ptr<AstNode> optimize(const std::shared_ptr<AstNode>& node) {
+        if (!node) return nullptr;
+
+        // 1. Bottom-up recursive optimization of children
+        std::vector<std::shared_ptr<AstNode>> folded_children;
+        for (const auto& child : node->children) {
+            folded_children.push_back(optimize(child));
+        }
+
+        auto result = std::make_shared<AstNode>(*node);
+        result->children = std::move(folded_children);
+
+        // 2. Optimization passes
+        switch (result->kind) {
+            case AstKind::UNARY_OP:
+                return fold_unary(result);
+            case AstKind::BINARY_OP:
+                return fold_binary(result);
+            case AstKind::TERNARY_OP:
+                return fold_ternary(result);
+            case AstKind::FUNCTION_CALL:
+                return fold_function_call(result);
+            default:
+                return result;
+        }
+    }
+
+private:
+    static std::shared_ptr<AstNode> fold_unary(const std::shared_ptr<AstNode>& node) {
+        auto child = node->children[0];
+        if (node->text == "!") {
+            if (child->kind == AstKind::LITERAL_BOOL) {
+                return AstNode::make_bool(!child->bool_val);
+            }
+            if (child->kind == AstKind::UNARY_OP && child->text == "!") {
+                // Double negation: !(!x) -> x
+                return child->children[0];
+            }
+        } else if (node->text == "-") {
+            if (child->kind == AstKind::LITERAL_INT) {
+                return AstNode::make_int(-child->int_val);
+            }
+            if (child->kind == AstKind::LITERAL_FLOAT) {
+                return AstNode::make_float(-child->float_val);
+            }
+        }
+        return node;
+    }
+
+    static std::shared_ptr<AstNode> fold_binary(const std::shared_ptr<AstNode>& node) {
+        auto left = node->children[0];
+        auto right = node->children[1];
+        const std::string& op = node->text;
+
+        // 1. Integer Constant Folding
+        if (left->kind == AstKind::LITERAL_INT && right->kind == AstKind::LITERAL_INT) {
+            int64_t a = left->int_val;
+            int64_t b = right->int_val;
+            if (op == "+") return AstNode::make_int(a + b);
+            if (op == "-") return AstNode::make_int(a - b);
+            if (op == "*") return AstNode::make_int(a * b);
+            if (op == "/" && b != 0) return AstNode::make_int(a / b);
+            if (op == "%" && b != 0) return AstNode::make_int(a % b);
+            if (op == "==") return AstNode::make_bool(a == b);
+            if (op == "!=") return AstNode::make_bool(a != b);
+            if (op == "<")  return AstNode::make_bool(a < b);
+            if (op == "<=") return AstNode::make_bool(a <= b);
+            if (op == ">")  return AstNode::make_bool(a > b);
+            if (op == ">=") return AstNode::make_bool(a >= b);
+        }
+
+        // 2. Float Constant Folding
+        if ((left->kind == AstKind::LITERAL_FLOAT || left->kind == AstKind::LITERAL_INT) &&
+            (right->kind == AstKind::LITERAL_FLOAT || right->kind == AstKind::LITERAL_INT)) {
+            double a = (left->kind == AstKind::LITERAL_FLOAT) ? left->float_val : static_cast<double>(left->int_val);
+            double b = (right->kind == AstKind::LITERAL_FLOAT) ? right->float_val : static_cast<double>(right->int_val);
+            if (op == "+") return AstNode::make_float(a + b);
+            if (op == "-") return AstNode::make_float(a - b);
+            if (op == "*") return AstNode::make_float(a * b);
+            if (op == "/" && b != 0.0) return AstNode::make_float(a / b);
+            if (op == "==") return AstNode::make_bool(a == b);
+            if (op == "!=") return AstNode::make_bool(a != b);
+            if (op == "<")  return AstNode::make_bool(a < b);
+            if (op == "<=") return AstNode::make_bool(a <= b);
+            if (op == ">")  return AstNode::make_bool(a > b);
+            if (op == ">=") return AstNode::make_bool(a >= b);
+        }
+
+        // 3. Boolean Constant Folding
+        if (left->kind == AstKind::LITERAL_BOOL && right->kind == AstKind::LITERAL_BOOL) {
+            bool a = left->bool_val;
+            bool b = right->bool_val;
+            if (op == "&&") return AstNode::make_bool(a && b);
+            if (op == "||") return AstNode::make_bool(a || b);
+            if (op == "==") return AstNode::make_bool(a == b);
+            if (op == "!=") return AstNode::make_bool(a != b);
+        }
+
+        // 4. Algebraic Identities
+        if (op == "+") {
+            if (is_zero(left)) return right;
+            if (is_zero(right)) return left;
+        } else if (op == "-") {
+            if (is_zero(right)) return left;
+        } else if (op == "*") {
+            if (is_one(left)) return right;
+            if (is_one(right)) return left;
+            if (is_zero(left) || is_zero(right)) return AstNode::make_float(0.0);
+        } else if (op == "/") {
+            if (is_one(right)) return left;
+        } else if (op == "&&") {
+            if (left->kind == AstKind::LITERAL_BOOL) {
+                return left->bool_val ? right : AstNode::make_bool(false);
+            }
+            if (right->kind == AstKind::LITERAL_BOOL) {
+                return right->bool_val ? left : AstNode::make_bool(false);
+            }
+        } else if (op == "||") {
+            if (left->kind == AstKind::LITERAL_BOOL) {
+                return left->bool_val ? AstNode::make_bool(true) : right;
+            }
+            if (right->kind == AstKind::LITERAL_BOOL) {
+                return right->bool_val ? AstNode::make_bool(true) : left;
+            }
+        }
+
+        return node;
+    }
+
+    static std::shared_ptr<AstNode> fold_ternary(const std::shared_ptr<AstNode>& node) {
+        auto cond = node->children[0];
+        auto then_branch = node->children[1];
+        auto else_branch = node->children[2];
+
+        if (cond->kind == AstKind::LITERAL_BOOL) {
+            return cond->bool_val ? then_branch : else_branch;
+        }
+        return node;
+    }
+
+    static std::shared_ptr<AstNode> fold_function_call(const std::shared_ptr<AstNode>& node) {
+        int func_id = CelCompiler::resolve_math_func(node->text);
+        if (func_id <= 0) return node;
+
+        // Unary constant folding
+        if (node->children.size() == 1) {
+            auto arg = node->children[0];
+            if (arg->kind == AstKind::LITERAL_FLOAT || arg->kind == AstKind::LITERAL_INT) {
+                double val = (arg->kind == AstKind::LITERAL_FLOAT) ? arg->float_val : static_cast<double>(arg->int_val);
+                double res = impulse_math_unary_f64(static_cast<uint8_t>(func_id), val);
+                return AstNode::make_float(res);
+            }
+        }
+
+        // Binary constant folding
+        if (node->children.size() == 2) {
+            auto arg1 = node->children[0];
+            auto arg2 = node->children[1];
+            if ((arg1->kind == AstKind::LITERAL_FLOAT || arg1->kind == AstKind::LITERAL_INT) &&
+                (arg2->kind == AstKind::LITERAL_FLOAT || arg2->kind == AstKind::LITERAL_INT)) {
+                double a = (arg1->kind == AstKind::LITERAL_FLOAT) ? arg1->float_val : static_cast<double>(arg1->int_val);
+                double b = (arg2->kind == AstKind::LITERAL_FLOAT) ? arg2->float_val : static_cast<double>(arg2->int_val);
+                double res = impulse_math_binary_f64(static_cast<uint8_t>(func_id), a, b);
+                return AstNode::make_float(res);
+            }
+        }
+
+        // Ternary constant folding
+        if (node->children.size() == 3) {
+            auto arg1 = node->children[0];
+            auto arg2 = node->children[1];
+            auto arg3 = node->children[2];
+            if ((arg1->kind == AstKind::LITERAL_FLOAT || arg1->kind == AstKind::LITERAL_INT) &&
+                (arg2->kind == AstKind::LITERAL_FLOAT || arg2->kind == AstKind::LITERAL_INT) &&
+                (arg3->kind == AstKind::LITERAL_FLOAT || arg3->kind == AstKind::LITERAL_INT)) {
+                double a = (arg1->kind == AstKind::LITERAL_FLOAT) ? arg1->float_val : static_cast<double>(arg1->int_val);
+                double b = (arg2->kind == AstKind::LITERAL_FLOAT) ? arg2->float_val : static_cast<double>(arg2->int_val);
+                double c = (arg3->kind == AstKind::LITERAL_FLOAT) ? arg3->float_val : static_cast<double>(arg3->int_val);
+                double res = impulse_math_ternary_f64(static_cast<uint8_t>(func_id), a, b, c);
+                return AstNode::make_float(res);
+            }
+        }
+
+        return node;
+    }
+
+    static bool is_zero(const std::shared_ptr<AstNode>& node) {
+        if (!node) return false;
+        if (node->kind == AstKind::LITERAL_INT && node->int_val == 0) return true;
+        if (node->kind == AstKind::LITERAL_FLOAT && node->float_val == 0.0) return true;
+        return false;
+    }
+
+    static bool is_one(const std::shared_ptr<AstNode>& node) {
+        if (!node) return false;
+        if (node->kind == AstKind::LITERAL_INT && node->int_val == 1) return true;
+        if (node->kind == AstKind::LITERAL_FLOAT && node->float_val == 1.0) return true;
+        return false;
+    }
+};
+
 } // namespace cel
 } // namespace impulse
 
