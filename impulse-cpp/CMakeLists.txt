@@ -163,4 +163,8 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(bench_cypher_all_diseases tests/bench_cypher_all_diseases.cpp)
     target_link_libraries(bench_cypher_all_diseases PRIVATE impulse_graph_static)
     add_test(NAME bench_cypher_all_diseases COMMAND bench_cypher_all_diseases)
+
+    add_executable(test_datalog_compiler tests/test_datalog_compiler.cpp)
+    target_link_libraries(test_datalog_compiler PRIVATE impulse_graph_static)
+    add_test(NAME test_datalog_compiler COMMAND test_datalog_compiler)
 endif()
