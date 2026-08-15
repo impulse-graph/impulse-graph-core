@@ -113,36 +113,28 @@ For JVM applications (Java 25, Kotlin, Scala 3, Clojure), see the standalone [**
 <details>
 <summary><b>Python (Fluent Builder + Filters)</b></summary>
 
-Both openCypher and the fluent builder compile through the exact same **ImpScheme IR** pipeline down to identical SIMD bytecode. The fluent builder enables programmatic traversal construction with optional attribute filters.
-
-👉 **[Explore Python fluent traversal documentation & examples →](impulse-python/)**
-
-</details>
-
-<details>
-<summary><b>Zero-Copy Direct Tensor / Matrix Access (No Query Engine Required)</b></summary>
-
-You can also use `.imps` binary snapshots directly as a zero-copy, off-heap drop-in storage format for PyTorch tensors, SciPy CSR/CSC sparse matrices, and NumPy arrays without invoking the query VM:
+Both openCypher and the fluent builder compile through the exact same **ImpScheme IR** pipeline down to identical SIMD bytecode. The fluent builder enables programmatic traversal construction with optional attribute filters:
 
 ```python
-import numpy as np
-import torch
-from scipy.sparse import csr_matrix
 from impulse_graph import Snapshot
 
 with Snapshot("hetionet.v09.imps") as graph:
-    # Zero-copy memory-mapped slice of CSR row offsets and col indices
-    row_offsets = graph.get_row_offsets_array(relation_index=0)
-    col_indices = graph.get_col_indices_array(relation_index=0)
+    # 1. Resolve domain key to dense node ID via O(1) MPHF index lookup
+    # (Hetionet Disease domain ID: 4)
+    disease_id = graph.resolve_dense_id(domain_id=4, key="Disease::DOID:10652")
 
-    # Zero-allocation SciPy sparse matrix
-    adj = csr_matrix((np.ones_like(col_indices), col_indices, row_offsets))
-
-    # Direct PyTorch tensor wrapping for GNN neighbor sampling
-    edge_index = torch.from_numpy(col_indices)
+    # 2. Execute zero-allocation SIMD traversal with node attribute filter
+    candidates = (
+        graph.traverse(start_node=disease_id, catalog="hetionet")
+             .out("DaG")                  # Disease → Gene
+             .out("GpPW")                 # Gene → Pathway
+             .filter(prefix="PW:")        # Attribute filter on intermediate pathway nodes
+             .in_("GpPW")                 # Pathway ← Gene
+             .in_("CbG")                  # Gene ← Compound
+             .to_list()
+    )
+    print(f"Found {len(candidates)} candidate compounds")
 ```
-
-👉 **[Explore Python bindings & GNN tensor integration →](impulse-python/)**
 
 </details>
 
