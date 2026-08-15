@@ -25,7 +25,7 @@ func main() {
 		fmt.Println("[INFO] Generating sample transaction snapshot...")
 		isTemp = true
 
-		writer, err := impulse.NewWriter(tempPath)
+		writer, err := impulse.NewWriter(tempPath, 0)
 		if err != nil {
 			log.Fatalf("Failed to create writer: %v", err)
 		}

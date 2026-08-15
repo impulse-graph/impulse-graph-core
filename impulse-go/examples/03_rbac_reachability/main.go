@@ -25,7 +25,7 @@ func main() {
 		fmt.Println("[INFO] Generating fallback ReBAC snapshot...")
 		isTemp = true
 
-		writer, err := impulse.NewWriter(tempPath)
+		writer, err := impulse.NewWriter(tempPath, 0)
 		if err != nil {
 			log.Fatalf("Failed to create writer: %v", err)
 		}
@@ -67,8 +67,7 @@ func main() {
 	fmt.Println("\n1. ReBAC Policy: Check permissions for User 0 (User -> Role -> Permission):")
 
 	t0 := time.Now()
-	effectivePermissions, err := snap.Traverse(0).
-		Out("0"). // Walk User -> Role
+	effectivePermissions, err := snap.Traverse("0", 0).
 		Out("1"). // Walk Role -> Permission
 		ToSlice()
 	elapsed := time.Since(t0)

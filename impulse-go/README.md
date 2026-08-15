@@ -119,8 +119,7 @@ func main() {
 	defer snap.Close()
 
 	// 2-Hop Traversal: Seed(0) -> follows -> follows
-	friends, err := snap.Traverse(0).
-		Out("0").
+	friends, err := snap.Traverse("0", 0).
 		Out("0").
 		ToSlice()
 	if err != nil {
@@ -143,7 +142,7 @@ import (
 )
 
 func main() {
-	writer, err := impulse.NewWriter("sample_graph.imps")
+	writer, err := impulse.NewWriter("sample_graph.imps", 0)
 	if err != nil {
 		log.Fatalf("Failed to create writer: %v", err)
 	}
