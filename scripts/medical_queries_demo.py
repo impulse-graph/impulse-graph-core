@@ -144,7 +144,7 @@ def main():
             print(f"    Domains: {het_snap.domain_count()} | Relations: {het_snap.relation_count()}\n")
 
             # Q1: 4-Hop Pathway Drug Repurposing
-            seed_q1 = find_active_seed_node(het_snap, 7)
+            seed_q1 = find_active_seed_node(het_snap, 6)
             run_showcase_query(
                 name="Cypher Q1: 4-Hop Pathway Drug Repurposing (CbGpPWpD)",
                 dataset="Hetionet v1.0",
@@ -160,8 +160,8 @@ def main():
                 seed_node=seed_q1,
             )
 
-            # Q2: 2-Hop Expression Counteraction / MoA
-            seed_q2 = find_active_seed_node(het_snap, 17)
+            # Q2: 2-Hop Expression Counteraction / MoA (CuG<rGaD)
+            seed_q2 = find_active_seed_node(het_snap, 15)
             run_showcase_query(
                 name="Cypher Q2: 2-Hop Expression Counteraction / MoA (CuG<rGaD)",
                 dataset="Hetionet v1.0",
@@ -175,8 +175,8 @@ def main():
                 seed_node=seed_q2,
             )
 
-            # Q3: 2-Hop Chemical Resemblance Transitivity
-            seed_q3 = find_active_seed_node(het_snap, 9)
+            # Q3: 2-Hop Chemical Resemblance Transitivity (CrCtD)
+            seed_q3 = find_active_seed_node(het_snap, 8)
             run_showcase_query(
                 name="Cypher Q3: 2-Hop Chemical Resemblance Transitivity (CrCtD)",
                 dataset="Hetionet v1.0",
@@ -190,8 +190,8 @@ def main():
                 seed_node=seed_q3,
             )
 
-            # Q4: 3-Hop Shared Anatomy Pathology & Target Discovery
-            seed_q4 = find_active_seed_node(het_snap, 14)
+            # Q4: 3-Hop Shared Anatomy Pathology & Target Discovery (DlAeGbC)
+            seed_q4 = find_active_seed_node(het_snap, 12)
             run_showcase_query(
                 name="Cypher Q4: 3-Hop Shared Anatomy Pathology & Target Discovery (DlAeGbC)",
                 dataset="Hetionet v1.0",
@@ -217,31 +217,31 @@ def main():
             print(f"    Domains: {drkg_snap.domain_count()} | Relations: {drkg_snap.relation_count()}\n")
 
             # Q5: 3-Hop Precision Oncology Cascades
-            seed_q5 = find_active_seed_node(drkg_snap, 0)
+            seed_q5 = find_active_seed_node(drkg_snap, 81)
             run_showcase_query(
                 name="Cypher Q5: 3-Hop Precision Oncology Cascades (DisGeNET + STRING + DrugBank)",
                 dataset="DRKG (DisGeNET + STRING + DrugBank)",
-                cypher="MATCH (d:Disease)-[:`DISGENET::da`]->(g1:Gene)-[:`STRING::interacts_with`]->(g2:Gene)<-[:`DRUGBANK::target`]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
+                cypher="MATCH (d:Disease)-[:`Hetionet::DaG::Disease:Gene`]->(g1:Gene)-[:`STRING::OTHER::Gene:Gene`]->(g2:Gene)<-[:`DRUGBANK::target::Compound:Gene`]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog="drkg")
-                        .out("DISGENET::da")
-                        .out("STRING::interacts_with")
-                        .in_("DRUGBANK::target")
+                    snap.traverse(start_node=seed)
+                        .out(81)
+                        .out(99)
+                        .in_(101)
                 ),
                 snap=drkg_snap,
                 seed_node=seed_q5,
             )
 
             # Q6: 2-Hop Polypharmacology Adverse DDI Warning
-            seed_q6 = find_active_seed_node(drkg_snap, 0)
+            seed_q6 = find_active_seed_node(drkg_snap, 96)
             run_showcase_query(
                 name="Cypher Q6: 2-Hop Polypharmacology Adverse DDI Warning (DrugBank + GNBR)",
                 dataset="DRKG (DrugBank DDI + GNBR Side Effects)",
-                cypher="MATCH (c1:Compound)-[:`DRUGBANK::ddi_interactor_in`]->(c2:Compound)-[:`GNBR::C`]->(s:SideEffect) WHERE c1.id = $compoundId RETURN s",
+                cypher="MATCH (c1:Compound)-[:`DRUGBANK::ddi_interactor_in::Compound:Compound`]->(c2:Compound)-[:`GNBR::T::Compound:Disease`]->(s:Disease) WHERE c1.id = $compoundId RETURN s",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog="drkg")
-                        .out("DRUGBANK::ddi_interactor_in")
-                        .out("GNBR::C")
+                    snap.traverse(start_node=seed)
+                        .out(0)
+                        .out(96)
                 ),
                 snap=drkg_snap,
                 seed_node=seed_q6,
