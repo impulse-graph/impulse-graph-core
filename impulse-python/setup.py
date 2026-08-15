@@ -32,7 +32,7 @@ if not os.path.exists(hwy_dir) and os.path.exists(os.path.join(cpp_dir, "CMakeLi
         pass
 
 hwy_sources = []
-for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_allocator.cc", "timer.cc"]:
+for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_allocator.cc", "timer.cc", "abort.cc", "base.cc", "stats.cc", "print.cc"]:
     full_hwy_file = os.path.join(hwy_dir, "hwy", hwy_file)
     if os.path.exists(full_hwy_file):
         hwy_sources.append(full_hwy_file)
