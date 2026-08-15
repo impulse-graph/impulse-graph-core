@@ -63,6 +63,11 @@ class Snapshot:
         native_query = getattr(query, "_native", query)
         return vm.QueryResult(self._native.execute_query(native_query, input_param))
 
+    def traverse(self, start_node: int = 0, catalog: dict | None = None) -> "Traversal":
+        """Initiate a friendly fluent graph path traversal starting from start_node."""
+        from .traversal import Traversal
+        return Traversal(self, start_node=start_node, catalog=catalog)
+
     def to_scipy_csr(self, relation_index: int = 0):
         """Convert snapshot CSR topology to a zero-copy scipy.sparse.csr_matrix."""
         import scipy.sparse as sp
@@ -174,5 +179,7 @@ class Writer:
         self._native.finalize()
 
 
+from .traversal import Traversal
+
 __version__ = "2.4.0"
-__all__ = ["Snapshot", "Writer", "vm"]
+__all__ = ["Snapshot", "Writer", "Traversal", "vm"]

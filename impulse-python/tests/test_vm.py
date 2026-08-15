@@ -128,7 +128,14 @@ def test_vm_query_execution_on_snapshot():
             qb.walk_edge(0)
             qb.collect_array()
             query = qb.compile()
-
             result = snap.execute_query(query, input_param=0)
             assert result.is_ok()
             assert result.status == vm.VmStatus.OK
+
+            # Test Friendly Traversal API
+            traversal = snap.traverse(start_node=0).out(0)
+            targets = traversal.to_list()
+            assert targets == [1]
+            assert traversal.contains(1) is True
+            assert traversal.contains(2) is False
+            assert traversal.count() == 1

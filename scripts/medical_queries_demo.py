@@ -25,10 +25,31 @@ pkg_dir = os.path.abspath(os.path.join(script_dir, "..", "impulse-python"))
 if pkg_dir not in sys.path:
     sys.path.insert(0, pkg_dir)
 
-from impulse_graph import Snapshot, vm
+from impulse_graph import Snapshot, Traversal, vm
 
 HETIONET_PATH = "/Users/jesse/impulse/datasets/hetionet/hetionet.v09.imps"
 DRKG_PATH = "/Users/jesse/impulse/datasets/drkg/drkg.v09.imps"
+
+# Domain Catalogs for Friendly String-Based Relation Resolution
+HETIONET_CATALOG = {
+    "AeG": 0,
+    "DaG": 7,
+    "CtD": 9,
+    "CrC": 10,
+    "DlA": 14,
+    "DdG": 17,
+    "CbG": 19,
+    "GpPW": 20,
+    "CuG": 22,
+}
+
+DRKG_CATALOG = {
+    "DISGENET::da": 0,
+    "STRING::interacts_with": 0,
+    "DRUGBANK::target": 0,
+    "DRUGBANK::ddi_interactor_in": 0,
+    "GNBR::C": 0,
+}
 
 
 def find_active_seed_node(snap: Snapshot, rel_idx: int, min_degree: int = 5) -> int:
@@ -41,11 +62,11 @@ def find_active_seed_node(snap: Snapshot, rel_idx: int, min_degree: int = 5) -> 
     return 0
 
 
-def run_benchmark(
+def run_showcase_query(
     name: str,
     dataset: str,
     cypher: str,
-    query_builder_fn,
+    traversal_fn,
     snap: Snapshot,
     seed_node: int,
     iterations: int = 20000,
@@ -58,22 +79,24 @@ def run_benchmark(
     print(f"    {cypher}")
     print("=" * 100)
 
-    # 1. Build & Compile VM Bytecode
-    qb = query_builder_fn()
-    compiled = qb.compile()
-    print(f"  [Bytecode]: Compiled {compiled.instruction_count()} impOps instructions")
+    # 1. Friendly Pythonic Traversal Syntax
+    t: Traversal = traversal_fn(snap, seed_node)
+    
+    # 2. Extract Sample Discovered Entities
+    candidates = t.to_list(start_node=seed_node)
+    sample_preview = candidates[:8] if len(candidates) > 8 else candidates
+    print(f"  -> Discovered {len(candidates)} candidate targets | Sample: {sample_preview}{' ...' if len(candidates) > 8 else ''}")
 
-    # 2. Execution Context
+    # 3. High-Throughput Compiled Engine Benchmark
+    compiled = t.compile()
     ctx = vm.VmContext(snap)
     state = vm.VmState()
 
-    # 3. Warmup
     for _ in range(warmup):
         res = compiled.execute_with_context(ctx, state, seed_node)
         if res.is_ok() and res.result_type == vm.RegisterType.TYPE_BITSET_HANDLE:
             ctx.release_bitset(res.raw_value)
 
-    # 4. Timed Execution
     latencies_us: List[float] = []
     t0_wall = time.perf_counter()
 
@@ -96,20 +119,20 @@ def run_benchmark(
     p99_us = latencies_us[int(len(latencies_us) * 0.99)]
     qps = int(iterations / total_wall_sec)
 
-    print(f"  Seed Node ID:          {seed_node}")
-    print(f"  Mean Latency:          {mean_us:8.3f} µs")
-    print(f"  P50 (Median) Latency:  {p50_us:8.3f} µs")
-    print(f"  P90 Latency:           {p90_us:8.3f} µs")
-    print(f"  P99 Latency:           {p99_us:8.3f} µs")
-    print(f"  Execution Throughput:  {qps:,} queries / second\n")
+    print(f"  -> Compiled VM Code:   {compiled.instruction_count()} impOps instructions")
+    print(f"  -> Mean Latency:       {mean_us:8.3f} µs")
+    print(f"  -> P50 (Median):       {p50_us:8.3f} µs")
+    print(f"  -> P90 Latency:        {p90_us:8.3f} µs")
+    print(f"  -> P99 Latency:        {p99_us:8.3f} µs")
+    print(f"  -> Execution Rate:     {qps:,} queries / second\n")
 
     ctx.destroy()
 
 
 def main():
     print("\n" + "#" * 100)
-    print("   IMPULSE GRAPH ENGINE - BIOMEDICAL KNOWLEDGE GRAPH QUERY DEMONSTRATION (PYTHON SDK)")
-    print("   Zero-Copy C-ABI Kernel & ImpulseVM Instruction Set Architecture")
+    print("   IMPULSE GRAPH ENGINE - BIOMEDICAL KNOWLEDGE GRAPH SHOWCASE (PYTHON SDK)")
+    print("   Friendly Fluent Path Traversal DSL & High-Performance ImpulseVM Engine")
     print("#" * 100 + "\n")
 
     # -------------------------------------------------------------------------
@@ -122,18 +145,16 @@ def main():
 
             # Q1: 4-Hop Pathway Drug Repurposing
             seed_q1 = find_active_seed_node(het_snap, 7)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q1: 4-Hop Pathway Drug Repurposing (CbGpPWpD)",
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DaG]->(g1:Gene)-[:GpPW]->(p:Pathway)<-[:GpPW]-(g2:Gene)<-[:CbG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_edge(7)   # DaG
-                    .walk_edge(20)  # GpPW
-                    .walk_csc(20)   # GpPW (rev)
-                    .walk_csc(19)   # CbG (rev)
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                        .out("DaG")
+                        .out("GpPW")
+                        .in_("GpPW")
+                        .in_("CbG")
                 ),
                 snap=het_snap,
                 seed_node=seed_q1,
@@ -141,16 +162,14 @@ def main():
 
             # Q2: 2-Hop Expression Counteraction / MoA
             seed_q2 = find_active_seed_node(het_snap, 17)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q2: 2-Hop Expression Counteraction / MoA (CuG<rGaD)",
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DdG]->(g:Gene)<-[:CuG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_edge(17)  # DdG
-                    .walk_csc(22)   # CuG (rev)
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                        .out("DdG")
+                        .in_("CuG")
                 ),
                 snap=het_snap,
                 seed_node=seed_q2,
@@ -158,16 +177,14 @@ def main():
 
             # Q3: 2-Hop Chemical Resemblance Transitivity
             seed_q3 = find_active_seed_node(het_snap, 9)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q3: 2-Hop Chemical Resemblance Transitivity (CrCtD)",
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)<-[:CtD]-(c1:Compound)-[:CrC]->(c2:Compound) WHERE d.id = $diseaseId RETURN c2",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_csc(9)   # CtD (rev)
-                    .walk_edge(10) # CrC
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                        .in_("CtD")
+                        .out("CrC")
                 ),
                 snap=het_snap,
                 seed_node=seed_q3,
@@ -175,17 +192,15 @@ def main():
 
             # Q4: 3-Hop Shared Anatomy Pathology & Target Discovery
             seed_q4 = find_active_seed_node(het_snap, 14)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q4: 3-Hop Shared Anatomy Pathology & Target Discovery (DlAeGbC)",
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DlA]->(a:Anatomy)-[:AeG]->(g:Gene)<-[:CbG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_edge(14)  # DlA
-                    .walk_edge(0)   # AeG
-                    .walk_csc(19)   # CbG (rev)
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                        .out("DlA")
+                        .out("AeG")
+                        .in_("CbG")
                 ),
                 snap=het_snap,
                 seed_node=seed_q4,
@@ -203,17 +218,15 @@ def main():
 
             # Q5: 3-Hop Precision Oncology Cascades
             seed_q5 = find_active_seed_node(drkg_snap, 0)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q5: 3-Hop Precision Oncology Cascades (DisGeNET + STRING + DrugBank)",
                 dataset="DRKG (DisGeNET + STRING + DrugBank)",
                 cypher="MATCH (d:Disease)-[:`DISGENET::da`]->(g1:Gene)-[:`STRING::interacts_with`]->(g2:Gene)<-[:`DRUGBANK::target`]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_edge(0)  # DISGENET::da
-                    .walk_edge(0)  # STRING::interacts_with
-                    .walk_csc(0)   # DRUGBANK::target (rev)
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=DRKG_CATALOG)
+                        .out("DISGENET::da")
+                        .out("STRING::interacts_with")
+                        .in_("DRUGBANK::target")
                 ),
                 snap=drkg_snap,
                 seed_node=seed_q5,
@@ -221,16 +234,14 @@ def main():
 
             # Q6: 2-Hop Polypharmacology Adverse DDI Warning
             seed_q6 = find_active_seed_node(drkg_snap, 0)
-            run_benchmark(
+            run_showcase_query(
                 name="Cypher Q6: 2-Hop Polypharmacology Adverse DDI Warning (DrugBank + GNBR)",
                 dataset="DRKG (DrugBank DDI + GNBR Side Effects)",
                 cypher="MATCH (c1:Compound)-[:`DRUGBANK::ddi_interactor_in`]->(c2:Compound)-[:`GNBR::C`]->(s:SideEffect) WHERE c1.id = $compoundId RETURN s",
-                query_builder_fn=lambda: (
-                    vm.QueryBuilder()
-                    .input_node(0)
-                    .walk_edge(0)  # DRUGBANK::ddi_interactor_in
-                    .walk_edge(0)  # GNBR::C
-                    .collect_bitset()
+                traversal_fn=lambda snap, seed: (
+                    snap.traverse(start_node=seed, catalog=DRKG_CATALOG)
+                        .out("DRUGBANK::ddi_interactor_in")
+                        .out("GNBR::C")
                 ),
                 snap=drkg_snap,
                 seed_node=seed_q6,
