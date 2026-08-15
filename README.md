@@ -12,6 +12,26 @@ Impulse Graph is the **"SQLite for Graphs"** and the **"Apache Arrow for Graph A
 
 ---
 
+## 🏛️ The Two Core Pillars
+
+There are two architectural pillars that make this possible:
+
+### Pillar 1: The Impulse Binary Snapshot Format (`.imps`)
+The **Impulse Binary Snapshot Format** borrows the best zero-copy, columnar concepts from **Apache Parquet** and **Apache Arrow**, tailored and optimized specifically for graph analytics:
+* **Ultra `mmap`-Friendly Design**: Engineered from the ground up so that files can be memory-mapped into user space instantly without deserialization, decoding, or heap copying.
+* **128-Byte Hardware Alignment**: All internal directory entries, adjacency arrays, and attribute buffers are strictly 128-byte aligned for NVMe/SSD sector reads, CPU SIMD vector lanes (AVX-512 / ARM Neon), GPU warp memory coalescing (NVIDIA GPUDirect Storage `cuFile`), and TPU vector tiles.
+* **Rich Graph Topologies & Sparse Matrix Encodings**: Supports strongly typed nodes and edges across multi-domain schemas. Graph relations are stored as high-performance sparse matrices (**Compressed Sparse Row / CSR**, **Compressed Sparse Column / CSC**, and **Coordinate List / COO**) alongside advanced compression formats such as **SIMDComp** and **ELLPACK**.
+* **Instant Sub-Millisecond Cold Starts**: Open and query multi-gigabyte or multi-terabyte graphs in `< 1 ms`.
+
+### Pillar 2: The ImpulseVM Register-Based Execution Core
+The **ImpulseVM** is an ultra-lean, register-based graph query Virtual Machine heavily inspired by **Lua's register VM architecture**:
+* **64 Polymorphic Registers (`R0`..`R63`)**: Directly manages scalar node IDs, dense numeric feature vectors, off-heap bitsets ($N/64$ words), and string pool offsets without stack push/pop overhead.
+* **Direct-Threaded Computed Goto Dispatch**: Utilizes compiler jump tables (`dispatch_table[]`) on Clang and GCC to eliminate switch-case branch mispredictions in instruction dispatch loops.
+* **SIMD-Vectorized Instruction Set (`impOps`)**: Opcodes (`0x00`..`0x72`) map directly to vectorized hardware primitives for forward CSR walks, reverse CSC walks, fused 2-hop traversals (`OP_CSR_WALK_2HOP`), GraphBLAS matrix-vector multiplications (`OP_MXV`), and Afforest connected components (`OP_CC_AFFOREST`).
+* **Zero-Cost On-The-Fly Compilation**: Paired with the homoiconic **ImpScheme** (`.impscm`) IR bus, the zero-dependency C++ compiler generates and optimizes execution plans in single-digit microseconds (< 3 µs). Every query is compiled and optimized dynamically without query cache contention or synchronization locks.
+
+---
+
 ## 🛡️ Zero Third-Party Runtime Dependencies
 
 Impulse Graph maintains **strictly zero external runtime dependencies**:
