@@ -61,7 +61,9 @@ private:
         in_stack.insert(current);
         auto it = adj.find(current);
         if (it != adj.end()) {
-            for (const auto& [next, is_negated] : it->second) {
+            for (const auto& edge : it->second) {
+                const std::string& next = edge.first;
+                bool is_negated = edge.second;
                 path.push_back({next, is_negated});
                 if (in_stack.find(next) != in_stack.end()) {
                     auto pos_it = std::find_if(path.begin(), path.end(), [&](const auto& p) { return p.first == next; });

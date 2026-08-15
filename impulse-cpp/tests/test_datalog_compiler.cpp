@@ -49,7 +49,10 @@ static void test_datalog_stratification_failure() {
         caught = true;
         std::cout << "  -> Expected rejection caught: " << e.what() << std::endl;
     }
-    assert(caught);
+    if (!caught) {
+        std::cerr << "Assertion failed: expected exception" << std::endl;
+        std::exit(1);
+    }
 }
 
 static void test_magic_sets_transformation() {

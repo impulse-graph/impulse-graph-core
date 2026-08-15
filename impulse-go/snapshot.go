@@ -76,24 +76,6 @@ func (s *Snapshot) RelationCount() uint16 {
 	return uint16(C.impulse_snapshot_relation_count(s.ptr))
 }
 
-// MaxNodeCount returns the maximum node count defined across all relations in the snapshot.
-func (s *Snapshot) MaxNodeCount() uint64 {
-	if s.ptr == nil {
-		return 0
-	}
-	count := s.RelationCount()
-	var maxNodes uint64
-	for i := uint16(0); i < count; i++ {
-		entry, err := s.GetRelationEntry(i)
-		if err == nil && entry.NodeCount > maxNodes {
-			maxNodes = entry.NodeCount
-		}
-	}
-	if maxNodes == 0 {
-		return 65536
-	}
-	return maxNodes
-}
 
 // RelationIndex looks up a relation index in the snapshot catalog.
 func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
