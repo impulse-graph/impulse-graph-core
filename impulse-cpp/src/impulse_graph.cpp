@@ -188,14 +188,57 @@ const char* impulse_get_last_error(void) {
     return g_last_error.c_str();
 }
 
+static std::string resolve_snapshot_path(const char* file_path) {
+    if (!file_path || file_path[0] == '\0') return "";
+    std::string path_str(file_path);
+
+#ifndef _WIN32
+    struct stat st;
+    if (::stat(path_str.c_str(), &st) == 0) {
+        return path_str;
+    }
+
+    const char* env_dir = std::getenv("IMPULSEGRAPH_DATA_DIR");
+    if (!env_dir || env_dir[0] == '\0') {
+        env_dir = std::getenv("IMPULSE_DATA_DIR");
+    }
+
+    if (env_dir) {
+        std::string base(env_dir);
+        if (!base.empty() && base.back() != '/') {
+            base += '/';
+        }
+
+        std::string candidate1 = base + path_str;
+        if (::stat(candidate1.c_str(), &st) == 0) {
+            return candidate1;
+        }
+
+        size_t dot_pos = path_str.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string dataset_name = path_str.substr(0, dot_pos);
+            std::string candidate2 = base + dataset_name + "/" + path_str;
+            if (::stat(candidate2.c_str(), &st) == 0) {
+                return candidate2;
+            }
+        }
+    }
+#endif
+
+    return path_str;
+}
+
 impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
     if (!file_path) {
         if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
         return nullptr;
     }
 
+    std::string resolved = resolve_snapshot_path(file_path);
+    const char* target_path = resolved.c_str();
+
 #ifdef _WIN32
-    HANDLE hFile = CreateFileA(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileA(target_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
         g_last_error = "Failed to open file on Windows";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
@@ -218,7 +261,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
 #else
-    int fd = ::open(file_path, O_RDONLY);
+    int fd = ::open(target_path, O_RDONLY);
     if (fd < 0) {
         g_last_error = "Failed to open file";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;

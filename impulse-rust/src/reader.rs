@@ -70,7 +70,35 @@ pub struct SnapshotReader {
 
 impl SnapshotReader {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ImpulseError> {
-        let mmap = MemoryMap::open(path).map_err(|_| ImpulseError::IoFailure)?;
+        let p = path.as_ref();
+        if p.exists() {
+            let mmap = MemoryMap::open(p).map_err(|_| ImpulseError::IoFailure)?;
+            return Self::from_mmap(mmap);
+        }
+
+        let env_val = std::env::var("IMPULSEGRAPH_DATA_DIR")
+            .or_else(|_| std::env::var("IMPULSE_DATA_DIR"));
+
+        if let Ok(base_dir) = env_val {
+            let candidate1 = Path::new(&base_dir).join(p);
+            if candidate1.exists() {
+                let mmap = MemoryMap::open(candidate1).map_err(|_| ImpulseError::IoFailure)?;
+                return Self::from_mmap(mmap);
+            }
+
+            if let Some(file_str) = p.to_str() {
+                if let Some(dot_pos) = file_str.find('.') {
+                    let dataset = &file_str[..dot_pos];
+                    let candidate2 = Path::new(&base_dir).join(dataset).join(p);
+                    if candidate2.exists() {
+                        let mmap = MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
+                        return Self::from_mmap(mmap);
+                    }
+                }
+            }
+        }
+
+        let mmap = MemoryMap::open(p).map_err(|_| ImpulseError::IoFailure)?;
         Self::from_mmap(mmap)
     }
 
