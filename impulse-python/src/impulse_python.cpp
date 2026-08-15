@@ -44,6 +44,22 @@ public:
         return snapshot_ ? impulse_snapshot_domain_count(snapshot_) : 0;
     }
 
+    py::dict get_domain(uint16_t index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        impulse_domain_catalog_entry_t entry;
+        const char* name = nullptr;
+        impulse_status_t status = impulse_snapshot_get_domain_entry(snapshot_, index, &entry, &name);
+        if (status != IMPULSE_OK) {
+            throw std::out_of_range("Invalid domain index: " + std::to_string(index));
+        }
+
+        py::dict res;
+        res["domain_id"] = entry.domain_id;
+        res["key_type"] = entry.key_type;
+        res["name"] = name ? std::string(name) : "";
+        return res;
+    }
+
     uint16_t relation_count() const {
         return snapshot_ ? impulse_snapshot_relation_count(snapshot_) : 0;
     }
@@ -638,6 +654,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("__enter__", [](PyImpulseSnapshot& self) { return &self; })
         .def("__exit__", [](PyImpulseSnapshot& self, py::object, py::object, py::object) { self.close(); })
         .def("domain_count", &PyImpulseSnapshot::domain_count)
+        .def("get_domain", &PyImpulseSnapshot::get_domain, py::arg("index"))
         .def("relation_count", &PyImpulseSnapshot::relation_count)
         .def("get_relation", &PyImpulseSnapshot::get_relation, py::arg("index"))
         .def("get_buffer", &PyImpulseSnapshot::get_buffer, py::arg("offset"), py::arg("size"))

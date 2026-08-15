@@ -139,6 +139,21 @@ IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot
 IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
 
 /**
+ * @brief Inspect domain catalog entry metadata by domain index.
+ * @param snapshot Pointer to snapshot handle.
+ * @param domain_index Index of domain entry (0..domain_count-1).
+ * @param out_entry Output struct to populate with domain entry data.
+ * @param out_name Optional pointer to receive null-terminated domain name string.
+ * @return IMPULSE_OK on success, or error code on invalid index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    impulse_domain_catalog_entry_t* out_entry,
+    const char** out_name
+);
+
+/**
  * @brief Get number of relation directory entries in snapshot.
  * @param snapshot Pointer to snapshot handle.
  * @return Count of relation directories.

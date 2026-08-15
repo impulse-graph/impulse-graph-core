@@ -637,6 +637,26 @@ uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.domain_count : 0;
 }
 
+impulse_status_t impulse_snapshot_get_domain_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    impulse_domain_catalog_entry_t* out_entry,
+    const char** out_name
+) {
+    if (!snapshot || !out_entry || domain_index >= snapshot->domains.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    *out_entry = snapshot->domains[domain_index];
+    if (out_name) {
+        if (domain_index < snapshot->domain_names.size()) {
+            *out_name = snapshot->domain_names[domain_index].c_str();
+        } else {
+            *out_name = "";
+        }
+    }
+    return IMPULSE_OK;
+}
+
 uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.relation_count : 0;
 }

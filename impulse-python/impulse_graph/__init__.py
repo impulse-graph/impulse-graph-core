@@ -35,6 +35,9 @@ class Snapshot:
     def domain_count(self) -> int:
         return self._native.domain_count()
 
+    def get_domain(self, index: int) -> dict:
+        return self._native.get_domain(index)
+
     def relation_count(self) -> int:
         return self._native.relation_count()
 
