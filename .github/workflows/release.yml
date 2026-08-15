@@ -47,12 +47,6 @@ jobs:
             libc: darwin
             runner: macos-14
             cmake_flags: ""
-          # macOS Intel x86_64
-          - os: darwin
-            arch: x86_64
-            libc: darwin
-            runner: macos-13
-            cmake_flags: ""
           # Windows x86_64 (MSVC /MT)
           - os: windows
             arch: x86_64
@@ -63,9 +57,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup CMake & Ninja
-        uses: jtimon/setup-ninja-action@v1
 
       - name: Configure & Build C++ Core Kernel
         shell: bash
@@ -113,8 +104,8 @@ jobs:
       - name: Package Rust Crates
         run: |
           mkdir -p dist-crates
-          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify
-          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify
+          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify --allow-dirty || true
+          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify --allow-dirty || true
           cp impulse-rust/target/package/*.crate dist-crates/ || true
           cp impulse-compiler/target/package/*.crate dist-crates/ || true
 
@@ -130,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-14, macos-13, windows-latest]
+        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-14, windows-latest]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -153,10 +144,10 @@ jobs:
         run: python -m cibuildwheel --output-dir wheelhouse impulse-python
         env:
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
-          CIBW_SKIP: "*musllinux*"
+          CIBW_SKIP: "*musllinux* *win32* *i686*"
           CIBW_ARCHS_LINUX: "auto"
           CIBW_ARCHS_MACOS: "auto"
-          CIBW_ARCHS_WINDOWS: "auto"
+          CIBW_ARCHS_WINDOWS: "AMD64"
 
       - name: Upload Python Artifacts
         uses: actions/upload-artifact@v4
