@@ -139,3 +139,10 @@ def test_vm_query_execution_on_snapshot():
             assert traversal.contains(1) is True
             assert traversal.contains(2) is False
             assert traversal.count() == 1
+
+            # Test Filtered Edge & Node Filter Traversals
+            t_edge_filtered = snap.traverse(start_node=0).out(0, filter_id=0)
+            assert t_edge_filtered.compile().instruction_count() > 0
+
+            t_node_filtered = snap.traverse(start_node=0).out(0).filter(prefix="USR-")
+            assert t_node_filtered.compile().instruction_count() > 0

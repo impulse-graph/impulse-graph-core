@@ -34,32 +34,87 @@ class Traversal:
             f"Unknown relation name '{rel}'. Provide relation ID integer or pass catalog={{'{rel}': id}}."
         )
 
-    def out(self, relation: Union[str, int]) -> "Traversal":
-        """Follow outgoing edge (forward CSR walk): (a)-[:rel]->(b)"""
-        self._steps.append(("out", self._resolve_rel(relation)))
+    def out(
+        self,
+        relation: Union[str, int],
+        filter_id: Optional[int] = None,
+        predicate_id: Optional[int] = None,
+    ) -> "Traversal":
+        """
+        Follow outgoing edge (forward CSR walk): (a)-[:rel]->(b)
+        Optional edge filters:
+          - filter_id: secondary attribute filter index (e.g. edge weight, confidence)
+          - predicate_id: fused SIMD boolean predicate filter
+        """
+        rel = self._resolve_rel(relation)
+        if predicate_id is not None:
+            self._steps.append(("out_predicate", rel, predicate_id))
+        elif filter_id is not None:
+            self._steps.append(("out_filtered", rel, filter_id))
+        else:
+            self._steps.append(("out", rel, 0))
         return self
 
-    def in_(self, relation: Union[str, int]) -> "Traversal":
+    def in_(
+        self,
+        relation: Union[str, int],
+    ) -> "Traversal":
         """Follow incoming edge (reverse CSC walk): (a)<-[:rel]-(b)"""
-        self._steps.append(("in_", self._resolve_rel(relation)))
+        rel = self._resolve_rel(relation)
+        self._steps.append(("in_", rel, 0))
+        return self
+
+    def filter_node(self, filter_id: int) -> "Traversal":
+        """Filter current node set using secondary node attribute index (OP_NODE_FILTER)."""
+        self._steps.append(("filter_node", filter_id, 0))
+        return self
+
+    def filter_prefix(self, prefix: str) -> "Traversal":
+        """Filter current node set matching string attribute prefix (OP_NODE_FILTER_STR_PREFIX)."""
+        self._steps.append(("filter_prefix", prefix, 0))
+        return self
+
+    def filter(
+        self,
+        filter_id: Optional[int] = None,
+        prefix: Optional[str] = None,
+    ) -> "Traversal":
+        """
+        Convenience node filter:
+          - snap.traverse(...).filter(filter_id=42)
+          - snap.traverse(...).filter(prefix="COVID-19")
+        """
+        if prefix is not None:
+            return self.filter_prefix(prefix)
+        if filter_id is not None:
+            return self.filter_node(filter_id)
         return self
 
     def degree(self, relation: Union[str, int]) -> "Traversal":
         """Compute degree on relation."""
-        self._steps.append(("degree", self._resolve_rel(relation)))
+        self._steps.append(("degree", self._resolve_rel(relation), 0))
         return self
 
     def compile(self) -> vm.CompiledQuery:
         """Compile traversal steps into an optimized ImpulseVM bytecode program."""
         qb = vm.QueryBuilder()
         qb.input_node(0)
-        for op, rel_id in self._steps:
+        for step in self._steps:
+            op = step[0]
             if op == "out":
-                qb.walk_edge(rel_id)
+                qb.walk_edge(step[1])
+            elif op == "out_filtered":
+                qb.walk_edge_filtered(step[1], step[2])
+            elif op == "out_predicate":
+                qb.walk_edge_predicate(step[1], step[2])
             elif op == "in_":
-                qb.walk_csc(rel_id)
+                qb.walk_csc(step[1])
+            elif op == "filter_node":
+                qb.filter_node(step[1])
+            elif op == "filter_prefix":
+                qb.filter_node_str_prefix(step[1])
             elif op == "degree":
-                qb.walk_degree(rel_id)
+                qb.walk_degree(step[1])
         qb.collect_bitset()
         return qb.compile()
 
