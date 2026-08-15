@@ -61,9 +61,13 @@ For maximum performance, you can bypass the Cypher parser and use the zero-alloc
 from impulse_graph import Snapshot
 
 with Snapshot("hetionet.v09.imps") as graph:
-    # Assuming Epilepsy was resolved to node ID 14726 via an external index
+    # 1. Resolve domain key to dense node ID via O(1) MPHF index lookup
+    # Disease domain is ID 4 in Hetionet
+    disease_id = graph.resolve_dense_id(domain_id=4, key="Disease::DOID:10652")
+
+    # 2. Execute zero-allocation SIMD traversal
     candidates = (
-        graph.traverse(start_node=14726, catalog="hetionet")
+        graph.traverse(start_node=disease_id, catalog="hetionet")
              .out("DaG")       # Disease → Gene
              .out("GpPW")      # Gene → Pathway
              .in_("GpPW")      # Pathway ← Gene
@@ -86,9 +90,14 @@ int main() {
     impulse_status_t st;
     impulse_snapshot_t* graph = impulse_snapshot_open("hetionet.v09.imps", &st);
 
+    // Resolve string keys to dense node IDs via O(1) MPHF index lookup
+    uint32_t disease_id = 0, gene_id = 0;
+    impulse_snapshot_resolve_key(graph, 4, "Disease::DOID:10652", &disease_id); // Epilepsy
+    impulse_snapshot_resolve_key(graph, 5, "Gene::5231", &gene_id);             // Target gene
+
     // Point reachability query
-    bool connected = impulse_snapshot_is_reachable(graph, 0, 14726, 5231);
-    printf("Disease 14726 → Gene 5231: %s\n", connected ? "yes" : "no");
+    bool connected = impulse_snapshot_is_reachable(graph, 0, disease_id, gene_id);
+    printf("Disease %u → Gene %u connected: %s\n", disease_id, gene_id, connected ? "yes" : "no");
 
     impulse_snapshot_close(graph);
 }
@@ -102,7 +111,7 @@ Or with the C++ fluent QueryBuilder:
 using namespace impulse::vm;
 
 QueryBuilder builder;
-builder.inputNode(14726)
+builder.inputNodeParam()  // Use parameterized input instead of hardcoded ID
        .walkEdge(0)       // DaG
        .walkEdge(1)       // GpPW
        .walkCsc(1)        // GpPW reverse
@@ -111,7 +120,8 @@ builder.inputNode(14726)
 
 CompiledQuery query = builder.compile();
 impulse_vm_state_t state{};
-QueryResult result = query.executeWithContext(nullptr, &state, 14726);
+// Execute with parameter value mapped from domain index
+QueryResult result = query.executeWithContext(nullptr, &state, disease_id);
 printf("Status: %s\n", result.isOk() ? "OK" : "ERROR");
 ```
 
@@ -124,8 +134,9 @@ printf("Status: %s\n", result.isOk() ? "OK" : "ERROR");
 use impulse_graph::SnapshotReader;
 
 let reader = SnapshotReader::open("hetionet.v09.imps").unwrap();
+let disease_id = reader.resolve_dense_id(4, "Disease::DOID:10652").unwrap();
 
-let candidates = reader.traverse(14726)
+let candidates = reader.traverse(disease_id)
     .out("DaG")
     .out("GpPW")
     .in_step("GpPW")
@@ -153,7 +164,9 @@ func main() {
     graph, _ := impulse.OpenSnapshot("hetionet.v09.imps")
     defer graph.Close()
 
-    candidates, _ := graph.Traverse(14726).
+    diseaseId, _ := graph.ResolveDenseId(4, "Disease::DOID:10652")
+
+    candidates, _ := graph.Traverse(diseaseId).
         Out("DaG").
         Out("GpPW").
         In("GpPW").
@@ -173,8 +186,9 @@ func main() {
 const { Snapshot } = require('impulse-graph');
 
 const graph = new Snapshot('hetionet.v09.imps');
+const diseaseId = graph.resolveDenseId(4, 'Disease::DOID:10652');
 
-const candidates = graph.traverse(14726)
+const candidates = graph.traverse(diseaseId)
     .out(0)    // DaG
     .out(1)    // GpPW
     .in(1)     // GpPW reverse
@@ -195,9 +209,10 @@ using ImpulseGraph;
 using ImpulseGraph.Vm;
 
 using var graph = new Snapshot("hetionet.v09.imps");
+uint diseaseId = graph.ResolveDenseId(4, "Disease::DOID:10652");
 
 var query = new QueryBuilder()
-    .InputNode(14726)
+    .InputNodeParam()  // Use parameterized input
     .WalkEdge(0)       // DaG
     .WalkEdge(1)       // GpPW
     .CscWalk(1)        // GpPW reverse
@@ -205,7 +220,7 @@ var query = new QueryBuilder()
     .CollectBitset()
     .Compile();
 
-var result = graph.ExecuteQuery(query, inputParam: 14726);
+var result = graph.ExecuteQuery(query, inputParam: diseaseId);
 Console.WriteLine($"Status: {result.Status}");
 ```
 
@@ -362,7 +377,7 @@ Comparison against other graph engines on the same dataset:
 | **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc36`) |
 | **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
 | **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
-| **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs Neo4j, PyG, NetworkX, MATPOWER |
+| **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs PyG, NetworkX, MATPOWER |
 | **[impulse-website](https://github.com/impulse-graph/impulse-website)** | Documentation portal ([docs.impulsegraph.io](https://docs.impulsegraph.io)) |
 
 ---

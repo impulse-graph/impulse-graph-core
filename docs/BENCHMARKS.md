@@ -9,7 +9,7 @@ This document presents empirical benchmark results for the **Impulse Graph Engin
 Impulse Graph provides native C-ABI bindings for Python, Go, Node.js, C# / .NET, and Rust. All bindings share zero-copy access to the memory-mapped snapshot and execute bytecode directly in the C++ kernel.
 
 ### 4-Hop Drug Repurposing Pipeline Latency (Hetionet Dataset)
-*Query: `Disease(14726) -> [:DaG] -> [:GpPW] <- [:GpPW] <- [:CbG] (1,317 candidate compounds)`*
+*Query: `Disease::DOID:10652 -> [:DaG] -> [:GpPW] <- [:GpPW] <- [:CbG] (1,317 candidate compounds)`*
 
 | Language / Binding | Environment | Mean Latency | FFI Overhead vs C++ |
 | :--- | :--- | :--- | :--- |
@@ -32,7 +32,6 @@ Evaluated on Hetionet (47,031 nodes, 2,250,197 edges, 24 relation types):
 | Engine | Storage Model | Cold Start Time | 4-Hop Query Latency | Memory Footprint (RAM) |
 | :--- | :--- | :--- | :--- | :--- |
 | **Impulse Graph** | Immutable `.imps` (Mmap) | **< 1 ms** | **0.018 ms** (18 µs) | **0 MB** (Off-heap / OS Cache) |
-| **Neo4j Enterprise** | Client-Server JVM Database | 4,200 ms | 8.400 ms (8,400 µs) | 2,400 MB (Java Heap) |
 | **NetworkX** | Python In-Memory Dicts | 1,850 ms | 42.100 ms (42,100 µs) | 890 MB (Python Objects) |
 | **PyG (PyTorch Geo)** | CSR / Tensor | 450 ms | 0.850 ms (850 µs) | 410 MB (PyTorch Tensors) |
 
@@ -44,5 +43,5 @@ Evaluated on Hetionet (47,031 nodes, 2,250,197 edges, 24 relation types):
 
 ## 3. Macro Benchmark Suite Reference
 
-For automated, reproducible macro benchmarks comparing Impulse Graph against Neo4j, PyTorch Geometric, NetworkX, and MATPOWER across standardized datasets, visit the dedicated repository:
+For automated, reproducible macro benchmarks comparing Impulse Graph against PyTorch Geometric, NetworkX, and MATPOWER across standardized datasets, visit the dedicated repository:
 👉 **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)**
