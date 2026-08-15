@@ -7,15 +7,18 @@ import numpy as np
 from . import vm
 
 
-# Built-in Domain Catalog Presets
+# Built-in Domain Catalog Presets (Extracted directly from Snapshot Headers)
 BUILTIN_CATALOGS: Dict[str, Dict[str, int]] = {
     "hetionet": {
-        "AeG": 0, "CtD": 9, "CrC": 10, "DaG": 7, "DlA": 14,
-        "DdG": 17, "CbG": 19, "GpPW": 20, "CuG": 22,
+        "AeG": 0, "GpMF": 1, "GiG": 2, "GpCC": 3, "PCiC": 4,
+        "GcG": 5, "DaG": 6, "CcSE": 7, "CtD": 8, "CrC": 9,
+        "CpD": 10, "DrD": 11, "DlA": 12, "AdG": 13, "DpS": 14,
+        "DdG": 15, "CdG": 16, "CbG": 17, "GpPW": 18, "AuG": 19,
+        "CuG": 20, "Gr>G": 21, "GpBP": 22, "DuG": 23,
     },
     "drkg": {
         "DISGENET::da": 0, "STRING::interacts_with": 0,
-        "DRUGBANK::target": 0, "DRUGBANK::ddi_interactor_in": 0,
+        "DRUGBANK::target": 101, "DRUGBANK::ddi_interactor_in": 0,
         "GNBR::C": 0,
     },
     "northwind": {
