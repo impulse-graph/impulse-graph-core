@@ -1498,10 +1498,12 @@ op_CSR_WALK: {
 op_CSR_WALK_FILTERED: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t src = inst.payload & 0xFF;
+    uint16_t filter_reg = (inst.payload >> 8) & 0xFF;
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    VALIDATE_REG(filter_reg);
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];

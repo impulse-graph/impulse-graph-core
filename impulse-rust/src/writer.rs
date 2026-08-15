@@ -132,6 +132,12 @@ impl SnapshotWriter {
         });
     }
 
+    pub fn set_relation_name(&mut self, relation_index: usize, name: &str) {
+        if relation_index < self.relations.len() {
+            self.relations[relation_index].name = name.to_string();
+        }
+    }
+
     pub fn add_attribute_to_relation(
         &mut self,
         relation_index: usize,
