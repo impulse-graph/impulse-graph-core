@@ -113,28 +113,9 @@ For JVM applications (Java 25, Kotlin, Scala 3, Clojure), see the standalone [**
 <details>
 <summary><b>Python (Fluent Builder + Filters)</b></summary>
 
-Both openCypher and the fluent builder compile through the exact same **ImpScheme IR** pipeline down to identical SIMD bytecode. The fluent builder enables programmatic traversal construction with optional attribute filters:
+Both openCypher and the fluent builder compile through the exact same **ImpScheme IR** pipeline down to identical SIMD bytecode. The fluent builder enables programmatic traversal construction with optional attribute filters.
 
-```python
-from impulse_graph import Snapshot
-
-with Snapshot("hetionet.v09.imps") as graph:
-    # 1. Resolve domain key to dense node ID via O(1) MPHF index lookup
-    # (Hetionet Disease domain ID: 4)
-    disease_id = graph.resolve_dense_id(domain_id=4, key="Disease::DOID:10652")
-
-    # 2. Execute zero-allocation SIMD traversal with node attribute filter
-    candidates = (
-        graph.traverse(start_node=disease_id, catalog="hetionet")
-             .out("DaG")                  # Disease → Gene
-             .out("GpPW")                 # Gene → Pathway
-             .filter(prefix="PW:")        # Attribute filter on intermediate pathway nodes
-             .in_("GpPW")                 # Pathway ← Gene
-             .in_("CbG")                  # Gene ← Compound
-             .to_list()
-    )
-    print(f"Found {len(candidates)} candidate compounds")
-```
+👉 **[Explore Python fluent traversal documentation & examples →](impulse-python/)**
 
 </details>
 
