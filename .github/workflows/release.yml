@@ -1,0 +1,215 @@
+name: Release & Artifact Build Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+      - 'v*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.9.0-preview.1)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write # Required for Cosign keyless signing
+
+jobs:
+  build-cpp-kernel:
+    name: Build C++ Kernel (${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Linux x86_64 (glibc)
+          - os: linux
+            arch: x86_64
+            libc: glibc
+            runner: ubuntu-22.04
+            cmake_flags: ""
+          # Linux ARM64 (glibc)
+          - os: linux
+            arch: aarch64
+            libc: glibc
+            runner: ubuntu-24.04-arm
+            cmake_flags: ""
+          # macOS Apple Silicon arm64
+          - os: darwin
+            arch: arm64
+            libc: darwin
+            runner: macos-14
+            cmake_flags: ""
+          # macOS Intel x86_64
+          - os: darwin
+            arch: x86_64
+            libc: darwin
+            runner: macos-13
+            cmake_flags: ""
+          # Windows x86_64 (MSVC /MT)
+          - os: windows
+            arch: x86_64
+            libc: msvc
+            runner: windows-latest
+            cmake_flags: "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup CMake & Ninja
+        uses: jtimon/setup-ninja-action@v1
+
+      - name: Configure & Build C++ Core Kernel
+        shell: bash
+        run: |
+          cmake -B build-cpp -S impulse-cpp \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=install-cpp \
+            ${{ matrix.target.cmake_flags }}
+          cmake --build build-cpp --config Release --target install
+
+      - name: Package Distributable C++ Core Archive
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="${{ inputs.version }}"
+          fi
+          DIST_NAME="impulse-core-cpp-${TAG_NAME}-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}"
+          mkdir -p dist
+
+          if [ "${{ matrix.target.os }}" == "windows" ]; then
+            cp -r install-cpp "$DIST_NAME"
+            7z a "dist/${DIST_NAME}.zip" "$DIST_NAME"
+          else
+            cp -r install-cpp "$DIST_NAME"
+            tar -czvf "dist/${DIST_NAME}.tar.gz" "$DIST_NAME"
+          fi
+
+      - name: Upload C++ Distributable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-cpp-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}
+          path: dist/*
+
+  build-rust-crates:
+    name: Package Rust Crates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Package Rust Crates
+        run: |
+          mkdir -p dist-crates
+          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify
+          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify
+          cp impulse-rust/target/package/*.crate dist-crates/ || true
+          cp impulse-compiler/target/package/*.crate dist-crates/ || true
+
+      - name: Upload Rust Crate Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-rust-crates
+          path: dist-crates/*
+
+  build-python-wheels:
+    name: Build Python Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-14, macos-13, windows-latest]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install cibuildwheel & build
+        run: python -m pip install cibuildwheel==2.21.3 build
+
+      - name: Build SDist (on Linux x86_64 only)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          cd impulse-python
+          python -m build --sdist --outdir ../wheelhouse
+
+      - name: Build Wheels via cibuildwheel
+        run: python -m cibuildwheel --output-dir wheelhouse impulse-python
+        env:
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*musllinux*"
+          CIBW_ARCHS_LINUX: "auto"
+          CIBW_ARCHS_MACOS: "auto"
+          CIBW_ARCHS_WINDOWS: "auto"
+
+      - name: Upload Python Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: wheelhouse/*
+
+  publish-release:
+    name: Publish GitHub Release & Sign Artifacts
+    needs: [build-cpp-kernel, build-rust-crates, build-python-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Sign SHA256SUMS with Cosign (Keyless OIDC)
+        run: |
+          cd release-assets
+          cosign sign-blob --yes --output-signature SHA256SUMS.sig SHA256SUMS
+
+      - name: Determine Pre-release Status
+        id: prerelease_check
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="${{ inputs.version }}"
+          fi
+
+          if [ "${{ inputs.prerelease }}" == "true" ] || [[ "$TAG_NAME" =~ -preview|-PREVIEW|-rc|-alpha|-beta ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prerelease_check.outputs.release_tag }}
+          name: "Impulse Graph Core ${{ steps.prerelease_check.outputs.release_tag }}"
+          files: |
+            release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}

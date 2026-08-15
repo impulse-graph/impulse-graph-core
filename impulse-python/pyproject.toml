@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "impulse-graph"
-version = "2.4.0"
+version = "0.9.0"
 description = "Impulse Graph Engine Python SDK & C++ Bytecode VM Binding"
 authors = [
     { name = "Impulse Graph Team", email = "engineering@impulsegraph.io" }
