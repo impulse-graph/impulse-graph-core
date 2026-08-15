@@ -3,222 +3,390 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Spec Compliance](https://img.shields.io/badge/Spec-v0.9.0-green.svg)](https://github.com/impulse-graph/impulse-graph-spec)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#-cross-platform-hardware-support)
-[![Dependencies](https://img.shields.io/badge/Dependencies-0%20(Zero)-brightgreen.svg)](#-zero-third-party-runtime-dependencies)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support--zero-dependencies)
+[![Dependencies](https://img.shields.io/badge/Dependencies-0%20(Zero)-brightgreen.svg)](#platform-support--zero-dependencies)
 
-High-performance, zero-copy, SIMD-vectorized C++20 graph traversal engine and polyglot native bindings. 
+Impulse Graph is an embedded graph analytics engine. Think **SQLite, but for graphs** — open a single `.imps` snapshot file, query it from any language, no database server required.
 
-Impulse Graph is the **"SQLite for Graphs"** and the **"Apache Arrow for Graph Analytics"** — an embedded, serverless, single-file binary snapshot engine designed for sub-millisecond cold starts, sub-microsecond vector traversals, and multi-terabyte scale graph analytics without database servers or garbage collection pauses.
-
----
-
-## 🏛️ The Two Core Pillars
-
-There are two architectural pillars that make this possible:
-
-### Pillar 1: The Impulse Binary Snapshot Format (`.imps`)
-The **Impulse Binary Snapshot Format** borrows the best zero-copy, columnar concepts from **Apache Parquet** and **Apache Arrow**, tailored and optimized specifically for graph analytics:
-* **Ultra `mmap`-Friendly Design**: Engineered from the ground up so that files can be memory-mapped into user space instantly without deserialization, decoding, or heap copying.
-* **128-Byte Hardware Alignment**: All internal directory entries, adjacency arrays, and attribute buffers are strictly 128-byte aligned for NVMe/SSD sector reads, CPU SIMD vector lanes (AVX-512 / ARM Neon), GPU warp memory coalescing (NVIDIA GPUDirect Storage `cuFile`), and TPU vector tiles.
-* **Rich Graph Topologies & Sparse Matrix Encodings**: Supports strongly typed nodes and edges across multi-domain schemas. Graph relations are stored as high-performance sparse matrices (**Compressed Sparse Row / CSR**, **Compressed Sparse Column / CSC**, and **Coordinate List / COO**) alongside advanced compression formats such as **SIMDComp** and **ELLPACK**.
-* **Instant Sub-Millisecond Cold Starts**: Open and query multi-gigabyte or multi-terabyte graphs in `< 1 ms`.
-
-### Pillar 2: The ImpulseVM Register-Based Execution Core
-The **ImpulseVM** is an ultra-lean, register-based graph query Virtual Machine heavily inspired by **Lua's register VM architecture**:
-* **64 Polymorphic Registers (`R0`..`R63`)**: Directly manages scalar node IDs, dense numeric feature vectors, off-heap bitsets ($N/64$ words), and string pool offsets without stack push/pop overhead.
-* **Direct-Threaded Computed Goto Dispatch**: Utilizes compiler jump tables (`dispatch_table[]`) on Clang and GCC to eliminate switch-case branch mispredictions in instruction dispatch loops.
-* **SIMD-Vectorized Instruction Set (`impOps`)**: Opcodes (`0x00`..`0x72`) map directly to vectorized hardware primitives for forward CSR walks, reverse CSC walks, fused 2-hop traversals (`OP_CSR_WALK_2HOP`), GraphBLAS matrix-vector multiplications (`OP_MXV`), and Afforest connected components (`OP_CC_AFFOREST`).
-* **Zero-Cost On-The-Fly Compilation**: Paired with the homoiconic **ImpScheme** (`.impscm`) IR bus, the zero-dependency C++ compiler generates and optimizes execution plans in single-digit microseconds (< 3 µs). Every query is compiled and optimized dynamically without query cache contention or synchronization locks.
+It fills a missing gap in the open-source ecosystem as the **Apache Arrow / Parquet equivalent for graph analytics**. Rather than running a heavy database server, you compile your graph data into an immutable binary snapshot (`.imps`), memory-map it, and run traversals and linear algebra directly over the mapped memory. Datasets from thousands to billions of edges, cold starts under a millisecond, queries in microseconds.
 
 ---
 
-## 🛡️ Zero Third-Party Runtime Dependencies
+## Quick Start
 
-Impulse Graph maintains **strictly zero external runtime dependencies**:
+### 1. Install
 
-* **C++20 Kernel (`impulse-cpp`)**: Pure standard library implementation (`<cstdlib>`, `<vector>`, `<sys/mman.h>`). Requires no external shared libraries or runtime frameworks.
-* **Rust Crate (`impulse-rust`)**: `Cargo.toml` has `[dependencies]` completely empty.
-* **Java Engine (`impulse-graph-java`)**: Pure JDK 25 Foreign Function & Memory (FFM) API with zero Maven runtime dependencies.
-* **Zero Supply-Chain Risk**: Immune to transitive dependency vulnerabilities, CVE bloat, and runtime licensing conflicts.
-* **Universal Portability**: Compiles statically into standalone executables or links dynamically into container images (`FROM scratch` / Alpine).
+```bash
+pip install impulse-graph
+```
+
+### 2. Download a Sample Snapshot
+
+```bash
+curl -LO https://github.com/impulse-graph/impulse-graph-samples/releases/download/v0.9.0/hetionet.v09.imps
+```
+
+> [!NOTE]
+> This is [Hetionet](https://het.io), a biomedical knowledge graph with 47K nodes, 2.25M edges, and 24 relation types (Disease→Gene, Compound→Gene, Gene→Pathway, etc.). The `.imps` file is ~27 MB.
+
+### 3. Query
+
+```python
+from impulse_graph import Snapshot
+
+with Snapshot("hetionet.v09.imps") as graph:
+    # Find all compounds that target genes associated with a disease
+    # Disease(14726) → DaG → GpPW ← GpPW ← CbG → Compound
+    candidates = (
+        graph.traverse(start_node=14726)
+             .out("DaG")       # Disease → Gene
+             .out("GpPW")      # Gene → Pathway
+             .in_("GpPW")      # Pathway ← Gene
+             .in_("CbG")       # Gene ← Compound
+             .to_list()
+    )
+    print(f"Found {len(candidates)} candidate compounds")  # 1,317
+```
+
+<details>
+<summary><b>C++</b></summary>
+
+```cpp
+#include <impulse_graph.h>
+#include <cstdio>
+
+int main() {
+    impulse_status_t st;
+    impulse_snapshot_t* graph = impulse_snapshot_open("hetionet.v09.imps", &st);
+
+    // Point reachability query
+    bool connected = impulse_snapshot_is_reachable(graph, 0, 14726, 5231);
+    printf("Disease 14726 → Gene 5231: %s\n", connected ? "yes" : "no");
+
+    impulse_snapshot_close(graph);
+}
+```
+
+Or with the C++ fluent QueryBuilder:
+
+```cpp
+#include <impulse_vm_fluent.hpp>
+
+using namespace impulse::vm;
+
+QueryBuilder builder;
+builder.inputNode(14726)
+       .walkEdge(0)       // DaG
+       .walkEdge(1)       // GpPW
+       .walkCsc(1)        // GpPW reverse
+       .walkCsc(2)        // CbG reverse
+       .collectBitset();
+
+CompiledQuery query = builder.compile();
+impulse_vm_state_t state{};
+QueryResult result = query.executeWithContext(nullptr, &state, 14726);
+printf("Status: %s\n", result.isOk() ? "OK" : "ERROR");
+```
+
+</details>
+
+<details>
+<summary><b>Rust</b></summary>
+
+```rust
+use impulse_graph::SnapshotReader;
+
+let reader = SnapshotReader::open("hetionet.v09.imps").unwrap();
+
+let candidates = reader.traverse(14726)
+    .out("DaG")
+    .out("GpPW")
+    .in_step("GpPW")
+    .in_step("CbG")
+    .to_vec()
+    .unwrap();
+
+println!("Found {} candidate compounds", candidates.len());
+```
+
+</details>
+
+<details>
+<summary><b>Go</b></summary>
+
+```go
+package main
+
+import (
+    "fmt"
+    impulse "github.com/impulse-graph/impulse-graph/go"
+)
+
+func main() {
+    graph, _ := impulse.OpenSnapshot("hetionet.v09.imps")
+    defer graph.Close()
+
+    candidates, _ := graph.Traverse(14726).
+        Out("DaG").
+        Out("GpPW").
+        In("GpPW").
+        In("CbG").
+        ToSlice()
+
+    fmt.Printf("Found %d candidate compounds\n", len(candidates))
+}
+```
+
+</details>
+
+<details>
+<summary><b>Node.js</b></summary>
+
+```js
+const { Snapshot } = require('impulse-graph');
+
+const graph = new Snapshot('hetionet.v09.imps');
+
+const candidates = graph.traverse(14726)
+    .out(0)    // DaG
+    .out(1)    // GpPW
+    .in(1)     // GpPW reverse
+    .in(2)     // CbG reverse
+    .toArray();
+
+console.log(`Found ${candidates.length} candidate compounds`);
+graph.close();
+```
+
+</details>
+
+<details>
+<summary><b>C# / .NET</b></summary>
+
+```csharp
+using ImpulseGraph;
+using ImpulseGraph.Vm;
+
+using var graph = new Snapshot("hetionet.v09.imps");
+
+var query = new QueryBuilder()
+    .InputNode(14726)
+    .WalkEdge(0)       // DaG
+    .WalkEdge(1)       // GpPW
+    .CscWalk(1)        // GpPW reverse
+    .CscWalk(2)        // CbG reverse
+    .CollectBitset()
+    .Compile();
+
+var result = graph.ExecuteQuery(query, inputParam: 14726);
+Console.WriteLine($"Status: {result.Status}");
+```
+
+</details>
+
+### Building Your Own Snapshots
+
+To compile your own datasets into `.imps` files, install the [Impulse CLI tooling](https://github.com/impulse-graph/impulse-graph-tooling):
+
+```bash
+# Install the CLI
+cargo install impulse-graph-tools
+
+# Create a manifest describing your graph schema
+cat > manifest.json << 'EOF'
+{
+  "version": "0.9.0",
+  "domains": [
+    { "id": 0, "name": "User", "key_type": "string" },
+    { "id": 1, "name": "Product", "key_type": "string" }
+  ],
+  "relations": [
+    { "src_domain": 0, "tgt_domain": 1, "encoding": "delta_vbyte", "file": "purchases.tsv" }
+  ]
+}
+EOF
+
+# Build the snapshot
+impulse build -m manifest.json -o my_graph.imps
+
+# Inspect it
+impulse inspect my_graph.imps
+```
 
 ---
 
-## 🖥️ Cross-Platform Hardware Support
+## How It Works
 
-Impulse Graph compiles natively and runs across all major operating systems and CPU architectures:
+Impulse Graph's performance comes from two architectural pillars:
 
-| Operating System | Architectures | Compiler Toolchain | Acceleration / SIMD |
+### The Impulse Binary Snapshot Format (`.imps`)
+
+The snapshot format took the best ideas from **Apache Parquet** and **Apache Arrow** and optimized them for graph analytics:
+
+- **Memory-map friendly**: Designed from the ground up so that files map directly into user space with zero deserialization, decoding, or heap allocation. Open and query multi-gigabyte graphs in under a millisecond.
+- **Hardware-aligned**: All internal structures are 128-byte aligned for NVMe/SSD sector reads, SIMD vector lanes (AVX-512, ARM Neon), GPU warp coalescing (NVIDIA GPUDirect `cuFile`), and TPU vector tiles.
+- **Rich graph support**: Strongly typed nodes and edges across multi-domain schemas. Relations stored as sparse matrices — **CSR** (Compressed Sparse Row), **CSC** (Compressed Sparse Column), and **COO** (Coordinate List) — with advanced encodings including **SIMDComp**, **Delta-VByte**, and **ELLPACK**.
+- **Open specification**: The binary format is a [public C-ABI specification](https://github.com/impulse-graph/impulse-graph-spec) with cross-language compliance test vectors.
+
+### The ImpulseVM Execution Engine
+
+The **ImpulseVM** is a register-based graph query Virtual Machine inspired by **Lua's register VM**:
+
+- **64 polymorphic registers** (`R0`..`R63`) holding node IDs, bitset frontiers, numeric vectors, and string pool offsets — no stack push/pop overhead.
+- **Direct-threaded dispatch** via compiler computed-goto jump tables on Clang/GCC, eliminating branch misprediction in the instruction loop.
+- **SIMD-vectorized opcodes** (`impOps`, `0x00`..`0x72`) mapping to hardware primitives: CSR/CSC walks, fused 2-hop traversals, GraphBLAS matrix-vector multiply, Afforest connected components.
+- **On-the-fly compilation** in < 3 µs via the homoiconic **ImpScheme** IR — faster than a thread-safe cache lookup, so every query is compiled fresh with zero lock contention.
+
+### Key Tradeoffs
+
+| Get | Give |
+| :--- | :--- |
+| Lock-free, allocation-free query hot paths | `.imps` snapshots are **read-only and immutable** |
+| Sub-millisecond cold start, no server process | Data must be compiled to `.imps` format first |
+| Zero runtime dependencies, embeds anywhere | No built-in write path — mutations produce new snapshots |
+
+---
+
+## Language Bindings
+
+All bindings link against the native C++20 kernel. Queries execute in the C++ engine regardless of host language — the binding layer is just the call boundary.
+
+| Language | Directory | Install | API Style |
 | :--- | :--- | :--- | :--- |
-| **Linux** | `x86_64` (AMD64), `aarch64` (ARM64) | GCC 12+, Clang 16+ | AVX-512, AVX2, ARM Neon, Highway SIMD, OpenMP |
-| **macOS** | `arm64` (Apple Silicon M1-M4), `x86_64` (Intel) | Apple Clang / Xcode 15+ | ARM Neon, AVX2, Direct Threaded Dispatch |
-| **Windows** | `x64` (AMD64 / Intel 64) | MSVC 2022+ (`/MT` Static CRT), Clang-CL | AVX-512, AVX2, Highway SIMD |
+| **C++20** | [`impulse-cpp/`](./impulse-cpp/) | CMake / system install | C-ABI + fluent `QueryBuilder` |
+| **Python** | [`impulse-python/`](./impulse-python/) | `pip install impulse-graph` | Fluent traversal, NumPy/PyTorch/SciPy interop |
+| **Rust** | [`impulse-rust/`](./impulse-rust/) | `cargo add impulse-graph` | Safe wrapper, fluent traversal |
+| **Go** | [`impulse-go/`](./impulse-go/) | `go get github.com/impulse-graph/impulse-graph/go` | CGO, fluent traversal |
+| **C# / .NET 9** | [`impulse-dotnet/`](./impulse-dotnet/) | NuGet `ImpulseGraph` | P/Invoke, `QueryBuilder` |
+| **Node.js** | [`impulse-node/`](./impulse-node/) | `npm install impulse-graph` | N-API, fluent traversal |
 
 ---
 
-## ⚡ Features & Architectural Tradeoffs
+## Query Languages
 
-* **The SQLite / Parquet of Graphs**: Runs embedded directly inside your application process without database servers, daemons, socket overhead, or network serialization.
-* **Impulse Binary Snapshot Format (`.imps`)**: All adjacency structures (CSR/CSC), node/edge attributes (Structure of Arrays), string tables, and secondary indexes reside in an open, immutable, 128-byte hardware-aligned C-ABI binary snapshot file ([Specification v0.9.0](https://github.com/impulse-graph/impulse-graph-spec)).
-* **Lock-Free & Allocation-Free Hot Path**: Query hot paths execute without mutexes, spinlocks, or heap memory allocations. SIMD bitsets and vector registers execute directly off-heap over memory-mapped (`mmap`) storage.
-* **Read-Only (RO) Immutable Design Tradeoff**: To guarantee maximum SIMD throughput and zero lock contention, `.imps` files are strictly **immutable and read-only**. Dynamic updates and streaming mutations are handled out-of-band by snapshot compilers streaming new versions direct to disk.
-* **Zero Third-Party Runtime Dependencies**: The core C++20 kernel, Rust crate, and native FFI layers maintain **0 external runtime dependencies**.
+All query frontends compile through the **ImpScheme** (`.impscm`) intermediate representation into ImpulseVM bytecode:
 
----
-
-## 🌐 Ecosystem Repositories
-
-* **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)**: Normative C-ABI Binary Snapshot v0.9.0 Format Specification and shared cross-language test vectors (`tc01`..`tc36`).
-* **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)**: Pure Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine:
-  * **Kotlin SDK** (`impulse-kotlin`): Coroutine-enabled async extensions and type-safe DSL builders.
-  * **Scala 3 SDK** (`impulse-scala_3`): Opaque types and functional GraphBLAS combinators.
-  * **Clojure SDK** (`impulse-clojure`): Homoiconic S-Expression and threading macro (`->`) graph querying.
-* **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)**: Developer utilities (`impulse assemble`, `disassemble`, `compile`, `inspect`, `opt`).
-* **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)**: Reproducible macro benchmark suite comparing Impulse against Neo4j, PyG, NetworkX, and MATPOWER.
+| Language | Style | Example Use Cases |
+| :--- | :--- | :--- |
+| **[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** | Programmatic builder with [Google CEL](https://github.com/google/cel-spec) filters | Multi-hop path queries, filtered edge traversals |
+| **[ImpLog](https://docs.impulsegraph.io/query/implog/)** (`.implog`) | Declarative Datalog | Recursive reachability, ReBAC/Zanzibar authorization, transitive closure |
+| **[ImpK](https://docs.impulsegraph.io/query/impk/)** (`.impk`) | GraphBLAS matrix math | PageRank, connected components, semiring operations |
+| **[openCypher](https://docs.impulsegraph.io/query/cypher/)** | Pattern matching | `MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE ... RETURN ...` |
 
 ---
 
-## 💻 Language Bindings Supported by C++ Engine
+## Architecture
 
-All bindings link against the native C++20 engine kernel with zero serialization overhead:
-
-* **[C++20](./impulse-cpp/)**: Native zero-copy memory-mapped kernel, Highway SIMD vectorization, and C-ABI headers.
-* **[Python](./impulse-python/)**: PyBind11 bindings with zero-copy NumPy/PyTorch `mmap` tensor integration and fluent API.
-* **[Go](./impulse-go/)**: High-performance CGO bindings with fluent multi-hop traversal builder and openCypher queries.
-* **[C# / .NET 9](./impulse-dotnet/)**: High-performance P/Invoke managed bindings with span-based memory access.
-* **[Node.js / TypeScript](./impulse-node/)**: Node-API (N-API) native addon for Node.js, Bun, and TypeScript runtimes.
-* **[Rust](./impulse-rust/)**: Safe Rust engine crate (`impulse-graph`) implementing zero-copy reading, snapshot generation, and fluent traversals.
-
----
-
-## 🔍 Supported Query Languages & DSLs
-
-Impulse Graph supports multiple declarative and programmatic query frontends, all compiling into the unified `ImpScheme` IR:
-
-* **[Fluent Traversal + Google CEL](https://docs.impulsegraph.io/query/fluent/)**: Multi-hop edge traversal with embedded Google Common Expression Language (CEL) predicate filters (`edge.affinity <= $maxAffinity`).
-* **[ImpLog (Datalog)](https://docs.impulsegraph.io/query/implog/)**: Declarative Datalog logic rules, stratification validation (negation cycle detection), Magic Sets rewriting, and recursive reachability.
-* **[ImpK (GraphBLAS)](https://docs.impulsegraph.io/query/impk/)**: Matrix-vector semiring math (`OP_MXV`), PageRank (`pr`), and Afforest connected components (`OP_CC_AFFOREST`).
-* **[openCypher](https://docs.impulsegraph.io/query/cypher/)**: Industry-standard graph pattern matching (`MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE ... RETURN ...`).
-
----
-
-## 🏛️ Architecture Overview
-
-Impulse Graph decouples analytical graph execution from storage by pairing an immutable binary format (`.imps`) with a register-based virtual machine (**ImpulseVM**).
+Impulse Graph decouples analytical graph compute from storage by pairing an immutable binary format with a register-based VM. All query frontends compile down to a shared S-Expression IR (**ImpScheme**), which is optimized and emitted as ImpulseVM bytecode:
 
 ```
-+-----------------------------------------------------------------------+
-|                         Application Process                           |
-|  +------------+  +------------+  +------------+  +-----------------+  |
-|  | Python SDK |  |   Go SDK   |  |  Node.js   |  | .NET / C# / Rust|  |
-|  +-----+------+  +-----+------+  +-----+------+  +--------+--------+  |
-|        |               |               |                  |           |
-|  +-----v---------------v---------------v------------------v--------+  |
-|  |                    Impulse C-ABI Kernel                         |  |
-|  |  +-----------------------------------------------------------+  |  |
-|  |  |     Frontend DSLs (Fluent/CEL, ImpLog, ImpK, Cypher)      |  |  |
-|  |  +-----------------------------+-----------------------------+  |  |
-|  |                                | (AST)                          |  |
-|  |  +-----------------------------v-----------------------------+  |  |
-|  |  |           ImpScheme Homoiconic S-Expression IR            |  |  |
-|  |  +-----------------------------+-----------------------------+  |  |
-|  |                                | (Optimized impOps)             |  |
-|  |  +-----------------------------v-----------------------------+  |  |
-|  |  |       ImpulseVM (SIMD Vector Execution & OpenMP)          |  |  |
-|  |  +-----------------------------+-----------------------------+  |  |
-|  +--------------------------------|--------------------------------+  |
-|                                   | (Zero-Copy Pointer Access)        |
-|  +--------------------------------v--------------------------------+  |
-|  |          Immutable Binary Snapshot (.imps, mmap, RO)            |  |
-|  +-----------------------------------------------------------------+  |
-+-----------------------------------------------------------------------+
+  Application Code (Python, Go, Rust, C#, Node.js, C++)
+                          │
+                    C-ABI Kernel
+                          │
+         ┌────────────────┼────────────────┐
+    Fluent/CEL        ImpLog           ImpK / Cypher
+         └────────────────┼────────────────┘
+                          │ AST
+                    ImpScheme IR
+                   (S-Expressions)
+                          │ Optimized impOps
+                     ImpulseVM
+                  (SIMD + OpenMP)
+                          │ Zero-copy pointers
+                  .imps Snapshot (mmap, RO)
 ```
 
-### On-The-Fly Compilation (Zero Query Cache Overhead)
-Because the zero-dependency C++ AST optimizer and bytecode emitter compile in single-digit microseconds (< 3 µs), Impulse Graph compiles queries **on-the-fly for every execution by default**. This avoids the lock contention, memory overhead, and invalidation bugs of traditional query plan caches.
+The compiler pipeline includes constant folding, direction selection (CSR push vs CSC pull), 2-hop kernel fusion, register ping-ponging, predicate pushdown, seed inlining, and early-exit optimization — all completing in < 3 µs.
 
-👉 **Read the full architectural deep dive**: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
-
----
-
-## ⚙️ The ImpulseVM Engine
-
-* **Register-Based ISA (`impOps`)**: 64 virtual registers (`R0`..`R63`) supporting scalar node IDs, bitsets, dense numeric vectors, and string offsets.
-* **Direct Threaded Dispatch**: Utilizes computed goto (`dispatch_table[]`) on modern Clang and GCC to eliminate branch misprediction latency in instruction dispatch.
-* **Google Highway Portable SIMD**: Automatically selects AVX-512, AVX2, ARM Neon, or SVE vector instructions at runtime.
-* **Parallel Execution**: OpenMP intra-query thread pooling for large-scale matrix and frontier evaluations.
+👉 **[Full architecture deep dive →](docs/ARCHITECTURE.md)**
 
 ---
 
-## 📊 Performance & Continuous Benchmarks
+## Performance
 
-Impulse Graph is built for world-class performance and continuous empirical verification. All published performance figures are derived exclusively from actual runtime executions on physical hardware.
+4-hop traversal latency across language bindings (Hetionet, 1,317 candidate compounds):
 
-### 4-Hop Traversal Latency (Hetionet Dataset, 1,317 Candidate Compounds)
-* **Native C++20 Engine**: **18.4 µs**
-* **Rust SDK**: **19.1 µs** (+0.7 µs FFI overhead)
-* **Go SDK**: **21.5 µs** (+3.1 µs FFI overhead)
-* **C# / .NET 9 SDK**: **23.0 µs** (+4.6 µs FFI overhead)
-* **Python SDK**: **24.2 µs** (+5.8 µs FFI overhead)
-* **Node.js SDK**: **26.8 µs** (+8.4 µs FFI overhead)
+| Binding | Latency | FFI Overhead |
+| :--- | :--- | :--- |
+| **C++20** (Clang 18, computed goto) | **18.4 µs** | — |
+| **Rust** | 19.1 µs | +0.7 µs |
+| **Go** (CGO) | 21.5 µs | +3.1 µs |
+| **C# / .NET 9** (P/Invoke) | 23.0 µs | +4.6 µs |
+| **Python** (PyBind11) | 24.2 µs | +5.8 µs |
+| **Node.js** (N-API) | 26.8 µs | +8.4 µs |
 
-👉 **Read the full benchmark report & cross-engine comparison**: **[docs/BENCHMARKS.md](docs/BENCHMARKS.md)**
+Comparison against other graph engines on the same dataset:
+
+| Engine | Cold Start | 4-Hop Query | RAM |
+| :--- | :--- | :--- | :--- |
+| **Impulse Graph** | < 1 ms | 18 µs | 0 MB (off-heap) |
+| **Neo4j Enterprise** | 4,200 ms | 8,400 µs | 2,400 MB |
+| **PyTorch Geometric** | 450 ms | 850 µs | 410 MB |
+| **NetworkX** | 1,850 ms | 42,100 µs | 890 MB |
+
+👉 **[Full benchmark report →](docs/BENCHMARKS.md)**
 
 ---
 
-## 🔧 Global Dataset Resolution (`IMPULSEGRAPH_DATA_DIR`)
+## Ecosystem
 
-You can configure a global snapshot directory to eliminate hardcoded file paths across all bindings:
+| Repository | Description |
+| :--- | :--- |
+| **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc36`) |
+| **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
+| **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
+| **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs Neo4j, PyG, NetworkX, MATPOWER |
+| **[impulse-website](https://github.com/impulse-graph/impulse-website)** | Documentation portal ([docs.impulsegraph.io](https://docs.impulsegraph.io)) |
+
+---
+
+## Platform Support & Zero Dependencies
+
+Impulse Graph maintains **zero third-party runtime dependencies**. The C++20 kernel uses only standard library headers. The Rust crate has an empty `[dependencies]`. The Java engine uses only JDK 25 FFM. No transitive dependency vulnerabilities, no supply-chain risk.
+
+| OS | Architectures | Toolchain | SIMD |
+| :--- | :--- | :--- | :--- |
+| **Linux** | x86_64, aarch64 | GCC 12+, Clang 16+ | AVX-512, AVX2, ARM Neon |
+| **macOS** | arm64 (Apple Silicon), x86_64 | Apple Clang / Xcode 15+ | ARM Neon, AVX2 |
+| **Windows** | x64 | MSVC 2022+ (`/MT`), Clang-CL | AVX-512, AVX2 |
+
+---
+
+## Configuration
+
+Set `IMPULSEGRAPH_DATA_DIR` to avoid hardcoding snapshot paths:
 
 ```bash
 export IMPULSEGRAPH_DATA_DIR=~/impulse/datasets
 ```
 
-When opening snapshots (e.g. `Snapshot("hetionet.v09.imps")`), all SDKs automatically resolve:
-1. Exact file path in current working directory (CWD).
-2. `$IMPULSEGRAPH_DATA_DIR/<path>`.
-3. `$IMPULSEGRAPH_DATA_DIR/<dataset_name>/<path>`.
+All SDKs resolve snapshot paths in order: exact path / CWD → `$IMPULSEGRAPH_DATA_DIR/<path>` → `$IMPULSEGRAPH_DATA_DIR/<dataset>/<path>`.
 
 ---
 
-## 🛠️ Build & Test Instructions
+## Build & Test
 
-### C++ Kernel & Test Suite
 ```bash
-cd impulse-cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j8
+# C++ kernel
+cd impulse-cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j8
 ctest --test-dir build --output-on-failure
-```
 
-### Python SDK
-```bash
-cd impulse-python
-pip install -e .
-python -m unittest discover tests
-```
+# Python
+cd impulse-python && pip install -e . && python -m unittest discover tests
 
-### Go SDK
-```bash
-cd impulse-go
-go test -v ./...
-```
+# Rust
+cd impulse-rust && cargo test
 
-### Rust Crate
-```bash
-cd impulse-rust
-cargo test
-```
+# Go
+cd impulse-go && go test -v ./...
 
-### Node.js Native Addon
-```bash
-cd impulse-node
-npm install
-npm test
+# Node.js
+cd impulse-node && npm install && npm test
 ```
 
 ---
 
-## 📄 License
+## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
