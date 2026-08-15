@@ -21,9 +21,12 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
     };
 
     if !Path::new(hwy_lib_file).exists() && !Path::new("../impulse-cpp/build/_deps/highway-build/libhwy.a").exists() {
-        let _ = Command::new("cmake")
-            .args(["-B", "../impulse-cpp/build", "-S", "../impulse-cpp", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"])
-            .status();
+        let mut cmake_cfg = Command::new("cmake");
+        cmake_cfg.args(["-B", "../impulse-cpp/build", "-S", "../impulse-cpp", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"]);
+        if is_windows {
+            cmake_cfg.args(["-A", "x64"]);
+        }
+        let _ = cmake_cfg.status();
         let _ = Command::new("cmake")
             .args(["--build", "../impulse-cpp/build", "--config", "Release", "--target", "hwy"])
             .status();
@@ -48,14 +51,20 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             args.push(format!("/I{}", hwy_inc));
         }
 
-        let status = Command::new(&compiler)
+        let output = Command::new(&compiler)
             .args(&args)
-            .status();
-            
-        assert!(
-            status.is_ok() && status.unwrap().success(),
-            "Failed to compile C++ source file: {} using {}", src, compiler
-        );
+            .output()
+            .expect("Failed to execute C++ compiler");
+
+        if !output.status.success() {
+            eprintln!(
+                "C++ Compiler Error for {}:\nSTDOUT:\n{}\nSTDERR:\n{}",
+                src,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            panic!("Failed to compile C++ source file: {} using {}", src, compiler);
+        }
     } else {
         let mut args = vec![
             "-std=c++20",
@@ -85,14 +94,20 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
 
         let compiler = env::var("CXX").unwrap_or_else(|_| if is_macos { "clang++".to_string() } else { "c++".to_string() });
         
-        let status = Command::new(&compiler)
+        let output = Command::new(&compiler)
             .args(&args)
-            .status();
-            
-        assert!(
-            status.is_ok() && status.unwrap().success(),
-            "Failed to compile C++ source file: {} using {}", src, compiler
-        );
+            .output()
+            .expect("Failed to execute C++ compiler");
+
+        if !output.status.success() {
+            eprintln!(
+                "C++ Compiler Error for {}:\nSTDOUT:\n{}\nSTDERR:\n{}",
+                src,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            panic!("Failed to compile C++ source file: {} using {}", src, compiler);
+        }
     }
 
     obj_file
@@ -181,6 +196,14 @@ fn main() {
     } else if is_musl {
         println!("cargo:rustc-link-lib=static=impulse_native");
         println!("cargo:rustc-link-lib=static=hwy");
+        if let Ok(entries) = std::fs::read_dir("/usr/lib/gcc/x86_64-linux-gnu") {
+            for entry in entries.flatten() {
+                if entry.path().join("libstdc++.a").exists() {
+                    println!("cargo:rustc-link-search=native={}", entry.path().display());
+                    break;
+                }
+            }
+        }
         println!("cargo:rustc-link-lib=static=stdc++");
     } else {
         println!("cargo:rustc-link-lib=static=impulse_native");
