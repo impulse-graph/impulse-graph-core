@@ -24,7 +24,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
         let mut cmake_cfg = Command::new("cmake");
         cmake_cfg.args(["-B", "../impulse-cpp/build", "-S", "../impulse-cpp", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"]);
         if is_windows {
-            cmake_cfg.args(["-A", "x64"]);
+            cmake_cfg.args(["-A", "x64", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"]);
         }
         let _ = cmake_cfg.status();
         let _ = Command::new("cmake")
@@ -38,6 +38,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             "/nologo".to_string(),
             "/std:c++20".to_string(),
             "/O2".to_string(),
+            "/MD".to_string(),
             "/EHsc".to_string(),
             "/DNOMINMAX".to_string(),
             "/DWIN32_LEAN_AND_MEAN".to_string(),
