@@ -45,18 +45,81 @@ pub struct AttributeInfo {
     pub offsets_bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct IndexEntryInfo {
+    pub index_id: u32,
+    pub domain_id: u16,
+    pub relation_id: u16,
+    pub attribute_index: u16,
+    pub index_type: u8,
+    pub name: String,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+    pub payload_feature_mask: u64,
+}
+
 pub struct SnapshotReader {
     mmap: SharedMemoryMap,
     header: SnapshotHeader,
     domains: Vec<DomainInfo>,
     relations: Vec<RelationInfo>,
+    index_entries: Vec<IndexEntryInfo>,
     metadata_offset: u64,
     metadata_bytes: u64,
 }
 
 impl SnapshotReader {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ImpulseError> {
-        let mmap = MemoryMap::open(path).map_err(|_| ImpulseError::IoFailure)?;
+        let p = path.as_ref();
+        if p.exists() {
+            let mmap = MemoryMap::open(p).map_err(|_| ImpulseError::IoFailure)?;
+            return Self::from_mmap(mmap);
+        }
+
+        let env_val = std::env::var("IMPULSE_DATASETS_DIR")
+            .or_else(|_| std::env::var("IMPULSEGRAPH_DATA_DIR"))
+            .or_else(|_| std::env::var("IMPULSE_DATA_DIR"));
+
+        if let Ok(base_dir) = env_val {
+            let candidate1 = Path::new(&base_dir).join(p);
+            if candidate1.exists() {
+                let mmap = MemoryMap::open(candidate1).map_err(|_| ImpulseError::IoFailure)?;
+                return Self::from_mmap(mmap);
+            }
+
+            if let Some(file_str) = p.to_str() {
+                if let Some(dot_pos) = file_str.find('.') {
+                    let dataset = &file_str[..dot_pos];
+                    let candidate2 = Path::new(&base_dir).join(dataset).join(p);
+                    if candidate2.exists() {
+                        let mmap = MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
+                        return Self::from_mmap(mmap);
+                    }
+                }
+            }
+        }
+
+        // Check local search paths
+        let local_prefixes = ["datasets/", "../datasets/", "../../datasets/", "../../../datasets/"];
+        for prefix in &local_prefixes {
+            let candidate1 = Path::new(prefix).join(p);
+            if candidate1.exists() {
+                let mmap = MemoryMap::open(candidate1).map_err(|_| ImpulseError::IoFailure)?;
+                return Self::from_mmap(mmap);
+            }
+            if let Some(file_str) = p.to_str() {
+                if let Some(dot_pos) = file_str.find('.') {
+                    let dataset = &file_str[..dot_pos];
+                    let candidate2 = Path::new(prefix).join(dataset).join(p);
+                    if candidate2.exists() {
+                        let mmap = MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
+                        return Self::from_mmap(mmap);
+                    }
+                }
+            }
+        }
+
+        let mmap = MemoryMap::open(p).map_err(|_| ImpulseError::IoFailure)?;
         Self::from_mmap(mmap)
     }
 
@@ -320,6 +383,7 @@ impl SnapshotReader {
             header,
             domains,
             relations,
+            index_entries: Vec::new(),
             metadata_offset,
             metadata_bytes,
         })
@@ -327,6 +391,10 @@ impl SnapshotReader {
 
     pub fn header(&self) -> &SnapshotHeader {
         &self.header
+    }
+
+    pub fn index_entries(&self) -> &[IndexEntryInfo] {
+        &self.index_entries
     }
 
     pub fn domain_count(&self) -> u16 {
@@ -506,5 +574,10 @@ impl SnapshotReader {
         }
 
         Ok(map)
+    }
+
+    /// Initializes a fluent multi-hop graph traversal starting at `start_node`.
+    pub fn traverse(&self, start_node: u64) -> crate::traversal::Traversal<'_> {
+        crate::traversal::Traversal::new(self, start_node)
     }
 }

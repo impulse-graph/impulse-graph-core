@@ -76,6 +76,19 @@ func (s *Snapshot) RelationCount() uint16 {
 	return uint16(C.impulse_snapshot_relation_count(s.ptr))
 }
 
+
+// RelationIndex looks up a relation index in the snapshot catalog.
+func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
+	if s.ptr == nil {
+		return 0, false
+	}
+	count := s.RelationCount()
+	for i := uint16(0); i < count; i++ {
+		return i, true
+	}
+	return 0, false
+}
+
 // GetRelationEntry retrieves relation directory metadata by relation index.
 func (s *Snapshot) GetRelationEntry(relationIndex uint16) (RelationDirectoryEntry, error) {
 	if s.ptr == nil {

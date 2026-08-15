@@ -81,6 +81,7 @@ pub fn parse(input: &str) -> Result<Vec<SExpr>, ImpKParseError> {
 
                 exprs.push(SExpr::List(fn_def));
                 fn_body.clear();
+                current_args.clear();
                 in_fn = false;
             }
             continue;
@@ -149,6 +150,7 @@ pub fn parse(input: &str) -> Result<Vec<SExpr>, ImpKParseError> {
 fn parse_impk_expr(s: &str) -> Result<SExpr, ImpKParseError> {
     let trimmed = s.trim();
 
+    // 1. BitSet And-Not
     if trimmed.contains("&~") {
         let parts: Vec<&str> = trimmed.splitn(2, "&~").collect();
         return Ok(SExpr::List(vec![
@@ -158,7 +160,36 @@ fn parse_impk_expr(s: &str) -> Result<SExpr, ImpKParseError> {
         ]));
     }
 
-    if trimmed.contains("@") {
+    // 2. Vector Monoid Reductions (e.g. sum(v))
+    if trimmed.starts_with("sum(") && trimmed.ends_with(')') {
+        let inner = &trimmed[4..trimmed.len() - 1];
+        return Ok(SExpr::List(vec![
+            SExpr::Symbol("vector:reduce-sum".into()),
+            parse_impk_expr(inner)?,
+        ]));
+    }
+
+    // 3. Topology Walk Operators (@ and @adaptive)
+    if trimmed.contains("@adaptive[") {
+        let parts: Vec<&str> = trimmed.splitn(2, "@adaptive[").collect();
+        let g_expr = parse_impk_expr(parts[0])?;
+        let rhs = parts[1].split(']').next().unwrap_or("");
+        let sub_parts: Vec<&str> = rhs.split(';').collect();
+        let f_expr = parse_impk_expr(sub_parts[0])?;
+        let rel_str = if sub_parts.len() > 1 {
+            sub_parts[1].trim().trim_matches('`').trim_matches('"')
+        } else {
+            "FOLLOWS"
+        };
+        return Ok(SExpr::List(vec![
+            SExpr::Symbol("g:walk-adaptive".into()),
+            g_expr,
+            f_expr,
+            SExpr::Str(rel_str.to_string()),
+        ]));
+    }
+
+    if trimmed.contains('@') {
         let parts: Vec<&str> = trimmed.splitn(2, '@').collect();
         let g_expr = parse_impk_expr(parts[0])?;
         let rhs = parts[1].trim();
@@ -188,6 +219,37 @@ fn parse_impk_expr(s: &str) -> Result<SExpr, ImpKParseError> {
                 SExpr::Str("FOLLOWS".to_string()),
             ]));
         }
+    }
+
+    // 4. Matrix Vector Multiplication (e.g. A * x)
+    if trimmed.contains(" * ") {
+        let parts: Vec<&str> = trimmed.splitn(2, " * ").collect();
+        return Ok(SExpr::List(vec![
+            SExpr::Symbol("g:mxv".into()),
+            parse_impk_expr(parts[0])?,
+            parse_impk_expr(parts[1])?,
+        ]));
+    }
+
+    // 5. Element-Wise Vector Arithmetic (+, -, /)
+    if trimmed.contains(" + ") {
+        let parts: Vec<&str> = trimmed.splitn(2, " + ").collect();
+        return Ok(SExpr::List(vec![
+            SExpr::Symbol("vector:ewise-add".into()),
+            parse_impk_expr(parts[0])?,
+            parse_impk_expr(parts[1])?,
+        ]));
+    }
+
+    // 6. Vector BitSet Masking (e.g. v <mask_bitset>)
+    if trimmed.contains(" <") && trimmed.contains('>') {
+        let parts: Vec<&str> = trimmed.splitn(2, " <").collect();
+        let mask_part = parts[1].split('>').next().unwrap_or("");
+        return Ok(SExpr::List(vec![
+            SExpr::Symbol("vector:filter".into()),
+            parse_impk_expr(parts[0])?,
+            parse_impk_expr(mask_part)?,
+        ]));
     }
 
     if trimmed.contains('|') && !trimmed.contains("||") {

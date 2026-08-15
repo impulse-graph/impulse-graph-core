@@ -188,7 +188,8 @@ pub struct SnapshotHeader {
     pub footer_directory_bytes: u64,    // 0x26..0x2D
     pub snapshot_uuid: [u8; 16],        // 0x2E..0x3D
     pub header_checksum: u16,           // 0x3E..0x3F (CRC-16-CCITT)
-    pub header_padding: [u8; 4032],     // 0x40..0xFFF (Pads to 4096)
+    pub index_count: u16,               // 0x40..0x41
+    pub header_padding: [u8; 4030],     // 0x42..0xFFF (Pads to 4096)
 }
 
 impl SnapshotHeader {
@@ -269,6 +270,28 @@ impl DomainCatalogEntry {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_count)) }
     }
 }
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct IndexDirectoryEntry {
+    pub index_id: u32,
+    pub domain_id: u16,
+    pub relation_id: u16,
+    pub attribute_index: u16,
+    pub index_type: u8,
+    pub reserved1: u8,
+    pub name_offset: u32,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+    pub payload_feature_mask: u64,
+    pub reserved_padding: [u8; 24],
+}
+
+pub const IMP_INDEX_NONE: u8 = 0;
+pub const IMP_INDEX_PERMUTATION: u8 = 1;
+pub const IMP_INDEX_ZONE_MAP: u8 = 2;
+pub const IMP_INDEX_INVERTED_BITSET: u8 = 3;
+pub const IMP_INDEX_MINIMAL_PERFECT_HASH: u8 = 4;
 
 const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 16);
 

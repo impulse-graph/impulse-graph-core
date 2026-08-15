@@ -87,7 +87,8 @@ typedef struct impulse_snapshot_header_v0_9_t {
     uint64_t footer_directory_bytes; // Byte size of Footer Directory Table
     uint8_t snapshot_uuid[16];       // 128-bit Binary UUID
     uint16_t header_checksum;        // CRC-16-CCITT checksum over bytes 0x00..0x3D
-    uint8_t header_padding[4032];    // Reserved header expansion padding
+    uint16_t index_count;            // Total number of secondary indices
+    uint8_t header_padding[4030];    // Reserved header expansion padding
 } impulse_snapshot_header_v0_9_t;
 
 // Section 2 Domain Catalog Entry (16 Bytes)
@@ -136,6 +137,33 @@ typedef struct impulse_attribute_descriptor_v0_9_t {
     uint64_t offsets_offset;         // Absolute file offset to var-string offsets array
     uint64_t offsets_bytes;          // Byte size of var-string offsets array
 } impulse_attribute_descriptor_v0_9_t;
+
+// Section 2.6 Secondary Index Directory Entry (Fixed 64 Bytes POD)
+typedef struct impulse_index_directory_entry_v0_9_t {
+    uint32_t index_id;               // Zero-indexed secondary index identifier
+    uint16_t domain_id;              // Target Node Domain ID
+    uint16_t relation_id;            // Target Relation ID (0xFFFF for Node Domain attributes)
+    uint16_t attribute_index;        // 0-indexed Attribute index within relation or domain
+    uint8_t index_type;              // Generic Index Type enum (0x01..0x07)
+    uint8_t reserved1;               // Alignment padding
+    uint32_t name_offset;            // Offset into Shared String Table
+    uint64_t data_offset;            // Absolute 128B-aligned file offset to index data
+    uint64_t data_bytes;             // Total byte size of index data payload
+    uint64_t payload_feature_mask;   // Generic Index Feature Bitmask
+    uint8_t reserved_padding[24];    // Reserved expansion padding
+} impulse_index_directory_entry_v0_9_t;
+
+// Generic Secondary Index Types (v0.9.0)
+typedef enum impulse_index_type_t {
+    IMP_INDEX_NONE = 0,
+    IMP_INDEX_PERMUTATION = 1,
+    IMP_INDEX_ZONE_MAP = 2,
+    IMP_INDEX_INVERTED_BITSET = 3,
+    IMP_INDEX_MINIMAL_PERFECT_HASH = 4,
+    IMP_INDEX_TRIGRAM_3GRAM = 5,
+    IMP_INDEX_DOMAIN_SPLIT_BITSET = 6,
+    IMP_INDEX_TEMPORAL_INTERVAL = 7
+} impulse_index_type_t;
 
 // 16-Byte Footer Trailer at EOF
 typedef struct impulse_footer_trailer_v0_9_t {

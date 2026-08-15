@@ -139,6 +139,21 @@ IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot
 IMPULSE_API uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot);
 
 /**
+ * @brief Inspect domain catalog entry metadata by domain index.
+ * @param snapshot Pointer to snapshot handle.
+ * @param domain_index Index of domain entry (0..domain_count-1).
+ * @param out_entry Output struct to populate with domain entry data.
+ * @param out_name Optional pointer to receive null-terminated domain name string.
+ * @return IMPULSE_OK on success, or error code on invalid index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    impulse_domain_catalog_entry_t* out_entry,
+    const char** out_name
+);
+
+/**
  * @brief Get number of relation directory entries in snapshot.
  * @param snapshot Pointer to snapshot handle.
  * @return Count of relation directories.
@@ -203,9 +218,49 @@ IMPULSE_API impulse_status_t impulse_writer_add_attribute(
     const void* data, uint64_t data_bytes,
     const void* offsets, uint64_t offsets_bytes
 );
+IMPULSE_API impulse_status_t impulse_writer_add_index(
+    impulse_writer_t* writer,
+    uint16_t domain_id,
+    uint16_t relation_id,
+    uint16_t attribute_index,
+    uint8_t index_type,
+    const char* index_name,
+    const void* index_data, uint64_t index_bytes,
+    uint64_t payload_feature_mask
+);
 IMPULSE_API impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value);
 IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
+
+IMPULSE_API uint16_t impulse_snapshot_get_index_count(const impulse_snapshot_t* snapshot);
+IMPULSE_API impulse_status_t impulse_snapshot_get_index(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index_idx,
+    uint32_t* index_id,
+    uint16_t* domain_id,
+    uint16_t* relation_id,
+    uint16_t* attribute_index,
+    uint8_t* index_type,
+    const char** index_name,
+    const void** index_data,
+    uint64_t* index_bytes
+);
+// Key Catalog Resolution API (Section 4)
+IMPULSE_API impulse_status_t impulse_snapshot_resolve_key(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    const void* key_bytes,
+    size_t key_len,
+    uint32_t* out_node_id
+);
+
+IMPULSE_API impulse_status_t impulse_snapshot_resolve_dense_id(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    uint32_t node_id,
+    const void** out_key_bytes,
+    size_t* out_key_len
+);
 
 // Live Overlay Delta Layer API (Thread-Safe Concurrent Edge Additions & Tombstones)
 IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name);

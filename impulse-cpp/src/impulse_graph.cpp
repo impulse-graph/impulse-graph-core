@@ -1,3 +1,6 @@
+#include "impulse_index.h"
+#include <string>
+
 #include "impulse_graph.h"
 #include "impulse_format_v0_9.h"
 #include "impulse_sha256.h"
@@ -114,6 +117,17 @@ struct pcg32_fast {
 
 } // anonymous namespace
 
+struct impulse_writer_index {
+    uint32_t index_id;
+    uint16_t domain_id;
+    uint16_t relation_id;
+    uint16_t attribute_index;
+    uint8_t index_type;
+    std::string index_name;
+    std::vector<uint8_t> data;
+    uint64_t payload_feature_mask;
+};
+
 struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t file_size = 0;
@@ -122,6 +136,8 @@ struct impulse_snapshot {
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
+    std::vector<impulse_index_directory_entry_v0_9_t> indexes;
+    std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -156,6 +172,7 @@ struct impulse_writer {
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_writer_relation> relations;
+    std::vector<impulse_writer_index> indexes;
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -174,14 +191,77 @@ const char* impulse_get_last_error(void) {
     return g_last_error.c_str();
 }
 
+static std::string resolve_snapshot_path(const char* file_path) {
+    if (!file_path || file_path[0] == '\0') return "";
+    std::string path_str(file_path);
+
+#ifndef _WIN32
+    struct stat st;
+    if (::stat(path_str.c_str(), &st) == 0) {
+        return path_str;
+    }
+
+    const char* env_dir = std::getenv("IMPULSE_DATASETS_DIR");
+    if (!env_dir || env_dir[0] == '\0') {
+        env_dir = std::getenv("IMPULSEGRAPH_DATA_DIR");
+    }
+    if (!env_dir || env_dir[0] == '\0') {
+        env_dir = std::getenv("IMPULSE_DATA_DIR");
+    }
+
+    if (env_dir) {
+        std::string base(env_dir);
+        if (!base.empty() && base.back() != '/') {
+            base += '/';
+        }
+
+        std::string candidate1 = base + path_str;
+        if (::stat(candidate1.c_str(), &st) == 0) {
+            return candidate1;
+        }
+
+        size_t dot_pos = path_str.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string dataset_name = path_str.substr(0, dot_pos);
+            std::string candidate2 = base + dataset_name + "/" + path_str;
+            if (::stat(candidate2.c_str(), &st) == 0) {
+                return candidate2;
+            }
+        }
+    }
+
+    // Check standard local relative search paths
+    const char* local_prefixes[] = {"datasets/", "../datasets/", "../../datasets/", "../../../datasets/"};
+    for (const char* prefix : local_prefixes) {
+        std::string local_cand1 = std::string(prefix) + path_str;
+        if (::stat(local_cand1.c_str(), &st) == 0) {
+            return local_cand1;
+        }
+        size_t dot_pos = path_str.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string dataset_name = path_str.substr(0, dot_pos);
+            std::string local_cand2 = std::string(prefix) + dataset_name + "/" + path_str;
+            if (::stat(local_cand2.c_str(), &st) == 0) {
+                return local_cand2;
+            }
+        }
+    }
+#endif
+
+    return path_str;
+}
+
 impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
     if (!file_path) {
         if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
         return nullptr;
     }
 
+    std::string resolved = resolve_snapshot_path(file_path);
+    const char* target_path = resolved.c_str();
+
 #ifdef _WIN32
-    HANDLE hFile = CreateFileA(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileA(target_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
         g_last_error = "Failed to open file on Windows";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
@@ -204,7 +284,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
 #else
-    int fd = ::open(file_path, O_RDONLY);
+    int fd = ::open(target_path, O_RDONLY);
     if (fd < 0) {
         g_last_error = "Failed to open file";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
@@ -228,6 +308,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
         return nullptr;
     }
+
+    // Asynchronously prefetch the graph into RAM to eliminate soft page fault latency
+#if defined(MADV_WILLNEED)
+    ::madvise(mmap_ptr, file_size, MADV_WILLNEED);
+#endif
 #endif
 
     const uint8_t* raw = static_cast<const uint8_t*>(mmap_ptr);
@@ -446,6 +531,38 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
             snap->relations.push_back(rel_entry);
         }
+
+        rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
+
+        uint16_t idx_count = snap->header.index_count;
+        snap->indexes.reserve(idx_count);
+        snap->index_names.resize(idx_count);
+
+        for (uint16_t k = 0; k < idx_count; ++k) {
+            if (cur + sizeof(impulse_index_directory_entry_v0_9_t) > file_size) {
+                g_last_error = "Buffer overflow parsing index directory";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+            impulse_index_directory_entry_v0_9_t idx_entry;
+            std::memcpy(&idx_entry, raw + cur, sizeof(idx_entry));
+            cur += sizeof(idx_entry);
+
+            std::string iname;
+            impulse_status_t str_status = validate_and_get_string(idx_entry.name_offset, iname);
+            if (str_status == IMPULSE_OK) {
+                snap->index_names[k] = iname;
+            }
+
+            if (idx_entry.data_offset > 0 && idx_entry.data_offset % 128 != 0) {
+                g_last_error = "Unaligned index data offset (must be 128B aligned)";
+                if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
+
+            snap->indexes.push_back(idx_entry);
+        }
     } else {
         // Legacy v2.4 parsing
         for (uint16_t i = 0; i < domain_count; ++i) {
@@ -618,6 +735,26 @@ uint16_t impulse_snapshot_domain_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.domain_count : 0;
 }
 
+impulse_status_t impulse_snapshot_get_domain_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    impulse_domain_catalog_entry_t* out_entry,
+    const char** out_name
+) {
+    if (!snapshot || !out_entry || domain_index >= snapshot->domains.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    *out_entry = snapshot->domains[domain_index];
+    if (out_name) {
+        if (domain_index < snapshot->domain_names.size()) {
+            *out_name = snapshot->domain_names[domain_index].c_str();
+        } else {
+            *out_name = "";
+        }
+    }
+    return IMPULSE_OK;
+}
+
 uint16_t impulse_snapshot_relation_count(const impulse_snapshot_t* snapshot) {
     return snapshot ? snapshot->header.relation_count : 0;
 }
@@ -785,9 +922,71 @@ impulse_status_t impulse_writer_add_attribute(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_writer_add_index(
+    impulse_writer_t* writer,
+    uint16_t domain_id,
+    uint16_t relation_id,
+    uint16_t attribute_index,
+    uint8_t index_type,
+    const char* index_name,
+    const void* index_data, uint64_t index_bytes,
+    uint64_t payload_feature_mask
+) {
+    if (!writer || !index_name) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    impulse_writer_index idx;
+    idx.index_id = static_cast<uint32_t>(writer->indexes.size());
+    idx.domain_id = domain_id;
+    idx.relation_id = relation_id;
+    idx.attribute_index = attribute_index;
+    idx.index_type = index_type;
+    idx.index_name = index_name;
+    idx.payload_feature_mask = payload_feature_mask;
+
+    if (index_data && index_bytes > 0) {
+        idx.data.resize(index_bytes);
+        std::memcpy(idx.data.data(), index_data, index_bytes);
+    }
+
+    writer->indexes.push_back(std::move(idx));
+    return IMPULSE_OK;
+}
+
 impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value) {
     if (!writer || !key || !value) return IMPULSE_ERR_INVALID_ARGUMENT;
     writer->metadata[key] = value;
+    return IMPULSE_OK;
+}
+
+uint16_t impulse_snapshot_get_index_count(const impulse_snapshot_t* snapshot) {
+    if (!snapshot) return 0;
+    return static_cast<uint16_t>(snapshot->indexes.size());
+}
+
+impulse_status_t impulse_snapshot_get_index(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index_idx,
+    uint32_t* index_id,
+    uint16_t* domain_id,
+    uint16_t* relation_id,
+    uint16_t* attribute_index,
+    uint8_t* index_type,
+    const char** index_name,
+    const void** index_data,
+    uint64_t* index_bytes
+) {
+    if (!snapshot || index_idx >= snapshot->indexes.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    const auto& entry = snapshot->indexes[index_idx];
+    if (index_id) *index_id = entry.index_id;
+    if (domain_id) *domain_id = entry.domain_id;
+    if (relation_id) *relation_id = entry.relation_id;
+    if (attribute_index) *attribute_index = entry.attribute_index;
+    if (index_type) *index_type = entry.index_type;
+    if (index_name && index_idx < snapshot->index_names.size()) *index_name = snapshot->index_names[index_idx].c_str();
+    if (index_data) *index_data = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + entry.data_offset;
+    if (index_bytes) *index_bytes = entry.data_bytes;
+
     return IMPULSE_OK;
 }
 
@@ -1203,7 +1402,7 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     size_t out_capacity,
     size_t* out_count
 ) {
-    if (!snapshot || !src_nodes || !out_src || !out_tgt || !out_count || relation_index >= snapshot->relations.size()) {
+    if (!snapshot || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
 
@@ -1215,6 +1414,24 @@ impulse_status_t impulse_snapshot_sample_neighbors(
 
     size_t total_written = 0;
     pcg32_fast rng(seed, 54u);
+
+    // Dry-run mode: count total samples needed
+    if (!out_src || !out_tgt) {
+        for (size_t i = 0; i < num_nodes; ++i) {
+            uint64_t u = src_nodes[i];
+            if (u >= rel.node_count) continue;
+
+            uint32_t start_idx = row_offsets[u];
+            uint32_t end_idx = row_offsets[u + 1];
+            uint32_t deg = end_idx - start_idx;
+            if (deg == 0) continue;
+
+            int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : (std::min)(static_cast<int>(deg), k_samples);
+            total_written += num_to_sample;
+        }
+        *out_count = total_written;
+        return IMPULSE_OK;
+    }
 
     for (size_t i = 0; i < num_nodes; ++i) {
         uint64_t u = src_nodes[i];
@@ -1335,6 +1552,84 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     if (out_csc_row_count) *out_csc_row_count = rel.node_count;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
     return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_resolve_key(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    const void* key_bytes,
+    size_t key_len,
+    uint32_t* out_node_id
+) {
+    if (!snapshot || !key_bytes || !out_node_id) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (domain_id >= snapshot->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    for (const auto& idx : snapshot->indexes) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+            const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+            const void* index_data = raw + idx.data_offset;
+            
+            if (idx.index_type == 4) { // IMP_INDEX_MINIMAL_PERFECT_HASH
+                std::string null_term_key(static_cast<const char*>(key_bytes), key_len);
+                return impulse_index_minimal_perfect_hash_lookup(index_data, idx.data_bytes, null_term_key.c_str(), out_node_id);
+            }
+            // Add other index types here (e.g. ZoneMap, Permutation for integers) if needed
+        }
+    }
+    return IMPULSE_ERR_INVALID_ARGUMENT;
+}
+
+impulse_status_t impulse_snapshot_resolve_dense_id(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    uint32_t node_id,
+    const void** out_key_bytes,
+    size_t* out_key_len
+) {
+    if (!snapshot || !out_key_bytes || !out_key_len) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (domain_id >= snapshot->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (node_id >= snapshot->domains[domain_id].node_count) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+
+    for (const auto& idx : snapshot->indexes) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+            if (idx.index_type == 4) { // IMP_INDEX_MINIMAL_PERFECT_HASH
+                const void* index_data = raw + idx.data_offset;
+                const uint8_t* iraw = static_cast<const uint8_t*>(index_data);
+                
+                // MphfHeader is 32 bytes.
+                // struct MphfHeader { uint64_t key_count, seed; uint32_t string_table_bytes; uint8_t reserved[12]; }
+                if (idx.data_bytes < 32) return IMPULSE_ERR_INVALID_ARGUMENT;
+                
+                uint64_t key_count = 0;
+                uint32_t str_bytes = 0;
+                std::memcpy(&key_count, iraw, 8);
+                std::memcpy(&str_bytes, iraw + 16, 4);
+
+                size_t str_offset = 32;
+                size_t table_offset = str_offset + str_bytes;
+                if (idx.data_bytes < table_offset + key_count * 8) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+                const char* str_pool = reinterpret_cast<const char*>(iraw + str_offset);
+                const uint8_t* table = iraw + table_offset;
+
+                for (size_t i = 0; i < key_count; ++i) {
+                    uint32_t k_off = 0;
+                    uint32_t n_id = 0;
+                    std::memcpy(&k_off, table + (i * 8), 4);
+                    std::memcpy(&n_id, table + (i * 8) + 4, 4);
+
+                    if (k_off != 0 && n_id == node_id) {
+                        *out_key_bytes = str_pool + k_off;
+                        *out_key_len = std::strlen(str_pool + k_off);
+                        return IMPULSE_OK;
+                    }
+                }
+            }
+        }
+    }
+    return IMPULSE_ERR_INVALID_ARGUMENT;
 }
 
 } // extern "C"

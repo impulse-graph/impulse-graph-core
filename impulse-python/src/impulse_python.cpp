@@ -44,6 +44,22 @@ public:
         return snapshot_ ? impulse_snapshot_domain_count(snapshot_) : 0;
     }
 
+    py::dict get_domain(uint16_t index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        impulse_domain_catalog_entry_t entry;
+        const char* name = nullptr;
+        impulse_status_t status = impulse_snapshot_get_domain_entry(snapshot_, index, &entry, &name);
+        if (status != IMPULSE_OK) {
+            throw std::out_of_range("Invalid domain index: " + std::to_string(index));
+        }
+
+        py::dict res;
+        res["domain_id"] = entry.domain_id;
+        res["key_type"] = entry.key_type;
+        res["name"] = name ? std::string(name) : "";
+        return res;
+    }
+
     uint16_t relation_count() const {
         return snapshot_ ? impulse_snapshot_relation_count(snapshot_) : 0;
     }
@@ -91,6 +107,52 @@ public:
         return get_buffer(offset, bytes);
     }
 
+    py::memoryview get_csc_row_offsets(uint16_t index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const uint32_t* csc_offsets = nullptr;
+        const uint32_t* csc_targets = nullptr;
+        uint64_t row_count = 0, edge_count = 0;
+        impulse_status_t st = impulse_snapshot_get_relation_csc_buffers(
+            snapshot_, index, &csc_offsets, &csc_targets, &row_count, &edge_count
+        );
+        if (st != IMPULSE_OK || !csc_offsets) {
+            throw std::runtime_error("CSC buffers not available for relation " + std::to_string(index));
+        }
+        return py::memoryview::from_memory(const_cast<uint32_t*>(csc_offsets), (row_count + 1) * sizeof(uint32_t), true);
+    }
+
+    py::memoryview get_csc_col_indices(uint16_t index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const uint32_t* csc_offsets = nullptr;
+        const uint32_t* csc_targets = nullptr;
+        uint64_t row_count = 0, edge_count = 0;
+        impulse_status_t st = impulse_snapshot_get_relation_csc_buffers(
+            snapshot_, index, &csc_offsets, &csc_targets, &row_count, &edge_count
+        );
+        if (st != IMPULSE_OK || !csc_targets) {
+            throw std::runtime_error("CSC buffers not available for relation " + std::to_string(index));
+        }
+        return py::memoryview::from_memory(const_cast<uint32_t*>(csc_targets), edge_count * sizeof(uint32_t), true);
+    }
+
+    py::memoryview get_attribute_data(uint16_t relation_index, uint16_t attribute_index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        const void* offsets = nullptr;
+        uint64_t offsets_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
+            snapshot_, relation_index, attribute_index,
+            &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+        );
+        if (st != IMPULSE_OK || !data) {
+            throw std::runtime_error("Attribute buffer not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
+        }
+        return py::memoryview::from_memory(const_cast<void*>(data), data_bytes, true);
+    }
+
     py::tuple sample_neighbors(uint16_t relation_index, const std::vector<uint64_t>& nodes, int k_samples, uint64_t seed) const {
         if (!snapshot_) throw std::runtime_error("Snapshot is closed");
         size_t out_count = 0;
@@ -120,6 +182,31 @@ public:
     impulse::vm::QueryResult execute_query(const impulse::vm::CompiledQuery& query, uint64_t input_param = 0) const {
         if (!snapshot_) throw std::runtime_error("Snapshot is closed");
         return query.execute(snapshot_, input_param);
+    }
+
+    uint32_t resolve_dense_id(uint16_t domain_id, const std::string& key) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        uint32_t node_id = 0;
+        impulse_status_t status = impulse_snapshot_resolve_key(snapshot_, domain_id, key.data(), key.size(), &node_id);
+        if (status == IMPULSE_ERR_INVALID_ARGUMENT) {
+            throw py::key_error("Key '" + key + "' not found in domain " + std::to_string(domain_id));
+        } else if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to resolve key: " + std::string(impulse_get_last_error()));
+        }
+        return node_id;
+    }
+
+    py::bytes resolve_key(uint16_t domain_id, uint32_t node_id) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const void* key_bytes = nullptr;
+        size_t key_len = 0;
+        impulse_status_t status = impulse_snapshot_resolve_dense_id(snapshot_, domain_id, node_id, &key_bytes, &key_len);
+        if (status == IMPULSE_ERR_INVALID_ARGUMENT) {
+            throw py::index_error("Node ID " + std::to_string(node_id) + " not found in domain " + std::to_string(domain_id));
+        } else if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to resolve dense ID: " + std::string(impulse_get_last_error()));
+        }
+        return py::bytes(static_cast<const char*>(key_bytes), key_len);
     }
 
 private:
@@ -638,15 +725,23 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("__enter__", [](PyImpulseSnapshot& self) { return &self; })
         .def("__exit__", [](PyImpulseSnapshot& self, py::object, py::object, py::object) { self.close(); })
         .def("domain_count", &PyImpulseSnapshot::domain_count)
+        .def("get_domain", &PyImpulseSnapshot::get_domain, py::arg("index"))
         .def("relation_count", &PyImpulseSnapshot::relation_count)
         .def("get_relation", &PyImpulseSnapshot::get_relation, py::arg("index"))
         .def("get_buffer", &PyImpulseSnapshot::get_buffer, py::arg("offset"), py::arg("size"))
         .def("get_csr_row_offsets", &PyImpulseSnapshot::get_csr_row_offsets, py::arg("index"))
         .def("get_csr_col_indices", &PyImpulseSnapshot::get_csr_col_indices, py::arg("index"))
+        .def("get_csc_row_offsets", &PyImpulseSnapshot::get_csc_row_offsets, py::arg("index"))
+        .def("get_csc_col_indices", &PyImpulseSnapshot::get_csc_col_indices, py::arg("index"))
+        .def("get_attribute_data", &PyImpulseSnapshot::get_attribute_data, py::arg("relation_index"), py::arg("attribute_index"))
         .def("sample_neighbors", &PyImpulseSnapshot::sample_neighbors,
              py::arg("relation_index"), py::arg("nodes"), py::arg("k_samples"), py::arg("seed") = 42)
         .def("is_reachable", &PyImpulseSnapshot::is_reachable,
              py::arg("relation_index"), py::arg("src_id"), py::arg("tgt_id"))
+        .def("resolve_key", &PyImpulseSnapshot::resolve_key,
+             py::arg("domain_id"), py::arg("node_id"))
+        .def("resolve_dense_id", &PyImpulseSnapshot::resolve_dense_id,
+             py::arg("domain_id"), py::arg("key"))
 
         .def("execute_query", &PyImpulseSnapshot::execute_query, py::arg("query"), py::arg("input_param") = 0);
 

@@ -46,6 +46,7 @@ ext_modules = [
         [
             "src/impulse_python.cpp",
             f"{rel_src_prefix}/impulse_graph.cpp",
+            f"{rel_src_prefix}/impulse_index.cpp",
             f"{rel_src_prefix}/impulse_simd.cpp",
             f"{rel_src_prefix}/impulse_vm.cpp",
             f"{rel_src_prefix}/impulse_vm_fluent.cpp",
@@ -62,7 +63,7 @@ ext_modules = [
 
 setup(
     name="impulse-graph",
-    version="2.4.0",
+    version="0.9.0",
     description="Impulse Graph Engine Python SDK & C++ Bytecode VM Binding",
     author="Impulse Graph Team",
     packages=find_packages(),

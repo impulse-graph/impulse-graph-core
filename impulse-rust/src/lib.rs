@@ -8,6 +8,7 @@ pub mod mmap;
 pub mod reader;
 pub mod simd;
 pub mod spec;
+pub mod traversal;
 pub mod writer;
 
 pub use ffi::*;
@@ -16,6 +17,7 @@ pub use spec::{
     BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader,
     IMPULSE_MAGIC, IMPULSE_VERSION_PACKED,
 };
+pub use traversal::{StepDirection, Traversal, TraversalStep};
 pub use writer::{AttributeField, SnapshotWriter};
 
 #[cfg(test)]
@@ -167,6 +169,41 @@ mod tests {
         assert_eq!(rels[2].csr_row_off_offset, rel1_end_offset, "Relation 2 row offset 0x{:X} should start immediately at 4KB page boundary 0x{:X}", rels[2].csr_row_off_offset, rel1_end_offset);
 
         let _ = fs::remove_file(TEST_FILE);
+    }
+
+    #[test]
+    fn test_rust_fluent_traversal_multihop() {
+        const TRAV_TEST_FILE: &str = "__impulse_rust_traversal_test.imps";
+        let _ = fs::remove_file(TRAV_TEST_FILE);
+
+        let mut writer = SnapshotWriter::new(TRAV_TEST_FILE);
+        writer.add_domain(0, KeyType::Int32, "Node");
+
+        // Relation 0: "Edge" (0 -> 1, 0 -> 2, 1 -> 3, 2 -> 3)
+        let row_offsets = vec![0u32, 2, 3, 4, 4];
+        let col_indices = vec![1u32, 2, 3, 3];
+        writer.add_relation(0, 0, 4, 4, row_offsets, col_indices);
+        assert!(writer.finalize().is_ok());
+
+        let reader = SnapshotReader::open(TRAV_TEST_FILE).unwrap();
+
+        // 1-hop traversal: 0 -> {1, 2}
+        let hop1 = reader.traverse(0).out("0").to_vec().unwrap();
+        assert_eq!(hop1, vec![1, 2]);
+
+        // 2-hop traversal: 0 -> {1, 2} -> {3}
+        let hop2 = reader.traverse(0).out("0").out("0").to_vec().unwrap();
+        assert_eq!(hop2, vec![3]);
+
+        // Reverse 1-hop traversal: 3 <- {1, 2}
+        let rev1 = reader.traverse(3).in_step("0").to_vec().unwrap();
+        assert_eq!(rev1, vec![1, 2]);
+
+        // Param binding & count
+        let count = reader.traverse(0).out("0").out("0").with_param("minScore", 0.5).count().unwrap();
+        assert_eq!(count, 1);
+
+        let _ = fs::remove_file(TRAV_TEST_FILE);
     }
 }
 

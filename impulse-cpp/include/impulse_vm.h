@@ -10,6 +10,7 @@
 #define IMPULSE_VM_H
 
 #include "impulse_graph.h"
+#include "impulse_math_ops.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -34,10 +35,11 @@ extern "C" {
 #define IMPULSE_VM_FLAG_ST (1ULL << 4) /**< Stable Flag: set by repeat checks when set generation converged */
 
 // Opcode Modifier Flags (FLAGS field in instruction)
-#define IMPULSE_VM_OP_FLAG_MODE_BITSET 0x01
-#define IMPULSE_VM_OP_FLAG_ACCUMULATE  0x02
-#define IMPULSE_VM_OP_FLAG_INVERT      0x04
-#define IMPULSE_VM_OP_FLAG_OFFHEAP     0x08
+#define IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY  0x01 /**< Early exit: jump to halt if output bitset is empty */
+#define IMPULSE_VM_OP_FLAG_INPUT_SEED     0x02 /**< Seed inlined: source is query input seed node */
+#define IMPULSE_VM_OP_FLAG_ACCUMULATE     0x04 /**< Accumulate destination bitset */
+#define IMPULSE_VM_OP_FLAG_INVERT         0x08 /**< Invert filter condition */
+#define IMPULSE_VM_OP_FLAG_OFFHEAP        0x10 /**< Off-heap mode */
 
 /// Opcodes Definitions
 #define OP_HALT                     0x00
@@ -55,7 +57,7 @@ extern "C" {
 #define OP_RESERVED_0B              0x0B
 #define OP_RESERVED_0C              0x0C
 #define OP_RESERVED_0D              0x0D
-#define OP_RESERVED_0E              0x0E
+#define OP_CSR_WALK_2HOP            0x0E
 #define OP_RESERVED_0F              0x0F
 
 #define OP_CSR_WALK                 0x10
@@ -71,26 +73,29 @@ extern "C" {
 #define OP_HAS_CSC                  0x1A
 #define OP_HAS_COO                  0x1B
 #define OP_HAS_KEY_CATALOG          0x1C
+#define OP_DENSE_WALK_LEGACY        0x1D
+#define OP_CREATE_SCRATCH_INDEX     0x1E
+#define OP_DROP_SCRATCH_INDEX       0x1F
+#define OP_HAS_DENSE                0x20
+#define OP_CSR_WALK_SHARDED         0x21
 
-#define OP_RESERVED_1D              0x1D
-#define OP_RESERVED_1E              0x1E
-#define OP_RESERVED_1F              0x1F
-#define OP_RESERVED_20              0x20
-#define OP_RESERVED_21              0x21
-#define OP_RESERVED_22              0x22
-#define OP_RESERVED_23              0x23
-#define OP_RESERVED_24              0x24
-#define OP_RESERVED_25              0x25
-#define OP_RESERVED_26              0x26
-#define OP_RESERVED_27              0x27
+// Vector Predicate and SIMD Mask Opcodes (0x20 - 0x27)
+#define OP_VEC_CMP_EQ               0x20
+#define OP_VEC_CMP_GT               0x21
+#define OP_VEC_CMP_LT               0x22
+#define OP_VEC_CMP_BETWEEN          0x23
+#define OP_MASK_AND                 0x24
+#define OP_MASK_OR                  0x25
+#define OP_MASK_NOT                 0x26
+#define OP_VEC_BLEND                0x27
 #define OP_RESERVED_28              0x28
 #define OP_RESERVED_29              0x29
-#define OP_RESERVED_2A              0x2A
+#define OP_ASSERT_FINITE            0x2A
 #define OP_RESERVED_2B              0x2B
 #define OP_RESERVED_2C              0x2C
-#define OP_RESERVED_2D              0x2D
-#define OP_RESERVED_2E              0x2E
-#define OP_RESERVED_2F              0x2F
+#define OP_VEC_MATH_UNARY           0x2D
+#define OP_VEC_MATH_BINARY          0x2E
+#define OP_VEC_MATH_TERNARY         0x2F
 
 #define OP_SET_UNION                0x30
 #define OP_SET_INTERSECT            0x31
@@ -106,7 +111,7 @@ extern "C" {
 #define OP_RESERVED_3A              0x3A
 #define OP_RESERVED_3B              0x3B
 #define OP_RESERVED_3C              0x3C
-#define OP_RESERVED_3D              0x3D
+#define OP_VECTOR_TIME_VALID_AT     0x3D
 #define OP_RESERVED_3E              0x3E
 #define OP_RESERVED_3F              0x3F
 
@@ -184,27 +189,33 @@ extern "C" {
 #define OP_RESERVED_7D              0x7D
 #define OP_RESERVED_7E              0x7E
 #define OP_RESERVED_7F              0x7F
-#define OP_RESERVED_80              0x80
-#define OP_RESERVED_81              0x81
-#define OP_RESERVED_82              0x82
-#define OP_RESERVED_83              0x83
-#define OP_RESERVED_84              0x84
-#define OP_RESERVED_85              0x85
-#define OP_RESERVED_86              0x86
-#define OP_RESERVED_87              0x87
-#define OP_RESERVED_88              0x88
-#define OP_RESERVED_89              0x89
-#define OP_RESERVED_8A              0x8A
-#define OP_RESERVED_8B              0x8B
-#define OP_RESERVED_8C              0x8C
-#define OP_RESERVED_8D              0x8D
-#define OP_RESERVED_8E              0x8E
-#define OP_RESERVED_8F              0x8F
+
+// Functional Optics & Columnar Gathers (0x80 - 0x83)
+#define OP_LOAD_COLUMN_VECTOR       0x80
+#define OP_GATHER_NODE_ATTR         0x81
+#define OP_GATHER_EDGE_ATTR         0x82
+#define OP_BRIN_ZONE_SKIP           0x83
+
+// Multiplicity Fast Paths & Multi-Layout Sweep (0x84 - 0x8F, 0x94 - 0x95)
+#define OP_CSR_WALK_DIRECT_STORE    0x84
+#define OP_CSR_WALK_DENSE_STREAM    0x85
+#define OP_COO_WALK                 0x86
+#define OP_CSC_WALK_DIRECT_STORE    0x87
+#define OP_FIXPOINT_KLEENE_STAR     0x88
+#define OP_SWAP_REG                 0x89
+#define OP_FRONTIER_DIFF            0x8A
+#define OP_COO_WALK_FILTERED        0x8B
+#define OP_COO_WALK_REDUCE          0x8C
+#define OP_COO_WALK_DIRECT_STORE    0x8D
+#define OP_DENSE_WALK               0x8E
+#define OP_DENSE_WALK_BITMATRIX     0x8F
 
 #define OP_COLLECT_BITSET           0x90
 #define OP_COLLECT_ARRAY            0x91
 #define OP_MAP_DENSE_TO_KEYS        0x92
 #define OP_COLLECT_VALUE_MAP        0x93
+#define OP_DENSE_WALK_REDUCE        0x94
+#define OP_DENSE_WALK_DIRECT_STORE  0x95
 
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0
@@ -251,7 +262,10 @@ typedef enum {
     IMPULSE_VM_ERR_USER_THROW = 7,
     IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
     IMPULSE_VM_ERR_TRAP = 9,
-    IMPULSE_VM_ERR_RESERVED_OPCODE = 10
+    IMPULSE_VM_ERR_RESERVED_OPCODE = 10,
+    IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11,
+    IMPULSE_VM_ERR_FLOATING_POINT = 12,
+    IMPULSE_VM_ERR_GAS_EXHAUSTED = 13
 } impulse_vm_status_t;
 
 #ifndef IMPULSE_ALIGN
@@ -326,11 +340,21 @@ IMPULSE_API void impulse_vm_context_release_string_vector(impulse_vm_context_t* 
 IMPULSE_API void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
 IMPULSE_API size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+IMPULSE_API void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel);
 IMPULSE_API int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 IMPULSE_API float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+
+IMPULSE_API void impulse_vm_context_mock_csr(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const uint32_t* csr_offsets,
+    const uint32_t* csr_targets,
+    uint64_t node_count,
+    uint64_t edge_count
+);
 
 IMPULSE_API void impulse_vm_context_mock_csc(
     impulse_vm_context_t* ctx,
@@ -366,6 +390,23 @@ IMPULSE_API impulse_vm_status_t impulse_vm_execute(
     size_t instruction_count,
     impulse_vm_state_t* vm_state,
     uint64_t input_param
+);
+
+IMPULSE_API size_t impulse_vm_get_required_buffer_size(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id
+);
+
+IMPULSE_API impulse_vm_status_t impulse_vm_execute_to_buffer(
+    const impulse_instruction_t* bytecode,
+    size_t instruction_count,
+    impulse_vm_state_t* vm_state,
+    uint64_t input_param,
+    uint16_t target_domain_id,
+    uint16_t result_reg,
+    uint64_t* out_words,
+    size_t out_words_capacity,
+    size_t* out_words_written
 );
 
 #ifdef __cplusplus

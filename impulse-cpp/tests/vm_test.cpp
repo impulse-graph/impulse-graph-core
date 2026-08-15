@@ -1335,6 +1335,42 @@ void test_new_opcodes() {
     std::cout << "[VM Test] 6 New Opcodes (INLINE_ARRAY, MOCK_GRAPH, INDIRECT, THROW, ASSERT, TRAP): PASSED" << std::endl;
 }
 
+static void test_fuel_and_gas_exhaustion() {
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+
+    // Infinite loop program:
+    // 0: NOP
+    // 1: JMP -1 (jumps back to 0)
+    std::vector<impulse_instruction_t> infinite_prog = {
+        { OP_NOP, 0, 0, 0 },
+        { OP_JMP, 0, 0, static_cast<uint32_t>(-1) },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    // 1. With fuel = 50: halts with IMPULSE_VM_ERR_GAS_EXHAUSTED
+    impulse_vm_context_set_fuel(ctx, 50);
+    impulse_vm_state_t state1{};
+    state1.query_context = ctx;
+    impulse_vm_status_t st1 = impulse_vm_execute(infinite_prog.data(), infinite_prog.size(), &state1, 0);
+    assert(st1 == IMPULSE_VM_ERR_GAS_EXHAUSTED);
+
+    // 2. Finite program with sufficient fuel (fuel = 100 for 5 instructions) -> PASSES
+    std::vector<impulse_instruction_t> finite_prog = {
+        { OP_LOAD_CONST_INT, 0, 0, 42 },
+        { OP_LOAD_CONST_INT, 0, 1, 10 },
+        { OP_HALT, 0, 0, 0 }
+    };
+    impulse_vm_context_set_fuel(ctx, 100);
+    impulse_vm_state_t state2{};
+    state2.query_context = ctx;
+    impulse_vm_status_t st2 = impulse_vm_execute(finite_prog.data(), finite_prog.size(), &state2, 0);
+    assert(st2 == IMPULSE_VM_OK);
+    assert(state2.registers[0] == 42);
+
+    impulse_vm_context_destroy(ctx);
+    std::cout << "[VM Test] Fuel & Gas Exhaustion: PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -1353,6 +1389,7 @@ int main() {
     test_pagerank_bytecode();
     test_new_opcodes();
     test_error_handling();
+    test_fuel_and_gas_exhaustion();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
 }
