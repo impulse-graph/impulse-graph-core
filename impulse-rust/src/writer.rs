@@ -16,6 +16,17 @@ pub struct AttributeField {
     pub offsets_bytes: u64,
 }
 
+pub struct WriterIndex {
+    pub domain_id: u16,
+    pub relation_id: u16,
+    pub attribute_index: u16,
+    pub index_type: u8,
+    pub name: String,
+    pub data: Vec<u8>,
+    pub data_offset: u64,
+    pub data_bytes: u64,
+}
+
 pub struct WriterDomain {
     pub domain_id: u16,
     pub key_type: KeyType,
@@ -52,6 +63,7 @@ pub struct SnapshotWriter {
     global_required_features: u64,
     domains: Vec<WriterDomain>,
     relations: Vec<WriterRelation>,
+    indexes: Vec<WriterIndex>,
     metadata: std::collections::HashMap<String, String>,
 }
 
@@ -62,6 +74,7 @@ impl SnapshotWriter {
             global_required_features: IMPULSE_FEAT_4KB_PAGE_ALIGNED,
             domains: Vec::new(),
             relations: Vec::new(),
+            indexes: Vec::new(),
             metadata: std::collections::HashMap::new(),
         }
     }
@@ -150,6 +163,27 @@ impl SnapshotWriter {
         }
     }
 
+    pub fn add_index(
+        &mut self,
+        domain_id: u16,
+        relation_id: u16,
+        attribute_index: u16,
+        index_type: u8,
+        name: &str,
+        data: Vec<u8>,
+    ) {
+        self.indexes.push(WriterIndex {
+            domain_id,
+            relation_id,
+            attribute_index,
+            index_type,
+            name: name.to_string(),
+            data,
+            data_offset: 0,
+            data_bytes: 0,
+        });
+    }
+
     pub fn finalize_to_writer(&mut self, writer: &mut impl Write) -> Result<(), ImpulseError> {
 
         // Sort relations primary by src_domain_id, secondary by tgt_domain_id
@@ -194,6 +228,8 @@ impl SnapshotWriter {
             attr_name_offsets.push(a_offs);
         }
 
+        let index_name_offsets: Vec<u32> = self.indexes.iter().map(|i| get_or_add_string(&i.name)).collect();
+
         let mut dir_table_bytes = Vec::new();
 
         // Write String Table Header & Pool Blob
@@ -229,7 +265,10 @@ impl SnapshotWriter {
             rel_dir_size += std::mem::size_of::<RelationDirectoryEntry>();
             rel_dir_size += rel.attributes.len() * std::mem::size_of::<AttributeDescriptor>();
         }
-        let total_dir_table_len = dir_table_bytes.len() + rel_dir_size;
+        let mut idx_dir_size = 128; // alignment padding
+        idx_dir_size += self.indexes.len() * std::mem::size_of::<IndexDirectoryEntry>();
+
+        let total_dir_table_len = dir_table_bytes.len() + rel_dir_size + idx_dir_size;
         let aligned_dir_table_len = align_4k(total_dir_table_len as u64) as usize;
 
         // Base offset where Relation Blocks payload begins
@@ -290,6 +329,14 @@ impl SnapshotWriter {
                     attr.offsets_bytes = 0;
                 }
             }
+
+        }
+        // Serialize Index Blocks
+        for idx in &mut self.indexes {
+            Self::align_buffer(&mut payload, 128);
+            idx.data_offset = rel_blocks_base_offset + payload.len() as u64;
+            idx.data_bytes = idx.data.len() as u64;
+            payload.extend_from_slice(&idx.data);
         }
 
         // Now serialize Relation Directory Table entries into dir_table_bytes
@@ -349,6 +396,33 @@ impl SnapshotWriter {
             }
         }
 
+        Self::align_buffer(&mut dir_table_bytes, 128);
+
+        // Serialize Index Directory Table entries
+        for (idx_idx, idx) in self.indexes.iter().enumerate() {
+            let idx_name_off = index_name_offsets[idx_idx];
+            let idx_entry = IndexDirectoryEntry {
+                index_id: idx_idx as u32,
+                domain_id: idx.domain_id,
+                relation_id: idx.relation_id,
+                attribute_index: idx.attribute_index,
+                index_type: idx.index_type,
+                reserved1: 0,
+                name_offset: idx_name_off,
+                data_offset: idx.data_offset,
+                data_bytes: idx.data_bytes,
+                payload_feature_mask: 0,
+                reserved_padding: [0; 24],
+            };
+            let entry_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &idx_entry as *const IndexDirectoryEntry as *const u8,
+                    std::mem::size_of::<IndexDirectoryEntry>(),
+                )
+            };
+            dir_table_bytes.extend_from_slice(entry_bytes);
+        }
+
         Self::align_buffer(&mut dir_table_bytes, aligned_dir_table_len);
 
         // Combine Directory Table and Relation Payload
@@ -402,7 +476,8 @@ impl SnapshotWriter {
             footer_directory_bytes: 0,
             snapshot_uuid: [0u8; 16],
             header_checksum: 0,
-            header_padding: [0u8; 4032],
+            index_count: self.indexes.len() as u16,
+            header_padding: [0u8; 4030],
         };
 
         let header_raw = unsafe {

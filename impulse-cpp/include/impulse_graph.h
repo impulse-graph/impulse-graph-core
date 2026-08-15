@@ -245,6 +245,22 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_index(
     const void** index_data,
     uint64_t* index_bytes
 );
+// Key Catalog Resolution API (Section 4)
+IMPULSE_API impulse_status_t impulse_snapshot_resolve_key(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    const void* key_bytes,
+    size_t key_len,
+    uint32_t* out_node_id
+);
+
+IMPULSE_API impulse_status_t impulse_snapshot_resolve_dense_id(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    uint32_t node_id,
+    const void** out_key_bytes,
+    size_t* out_key_len
+);
 
 // Live Overlay Delta Layer API (Thread-Safe Concurrent Edge Additions & Tombstones)
 IMPULSE_API impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name);

@@ -138,6 +138,31 @@ public:
         return query.execute(snapshot_, input_param);
     }
 
+    uint32_t resolve_dense_id(uint16_t domain_id, const std::string& key) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        uint32_t node_id = 0;
+        impulse_status_t status = impulse_snapshot_resolve_key(snapshot_, domain_id, key.c_str(), &node_id);
+        if (status == IMPULSE_ERR_INVALID_ARGUMENT) {
+            throw py::key_error("Key '" + key + "' not found in domain " + std::to_string(domain_id));
+        } else if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to resolve key: " + std::string(impulse_get_last_error()));
+        }
+        return node_id;
+    }
+
+    py::bytes resolve_key(uint16_t domain_id, uint32_t node_id) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const char* key_bytes = nullptr;
+        size_t key_len = 0;
+        impulse_status_t status = impulse_snapshot_resolve_dense_id(snapshot_, domain_id, node_id, &key_bytes, &key_len);
+        if (status == IMPULSE_ERR_INVALID_ARGUMENT) {
+            throw py::index_error("Node ID " + std::to_string(node_id) + " not found in domain " + std::to_string(domain_id));
+        } else if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to resolve dense ID: " + std::string(impulse_get_last_error()));
+        }
+        return py::bytes(key_bytes, key_len);
+    }
+
 private:
     impulse_snapshot_t* snapshot_ = nullptr;
 };
@@ -664,6 +689,10 @@ PYBIND11_MODULE(_impulse_native, m) {
              py::arg("relation_index"), py::arg("nodes"), py::arg("k_samples"), py::arg("seed") = 42)
         .def("is_reachable", &PyImpulseSnapshot::is_reachable,
              py::arg("relation_index"), py::arg("src_id"), py::arg("tgt_id"))
+        .def("resolve_key", &PyImpulseSnapshot::resolve_key,
+             py::arg("domain_id"), py::arg("node_id"))
+        .def("resolve_dense_id", &PyImpulseSnapshot::resolve_dense_id,
+             py::arg("domain_id"), py::arg("key"))
 
         .def("execute_query", &PyImpulseSnapshot::execute_query, py::arg("query"), py::arg("input_param") = 0);
 

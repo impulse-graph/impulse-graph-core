@@ -7037,52 +7037,19 @@ op_GAS_EXHAUSTED:
 
                 const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
                 if (input_keys && input_keys->keys && input_keys->count > 0) {
-                    uint8_t base_type = attr->type_code & 0x7F;
-                    size_t node_count = vm_state->query_context->max_nodes;
-
                     for (size_t k = 0; k < input_keys->count; ++k) {
                         const char* target_key = input_keys->keys[k];
                         if (!target_key) continue;
 
-                        for (size_t u = 0; u < node_count; ++u) {
-                            bool is_match = false;
-                            if (base_type == 0x0B) {
-                                const char* str_ptr = nullptr;
-                                size_t str_len = 0;
-                                if (!attr->offsets_ptr) {
-                                    str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
-                                    str_len = attr->dimension;
-                                } else {
-                                    const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
-                                    str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
-                                    str_len = offsets[u + 1] - offsets[u];
-                                }
-                                if (str_ptr) {
-                                    size_t target_len = std::strlen(target_key);
-                                    size_t actual_len = 0;
-                                    while (actual_len < str_len && str_ptr[actual_len] != '\0') {
-                                        actual_len++;
-                                    }
-                                    if (actual_len == target_len && std::strncmp(str_ptr, target_key, actual_len) == 0) {
-                                        is_match = true;
-                                    }
-                                }
-                            } else if (base_type == 0x03 || base_type == 0x04) {
-                                int64_t val = 0;
-                                if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
-                                else val = static_cast<const int64_t*>(attr->data_ptr)[u];
-                                
-                                char* endptr = nullptr;
-                                int64_t target_val = std::strtoll(target_key, &endptr, 10);
-                                if (endptr != target_key && val == target_val) {
-                                    is_match = true;
-                                }
-                            }
-
-                            if (is_match) {
-                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
-                                break;
-                            }
+                        uint32_t resolved_id = 0;
+                        if (impulse_snapshot_resolve_key(
+                                vm_state->query_context->snapshot,
+                                domain_id,
+                                target_key,
+                                std::strlen(target_key),
+                                &resolved_id
+                            ) == IMPULSE_OK) {
+                            bitset_add(bs_dst, resolved_id, vm_state->query_context->max_nodes);
                         }
                     }
                 }

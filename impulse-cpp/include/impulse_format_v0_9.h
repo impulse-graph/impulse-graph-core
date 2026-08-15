@@ -87,7 +87,8 @@ typedef struct impulse_snapshot_header_v0_9_t {
     uint64_t footer_directory_bytes; // Byte size of Footer Directory Table
     uint8_t snapshot_uuid[16];       // 128-bit Binary UUID
     uint16_t header_checksum;        // CRC-16-CCITT checksum over bytes 0x00..0x3D
-    uint8_t header_padding[4032];    // Reserved header expansion padding
+    uint16_t index_count;            // Total number of secondary indices
+    uint8_t header_padding[4030];    // Reserved header expansion padding
 } impulse_snapshot_header_v0_9_t;
 
 // Section 2 Domain Catalog Entry (16 Bytes)

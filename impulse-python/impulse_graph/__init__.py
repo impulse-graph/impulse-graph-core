@@ -47,6 +47,12 @@ class Snapshot:
     def is_reachable(self, relation_index: int, src_id: int, tgt_id: int) -> bool:
         return self._native.is_reachable(relation_index, src_id, tgt_id)
 
+    def resolve_key(self, domain_id: int, node_id: int) -> bytes:
+        return self._native.resolve_key(domain_id, node_id)
+
+    def resolve_dense_id(self, domain_id: int, key: str) -> int:
+        return self._native.resolve_dense_id(domain_id, key)
+
     def get_row_offsets_array(self, relation_index: int) -> np.ndarray:
         mv = self._native.get_csr_row_offsets(relation_index)
         return np.frombuffer(mv, dtype=np.uint32)

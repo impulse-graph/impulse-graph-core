@@ -1,3 +1,6 @@
+#include "impulse_index.h"
+#include <string>
+
 #include "impulse_graph.h"
 #include "impulse_format_v0_9.h"
 #include "impulse_sha256.h"
@@ -507,6 +510,38 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             }
 
             snap->relations.push_back(rel_entry);
+        }
+
+        rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
+
+        uint16_t idx_count = snap->header.index_count;
+        snap->indexes.reserve(idx_count);
+        snap->index_names.resize(idx_count);
+
+        for (uint16_t k = 0; k < idx_count; ++k) {
+            if (cur + sizeof(impulse_index_directory_entry_v0_9_t) > file_size) {
+                g_last_error = "Buffer overflow parsing index directory";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+            impulse_index_directory_entry_v0_9_t idx_entry;
+            std::memcpy(&idx_entry, raw + cur, sizeof(idx_entry));
+            cur += sizeof(idx_entry);
+
+            std::string iname;
+            impulse_status_t str_status = validate_and_get_string(idx_entry.name_offset, iname);
+            if (str_status == IMPULSE_OK) {
+                snap->index_names[k] = iname;
+            }
+
+            if (idx_entry.data_offset > 0 && idx_entry.data_offset % 128 != 0) {
+                g_last_error = "Unaligned index data offset (must be 128B aligned)";
+                if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
+
+            snap->indexes.push_back(idx_entry);
         }
     } else {
         // Legacy v2.4 parsing
@@ -1479,6 +1514,84 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     if (out_csc_row_count) *out_csc_row_count = rel.node_count;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
     return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_resolve_key(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    const void* key_bytes,
+    size_t key_len,
+    uint32_t* out_node_id
+) {
+    if (!snapshot || !key_bytes || !out_node_id) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (domain_id >= snapshot->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    for (const auto& idx : snapshot->indexes) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+            const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+            const void* index_data = raw + idx.data_offset;
+            
+            if (idx.index_type == 4) { // IMP_INDEX_MINIMAL_PERFECT_HASH
+                std::string null_term_key(static_cast<const char*>(key_bytes), key_len);
+                return impulse_index_minimal_perfect_hash_lookup(index_data, idx.data_bytes, null_term_key.c_str(), out_node_id);
+            }
+            // Add other index types here (e.g. ZoneMap, Permutation for integers) if needed
+        }
+    }
+    return IMPULSE_ERR_INVALID_ARGUMENT;
+}
+
+impulse_status_t impulse_snapshot_resolve_dense_id(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_id,
+    uint32_t node_id,
+    const void** out_key_bytes,
+    size_t* out_key_len
+) {
+    if (!snapshot || !out_key_bytes || !out_key_len) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (domain_id >= snapshot->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (node_id >= snapshot->domains[domain_id].node_count) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+
+    for (const auto& idx : snapshot->indexes) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+            if (idx.index_type == 4) { // IMP_INDEX_MINIMAL_PERFECT_HASH
+                const void* index_data = raw + idx.data_offset;
+                const uint8_t* iraw = static_cast<const uint8_t*>(index_data);
+                
+                // MphfHeader is 32 bytes.
+                // struct MphfHeader { uint64_t key_count, seed; uint32_t string_table_bytes; uint8_t reserved[12]; }
+                if (idx.data_bytes < 32) return IMPULSE_ERR_INVALID_ARGUMENT;
+                
+                uint64_t key_count = 0;
+                uint32_t str_bytes = 0;
+                std::memcpy(&key_count, iraw, 8);
+                std::memcpy(&str_bytes, iraw + 16, 4);
+
+                size_t str_offset = 32;
+                size_t table_offset = str_offset + str_bytes;
+                if (idx.data_bytes < table_offset + key_count * 8) return IMPULSE_ERR_INVALID_ARGUMENT;
+
+                const char* str_pool = reinterpret_cast<const char*>(iraw + str_offset);
+                const uint8_t* table = iraw + table_offset;
+
+                for (size_t i = 0; i < key_count; ++i) {
+                    uint32_t k_off = 0;
+                    uint32_t n_id = 0;
+                    std::memcpy(&k_off, table + (i * 8), 4);
+                    std::memcpy(&n_id, table + (i * 8) + 4, 4);
+
+                    if (k_off != 0 && n_id == node_id) {
+                        *out_key_bytes = str_pool + k_off;
+                        *out_key_len = std::strlen(str_pool + k_off);
+                        return IMPULSE_OK;
+                    }
+                }
+            }
+        }
+    }
+    return IMPULSE_ERR_INVALID_ARGUMENT;
 }
 
 } // extern "C"
