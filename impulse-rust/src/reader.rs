@@ -526,4 +526,9 @@ impl SnapshotReader {
 
         Ok(map)
     }
+
+    /// Initializes a fluent multi-hop graph traversal starting at `start_node`.
+    pub fn traverse(&self, start_node: u64) -> crate::traversal::Traversal<'_> {
+        crate::traversal::Traversal::new(self, start_node)
+    }
 }
