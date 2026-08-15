@@ -40,6 +40,9 @@ for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_all
 hwy_lib = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-build", "libhwy.a"))
 extra_objects = [hwy_lib] if os.path.exists(hwy_lib) else []
 
+import sys
+extra_compile_args = ["/std:c++20", "/EHsc", "/DNOMINMAX", "/DWIN32_LEAN_AND_MEAN"] if sys.platform == "win32" else ["-std=c++20"]
+
 ext_modules = [
     Pybind11Extension(
         "impulse_graph._impulse_native",
@@ -57,6 +60,7 @@ ext_modules = [
             hwy_dir,
         ],
         extra_objects=extra_objects,
+        extra_compile_args=extra_compile_args,
         cxx_std=20,
     ),
 ]
