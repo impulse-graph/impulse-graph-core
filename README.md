@@ -6,6 +6,9 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support--zero-dependencies)
 [![Dependencies](https://img.shields.io/badge/Dependencies-0%20(Zero)-brightgreen.svg)](#platform-support--zero-dependencies)
 
+> [!WARNING]
+> **Pre-release Documentation**: This documentation describes pre-release software under active development and may be inaccurate, incomplete, or missing.
+
 Impulse Graph is an embedded graph analytics engine. Think **SQLite, but for graphs** — open a single `.imps` snapshot file, query it from any language, no database server required.
 
 It fills a missing gap in the open-source ecosystem as the **Apache Arrow / Parquet equivalent for graph analytics**. Rather than running a heavy database server, you compile your graph data into an immutable binary snapshot (`.imps`), memory-map it, and run traversals and linear algebra directly over the mapped memory. Datasets from thousands to billions of edges, cold starts under a millisecond, queries in microseconds.
@@ -13,6 +16,9 @@ It fills a missing gap in the open-source ecosystem as the **Apache Arrow / Parq
 ---
 
 ## Quick Start
+
+> [!NOTE]
+> **Pre-release Notice**: Binary wheels and package registry artifacts are currently in pre-release testing; building from source is currently required (see [Build & Test](#build--test)).
 
 ### 1. Install
 
@@ -27,7 +33,7 @@ curl -LO https://github.com/impulse-graph/impulse-graph-samples/releases/downloa
 ```
 
 > [!NOTE]
-> This is [Hetionet](https://het.io), a biomedical knowledge graph with 47K nodes, 2.25M edges, and 24 relation types (Disease→Gene, Compound→Gene, Gene→Pathway, etc.). The `.imps` file is ~27 MB.
+> This is [Hetionet](https://het.io), a biomedical knowledge graph with 47K nodes, 2.25M edges, and 24 relation types (Disease→Gene, Compound→Gene, Gene→Pathway, etc.). The `.imps` file is ~10 MB.
 
 ### 3. Query
 
@@ -54,6 +60,55 @@ with Snapshot("hetionet.v09.imps") as graph:
 
 > [!NOTE]
 > **Set Semantics vs Bag Semantics**: To guarantee predictable, sub-microsecond vector execution, Impulse Graph's openCypher engine implements strict **Set semantics** rather than relational Multiset/Bag semantics, eliminating duplicate frontier materialization and costly deduplication barriers.
+
+### 4. Building Your Own Snapshots
+
+To compile your own datasets into `.imps` files, install the [Impulse CLI tooling](https://github.com/impulse-graph/impulse-graph-tooling):
+
+```bash
+# Install the CLI
+cargo install impulse-graph-tools
+
+# Create a manifest describing your graph schema
+cat > manifest.json << 'EOF'
+{
+  "version": "0.9.0",
+  "domains": [
+    { "id": 0, "name": "User", "key_type": "string" },
+    { "id": 1, "name": "Product", "key_type": "string" }
+  ],
+  "relations": [
+    { "src_domain": 0, "tgt_domain": 1, "encoding": "raw", "file": "purchases.tsv" }
+  ]
+}
+EOF
+
+# Build the snapshot
+impulse build -m manifest.json -o my_graph.imps
+
+# Inspect it
+impulse inspect my_graph.imps
+```
+
+> [!TIP]
+> **Input Formats & Auto-Discovery**: Impulse CLI supports TSV, CSV, and Parquet relation tables with optional automatic attribute discovery and schema inference.
+
+---
+
+## Language Bindings & Multi-Language Usage
+
+All native bindings link against the C++20 kernel. Queries execute in the C++ engine regardless of host language — the binding layer is just the call boundary.
+
+For JVM applications (Java 25, Kotlin, Scala 3, Clojure), see the standalone [**impulse-graph-java**](https://github.com/impulse-graph/impulse-graph-java) implementation built on pure JDK 25 Foreign Function & Memory (FFM) and Vector API with full feature parity.
+
+| Language | Directory | Install | API Style |
+| :--- | :--- | :--- | :--- |
+| **Python** | [`impulse-python/`](./impulse-python/) | `pip install impulse-graph` | Fluent traversal + CEL, NumPy/PyTorch/SciPy interop |
+| **C++20** | [`impulse-cpp/`](./impulse-cpp/) | CMake / system install | C-ABI + fluent `QueryBuilder` |
+| **Rust** | [`impulse-rust/`](./impulse-rust/) | `cargo add impulse-graph` | Safe wrapper, fluent traversal |
+| **Go** | [`impulse-go/`](./impulse-go/) | `go get github.com/impulse-graph/impulse-graph/go` | CGO, fluent traversal |
+| **Node.js** | [`impulse-node/`](./impulse-node/) | `npm install impulse-graph` | N-API, fluent traversal |
+| **C# / .NET 9** | [`impulse-dotnet/`](./impulse-dotnet/) | NuGet `ImpulseGraph` | P/Invoke, `QueryBuilder` |
 
 <details>
 <summary><b>Python (Fluent Builder + Filters)</b></summary>
@@ -257,40 +312,52 @@ Console.WriteLine($"Status: {result.Status}");
 
 </details>
 
-### Building Your Own Snapshots
+---
 
-To compile your own datasets into `.imps` files, install the [Impulse CLI tooling](https://github.com/impulse-graph/impulse-graph-tooling):
+## Query Languages
 
-```bash
-# Install the CLI
-cargo install impulse-graph-tools
+All query frontends compile through the **ImpScheme** (`.impscm`) intermediate representation into ImpulseVM bytecode. 
 
-# Create a manifest describing your graph schema
-cat > manifest.json << 'EOF'
-{
-  "version": "0.9.0",
-  "domains": [
-    { "id": 0, "name": "User", "key_type": "string" },
-    { "id": 1, "name": "Product", "key_type": "string" }
-  ],
-  "relations": [
-    { "src_domain": 0, "tgt_domain": 1, "encoding": "delta_vbyte", "file": "purchases.tsv" }
-  ]
-}
-EOF
+**[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** is the most expressive and fullest featured query interface for Impulse Graph, enabling rich multi-hop traversals, edge attribute filtering via [Google CEL](https://github.com/google/cel-spec), and SIMD-vectorized execution.
 
-# Build the snapshot
-impulse build -m manifest.json -o my_graph.imps
+| Language | Style | Feature Highlights & Use Cases |
+| :--- | :--- | :--- |
+| **[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** *(Recommended)* | Programmatic builder with CEL filters | **Most expressive & fullest featured**: Multi-hop path queries, predicate pushdown, rich attribute filtering |
+| **[openCypher](https://docs.impulsegraph.io/query/cypher/)** | Declarative pattern matching (Set semantics) | Familiar Cypher syntax: `MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE ... RETURN ...` |
+| **[ImpLog](https://docs.impulsegraph.io/query/implog/)** (`.implog`) | Declarative Datalog | Recursive reachability, ReBAC/Zanzibar authorization, transitive closure |
+| **[ImpK](https://docs.impulsegraph.io/query/impk/)** (`.impk`) | GraphBLAS matrix math | PageRank, connected components, semiring operations |
 
-# Inspect it
-impulse inspect my_graph.imps
+---
+
+## Query Execution
+
+All query frontends compile down to a shared S-Expression IR (**ImpScheme**), which is optimized and emitted as ImpulseVM bytecode:
+
 ```
+  Application Code (Python, Go, Rust, C#, Node.js, C++)
+                          │
+                    C-ABI Kernel
+                          │
+         ┌────────────────┼────────────────┐
+    Fluent/CEL        ImpLog           ImpK / Cypher
+         └────────────────┼────────────────┘
+                          │ AST
+                    ImpScheme IR
+                   (S-Expressions)
+                          │ Optimized impOps
+                     ImpulseVM
+                  (SIMD + OpenMP)
+                          │ Zero-copy pointers
+                  .imps Snapshot (mmap, RO)
+```
+
+The compiler pipeline includes constant folding, direction selection (CSR push vs CSC pull), 2-hop kernel fusion, register ping-ponging, predicate pushdown, seed inlining, and early-exit optimization — all completing in < 3 µs.
+
+👉 **[Full architecture deep dive →](docs/ARCHITECTURE.md)**
 
 ---
 
 ## How It Works
-
-Impulse Graph's performance comes from two architectural pillars:
 
 ### The Impulse Binary Snapshot Format (`.imps`)
 
@@ -320,62 +387,6 @@ The **ImpulseVM** is a register-based graph query Virtual Machine inspired by **
 
 ---
 
-## Language Bindings
-
-All bindings link against the native C++20 kernel. Queries execute in the C++ engine regardless of host language — the binding layer is just the call boundary.
-
-| Language | Directory | Install | API Style |
-| :--- | :--- | :--- | :--- |
-| **C++20** | [`impulse-cpp/`](./impulse-cpp/) | CMake / system install | C-ABI + fluent `QueryBuilder` |
-| **Python** | [`impulse-python/`](./impulse-python/) | `pip install impulse-graph` | Fluent traversal, NumPy/PyTorch/SciPy interop |
-| **Rust** | [`impulse-rust/`](./impulse-rust/) | `cargo add impulse-graph` | Safe wrapper, fluent traversal |
-| **Go** | [`impulse-go/`](./impulse-go/) | `go get github.com/impulse-graph/impulse-graph/go` | CGO, fluent traversal |
-| **C# / .NET 9** | [`impulse-dotnet/`](./impulse-dotnet/) | NuGet `ImpulseGraph` | P/Invoke, `QueryBuilder` |
-| **Node.js** | [`impulse-node/`](./impulse-node/) | `npm install impulse-graph` | N-API, fluent traversal |
-
----
-
-## Query Languages
-
-All query frontends compile through the **ImpScheme** (`.impscm`) intermediate representation into ImpulseVM bytecode:
-
-| Language | Style | Example Use Cases |
-| :--- | :--- | :--- |
-| **[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** | Programmatic builder with [Google CEL](https://github.com/google/cel-spec) filters | Multi-hop path queries, filtered edge traversals |
-| **[ImpLog](https://docs.impulsegraph.io/query/implog/)** (`.implog`) | Declarative Datalog | Recursive reachability, ReBAC/Zanzibar authorization, transitive closure |
-| **[ImpK](https://docs.impulsegraph.io/query/impk/)** (`.impk`) | GraphBLAS matrix math | PageRank, connected components, semiring operations |
-| **[openCypher](https://docs.impulsegraph.io/query/cypher/)** | Pattern matching | `MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE ... RETURN ...` |
-
----
-
-## Architecture
-
-Impulse Graph decouples analytical graph compute from storage by pairing an immutable binary format with a register-based VM. All query frontends compile down to a shared S-Expression IR (**ImpScheme**), which is optimized and emitted as ImpulseVM bytecode:
-
-```
-  Application Code (Python, Go, Rust, C#, Node.js, C++)
-                          │
-                    C-ABI Kernel
-                          │
-         ┌────────────────┼────────────────┐
-    Fluent/CEL        ImpLog           ImpK / Cypher
-         └────────────────┼────────────────┘
-                          │ AST
-                    ImpScheme IR
-                   (S-Expressions)
-                          │ Optimized impOps
-                     ImpulseVM
-                  (SIMD + OpenMP)
-                          │ Zero-copy pointers
-                  .imps Snapshot (mmap, RO)
-```
-
-The compiler pipeline includes constant folding, direction selection (CSR push vs CSC pull), 2-hop kernel fusion, register ping-ponging, predicate pushdown, seed inlining, and early-exit optimization — all completing in < 3 µs.
-
-👉 **[Full architecture deep dive →](docs/ARCHITECTURE.md)**
-
----
-
 ## Performance
 
 4-hop traversal latency across language bindings (Hetionet, 1,317 candidate compounds):
@@ -391,11 +402,14 @@ The compiler pipeline includes constant folding, direction selection (CSR push v
 
 Comparison against other graph engines on the same dataset:
 
-| Engine | Cold Start | 4-Hop Query | RAM |
-| :--- | :--- | :--- | :--- |
-| **Impulse Graph** | < 1 ms | 18 µs | 0 MB (off-heap) |
-| **PyTorch Geometric** | 450 ms | 850 µs | 410 MB |
-| **NetworkX** | 1,850 ms | 42,100 µs | 890 MB |
+| Engine | Storage Model | Cold Start Time | 4-Hop Query Latency | Memory Footprint (RAM) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Impulse Graph** | Immutable `.imps` (Mmap) | **< 1 ms** | **0.018 ms** (18 µs) | **0 MB** (Off-heap / OS Cache) |
+| **PyG (PyTorch Geo)** | CSR / Tensor | 450 ms | 0.850 ms (850 µs) | 410 MB (PyTorch Tensors) |
+| **NetworkX** | Python In-Memory Dicts | 1,850 ms | 42.100 ms (42,100 µs) | 890 MB (Python Objects) |
+
+> [!NOTE]
+> **Honest & Reproducible Benchmarks**: We seek to provide honest, reproducible benchmark results across all tested systems. Suggestions for benchmark methodology improvements, optimization tuning for baseline engines, or additional graph engines to test are always welcome via issues or pull requests.
 
 👉 **[Full benchmark report →](docs/BENCHMARKS.md)**
 
@@ -406,7 +420,7 @@ Comparison against other graph engines on the same dataset:
 | Repository | Description |
 | :--- | :--- |
 | **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc36`) |
-| **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
+| **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
 | **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
 | **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs PyG, NetworkX, MATPOWER |
 | **[impulse-website](https://github.com/impulse-graph/impulse-website)** | Documentation portal ([docs.impulsegraph.io](https://docs.impulsegraph.io)) |
@@ -438,6 +452,9 @@ All SDKs resolve snapshot paths in order: exact path / CWD → `$IMPULSEGRAPH_DA
 ---
 
 ## Build & Test
+
+> [!NOTE]
+> **Pre-release Source Builds**: During pre-release, building from source is required across all native components.
 
 ```bash
 # C++ kernel
