@@ -1,6 +1,6 @@
-use std::process::Command;
 use std::env;
 use std::path::Path;
+use std::process::Command;
 
 fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> String {
     let filename = Path::new(src).file_stem().unwrap().to_str().unwrap();
@@ -32,6 +32,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
     if is_windows {
         let compiler = env::var("CXX").unwrap_or_else(|_| "cl".to_string());
         let mut args = vec![
+            "/nologo".to_string(),
             "/std:c++20".to_string(),
             "/O2".to_string(),
             "/EHsc".to_string(),
@@ -41,7 +42,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             src.to_string(),
             format!("/I{}", include_dir),
             format!("/I{}", "../impulse-cpp/src"),
-            format!("/Fo{}", obj_file),
+            format!("/Fo:{}", obj_file),
         ];
         if Path::new(hwy_inc).exists() {
             args.push(format!("/I{}", hwy_inc));
@@ -100,8 +101,10 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let is_macos = target_os == "macos";
     let is_windows = target_os == "windows";
+    let is_musl = target_env == "musl";
     let cpp_include = "../impulse-cpp/include";
 
     // Track changes to C++ source and header files
@@ -117,10 +120,9 @@ fn main() {
 
     let has_omp = if is_macos {
         Path::new("/opt/homebrew/opt/libomp/include").exists()
-    } else if is_windows {
+    } else if is_windows || is_musl {
         false
     } else {
-        // On Linux, check standard location or compile flag
         Path::new("/usr/include/omp.h").exists() || Path::new("/usr/lib/gcc").exists()
     };
 
@@ -135,7 +137,7 @@ fn main() {
     if is_windows {
         let lib_file = format!("{}/impulse_native.lib", out_dir);
         let status_lib = Command::new("lib")
-            .args([format!("/OUT:{}", lib_file), obj_simd, obj_vm, obj_fluent, obj_graph, obj_index])
+            .args(["/nologo", &format!("/OUT:{}", lib_file), &obj_simd, &obj_vm, &obj_fluent, &obj_graph, &obj_index])
             .status();
             
         assert!(
@@ -176,6 +178,10 @@ fn main() {
             println!("cargo:rustc-link-search=native=/opt/homebrew/opt/libomp/lib");
             println!("cargo:rustc-link-lib=dylib=omp");
         }
+    } else if is_musl {
+        println!("cargo:rustc-link-lib=static=impulse_native");
+        println!("cargo:rustc-link-lib=static=hwy");
+        println!("cargo:rustc-link-lib=static=stdc++");
     } else {
         println!("cargo:rustc-link-lib=static=impulse_native");
         println!("cargo:rustc-link-lib=static=hwy");
