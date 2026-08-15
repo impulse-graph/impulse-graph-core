@@ -31,14 +31,39 @@ curl -LO https://github.com/impulse-graph/impulse-graph-samples/releases/downloa
 
 ### 3. Query
 
+The easiest way to start is using declarative pattern matching. 
+
 ```python
 from impulse_graph import Snapshot
 
 with Snapshot("hetionet.v09.imps") as graph:
-    # Find all compounds that target genes associated with a disease
-    # Disease(14726) → DaG → GpPW ← GpPW ← CbG → Compound
+    # 1. Inspect the schema catalog
+    print(f"Loaded {graph.domain_count()} domains, {graph.relation_count()} relations")
+    
+    # 2. Run an openCypher query directly over the memory-mapped file
+    # This finds compounds targeting genes associated with Epilepsy
+    query = """
+        MATCH (d:Disease)-[:DaG]->(g1:Gene)-[:GpPW]->(p:Pathway)<-[:GpPW]-(g2:Gene)<-[:CbG]-(c:Compound) 
+        WHERE d.name = $diseaseName 
+        RETURN c
+    """
+    
+    candidates = graph.cypher(query, params={"diseaseName": "epilepsy syndrome"}, catalog="hetionet")
+    print(f"Found {len(candidates)} candidate compounds")
+```
+
+<details>
+<summary><b>Python (Fluent Builder)</b></summary>
+
+For maximum performance, you can bypass the Cypher parser and use the zero-allocation fluent builder. First, look up your starting node ID:
+
+```python
+from impulse_graph import Snapshot
+
+with Snapshot("hetionet.v09.imps") as graph:
+    # Assuming Epilepsy was resolved to node ID 14726 via an external index
     candidates = (
-        graph.traverse(start_node=14726)
+        graph.traverse(start_node=14726, catalog="hetionet")
              .out("DaG")       # Disease → Gene
              .out("GpPW")      # Gene → Pathway
              .in_("GpPW")      # Pathway ← Gene
@@ -47,6 +72,8 @@ with Snapshot("hetionet.v09.imps") as graph:
     )
     print(f"Found {len(candidates)} candidate compounds")  # 1,317
 ```
+
+</details>
 
 <details>
 <summary><b>C++</b></summary>
@@ -321,7 +348,6 @@ Comparison against other graph engines on the same dataset:
 | Engine | Cold Start | 4-Hop Query | RAM |
 | :--- | :--- | :--- | :--- |
 | **Impulse Graph** | < 1 ms | 18 µs | 0 MB (off-heap) |
-| **Neo4j Enterprise** | 4,200 ms | 8,400 µs | 2,400 MB |
 | **PyTorch Geometric** | 450 ms | 850 µs | 410 MB |
 | **NetworkX** | 1,850 ms | 42,100 µs | 890 MB |
 
