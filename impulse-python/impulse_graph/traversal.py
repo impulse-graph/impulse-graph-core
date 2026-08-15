@@ -204,3 +204,47 @@ class Traversal:
             found = res.test_bitset(ctx, target_node)
             ctx.release_bitset(res.raw_value)
             return found
+
+    def to_impas(self) -> str:
+        """Disassemble traversal steps into human-readable ImpAsm (.impas) text assembly."""
+        lines = [
+            "; =========================================================================",
+            ";                  IMPULSE VM BYTECODE DISASSEMBLY (.impas)               ",
+            "; =========================================================================",
+            ".version 0.9.0",
+            f".instructions {len(self._steps) + 3}",
+            "",
+            "  0x0000:  OP_INIT_INPUT_NODE    R0              ; Seed input parameter -> R0",
+        ]
+
+        curr_reg = 0
+        pc = 1
+        inv_catalog = {v: k for k, v in self._catalog.items()} if self._catalog else {}
+
+        for step in self._steps:
+            op = step[0]
+            rel_id = step[1]
+            rel_name = inv_catalog.get(rel_id, f"rel_{rel_id}")
+            next_reg = curr_reg + 1
+
+            if op == "out":
+                lines.append(f"  0x{pc:04x}:  OP_CSR_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Forward CSR walk via [\"{rel_name}\"] (rel_id={rel_id})")
+            elif op == "in_":
+                lines.append(f"  0x{pc:04x}:  OP_CSC_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Reverse CSC walk via [\"{rel_name}\"] (rel_id={rel_id})")
+            elif op == "filter_node":
+                lines.append(f"  0x{pc:04x}:  OP_NODE_FILTER        R{curr_reg}, #{rel_id:<3}     ; Filter R{curr_reg} by attribute filter #{rel_id}")
+                next_reg = curr_reg
+            elif op == "filter_prefix":
+                lines.append(f"  0x{pc:04x}:  OP_FILTER_STR_PREFIX  R{curr_reg}, \"{rel_id}\"     ; Filter R{curr_reg} by prefix \"{rel_id}\"")
+                next_reg = curr_reg
+
+            curr_reg = next_reg
+            pc += 1
+
+        lines.append(f"  0x{pc:04x}:  OP_COLLECT_BITSET     R{curr_reg}             ; Materialize active target bitset handle")
+        lines.append(f"  0x{pc+1:04x}:  OP_HALT                               ; Execution complete")
+        return "\n".join(lines)
+
+    def disassemble(self) -> str:
+        """Alias for to_impas()."""
+        return self.to_impas()
