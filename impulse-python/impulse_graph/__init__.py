@@ -71,6 +71,27 @@ class Snapshot:
         from .traversal import Traversal
         return Traversal(self, start_node=start_node, catalog=catalog)
 
+    def cypher(
+        self,
+        query: str,
+        params: dict | None = None,
+        catalog: Union[str, dict] | None = None,
+    ) -> Union[List[int], int]:
+        """Execute a declarative openCypher query directly against the snapshot off-heap."""
+        from .cypher import CypherQuery
+        c_query = CypherQuery(query, catalog=catalog)
+        return c_query.execute(self, params=params)
+
+    def compile_cypher(
+        self,
+        query: str,
+        catalog: Union[str, dict] | None = None,
+    ) -> "Traversal":
+        """Compile a declarative openCypher query into a reusable Traversal / VM executable."""
+        from .cypher import CypherQuery
+        c_query = CypherQuery(query, catalog=catalog)
+        return c_query.build_traversal(self)
+
     def to_scipy_csr(self, relation_index: int = 0):
         """Convert snapshot CSR topology to a zero-copy scipy.sparse.csr_matrix."""
         import scipy.sparse as sp
