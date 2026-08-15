@@ -36,15 +36,16 @@ type Record struct {
 	Fields map[string]any
 }
 
-// Traverse initializes a fluent Traversal starting at the given seed node ID.
-func (s *Snapshot) Traverse(startNode uint64) *Traversal {
-	return &Traversal{
+// Traverse initializes a fluent Traversal starting along the specified initial relation from the given seed node ID.
+func (s *Snapshot) Traverse(relationName string, startNode uint64) *Traversal {
+	t := &Traversal{
 		snapshot:   s,
 		startNode:  startNode,
 		steps:      make([]traversalStep, 0),
 		params:     make(map[string]float64),
 		projection: make([]string, 0),
 	}
+	return t.Out(relationName)
 }
 
 // Out appends a forward traversal step along the specified relation.
@@ -247,7 +248,13 @@ func (s *Snapshot) Cypher(query string, params map[string]float64) ([]uint64, er
 		return nil, fmt.Errorf("invalid Cypher statement: must start with MATCH")
 	}
 
-	t := s.Traverse(0)
+	t := &Traversal{
+		snapshot:   s,
+		startNode:  0,
+		steps:      make([]traversalStep, 0),
+		params:     make(map[string]float64),
+		projection: make([]string, 0),
+	}
 	if params != nil {
 		for k, v := range params {
 			t.WithParam(k, v)

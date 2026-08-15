@@ -233,8 +233,7 @@ func main() {
 
     diseaseId, _ := graph.ResolveDenseId(4, "Disease::DOID:10652")
 
-    candidates, _ := graph.Traverse(diseaseId).
-        Out("DaG").
+    candidates, _ := graph.Traverse("DaG", diseaseId).
         Out("GpPW").
         In("GpPW").
         In("CbG").
