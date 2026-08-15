@@ -25,7 +25,7 @@ func main() {
 		fmt.Println("[INFO] Generating fallback in-memory sample social graph...")
 		isTemp = true
 
-		writer, err := impulse.NewWriter(tempPath)
+		writer, err := impulse.NewWriter(tempPath, 0)
 		if err != nil {
 			log.Fatalf("Failed to create writer: %v", err)
 		}
@@ -60,8 +60,7 @@ func main() {
 	fmt.Println("   Query: Seed(User 0) -> Out(\"0\") -> Out(\"0\")")
 
 	t0 := time.Now()
-	hop2Friends, err := snap.Traverse(0).
-		Out("0").
+	hop2Friends, err := snap.Traverse("0", 0).
 		Out("0").
 		ToSlice()
 	elapsed := time.Since(t0)
@@ -77,7 +76,7 @@ func main() {
 	// Step 2: Immediate 1-Hop Outgoing Neighbors
 	// ------------------------------------------------------------------------
 	fmt.Println("\n2. Inspecting 1-Hop Outgoing Edges for User 0:")
-	directFriends, _ := snap.Traverse(0).Out("0").ToSlice()
+	directFriends, _ := snap.Traverse("0", 0).ToSlice()
 	fmt.Printf("   -> User 0 follows: %v\n", directFriends)
 
 	fmt.Println("\n[SUCCESS] Example 02 completed cleanly.")

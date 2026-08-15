@@ -20,7 +20,7 @@ func main() {
 	// ------------------------------------------------------------------------
 	fmt.Printf("1. Creating binary snapshot file: %s...\n", snapshotPath)
 
-	writer, err := impulse.NewWriter(snapshotPath)
+	writer, err := impulse.NewWriter(snapshotPath, 0)
 	if err != nil {
 		log.Fatalf("Failed to create writer: %v", err)
 	}
