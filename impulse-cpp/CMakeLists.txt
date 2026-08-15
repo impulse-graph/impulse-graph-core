@@ -168,3 +168,10 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_datalog_compiler PRIVATE impulse_graph_static)
     add_test(NAME test_datalog_compiler COMMAND test_datalog_compiler)
 endif()
+
+# --- Examples ------------------------------------------------------------
+option(IMPULSE_BUILD_EXAMPLES "Build impulse-cpp examples" ON)
+if(IMPULSE_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+

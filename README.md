@@ -103,7 +103,7 @@ For JVM applications (Java 25, Kotlin, Scala 3, Clojure), see the standalone [**
 
 | Language | Directory | Install | API Style |
 | :--- | :--- | :--- | :--- |
-| **Python** | [`impulse-python/`](./impulse-python/) | `pip install impulse-graph` | Fluent traversal + CEL, NumPy/PyTorch/SciPy interop |
+| **Python** | [`impulse-python/`](./impulse-python/) | `pip install impulse-graph` | Fluent traversal + CEL, [Snapshot Interchange (`.imps`)](./impulse-python/SNAPSHOT_INTERCHANGE_GUIDE.md) (PyTorch, PyG, SciPy, Arrow, Polars, NetworkX) |
 | **C++20** | [`impulse-cpp/`](./impulse-cpp/) | CMake / system install | C-ABI + fluent `QueryBuilder` |
 | **Rust** | [`impulse-rust/`](./impulse-rust/) | `cargo add impulse-graph` | Safe wrapper, fluent traversal |
 | **Go** | [`impulse-go/`](./impulse-go/) | `go get github.com/impulse-graph/impulse-graph/go` | CGO, fluent traversal |

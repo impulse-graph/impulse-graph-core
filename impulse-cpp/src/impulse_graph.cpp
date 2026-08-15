@@ -201,7 +201,10 @@ static std::string resolve_snapshot_path(const char* file_path) {
         return path_str;
     }
 
-    const char* env_dir = std::getenv("IMPULSEGRAPH_DATA_DIR");
+    const char* env_dir = std::getenv("IMPULSE_DATASETS_DIR");
+    if (!env_dir || env_dir[0] == '\0') {
+        env_dir = std::getenv("IMPULSEGRAPH_DATA_DIR");
+    }
     if (!env_dir || env_dir[0] == '\0') {
         env_dir = std::getenv("IMPULSE_DATA_DIR");
     }
@@ -223,6 +226,23 @@ static std::string resolve_snapshot_path(const char* file_path) {
             std::string candidate2 = base + dataset_name + "/" + path_str;
             if (::stat(candidate2.c_str(), &st) == 0) {
                 return candidate2;
+            }
+        }
+    }
+
+    // Check standard local relative search paths
+    const char* local_prefixes[] = {"datasets/", "../datasets/", "../../datasets/", "../../../datasets/"};
+    for (const char* prefix : local_prefixes) {
+        std::string local_cand1 = std::string(prefix) + path_str;
+        if (::stat(local_cand1.c_str(), &st) == 0) {
+            return local_cand1;
+        }
+        size_t dot_pos = path_str.find('.');
+        if (dot_pos != std::string::npos) {
+            std::string dataset_name = path_str.substr(0, dot_pos);
+            std::string local_cand2 = std::string(prefix) + dataset_name + "/" + path_str;
+            if (::stat(local_cand2.c_str(), &st) == 0) {
+                return local_cand2;
             }
         }
     }
@@ -1382,7 +1402,7 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     size_t out_capacity,
     size_t* out_count
 ) {
-    if (!snapshot || !src_nodes || !out_src || !out_tgt || !out_count || relation_index >= snapshot->relations.size()) {
+    if (!snapshot || !src_nodes || !out_count || relation_index >= snapshot->relations.size()) {
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
 
@@ -1394,6 +1414,24 @@ impulse_status_t impulse_snapshot_sample_neighbors(
 
     size_t total_written = 0;
     pcg32_fast rng(seed, 54u);
+
+    // Dry-run mode: count total samples needed
+    if (!out_src || !out_tgt) {
+        for (size_t i = 0; i < num_nodes; ++i) {
+            uint64_t u = src_nodes[i];
+            if (u >= rel.node_count) continue;
+
+            uint32_t start_idx = row_offsets[u];
+            uint32_t end_idx = row_offsets[u + 1];
+            uint32_t deg = end_idx - start_idx;
+            if (deg == 0) continue;
+
+            int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : (std::min)(static_cast<int>(deg), k_samples);
+            total_written += num_to_sample;
+        }
+        *out_count = total_written;
+        return IMPULSE_OK;
+    }
 
     for (size_t i = 0; i < num_nodes; ++i) {
         uint64_t u = src_nodes[i];

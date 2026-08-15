@@ -52,22 +52,20 @@ class Traversal {
         if (step.direction === 'out') {
           qb.walkEdge(relId, dstReg);
         } else {
-          qb.cscWalk(relId, dstReg);
+          qb.walkCsc(relId, dstReg);
         }
         currentReg = dstReg;
       }
 
       qb.collectBitset(currentReg);
-      const bytecode = qb.compile();
+      const compiled = qb.compile();
 
       const state = new native.VmState();
-      state.setQueryContext(ctx);
-      native.executeVm(bytecode, state, this.startNode);
+      const queryRes = compiled.executeWithContext(ctx, state, this.startNode);
 
-      const resHandle = Number(state.getRegister(currentReg));
       const results = [];
       for (let i = 0; i < 65536; i++) {
-        if (ctx.bitsetTest(resHandle, i)) {
+        if (queryRes.testBitset(ctx, i)) {
           results.push(i);
         }
       }
