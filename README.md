@@ -3,6 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Spec Compliance](https://img.shields.io/badge/Spec-v0.9.0-green.svg)](https://github.com/impulse-graph/impulse-graph-spec)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#-cross-platform-hardware-support)
 [![Dependencies](https://img.shields.io/badge/Dependencies-0%20(Zero)-brightgreen.svg)](#-zero-third-party-runtime-dependencies)
 
 High-performance, zero-copy, SIMD-vectorized C++20 graph traversal engine and polyglot native bindings. 
@@ -13,13 +14,25 @@ Impulse Graph is the **"SQLite for Graphs"** and the **"Apache Arrow for Graph A
 
 ## 🛡️ Zero Third-Party Runtime Dependencies
 
-Per the **Ultra-Lean Core Kernel Rule** (`AGENTS.md §3.2`), Impulse Graph maintains **strictly zero external runtime dependencies**:
+Impulse Graph maintains **strictly zero external runtime dependencies**:
 
 * **C++20 Kernel (`impulse-cpp`)**: Pure standard library implementation (`<cstdlib>`, `<vector>`, `<sys/mman.h>`). Requires no external shared libraries or runtime frameworks.
 * **Rust Crate (`impulse-rust`)**: `Cargo.toml` has `[dependencies]` completely empty.
 * **Java Engine (`impulse-graph-java`)**: Pure JDK 25 Foreign Function & Memory (FFM) API with zero Maven runtime dependencies.
 * **Zero Supply-Chain Risk**: Immune to transitive dependency vulnerabilities, CVE bloat, and runtime licensing conflicts.
 * **Universal Portability**: Compiles statically into standalone executables or links dynamically into container images (`FROM scratch` / Alpine).
+
+---
+
+## 🖥️ Cross-Platform Hardware Support
+
+Impulse Graph compiles natively and runs across all major operating systems and CPU architectures:
+
+| Operating System | Architectures | Compiler Toolchain | Acceleration / SIMD |
+| :--- | :--- | :--- | :--- |
+| **Linux** | `x86_64` (AMD64), `aarch64` (ARM64) | GCC 12+, Clang 16+ | AVX-512, AVX2, ARM Neon, Highway SIMD, OpenMP |
+| **macOS** | `arm64` (Apple Silicon M1-M4), `x86_64` (Intel) | Apple Clang / Xcode 15+ | ARM Neon, AVX2, Direct Threaded Dispatch |
+| **Windows** | `x64` (AMD64 / Intel 64) | MSVC 2022+ (`/MT` Static CRT), Clang-CL | AVX-512, AVX2, Highway SIMD |
 
 ---
 
