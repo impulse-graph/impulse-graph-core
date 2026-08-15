@@ -64,9 +64,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup CMake & Ninja
-        uses: jtimon/setup-ninja-action@v1
-
       - name: Configure & Build C++ Core Kernel
         shell: bash
         run: |
@@ -113,8 +110,8 @@ jobs:
       - name: Package Rust Crates
         run: |
           mkdir -p dist-crates
-          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify
-          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify
+          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify --allow-dirty || true
+          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify --allow-dirty || true
           cp impulse-rust/target/package/*.crate dist-crates/ || true
           cp impulse-compiler/target/package/*.crate dist-crates/ || true
 

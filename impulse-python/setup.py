@@ -27,7 +27,7 @@ import subprocess
 hwy_dir = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-src"))
 if not os.path.exists(hwy_dir) and os.path.exists(os.path.join(cpp_dir, "CMakeLists.txt")):
     try:
-        subprocess.run(["cmake", "-B", "build", "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"], cwd=cpp_dir, check=True)
+        subprocess.run(["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"], cwd=cpp_dir, check=True)
     except Exception:
         pass
 
