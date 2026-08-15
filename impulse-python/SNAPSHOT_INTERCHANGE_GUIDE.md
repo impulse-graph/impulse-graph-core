@@ -199,10 +199,17 @@ with Snapshot("rbac_snapshot.imps") as snap:
     n_components, labels = connected_components(mat)
 ```
 
-#### ImpulseVM Equivalence (1-Liner):
+#### ImpulseVM Equivalence (1-Liners):
 ```python
-# Direct hardware SIMD GraphBLAS Matrix-Vector Multiply (ImpK / OP_MXV) in < 15 microseconds:
-res = snap.execute_query(vm.QueryBuilder().input_node(0).matrix_vector_mul(matrix_reg=0).compile())
+# 1. Multi-Hop Shortest Path / Breadth-First Search:
+reachable_nodes = snap.traverse(start_node=0).out(0).to_list()
+
+# 2. GraphBLAS Power-Iteration PageRank via ImpK (20 SIMD matrix-vector iterations):
+# ImpK DSL: (repeat 20 (assign p (+ (* 0.85 (mxv A p)) (/ 0.15 N))))
+pr_query = (vm.QueryBuilder()
+            .repeat(20, lambda q: q.sparse_mat_vec(matrix_reg=0, vec_reg=1, out_reg=1))
+            .compile())
+pr_result = snap.execute_query(pr_query)
 ```
 
 ---
@@ -304,13 +311,37 @@ with Snapshot("hetionet.v09.imps") as graph:
 
 ---
 
-## 7. Virtual Relations & Transpose / CSC Views
+## 7. Virtual Relations: Transpose Views, Multiplexing & Partitioning
 
-In bidirectional graph algorithms (e.g. GNN message passing on undirected graphs, PageRank incoming link calculations, backward reachability), algorithms require fast column/incoming neighbor traversals.
+Virtual relations in `.imps` allow developers to define **logical relation views** in schema manifests and queries without duplicating physical edges on disk or in RAM.
 
-`.imps` handles this through two mechanisms:
-1. **Pre-Indexed CSC Buffers**: Relations can optionally store pre-sorted CSC column offset and row index arrays alongside CSR topology, enabling $O(1)$ off-heap incoming edge lookups without runtime sorting or transposition overhead.
-2. **Virtual Relations**: Virtual relations define named reverse edge types in schema catalogs by referencing existing relation CSC buffers, avoiding the creation of separate relation entries or duplicating edge attributes and metadata.
+### 7.1 Combining & Multiplexing Edge Types
+In rich heterogeneous graphs (e.g. social networks, e-commerce, knowledge graphs), multiple distinct physical interactions exist between the same domain pairs:
+- Physical relations: `VIEW`, `LIKE`, `DISLIKE`, `POSTED`, `COMMENTED`
+
+Rather than materializing a redundant physical table for combined engagement, a **virtual relation** is defined logically:
+- `USER_TO_POST_CONTENT` = `POSTED + COMMENTED` (authoring interactions)
+- `USER_ENGAGEMENT` = `VIEW + LIKE + COMMENTED` (all positive interactions)
+
+When queried, ImpulseVM dynamically unions the underlying CSR offset frontiers in SIMD registers (`OP_BITSET_OR`), executing in microseconds without allocating intermediate tables:
+
+```python
+# In openCypher: Traversal over combined virtual edge types:
+# MATCH (u:User)-[:POSTED|COMMENTED]->(p:Post) RETURN p
+posts = snap.cypher("MATCH (u:User)-[:POSTED|COMMENTED]->(p:Post) WHERE id(u) = 0 RETURN p")
+```
+
+### 7.2 Partitioning & Filtered Slices
+Virtual relations also enable logical slicing and partitioning across edge attributes (e.g. transaction date windows, confidence scores, or high-value transfers):
+- `TRANSFERS_LARGE` = `TRANSFERS WHERE amount >= 10000.0`
+- `VERIFIED_FOLLOWS` = `FOLLOWS WHERE verified == true`
+
+Predicate pushdown evaluates filters directly during the CSR walk instruction, skipping non-matching targets before frontier registers are populated.
+
+### 7.3 Pre-Indexed CSC Transpose Views (Inverse Relations)
+For bidirectional algorithms (e.g. GNN message passing on undirected graphs, PageRank incoming link calculations, backward reachability):
+- **Pre-Indexed CSC Buffers**: Physical snapshots can store pre-sorted CSC column offset and row index arrays alongside CSR topology, enabling $O(1)$ off-heap incoming edge lookups without runtime sorting or transposition overhead.
+- **Virtual Inverse Relations**: Schema catalogs define virtual reverse edges (e.g. `FOLLOWED_BY` as the inverse of `FOLLOWS`) referencing existing relation CSC buffers, avoiding the creation of separate relation entries or duplicating edge attributes and metadata.
 
 ```python
 with Snapshot("graph.imps") as snap:
