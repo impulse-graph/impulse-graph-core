@@ -66,7 +66,7 @@ class Snapshot:
         native_query = getattr(query, "_native", query)
         return vm.QueryResult(self._native.execute_query(native_query, input_param))
 
-    def traverse(self, start_node: int = 0, catalog: dict | None = None) -> "Traversal":
+    def traverse(self, start_node: int = 0, catalog: Union[str, dict] | None = None) -> "Traversal":
         """Initiate a friendly fluent graph path traversal starting from start_node."""
         from .traversal import Traversal
         return Traversal(self, start_node=start_node, catalog=catalog)

@@ -7,6 +7,23 @@ import numpy as np
 from . import vm
 
 
+# Built-in Domain Catalog Presets
+BUILTIN_CATALOGS: Dict[str, Dict[str, int]] = {
+    "hetionet": {
+        "AeG": 0, "CtD": 9, "CrC": 10, "DaG": 7, "DlA": 14,
+        "DdG": 17, "CbG": 19, "GpPW": 20, "CuG": 22,
+    },
+    "drkg": {
+        "DISGENET::da": 0, "STRING::interacts_with": 0,
+        "DRUGBANK::target": 0, "DRUGBANK::ddi_interactor_in": 0,
+        "GNBR::C": 0,
+    },
+    "northwind": {
+        "PURCHASED": 0, "CONTAINS": 1, "PRODUCED_BY": 2, "REPORTS_TO": 3,
+    },
+}
+
+
 class Traversal:
     """
     High-level, Pythonic graph traversal pipeline over Impulse Graph Snapshots.
@@ -18,12 +35,24 @@ class Traversal:
         self,
         snapshot: "Snapshot",
         start_node: int = 0,
-        catalog: Optional[Dict[str, int]] = None,
+        catalog: Optional[Union[str, Dict[str, int]]] = None,
     ):
         self._snapshot = snapshot
         self._start_node = start_node
-        self._catalog = catalog or {}
         self._steps = []
+
+        if isinstance(catalog, str):
+            key = catalog.lower().replace("_catalog", "").replace(".imps", "")
+            if key in BUILTIN_CATALOGS:
+                self._catalog = BUILTIN_CATALOGS[key]
+            else:
+                raise ValueError(
+                    f"Unknown catalog preset '{catalog}'. Available presets: {list(BUILTIN_CATALOGS.keys())}"
+                )
+        elif isinstance(catalog, dict):
+            self._catalog = catalog
+        else:
+            self._catalog = {}
 
     def _resolve_rel(self, rel: Union[str, int]) -> int:
         if isinstance(rel, int):

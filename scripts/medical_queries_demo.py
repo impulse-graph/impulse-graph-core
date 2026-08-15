@@ -150,7 +150,7 @@ def main():
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DaG]->(g1:Gene)-[:GpPW]->(p:Pathway)<-[:GpPW]-(g2:Gene)<-[:CbG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                    snap.traverse(start_node=seed, catalog="hetionet")
                         .out("DaG")
                         .out("GpPW")
                         .in_("GpPW")
@@ -167,7 +167,7 @@ def main():
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DdG]->(g:Gene)<-[:CuG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                    snap.traverse(start_node=seed, catalog="hetionet")
                         .out("DdG")
                         .in_("CuG")
                 ),
@@ -182,7 +182,7 @@ def main():
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)<-[:CtD]-(c1:Compound)-[:CrC]->(c2:Compound) WHERE d.id = $diseaseId RETURN c2",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                    snap.traverse(start_node=seed, catalog="hetionet")
                         .in_("CtD")
                         .out("CrC")
                 ),
@@ -197,7 +197,7 @@ def main():
                 dataset="Hetionet v1.0",
                 cypher="MATCH (d:Disease)-[:DlA]->(a:Anatomy)-[:AeG]->(g:Gene)<-[:CbG]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=HETIONET_CATALOG)
+                    snap.traverse(start_node=seed, catalog="hetionet")
                         .out("DlA")
                         .out("AeG")
                         .in_("CbG")
@@ -223,7 +223,7 @@ def main():
                 dataset="DRKG (DisGeNET + STRING + DrugBank)",
                 cypher="MATCH (d:Disease)-[:`DISGENET::da`]->(g1:Gene)-[:`STRING::interacts_with`]->(g2:Gene)<-[:`DRUGBANK::target`]-(c:Compound) WHERE d.id = $diseaseId RETURN c",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=DRKG_CATALOG)
+                    snap.traverse(start_node=seed, catalog="drkg")
                         .out("DISGENET::da")
                         .out("STRING::interacts_with")
                         .in_("DRUGBANK::target")
@@ -239,7 +239,7 @@ def main():
                 dataset="DRKG (DrugBank DDI + GNBR Side Effects)",
                 cypher="MATCH (c1:Compound)-[:`DRUGBANK::ddi_interactor_in`]->(c2:Compound)-[:`GNBR::C`]->(s:SideEffect) WHERE c1.id = $compoundId RETURN s",
                 traversal_fn=lambda snap, seed: (
-                    snap.traverse(start_node=seed, catalog=DRKG_CATALOG)
+                    snap.traverse(start_node=seed, catalog="drkg")
                         .out("DRUGBANK::ddi_interactor_in")
                         .out("GNBR::C")
                 ),
