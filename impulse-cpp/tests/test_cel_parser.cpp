@@ -261,6 +261,37 @@ static void test_cel_ast_optimizer_and_constant_folding() {
     std::cout << "  -> PASSED: All AST constant folding and algebraic reduction passes verified." << std::endl;
 }
 
+static void test_cel_parameter_normalization() {
+    std::cout << "[Test] CEL Parameter Normalization (Standard, $param, @param)..." << std::endl;
+
+    // 1. Standard CEL parameter
+    Parser p1("edge.confidence >= minConfidence");
+    auto ast1 = p1.parse_expression();
+    std::string ir1 = CelCompiler::to_impscheme(ast1);
+
+    // 2. Cypher-style $param
+    Parser p2("edge.confidence >= $minConfidence");
+    auto ast2 = p2.parse_expression();
+    std::string ir2 = CelCompiler::to_impscheme(ast2);
+
+    // 3. ImpScheme-style @param
+    Parser p3("edge.confidence >= @minConfidence");
+    auto ast3 = p3.parse_expression();
+    std::string ir3 = CelCompiler::to_impscheme(ast3);
+
+    assert(ir1 == "(>= (get-attr edge \"confidence\") minConfidence)");
+    assert(ir2 == ir1);
+    assert(ir3 == ir1);
+
+    // 4. Strings containing $ and @ must remain exact literal strings untouched
+    Parser p4("edge.label == \"$minConfidence\" && edge.prefix == \"@symbol\"");
+    auto ast4 = p4.parse_expression();
+    std::string ir4 = CelCompiler::to_impscheme(ast4);
+    assert(ir4 == "(mask-and (vec-cmp-eq (get-attr edge \"label\") \"$minConfidence\") (vec-cmp-eq (get-attr edge \"prefix\") \"@symbol\"))");
+
+    std::cout << "  -> PASSED: Parameter normalization and literal string preservation verified: " << ir1 << std::endl;
+}
+
 int main() {
     std::cout << "=== Google CEL Zero-Dependency Parser & IR Compiler Suite ===" << std::endl;
     test_cel_arithmetic_and_precedence();
@@ -270,6 +301,7 @@ int main() {
     test_cel_lists_and_methods();
     test_cel_pathological_40_term_expression();
     test_cel_ast_optimizer_and_constant_folding();
+    test_cel_parameter_normalization();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;
 }

@@ -104,6 +104,13 @@ public:
                 if (peek() == '|') { cursor_++; return Token{TokenType::PIPE_PIPE, "||", 0, 0.0, false, start}; }
                 break;
 
+            case '$':
+            case '@':
+                if (std::isalpha(static_cast<unsigned char>(peek())) || peek() == '_') {
+                    return parse_ident(start);
+                }
+                break;
+
             case '"':
             case '\'':
                 return parse_string(c, start);
@@ -199,7 +206,11 @@ private:
     }
 
     Token parse_ident(size_t start) {
-        std::string id(1, src_[start]);
+        std::string id;
+        char first = src_[start];
+        if (first != '$' && first != '@') {
+            id += first;
+        }
         while (cursor_ < src_.size()) {
             char c = src_[cursor_];
             if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
