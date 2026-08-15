@@ -1635,54 +1635,66 @@ op_CSC_WALK: {
 #endif
 
     if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(dynamic, 1024) num_threads(num_threads)
-#endif
-        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-            uint64_t w_unv = unv_words ? unv_words[i] : ~0ULL;
-            if (w_unv == 0) {
-                bs_dst.words[i] = 0;
-                continue;
-            }
-            uint64_t w_dst = 0;
-            for (int b = 0; b < 64; ++b) {
-                if (w_unv & (1ULL << b)) {
-                    uint64_t v = i * 64 + b;
+        if (src_is_bitset) {
+            const auto& bs_src = vm_state->query_context->bitsets[h_src];
+            for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                uint64_t word = bs_src.words[w];
+                while (word) {
+                    int bit = std::countr_zero(word);
+                    uint64_t v = w * 64 + bit;
+                    word &= word - 1;
                     if (v < slot.node_count) {
                         uint32_t start = slot.csc_offsets_ptr[v];
                         uint32_t end   = slot.csc_offsets_ptr[v + 1];
                         for (uint32_t idx = start; idx < end; ++idx) {
                             uint64_t u = slot.csc_targets_ptr[idx];
-                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
-                            if (hit) {
-                                w_dst |= (1ULL << b);
-                                break;
-                            }
+                            bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                         }
                     }
                 }
             }
-            bs_dst.words[i] = w_dst;
+        } else {
+            uint64_t v = scalar_src;
+            if (v < slot.node_count) {
+                uint32_t start = slot.csc_offsets_ptr[v];
+                uint32_t end   = slot.csc_offsets_ptr[v + 1];
+                for (uint32_t idx = start; idx < end; ++idx) {
+                    uint64_t u = slot.csc_targets_ptr[idx];
+                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                }
+            }
         }
     } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
-#if defined(_OPENMP)
-        #pragma omp parallel for schedule(static) num_threads(num_threads)
-#endif
-        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-            uint64_t w_dst = 0;
-            for (int b = 0; b < 64; ++b) {
-                uint64_t v = i * 64 + b;
-                if (v < slot.node_count) {
-                    uint32_t u = slot.csc_targets_ptr[v];
-                    if (u != 0xFFFFFFFF) {
-                        bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
-                        if (hit) {
-                            w_dst |= (1ULL << b);
+        if (src_is_bitset) {
+            const auto& bs_src = vm_state->query_context->bitsets[h_src];
+            for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                uint64_t word = bs_src.words[w];
+                while (word) {
+                    int bit = std::countr_zero(word);
+                    uint64_t v = w * 64 + bit;
+                    word &= word - 1;
+                    if (v < slot.node_count) {
+                        uint32_t u = slot.csc_targets_ptr[v];
+                        if (u != 0xFFFFFFFF) {
+                            bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                         }
                     }
                 }
             }
-            bs_dst.words[i] = w_dst;
+        } else {
+            uint64_t v = scalar_src;
+            if (v < slot.node_count) {
+                uint32_t u = slot.csc_targets_ptr[v];
+                if (u != 0xFFFFFFFF) {
+                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                }
+            }
+        }
+    }
+
+    if (unv_words) {
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            bs_dst.words[i] &= unv_words[i];
         }
     }
 
@@ -5535,31 +5547,66 @@ op_GAS_EXHAUSTED:
                 const uint64_t* src_words = src_is_bitset ? vm_state->query_context->bitsets[h_src].words : nullptr;
 
                 if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
-                    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-                        uint64_t w_unv = unv_words ? unv_words[i] : ~0ULL;
-                        if (w_unv == 0) {
-                            bs_dst.words[i] = 0;
-                            continue;
-                        }
-                        uint64_t w_dst = 0;
-                        for (int b = 0; b < 64; ++b) {
-                            if (w_unv & (1ULL << b)) {
-                                uint64_t v = i * 64 + b;
+                    if (src_is_bitset) {
+                        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                        for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                            uint64_t word = bs_src.words[w];
+                            while (word) {
+                                int bit = std::countr_zero(word);
+                                uint64_t v = w * 64 + bit;
+                                word &= word - 1;
                                 if (v < slot.node_count) {
                                     uint32_t start = slot.csc_offsets_ptr[v];
-                                    uint32_t end = slot.csc_offsets_ptr[v + 1];
+                                    uint32_t end   = slot.csc_offsets_ptr[v + 1];
                                     for (uint32_t idx = start; idx < end; ++idx) {
                                         uint64_t u = slot.csc_targets_ptr[idx];
-                                        bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
-                                        if (hit) {
-                                            w_dst |= (1ULL << b);
-                                            break;
-                                        }
+                                        bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                                     }
                                 }
                             }
                         }
-                        bs_dst.words[i] = w_dst;
+                    } else {
+                        uint64_t v = scalar_src;
+                        if (v < slot.node_count) {
+                            uint32_t start = slot.csc_offsets_ptr[v];
+                            uint32_t end   = slot.csc_offsets_ptr[v + 1];
+                            for (uint32_t idx = start; idx < end; ++idx) {
+                                uint64_t u = slot.csc_targets_ptr[idx];
+                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+                    if (src_is_bitset) {
+                        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                        for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                            uint64_t word = bs_src.words[w];
+                            while (word) {
+                                int bit = std::countr_zero(word);
+                                uint64_t v = w * 64 + bit;
+                                word &= word - 1;
+                                if (v < slot.node_count) {
+                                    uint32_t u = slot.csc_targets_ptr[v];
+                                    if (u != 0xFFFFFFFF) {
+                                        bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        uint64_t v = scalar_src;
+                        if (v < slot.node_count) {
+                            uint32_t u = slot.csc_targets_ptr[v];
+                            if (u != 0xFFFFFFFF) {
+                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                }
+
+                if (unv_words) {
+                    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                        bs_dst.words[i] &= unv_words[i];
                     }
                 }
 
