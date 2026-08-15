@@ -10,11 +10,11 @@ from . import vm
 # Built-in Domain Catalog Presets (Extracted directly from Snapshot Headers)
 BUILTIN_CATALOGS: Dict[str, Dict[str, int]] = {
     "hetionet": {
-        "AeG": 0, "GpMF": 1, "GiG": 2, "GpCC": 3, "PCiC": 4,
-        "GcG": 5, "DaG": 6, "CcSE": 7, "CtD": 8, "CrC": 9,
-        "CpD": 10, "DrD": 11, "DlA": 12, "AdG": 13, "DpS": 14,
-        "DdG": 15, "CdG": 16, "CbG": 17, "GpPW": 18, "AuG": 19,
-        "CuG": 20, "Gr>G": 21, "GpBP": 22, "DuG": 23,
+        "AdG": 0, "AeG": 1, "AuG": 2, "CbG": 3, "CcSE": 4,
+        "CdG": 5, "CpD": 6, "CrC": 7, "CtD": 8, "CuG": 9,
+        "DaG": 10, "DdG": 11, "DlA": 12, "DpS": 13, "DrD": 14,
+        "DuG": 15, "GcG": 16, "GiG": 17, "GpBP": 18, "GpCC": 19,
+        "GpMF": 20, "GpPW": 21, "Gr>G": 22, "PCiC": 23,
     },
     "drkg": {
         "DISGENET::da": 0, "STRING::interacts_with": 0,
