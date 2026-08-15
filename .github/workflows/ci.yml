@@ -29,18 +29,20 @@ jobs:
           filters: |
             cpp:
               - 'impulse-cpp/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/**'
+              - 'CMakeLists.txt'
             rust:
               - 'impulse-rust/**'
+              - 'impulse-compiler/**'
               - 'impulse-cpp/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/**'
             ffi:
               - 'impulse-go/**'
               - 'impulse-python/**'
               - 'impulse-node/**'
               - 'impulse-dotnet/**'
               - 'impulse-cpp/**'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/**'
 
   build-cpp-kernel:
     name: Build C++ Kernel (${{ matrix.os }})
