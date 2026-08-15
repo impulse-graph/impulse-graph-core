@@ -297,16 +297,14 @@ Console.WriteLine($"Status: {result.Status}");
 
 ## Query Languages
 
-All query frontends compile through the **ImpScheme** (`.impscm`) intermediate representation into ImpulseVM bytecode. 
-
-**[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** is the most expressive and fullest featured query interface for Impulse Graph, enabling rich multi-hop traversals, edge attribute filtering via [Google CEL](https://github.com/google/cel-spec), and SIMD-vectorized execution.
+All query frontends compile through the shared **ImpScheme** (`.impscm`) intermediate representation into `impOps` bytecode. Because every frontend maps to the same underlying ImpulseVM execution pipeline, **all query languages benefit equally from SIMD-vectorized execution, zero-copy off-heap traversal, and sub-3 µs on-the-fly compilation**.
 
 | Language | Style | Feature Highlights & Use Cases |
 | :--- | :--- | :--- |
-| **[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** *(Recommended)* | Programmatic builder with CEL filters | **Most expressive & fullest featured**: Multi-hop path queries, predicate pushdown, rich attribute filtering |
+| **[Fluent Traversal + CEL](https://docs.impulsegraph.io/query/fluent/)** *(Recommended)* | Programmatic builder with CEL filters | **Most expressive & fullest featured**: Multi-hop path queries, SIMD predicate pushdown, rich attribute filtering |
 | **[openCypher](https://docs.impulsegraph.io/query/cypher/)** | Declarative pattern matching (Set semantics) | Familiar Cypher syntax: `MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE ... RETURN ...` |
 | **[ImpLog](https://docs.impulsegraph.io/query/implog/)** (`.implog`) | Declarative Datalog | Recursive reachability, ReBAC/Zanzibar authorization, transitive closure |
-| **[ImpK](https://docs.impulsegraph.io/query/impk/)** (`.impk`) | GraphBLAS matrix math | PageRank, connected components, semiring operations |
+| **[ImpK](https://docs.impulsegraph.io/query/impk/)** (`.impk`) | GraphBLAS matrix math | SIMD PageRank, connected components, semiring vector operations |
 
 ---
 
