@@ -8,6 +8,7 @@ pub mod mmap;
 pub mod reader;
 pub mod simd;
 pub mod spec;
+pub mod stats;
 pub mod traversal;
 pub mod writer;
 
@@ -17,6 +18,7 @@ pub use spec::{
     BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader,
     IMPULSE_MAGIC, IMPULSE_VERSION_PACKED,
 };
+pub use stats::*;
 pub use traversal::{StepDirection, Traversal, TraversalStep};
 pub use writer::{AttributeField, SnapshotWriter};
 
@@ -204,6 +206,60 @@ mod tests {
         assert_eq!(count, 1);
 
         let _ = fs::remove_file(TRAV_TEST_FILE);
+    }
+
+    #[test]
+    fn test_relation_statistics_calculation_and_supernode_detection() {
+        const STATS_TEST_FILE: &str = "__impulse_stats_test.imps";
+        let _ = fs::remove_file(STATS_TEST_FILE);
+
+        let mut writer = SnapshotWriter::new(STATS_TEST_FILE);
+        writer.add_domain(0, KeyType::Int32, "Node");
+
+        // Node 0 has 50 edges (to nodes 1..50); nodes 1..99 have 1 edge to node 0 (total 100 nodes, 149 edges)
+        let node_count = 100;
+        let mut row_offsets = vec![0u32; (node_count + 1) as usize];
+        let mut col_indices = Vec::new();
+
+        // Node 0 -> 1..50
+        for i in 1..=50 {
+            col_indices.push(i);
+        }
+        row_offsets[1] = 50;
+
+        // Nodes 1..99 -> 0
+        for i in 1..node_count {
+            col_indices.push(0);
+            row_offsets[(i + 1) as usize] = row_offsets[i as usize] + 1;
+        }
+
+        let edge_count = col_indices.len() as u64; // 149
+
+        writer.add_relation(0, 0, node_count, edge_count, row_offsets, col_indices);
+        assert!(writer.finalize().is_ok());
+
+        let reader = SnapshotReader::open(STATS_TEST_FILE).unwrap();
+        let stats = reader.get_relation_statistics(0).unwrap();
+
+        assert_eq!(stats.node_count, 100);
+        assert_eq!(stats.edge_count, 149);
+        assert_eq!(stats.unique_source_nodes, 100);
+        assert_eq!(stats.max_out_degree, 50);
+        assert!((stats.avg_out_degree - 1.49).abs() < 0.001);
+
+        // Percentiles: 99 nodes have degree 1, 1 node has degree 50
+        assert_eq!(stats.p50_degree, 1);
+        assert_eq!(stats.p90_degree, 1);
+        assert_eq!(stats.p99_degree, 50);
+
+        // Supernode detection
+        assert!(stats.is_supernode(0), "Node 0 (degree 50) should be classified as supernode");
+        assert!(!stats.is_supernode(1), "Node 1 (degree 1) should NOT be classified as supernode");
+
+        let graph_stats = reader.get_graph_statistics().unwrap();
+        assert_eq!(graph_stats.relation_stats.len(), 1);
+
+        let _ = fs::remove_file(STATS_TEST_FILE);
     }
 }
 
