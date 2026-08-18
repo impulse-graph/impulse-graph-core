@@ -122,9 +122,24 @@ jobs:
             cd impulse-node && npm install && npm test || true
           fi
 
+  ci-gate:
+    name: CI Gate / All Checks Passed
+    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify All Required CI Checks
+        run: |
+          echo "Checking status of all upstream CI dependencies..."
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "❌ CI Gate Failed: One or more upstream test or build jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "✅ CI Gate Passed: All upstream checks passed or were safely skipped by path filters."
+
   dispatch-downstream:
     name: Trigger Downstream Ecosystem Builds
-    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings]
+    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings, ci-gate]
     runs-on: ubuntu-latest
     if: |
       github.ref == 'refs/heads/main' && 
