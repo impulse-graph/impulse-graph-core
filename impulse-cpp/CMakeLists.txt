@@ -54,7 +54,22 @@ install(TARGETS impulse_graph impulse_graph_static
     EXPORT ImpulseGraphTargets
     DESTINATION lib
 )
-install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h include/impulse_vm.h include/impulse_vm_fluent.hpp include/impulse_compiler.hpp
+install(FILES
+    include/impulse_format_v0_9.h
+    include/impulse_graph.h
+    include/impulse_simd.h
+    include/impulse_sha256.h
+    include/impulse_math_ops.h
+    include/impulse_index.h
+    include/impulse_vm.h
+    include/impulse_vm_fluent.hpp
+    include/impulse_cel.h
+    include/impulse_compiler.hpp
+    include/impulse_cypher.hpp
+    include/impulse_datalog.hpp
+    include/impulse_impk.hpp
+    include/impulse_implog.hpp
+    include/impulse_impscm.hpp
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets

@@ -1,6 +1,6 @@
 /**
  * @file impulse_graph.h
- * @brief Impulse Graph Engine Native C-ABI Kernel Specification v2.4.
+ * @brief Impulse Graph Engine Native C-ABI Kernel Specification v0.9.0.
  *
  * Provides high-performance zero-copy memory-mapped snapshot loading, graph reachability,
  * SIMD neighborhood sampling, live overlay delta compaction, and snapshot creation APIs.
@@ -127,7 +127,7 @@ IMPULSE_API uint32_t impulse_snapshot_magic(const impulse_snapshot_t* snapshot);
 /**
  * @brief Get snapshot format version.
  * @param snapshot Pointer to snapshot handle.
- * @return Format version number (e.g. 2 for v2.4 spec).
+ * @return Format version number (e.g. 9 for v0.9.0 spec).
  */
 IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot);
 

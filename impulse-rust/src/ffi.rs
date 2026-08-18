@@ -1,4 +1,4 @@
-//! Spec v2.4 C-ABI FFI Exports
+//! Spec v0.9.0 C-ABI FFI Exports
 
 use crate::reader::SnapshotReader;
 use crate::spec::*;

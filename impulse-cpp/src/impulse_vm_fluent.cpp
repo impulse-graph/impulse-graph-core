@@ -61,7 +61,7 @@ QueryBuilder::QueryBuilder(uint16_t start_register)
 uint16_t QueryBuilder::allocateRegister() {
     uint16_t reg = next_alloc_reg_++;
     if (reg >= 64) {
-        reg = 63; // Clamp to max valid register index
+        throw std::length_error("QueryBuilder exceeded maximum available VM registers (64)");
     }
     return reg;
 }
