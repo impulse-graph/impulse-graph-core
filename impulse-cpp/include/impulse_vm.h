@@ -480,8 +480,88 @@ IMPULSE_API impulse_vm_status_t impulse_compile_and_execute(
     uint64_t input_seed
 );
 
+// ---------------------------------------------------------------------------
+// Canonical SQLite-Style Statement C-ABI & Projections
+// ---------------------------------------------------------------------------
+
+/**
+ * @struct impulse_column_desc_t
+ * @brief Column metadata and data pointer descriptor (Apache Arrow Compatible).
+ */
+typedef struct impulse_column_desc {
+    char name[32];                 /**< Column identifier (e.g. "node_id", "email", "pagerank") */
+    uint8_t type_code;             /**< Type code: IMPULSE_KEY_TYPE_* or primitive code */
+    uint8_t element_size;          /**< Byte size of single element (e.g. 8 for uint64, 4 for float32) */
+    bool is_nullable;              /**< False if column is guaranteed 100% non-null */
+    uint8_t reserved;
+    uint32_t dimension;            /**< 1 for scalars, vector dim for embeddings */
+    size_t byte_offset_in_buf;     /**< Offset within caller buffer where column array begins */
+    const void* data_ptr;          /**< Direct pointer to contiguous array in caller buffer */
+    const uint64_t* null_bitmap;   /**< Arrow validity bitmap: NULL if non-nullable, else bit i=1 is valid */
+} impulse_column_desc_t;
+
+/**
+ * @struct impulse_execution_result_t
+ * @brief Output execution summary descriptor for one-line queries or direct calls.
+ */
+typedef struct impulse_execution_result {
+    impulse_vm_status_t status;    /**< Execution status code (IMPULSE_VM_OK == 0) */
+    size_t row_count;              /**< Total rows returned */
+    uint32_t column_count;         /**< Total projected columns */
+    uint32_t reserved;
+    size_t total_bytes_written;    /**< Bytes written to caller buffer */
+    const void* data_ptr;          /**< Fast-path pointer to column 0 array */
+    uint64_t scalar_value;         /**< Fast-path scalar integer/node value if row_count == 1 */
+} impulse_execution_result_t;
+
+/** Opaque Statement Handle */
+typedef struct impulse_stmt impulse_stmt_t;
+
+// Lifecycle & Sizing
+IMPULSE_API impulse_status_t impulse_stmt_prepare(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    impulse_stmt_t** out_stmt
+);
+
+IMPULSE_API size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt);
+IMPULSE_API void impulse_stmt_finalize(impulse_stmt_t* stmt);
+
+// Parameter Bindings
+IMPULSE_API impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id);
+IMPULSE_API impulse_status_t impulse_stmt_bind_nodes(impulse_stmt_t* stmt, const char* param, const uint64_t* node_ids, size_t count);
+IMPULSE_API impulse_status_t impulse_stmt_bind_bitset(impulse_stmt_t* stmt, const char* param, const uint64_t* words, size_t word_count);
+IMPULSE_API impulse_status_t impulse_stmt_bind_roaring(impulse_stmt_t* stmt, const char* param, const uint8_t* bytes, size_t len);
+IMPULSE_API impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_uint(impulse_stmt_t* stmt, const char* param, uint64_t val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_float(impulse_stmt_t* stmt, const char* param, double val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const char* param, const char* str);
+IMPULSE_API impulse_status_t impulse_stmt_bind_uuid(impulse_stmt_t* stmt, const char* param, const uint8_t uuid_bytes[16]);
+IMPULSE_API impulse_status_t impulse_stmt_bind_vector(impulse_stmt_t* stmt, const char* param, const float* data, size_t dim);
+
+// Execution
+IMPULSE_API impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size);
+
+// Column Result Accessors (Zero-Copy Arrow-Style)
+IMPULSE_API size_t impulse_stmt_row_count(const impulse_stmt_t* stmt);
+IMPULSE_API uint32_t impulse_stmt_column_count(const impulse_stmt_t* stmt);
+IMPULSE_API const char* impulse_stmt_column_name(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API uint8_t impulse_stmt_column_type(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API uint32_t impulse_stmt_column_dim(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API bool impulse_stmt_column_is_null(const impulse_stmt_t* stmt, uint32_t col_idx, size_t row_idx);
+
+// One-Line Convenience
+IMPULSE_API impulse_status_t impulse_exec(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    uint64_t seed_node,
+    impulse_execution_result_t* out_result
+);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif // IMPULSE_VM_H
+
