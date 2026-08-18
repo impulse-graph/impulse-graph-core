@@ -105,9 +105,7 @@ jobs:
         run: |
           mkdir -p dist-crates
           cargo package --manifest-path impulse-rust/Cargo.toml --no-verify --allow-dirty || true
-          cargo package --manifest-path impulse-compiler/Cargo.toml --no-verify --allow-dirty || true
           cp impulse-rust/target/package/*.crate dist-crates/ || true
-          cp impulse-compiler/target/package/*.crate dist-crates/ || true
 
       - name: Upload Rust Crate Artifacts
         uses: actions/upload-artifact@v4

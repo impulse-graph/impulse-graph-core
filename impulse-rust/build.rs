@@ -128,11 +128,13 @@ fn main() {
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_index.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_simd.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_vm.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_graph.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_index.h");
+    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_compiler.hpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_cypher.hpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_datalog.hpp");
 
     let has_omp = if is_macos {
         Path::new("/opt/homebrew/opt/libomp/include").exists()

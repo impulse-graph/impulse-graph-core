@@ -412,7 +412,6 @@ public:
 
         for (size_t pc = 0; pc < instructions.size(); ++pc) {
             const auto& inst = instructions[pc];
-            ss << "  0x" << std::hex << std::setw(4) << std::setfill('0') << pc << ":  " << std::dec;
             
             std::string op_name;
             std::string comment;
@@ -451,7 +450,7 @@ public:
                     op_name = "OP_CSC_WALK";
                     uint16_t src = inst.payload & 0xFFFF;
                     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
-                    comment = "Walk src=R" + std::to_string(src) + " -> dst=R" + std::to_string(inst.dst_reg) + " via rel[" + std::to_string(rel) + "]";
+                    comment = "Walk-CSC src=R" + std::to_string(src) + " -> dst=R" + std::to_string(inst.dst_reg) + " via rel[" + std::to_string(rel) + "]";
                     if (catalog) {
                         std::string name = catalog->get_relation_name(rel);
                         if (!name.empty()) comment += " (\"" + name + "\")";
@@ -474,10 +473,14 @@ public:
                     break;
             }
 
-            ss << std::left << std::setw(24) << op_name;
-            ss << "flags=0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(inst.flags) << ", ";
-            ss << "dst=R" << std::dec << std::setw(2) << std::setfill(' ') << inst.dst_reg << ", ";
-            ss << "payload=0x" << std::hex << std::setw(8) << std::setfill('0') << inst.payload << std::dec;
+            char line_buf[256];
+            std::snprintf(line_buf, sizeof(line_buf), "  0x%04x:  %-24s flags=0x%02x, dst=R%-2d, payload=0x%08x",
+                          static_cast<unsigned int>(pc),
+                          op_name.c_str(),
+                          static_cast<unsigned int>(inst.flags),
+                          static_cast<int>(inst.dst_reg),
+                          static_cast<unsigned int>(inst.payload));
+            ss << line_buf;
             
             if (!comment.empty()) {
                 ss << " ; " << comment;
