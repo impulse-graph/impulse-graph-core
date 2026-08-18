@@ -192,6 +192,7 @@ static void test_execution_on_vm() {
 
     impulse_vm_status_t st = impulse_vm_execute(compiled.data(), compiled.instruction_count(), &state, 10);
     assert(st == IMPULSE_VM_OK);
+    (void)st;
 
     uint16_t res_reg = compiled.result_register;
     assert(state.register_types[res_reg] == TYPE_BITSET_HANDLE);
@@ -218,6 +219,45 @@ static void test_execution_on_vm() {
     std::cout << "  ✓ Live Impulse VM Execution: PASSED\n" << std::endl;
 }
 
+static void test_c_abi_compiler_exports() {
+    std::cout << "--- [Test 6] C-ABI Compiler Exports (impulse_compile_query & impulse_compile_to_impas) ---" << std::endl;
+
+    // 1. Test ImpLog Datalog compilation via C-ABI
+    std::string datalog_src = "path(X, Y) :- edge(X, Z), edge(Z, Y).";
+    impulse_instruction_t instrs[32];
+    size_t inst_count = 0;
+    impulse_status_t st1 = impulse_compile_query(
+        nullptr,
+        datalog_src.c_str(),
+        IMPULSE_LANG_IMPLOG,
+        instrs,
+        32,
+        &inst_count
+    );
+    assert(st1 == IMPULSE_OK);
+    (void)st1;
+    assert(inst_count > 0);
+    std::cout << "  ✓ C-ABI impulse_compile_query (ImpLog): Generated " << inst_count << " instructions." << std::endl;
+
+    // 2. Test Cypher to ImpAsm string compilation via C-ABI
+    std::string cypher_src = "MATCH (d:Disease)-[:DaG]->(g:Gene) WHERE d.id = $id RETURN g";
+    char impas_buf[2048];
+    size_t bytes_written = 0;
+    impulse_status_t st2 = impulse_compile_to_impas(
+        nullptr,
+        cypher_src.c_str(),
+        IMPULSE_LANG_CYPHER,
+        impas_buf,
+        sizeof(impas_buf),
+        &bytes_written
+    );
+    assert(st2 == IMPULSE_OK);
+    (void)st2;
+    assert(bytes_written > 0);
+    assert(std::string(impas_buf).find("OP_CSR_WALK") != std::string::npos);
+    std::cout << "  ✓ C-ABI impulse_compile_to_impas (Cypher): Written " << bytes_written << " bytes." << std::endl;
+}
+
 int main() {
     std::cout << "=========================================================================\n";
     std::cout << "       IMPULSE GRAPH C++ OPTIMIZING COMPILER PARITY TEST SUITE           \n";
@@ -228,6 +268,7 @@ int main() {
     test_kernel_fusion_2hop();
     test_register_cache_ping_ponging();
     test_execution_on_vm();
+    test_c_abi_compiler_exports();
 
     std::cout << "=========================================================================\n";
     std::cout << "                   ALL C++ COMPILER TESTS PASSED!                        \n";

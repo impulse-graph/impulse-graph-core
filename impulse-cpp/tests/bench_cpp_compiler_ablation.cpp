@@ -51,6 +51,7 @@ static void build_benchmark_snapshot(size_t num_nodes, size_t degree) {
 
     st = impulse_writer_finalize(writer);
     assert(st == IMPULSE_OK);
+    (void)st;
     impulse_writer_destroy(writer);
 }
 

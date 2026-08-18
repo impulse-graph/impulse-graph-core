@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Warnings -------------------------------------------------
 if(MSVC)
-    add_compile_options(/W4 /wd4189)
+    add_compile_options(/W4 /wd4189 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS /utf-8 /permissive-)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -52,9 +53,26 @@ target_link_libraries(impulse_graph_static PUBLIC hwy)
 # --- Install Targets & Exports -------------------------------------------
 install(TARGETS impulse_graph impulse_graph_static
     EXPORT ImpulseGraphTargets
-    DESTINATION lib
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
 )
-install(FILES include/impulse_graph.h include/impulse_simd.h include/impulse_sha256.h include/impulse_vm.h include/impulse_vm_fluent.hpp include/impulse_compiler.hpp
+install(FILES
+    include/impulse_format_v0_9.h
+    include/impulse_graph.h
+    include/impulse_simd.h
+    include/impulse_sha256.h
+    include/impulse_math_ops.h
+    include/impulse_index.h
+    include/impulse_vm.h
+    include/impulse_vm_fluent.hpp
+    include/impulse_cel.h
+    include/impulse_compiler.hpp
+    include/impulse_cypher.hpp
+    include/impulse_datalog.hpp
+    include/impulse_impk.hpp
+    include/impulse_implog.hpp
+    include/impulse_impscm.hpp
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets
@@ -167,6 +185,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_datalog_compiler tests/test_datalog_compiler.cpp)
     target_link_libraries(test_datalog_compiler PRIVATE impulse_graph_static)
     add_test(NAME test_datalog_compiler COMMAND test_datalog_compiler)
+
+    add_executable(test_c_statement_api tests/test_c_statement_api.cpp)
+    target_link_libraries(test_c_statement_api PRIVATE impulse_graph_static)
+    add_test(NAME test_c_statement_api COMMAND test_c_statement_api)
 endif()
 
 # --- Examples ------------------------------------------------------------

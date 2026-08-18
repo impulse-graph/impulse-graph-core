@@ -33,7 +33,6 @@ jobs:
               - 'CMakeLists.txt'
             rust:
               - 'impulse-rust/**'
-              - 'impulse-compiler/**'
               - 'impulse-cpp/**'
               - '.github/workflows/**'
             ffi:

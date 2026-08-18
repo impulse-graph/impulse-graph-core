@@ -108,3 +108,24 @@ Adopt **Google CEL (Common Expression Language)** as the official, unified decla
 - [x] Parse CEL AST directly into **ImpScheme S-Expression Free Monad IR**.
 - [x] Static type checking & automatic type widening against `.imps` schema catalog.
 - [x] Emit vectorized `impOps` bytecode (AVX-512 / Neon) and Java 25 `MethodHandle` combinators.
+
+---
+
+## 4. Unified In-Kernel C-ABI Compiler & SQLite-Style Statement API
+
+- [x] **Unified Multi-Frontend In-Kernel C++ Compiler Engine**:
+  - Implemented 7-stage compiler pipeline lowering ImpLog, ImpK, openCypher, and ImpScheme to `impOps` bytecode.
+  - Implemented C-ABI exports `impulse_compile_query()`, `impulse_compile_to_impas()`, `impulse_compile_and_execute()`.
+- [x] **SQLite-Style Canonical Statement Execution API (`impulse_stmt_*`)**:
+  - `impulse_stmt_prepare()`: Compiles query and computes deterministic caller buffer sizing.
+  - `impulse_stmt_buffer_size()`: Returns exact memory footprint required (scratch area + Apache Arrow-style columnar buffers + null bitmaps).
+  - `impulse_stmt_bind_*()`: Binds parameter values (node IDs, dense bitsets, roaring bitmaps, scalar integers, floats, strings, UUIDs, vectors).
+  - `impulse_stmt_execute()`: Executes zero-allocation VM traversal directly into caller-allocated memory.
+  - `impulse_stmt_column_*()`: Column accessors (`row_count`, `column_count`, `column_name`, `column_type`, `column_dim`, `column_data`, `column_is_null`).
+  - `impulse_stmt_finalize()`: Statement resource cleanup.
+  - `impulse_exec()`: One-line zero-boilerplate convenience wrapper.
+- [x] **Ecosystem Tooling & FFI Integration**:
+  - `impulse-graph-tooling` updated to lower DSLs via the C-ABI compiler bridge.
+  - `impulse-graph-core/impulse-rust` FFI updated with statement and compiler bindings.
+  - Redundant standalone `impulse-compiler` crate successfully retired and deleted.
+

@@ -84,6 +84,10 @@ struct BoundValueMap {
     std::vector<float> values;
 };
 
+// Maximum concurrent bitset and vector handles per VM query context
+constexpr size_t VM_MAX_BITSET_HANDLES = 64;
+constexpr size_t VM_MAX_VECTOR_HANDLES = 32;
+
 // Thread-local virtual machine context implementation
 struct impulse_vm_context {
     const impulse_snapshot_t* snapshot;
@@ -95,8 +99,8 @@ struct impulse_vm_context {
     size_t words_per_bitset;
     size_t max_nodes;
 
-    std::array<VmBitSet, 16> bitsets;
-    std::array<bool, 16> bitset_allocated;
+    std::array<VmBitSet, VM_MAX_BITSET_HANDLES> bitsets;
+    std::array<bool, VM_MAX_BITSET_HANDLES> bitset_allocated;
 
     // Thread-private workspace bitsets for parallel map/reduce walks
     int max_threads;
@@ -108,16 +112,16 @@ struct impulse_vm_context {
     std::vector<std::vector<BoundAttributeSlot>> attribute_slots;
 
     // Pre-allocated float and double vectors for VM operations
-    std::array<std::vector<float>, 8> float_vectors;
-    std::array<bool, 8> float_vectors_allocated;
-    std::array<std::vector<double>, 8> double_vectors;
-    std::array<bool, 8> double_vectors_allocated;
-    std::array<std::vector<uint64_t>, 8> node_vectors;
-    std::array<bool, 8> node_vectors_allocated;
-    std::array<std::vector<const char*>, 8> string_vectors;
-    std::array<bool, 8> string_vectors_allocated;
-    std::array<BoundValueMap, 8> value_maps;
-    std::array<bool, 8> value_maps_allocated;
+    std::array<std::vector<float>, VM_MAX_VECTOR_HANDLES> float_vectors;
+    std::array<bool, VM_MAX_VECTOR_HANDLES> float_vectors_allocated;
+    std::array<std::vector<double>, VM_MAX_VECTOR_HANDLES> double_vectors;
+    std::array<bool, VM_MAX_VECTOR_HANDLES> double_vectors_allocated;
+    std::array<std::vector<uint64_t>, VM_MAX_VECTOR_HANDLES> node_vectors;
+    std::array<bool, VM_MAX_VECTOR_HANDLES> node_vectors_allocated;
+    std::array<std::vector<const char*>, VM_MAX_VECTOR_HANDLES> string_vectors;
+    std::array<bool, VM_MAX_VECTOR_HANDLES> string_vectors_allocated;
+    std::array<BoundValueMap, VM_MAX_VECTOR_HANDLES> value_maps;
+    std::array<bool, VM_MAX_VECTOR_HANDLES> value_maps_allocated;
 
     // Contiguous node buffer for array returns
     std::vector<uint64_t> node_buffer;
@@ -133,21 +137,18 @@ struct impulse_vm_context {
 
 inline int acquire_bitset(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 16; ++i) {
+    for (size_t i = 0; i < VM_MAX_BITSET_HANDLES; ++i) {
         if (!ctx->bitset_allocated[i]) {
             ctx->bitset_allocated[i] = true;
             ctx->bitsets[i].clear();
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 16;
-    ctx->bitsets[idx].clear();
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_bitset(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 16) {
+    if (ctx && handle < VM_MAX_BITSET_HANDLES) {
         ctx->bitsets[handle].clear();
         ctx->bitset_allocated[handle] = false;
     }
@@ -155,84 +156,72 @@ inline void release_bitset(impulse_vm_context_t* ctx, size_t handle) {
 
 inline int acquire_float_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->float_vectors_allocated[i]) {
             ctx->float_vectors_allocated[i] = true;
             std::memset(ctx->float_vectors[i].data(), 0, ctx->float_vectors[i].size() * sizeof(float));
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 8;
-    std::memset(ctx->float_vectors[idx].data(), 0, ctx->float_vectors[idx].size() * sizeof(float));
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_float_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->float_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_double_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->double_vectors_allocated[i]) {
             ctx->double_vectors_allocated[i] = true;
             std::memset(ctx->double_vectors[i].data(), 0, ctx->double_vectors[i].size() * sizeof(double));
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 8;
-    std::memset(ctx->double_vectors[idx].data(), 0, ctx->double_vectors[idx].size() * sizeof(double));
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->double_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_node_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->node_vectors_allocated[i]) {
             ctx->node_vectors_allocated[i] = true;
             std::memset(ctx->node_vectors[i].data(), 0, ctx->node_vectors[i].size() * sizeof(uint64_t));
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 8;
-    std::memset(ctx->node_vectors[idx].data(), 0, ctx->node_vectors[idx].size() * sizeof(uint64_t));
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_node_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->node_vectors_allocated[handle] = false;
     }
 }
 
 inline int acquire_string_vector(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->string_vectors_allocated[i]) {
             ctx->string_vectors_allocated[i] = true;
             ctx->string_vectors[i].clear();
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 8;
-    ctx->string_vectors[idx].clear();
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->string_vectors[handle].clear();
         ctx->string_vectors_allocated[handle] = false;
     }
@@ -240,7 +229,7 @@ inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
 
 inline int acquire_value_map(impulse_vm_context_t* ctx) {
     if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->value_maps_allocated[i]) {
             ctx->value_maps_allocated[i] = true;
             ctx->value_maps[i].keys.clear();
@@ -248,15 +237,11 @@ inline int acquire_value_map(impulse_vm_context_t* ctx) {
             return static_cast<int>(i);
         }
     }
-    static thread_local size_t rr = 0;
-    size_t idx = (rr++) % 8;
-    ctx->value_maps[idx].keys.clear();
-    ctx->value_maps[idx].values.clear();
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
 }
 
 inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->value_maps[handle].keys.clear();
         ctx->value_maps[handle].values.clear();
         ctx->value_maps_allocated[handle] = false;
@@ -315,9 +300,9 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);
     ctx->words_per_bitset = (bitset_capacity + 63) / 64;
 
-    // Pre-allocate 16 off-heap bitsets in a contiguous memory block
-    ctx->arena_memory = new uint64_t[16 * ctx->words_per_bitset]();
-    for (size_t i = 0; i < 16; ++i) {
+    // Pre-allocate off-heap bitsets in a contiguous memory block
+    ctx->arena_memory = new uint64_t[VM_MAX_BITSET_HANDLES * ctx->words_per_bitset]();
+    for (size_t i = 0; i < VM_MAX_BITSET_HANDLES; ++i) {
         ctx->bitsets[i].words = ctx->arena_memory + (i * ctx->words_per_bitset);
         ctx->bitsets[i].word_count = ctx->words_per_bitset;
         ctx->bitset_allocated[i] = false;
@@ -339,7 +324,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     }
 
     // Pre-allocate float and double vector buffers
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         ctx->float_vectors[i].resize(ctx->max_nodes, 0.0f);
         ctx->float_vectors_allocated[i] = false;
         ctx->double_vectors[i].resize(ctx->max_nodes, 0.0);
@@ -432,14 +417,14 @@ size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx) {
 }
 
 const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8 && ctx->float_vectors_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->float_vectors_allocated[handle]) {
         return ctx->float_vectors[handle].data();
     }
     return nullptr;
 }
 
 const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8 && ctx->double_vectors_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle]) {
         return ctx->double_vectors[handle].data();
     }
     return nullptr;
@@ -454,13 +439,13 @@ void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle)
 }
 
 void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id) {
-    if (ctx && handle < 16 && ctx->bitset_allocated[handle]) {
+    if (ctx && handle < VM_MAX_BITSET_HANDLES && ctx->bitset_allocated[handle]) {
         bitset_add(ctx->bitsets[handle], node_id, ctx->max_nodes);
     }
 }
 
 bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id) {
-    if (ctx && handle < 16 && ctx->bitset_allocated[handle]) {
+    if (ctx && handle < VM_MAX_BITSET_HANDLES && ctx->bitset_allocated[handle]) {
         return bitset_test(ctx->bitsets[handle], node_id, ctx->max_nodes);
     }
     return false;
@@ -475,7 +460,7 @@ void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t h
 }
 
 void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val) {
-    if (ctx && handle < 8 && ctx->float_vectors_allocated[handle] && index < ctx->max_nodes) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->float_vectors_allocated[handle] && index < ctx->max_nodes) {
         ctx->float_vectors[handle][index] = val;
     }
 }
@@ -489,7 +474,7 @@ void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t 
 }
 
 void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val) {
-    if (ctx && handle < 8 && ctx->double_vectors_allocated[handle] && index < ctx->max_nodes) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle] && index < ctx->max_nodes) {
         ctx->double_vectors[handle][index] = val;
     }
 }
@@ -503,88 +488,64 @@ void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t ha
 }
 
 const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8 && ctx->node_vectors_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
         return ctx->node_vectors[handle].data();
     }
     return nullptr;
 }
 
 int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx) {
-    if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
-        if (!ctx->string_vectors_allocated[i]) {
-            ctx->string_vectors_allocated[i] = true;
-            ctx->string_vectors[i].clear();
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
+    return acquire_string_vector(ctx);
 }
 
 void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
-        ctx->string_vectors[handle].clear();
-        ctx->string_vectors_allocated[handle] = false;
-    }
+    release_string_vector(ctx, handle);
 }
 
 void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str) {
-    if (ctx && handle < 8 && ctx->string_vectors_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->string_vectors_allocated[handle]) {
         ctx->string_vectors[handle].push_back(str);
     }
 }
 
 size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8 && ctx->string_vectors_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->string_vectors_allocated[handle]) {
         return ctx->string_vectors[handle].size();
     }
     return 0;
 }
 
 const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
-    if (ctx && handle < 8 && ctx->string_vectors_allocated[handle] && index < ctx->string_vectors[handle].size()) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->string_vectors_allocated[handle] && index < ctx->string_vectors[handle].size()) {
         return ctx->string_vectors[handle][index];
     }
     return nullptr;
 }
 
 int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx) {
-    if (!ctx) return -1;
-    for (size_t i = 0; i < 8; ++i) {
-        if (!ctx->value_maps_allocated[i]) {
-            ctx->value_maps_allocated[i] = true;
-            ctx->value_maps[i].keys.clear();
-            ctx->value_maps[i].values.clear();
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
+    return acquire_value_map(ctx);
 }
 
 void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8) {
-        ctx->value_maps[handle].keys.clear();
-        ctx->value_maps[handle].values.clear();
-        ctx->value_maps_allocated[handle] = false;
-    }
+    release_value_map(ctx, handle);
 }
 
 size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < 8 && ctx->value_maps_allocated[handle]) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->value_maps_allocated[handle]) {
         return ctx->value_maps[handle].keys.size();
     }
     return 0;
 }
 
 const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
-    if (ctx && handle < 8 && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].keys.size()) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].keys.size()) {
         return ctx->value_maps[handle].keys[index];
     }
     return nullptr;
 }
 
 float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index) {
-    if (ctx && handle < 8 && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].values.size()) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->value_maps_allocated[handle] && index < ctx->value_maps[handle].values.size()) {
         return ctx->value_maps[handle].values[index];
     }
     return 0.0f;
@@ -7560,6 +7521,7 @@ impulse_vm_status_t impulse_vm_validate(
 }
 
 size_t impulse_vm_get_required_buffer_size(const impulse_snapshot_t* snapshot, uint16_t domain_id) {
+    (void)domain_id;
     if (!snapshot) return 0;
     return 10000000;
 }
@@ -7575,6 +7537,7 @@ impulse_vm_status_t impulse_vm_execute_to_buffer(
     size_t out_words_capacity,
     size_t* out_words_written) {
     
+    (void)target_domain_id;
     impulse_vm_status_t st = impulse_vm_execute(bytecode, instruction_count, vm_state, input_param);
     if (st != IMPULSE_VM_OK) return st;
     

@@ -1,4 +1,4 @@
-//! Spec v2.4 C-ABI FFI Exports
+//! Spec v0.9.0 C-ABI FFI Exports
 
 use crate::reader::SnapshotReader;
 use crate::spec::*;
@@ -115,6 +115,43 @@ pub struct impulse_vm_state_t {
     pub reserved_padding2: u32,
 }
 
+#[repr(C)]
+pub struct impulse_stmt_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct impulse_column_desc_t {
+    pub name: [u8; 32],
+    pub type_code: u8,
+    pub element_size: u8,
+    pub is_nullable: bool,
+    pub reserved: u8,
+    pub dimension: u32,
+    pub byte_offset_in_buf: usize,
+    pub data_ptr: *const std::ffi::c_void,
+    pub null_bitmap: *const u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct impulse_execution_result_t {
+    pub status: i32,
+    pub row_count: usize,
+    pub column_count: u32,
+    pub reserved: u32,
+    pub total_bytes_written: usize,
+    pub data_ptr: *const std::ffi::c_void,
+    pub scalar_value: u64,
+}
+
+pub const IMPULSE_LANG_IMPSCM: i32 = 0;
+pub const IMPULSE_LANG_IMPK: i32 = 1;
+pub const IMPULSE_LANG_IMPLOG: i32 = 2;
+pub const IMPULSE_LANG_CYPHER: i32 = 3;
+pub const IMPULSE_LANG_CEL: i32 = 4;
+
 extern "C" {
     pub fn impulse_snapshot_open(
         file_path: *const std::os::raw::c_char,
@@ -156,5 +193,68 @@ extern "C" {
         instruction_count: usize,
         vm_state: *mut impulse_vm_state_t,
         input_param: u64,
+    ) -> i32;
+
+    // Compiler Functions
+    pub fn impulse_compile_query(
+        snapshot: *const impulse_snapshot_t,
+        script: *const c_char,
+        lang: i32,
+        out_instructions: *mut impulse_instruction_t,
+        out_capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_compile_to_impas(
+        snapshot: *const impulse_snapshot_t,
+        script: *const c_char,
+        lang: i32,
+        out_impas_buffer: *mut c_char,
+        out_capacity: usize,
+        out_bytes_written: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_compile_and_execute(
+        snapshot: *const impulse_snapshot_t,
+        script: *const c_char,
+        lang: i32,
+        state: *mut impulse_vm_state_t,
+        input_seed: u64,
+    ) -> i32;
+
+    // SQLite-Style Statement Lifecycle
+    pub fn impulse_stmt_prepare(
+        snapshot: *const impulse_snapshot_t,
+        query_text: *const c_char,
+        out_stmt: *mut *mut impulse_stmt_t,
+    ) -> i32;
+    pub fn impulse_stmt_buffer_size(stmt: *const impulse_stmt_t) -> usize;
+    pub fn impulse_stmt_finalize(stmt: *mut impulse_stmt_t);
+
+    pub fn impulse_stmt_bind_node(stmt: *mut impulse_stmt_t, param: *const c_char, node_id: u64) -> i32;
+    pub fn impulse_stmt_bind_nodes(stmt: *mut impulse_stmt_t, param: *const c_char, node_ids: *const u64, count: usize) -> i32;
+    pub fn impulse_stmt_bind_bitset(stmt: *mut impulse_stmt_t, param: *const c_char, words: *const u64, word_count: usize) -> i32;
+    pub fn impulse_stmt_bind_roaring(stmt: *mut impulse_stmt_t, param: *const c_char, bytes: *const u8, len: usize) -> i32;
+    pub fn impulse_stmt_bind_int(stmt: *mut impulse_stmt_t, param: *const c_char, val: i64) -> i32;
+    pub fn impulse_stmt_bind_uint(stmt: *mut impulse_stmt_t, param: *const c_char, val: u64) -> i32;
+    pub fn impulse_stmt_bind_float(stmt: *mut impulse_stmt_t, param: *const c_char, val: f64) -> i32;
+    pub fn impulse_stmt_bind_str(stmt: *mut impulse_stmt_t, param: *const c_char, str: *const c_char) -> i32;
+    pub fn impulse_stmt_bind_uuid(stmt: *mut impulse_stmt_t, param: *const c_char, uuid_bytes: *const u8) -> i32;
+    pub fn impulse_stmt_bind_vector(stmt: *mut impulse_stmt_t, param: *const c_char, data: *const f32, dim: usize) -> i32;
+
+    pub fn impulse_stmt_execute(stmt: *mut impulse_stmt_t, buffer: *mut std::ffi::c_void, buffer_size: usize) -> i32;
+    pub fn impulse_stmt_row_count(stmt: *const impulse_stmt_t) -> usize;
+    pub fn impulse_stmt_column_count(stmt: *const impulse_stmt_t) -> u32;
+    pub fn impulse_stmt_column_name(stmt: *const impulse_stmt_t, col_idx: u32) -> *const c_char;
+    pub fn impulse_stmt_column_type(stmt: *const impulse_stmt_t, col_idx: u32) -> u8;
+    pub fn impulse_stmt_column_dim(stmt: *const impulse_stmt_t, col_idx: u32) -> u32;
+    pub fn impulse_stmt_column_data(stmt: *const impulse_stmt_t, col_idx: u32) -> *const std::ffi::c_void;
+    pub fn impulse_stmt_column_is_null(stmt: *const impulse_stmt_t, col_idx: u32, row_idx: usize) -> bool;
+
+    pub fn impulse_exec(
+        snapshot: *const impulse_snapshot_t,
+        query_text: *const c_char,
+        seed_node: u64,
+        out_result: *mut impulse_execution_result_t,
     ) -> i32;
 }

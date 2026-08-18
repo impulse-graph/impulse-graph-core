@@ -6,6 +6,9 @@
 #include <cstring>
 #include <algorithm>
 
+#undef assert
+#define assert(expr) do { if (!(expr)) { std::cerr << "Assertion failed: " << #expr << " at " << __FILE__ << ":" << __LINE__ << std::endl; std::abort(); } } while(0)
+
 void test_basic_nop_halt() {
     // 0: NOP
     // 1: HALT
@@ -1253,7 +1256,6 @@ void test_pagerank_bytecode() {
 }
 
 void test_new_opcodes() {
-    impulse_vm_status_t st{};
     impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr); // Snapshot-less context
     assert(ctx != nullptr);
 

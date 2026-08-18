@@ -132,9 +132,21 @@ impl SnapshotWriter {
         });
     }
 
+    pub fn set_domain_node_count(&mut self, domain_id: u16, node_count: u64) {
+        if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
+            dom.node_count = node_count;
+        }
+    }
+
     pub fn set_relation_name(&mut self, relation_index: usize, name: &str) {
         if relation_index < self.relations.len() {
             self.relations[relation_index].name = name.to_string();
+        }
+    }
+
+    pub fn set_relation_include_csc(&mut self, relation_index: usize, include_csc: bool) {
+        if relation_index < self.relations.len() {
+            self.relations[relation_index].include_csc = include_csc;
         }
     }
 
@@ -200,6 +212,15 @@ impl SnapshotWriter {
         });
         for (idx, rel) in self.relations.iter_mut().enumerate() {
             rel.relation_id = idx as u16;
+        }
+
+        // Infer domain node_count from relations if 0
+        for rel in &self.relations {
+            if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == rel.src_domain_id) {
+                if dom.node_count < rel.node_count {
+                    dom.node_count = rel.node_count;
+                }
+            }
         }
 
         // 1. Build Shared String Table & Pool Blob

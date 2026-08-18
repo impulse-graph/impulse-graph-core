@@ -86,6 +86,7 @@ void run_benchmark_suite() {
         t1 = Clock::now();
         double indexed_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / RUNS;
 
+        (void)dummy_out;
         results.push_back({ "Exact String Lookup (email = 'user_42424@gmail.com')", unindexed_us, indexed_us, unindexed_us / indexed_us });
     }
 
@@ -112,6 +113,7 @@ void run_benchmark_suite() {
         t1 = Clock::now();
         double indexed_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / RUNS;
 
+        (void)dummy_cnt;
         results.push_back({ "Categorical Filter (state = 'HI')", unindexed_us, indexed_us, unindexed_us / indexed_us });
     }
 
@@ -159,6 +161,7 @@ void run_benchmark_suite() {
         t1 = Clock::now();
         double indexed_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / RUNS;
 
+        (void)dummy_cnt;
         results.push_back({ "Compound Criteria (age 21-25 AND state='HI' AND '@gmail.com')", unindexed_us, indexed_us, unindexed_us / indexed_us });
     }
 
@@ -195,6 +198,7 @@ void run_benchmark_suite() {
         t1 = Clock::now();
         double indexed_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / 50;
 
+        (void)dummy_cnt;
         results.push_back({ "Pathological: 5M Edges All Value 3.5f (Filter weight >= 10.0)", unindexed_us, indexed_us, unindexed_us / indexed_us });
         impulse_index_free(path_zm_bytes);
     }
@@ -233,6 +237,7 @@ void run_benchmark_suite() {
         t1 = Clock::now();
         double indexed_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / RUNS;
 
+        (void)dummy_cnt;
         results.push_back({ "Pathological: All Items Identical String (Filter missing key)", unindexed_us, indexed_us, unindexed_us / indexed_us });
         impulse_index_free(path_bitset_bytes);
     }

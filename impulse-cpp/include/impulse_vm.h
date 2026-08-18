@@ -409,8 +409,159 @@ IMPULSE_API impulse_vm_status_t impulse_vm_execute_to_buffer(
     size_t* out_words_written
 );
 
+// ---------------------------------------------------------------------------
+// Unified In-Kernel Compiler C-ABI Interface
+// ---------------------------------------------------------------------------
+
+/**
+ * @enum impulse_language_t
+ * @brief Supported DSL frontend dialects for the unified C++20 in-kernel compiler.
+ */
+typedef enum {
+    IMPULSE_LANG_IMPSCM = 0,  /**< ImpScheme S-Expression IR (.impscm) */
+    IMPULSE_LANG_IMPK   = 1,  /**< ImpK Array/Vector DSL (.impk) */
+    IMPULSE_LANG_IMPLOG = 2,  /**< ImpLog Datalog DSL (.implog) */
+    IMPULSE_LANG_CYPHER = 3,  /**< openCypher Pattern Matcher */
+    IMPULSE_LANG_CEL    = 4   /**< Common Expression Language */
+} impulse_language_t;
+
+/**
+ * @brief Compiles a DSL query string into physical 8-byte VM instructions using snapshot catalog statistics.
+ * @param snapshot Snapshot handle (can be NULL for snapshot-less compilation).
+ * @param script Source query text.
+ * @param lang Language dialect (ImpLog, ImpK, ImpScheme, Cypher, CEL).
+ * @param out_instructions Output buffer for compiled impulse_instruction_t bytecode.
+ * @param out_capacity Capacity of out_instructions buffer.
+ * @param out_count Pointer to store actual count of generated instructions.
+ * @return IMPULSE_OK on success, or non-zero error code.
+ */
+IMPULSE_API impulse_status_t impulse_compile_query(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_instruction_t* out_instructions,
+    size_t out_capacity,
+    size_t* out_count
+);
+
+/**
+ * @brief Compiles a DSL query string into human-readable ImpAsm (.impas) assembly text.
+ * @param snapshot Snapshot handle (can be NULL).
+ * @param script Source query text.
+ * @param lang Language dialect.
+ * @param out_impas_buffer Output buffer to write assembly text string.
+ * @param out_capacity Capacity of out_impas_buffer.
+ * @param out_bytes_written Pointer to store written byte count (including null terminator).
+ * @return IMPULSE_OK on success.
+ */
+IMPULSE_API impulse_status_t impulse_compile_to_impas(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    char* out_impas_buffer,
+    size_t out_capacity,
+    size_t* out_bytes_written
+);
+
+/**
+ * @brief Compiles and directly executes a DSL query string against a snapshot.
+ * @param snapshot Snapshot handle.
+ * @param script Source query text.
+ * @param lang Language dialect.
+ * @param state VM execution state frame.
+ * @param input_seed Initial seed node ID (placed in R0).
+ * @return IMPULSE_VM_OK on success.
+ */
+IMPULSE_API impulse_vm_status_t impulse_compile_and_execute(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_vm_state_t* state,
+    uint64_t input_seed
+);
+
+// ---------------------------------------------------------------------------
+// Canonical SQLite-Style Statement C-ABI & Projections
+// ---------------------------------------------------------------------------
+
+/**
+ * @struct impulse_column_desc_t
+ * @brief Column metadata and data pointer descriptor (Apache Arrow Compatible).
+ */
+typedef struct impulse_column_desc {
+    char name[32];                 /**< Column identifier (e.g. "node_id", "email", "pagerank") */
+    uint8_t type_code;             /**< Type code: IMPULSE_KEY_TYPE_* or primitive code */
+    uint8_t element_size;          /**< Byte size of single element (e.g. 8 for uint64, 4 for float32) */
+    bool is_nullable;              /**< False if column is guaranteed 100% non-null */
+    uint8_t reserved;
+    uint32_t dimension;            /**< 1 for scalars, vector dim for embeddings */
+    size_t byte_offset_in_buf;     /**< Offset within caller buffer where column array begins */
+    const void* data_ptr;          /**< Direct pointer to contiguous array in caller buffer */
+    const uint64_t* null_bitmap;   /**< Arrow validity bitmap: NULL if non-nullable, else bit i=1 is valid */
+} impulse_column_desc_t;
+
+/**
+ * @struct impulse_execution_result_t
+ * @brief Output execution summary descriptor for one-line queries or direct calls.
+ */
+typedef struct impulse_execution_result {
+    impulse_vm_status_t status;    /**< Execution status code (IMPULSE_VM_OK == 0) */
+    size_t row_count;              /**< Total rows returned */
+    uint32_t column_count;         /**< Total projected columns */
+    uint32_t reserved;
+    size_t total_bytes_written;    /**< Bytes written to caller buffer */
+    const void* data_ptr;          /**< Fast-path pointer to column 0 array */
+    uint64_t scalar_value;         /**< Fast-path scalar integer/node value if row_count == 1 */
+} impulse_execution_result_t;
+
+/** Opaque Statement Handle */
+typedef struct impulse_stmt impulse_stmt_t;
+
+// Lifecycle & Sizing
+IMPULSE_API impulse_status_t impulse_stmt_prepare(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    impulse_stmt_t** out_stmt
+);
+
+IMPULSE_API size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt);
+IMPULSE_API void impulse_stmt_finalize(impulse_stmt_t* stmt);
+
+// Parameter Bindings
+IMPULSE_API impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id);
+IMPULSE_API impulse_status_t impulse_stmt_bind_nodes(impulse_stmt_t* stmt, const char* param, const uint64_t* node_ids, size_t count);
+IMPULSE_API impulse_status_t impulse_stmt_bind_bitset(impulse_stmt_t* stmt, const char* param, const uint64_t* words, size_t word_count);
+IMPULSE_API impulse_status_t impulse_stmt_bind_roaring(impulse_stmt_t* stmt, const char* param, const uint8_t* bytes, size_t len);
+IMPULSE_API impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_uint(impulse_stmt_t* stmt, const char* param, uint64_t val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_float(impulse_stmt_t* stmt, const char* param, double val);
+IMPULSE_API impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const char* param, const char* str);
+IMPULSE_API impulse_status_t impulse_stmt_bind_uuid(impulse_stmt_t* stmt, const char* param, const uint8_t uuid_bytes[16]);
+IMPULSE_API impulse_status_t impulse_stmt_bind_vector(impulse_stmt_t* stmt, const char* param, const float* data, size_t dim);
+
+// Execution
+IMPULSE_API impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size);
+
+// Column Result Accessors (Zero-Copy Arrow-Style)
+IMPULSE_API size_t impulse_stmt_row_count(const impulse_stmt_t* stmt);
+IMPULSE_API uint32_t impulse_stmt_column_count(const impulse_stmt_t* stmt);
+IMPULSE_API const char* impulse_stmt_column_name(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API uint8_t impulse_stmt_column_type(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API uint32_t impulse_stmt_column_dim(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx);
+IMPULSE_API bool impulse_stmt_column_is_null(const impulse_stmt_t* stmt, uint32_t col_idx, size_t row_idx);
+
+// One-Line Convenience
+IMPULSE_API impulse_status_t impulse_exec(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    uint64_t seed_node,
+    impulse_execution_result_t* out_result
+);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif // IMPULSE_VM_H
+

@@ -85,6 +85,7 @@ static BenchmarkResult run_tight_loop_benchmark(size_t iterations) {
         impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
         auto t1 = std::chrono::high_resolution_clock::now();
         assert(st == IMPULSE_VM_OK);
+        (void)st;
         latencies.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
 
@@ -157,6 +158,7 @@ static BenchmarkResult run_mixed_alu_pipeline_benchmark(size_t iterations) {
         impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
         auto t1 = std::chrono::high_resolution_clock::now();
         assert(st == IMPULSE_VM_OK);
+        (void)st;
         latencies.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
 
@@ -251,6 +253,7 @@ static BenchmarkResult run_branch_predict_benchmark(size_t iterations) {
         impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
         auto t1 = std::chrono::high_resolution_clock::now();
         assert(st == IMPULSE_VM_OK);
+        (void)st;
         latencies.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
 
@@ -334,6 +337,7 @@ static BenchmarkResult run_subroutine_trampoline_benchmark(size_t iterations) {
         impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
         auto t1 = std::chrono::high_resolution_clock::now();
         assert(st == IMPULSE_VM_OK);
+        (void)st;
         latencies.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
 

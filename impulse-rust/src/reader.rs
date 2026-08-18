@@ -576,6 +576,72 @@ impl SnapshotReader {
         Ok(map)
     }
 
+    pub fn get_attribute_data(&self, relation_index: usize, attribute_index: usize) -> Result<&[u8], ImpulseError> {
+        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
+        let attr = rel.attributes.get(attribute_index).ok_or(ImpulseError::NotFound)?;
+        let slice = self.mmap.as_slice();
+        let start = attr.data_offset as usize;
+        let bytes = attr.data_bytes as usize;
+        if start + bytes > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        Ok(&slice[start..start + bytes])
+    }
+
+    pub fn get_attribute_offsets(&self, relation_index: usize, attribute_index: usize) -> Result<Option<&[u32]>, ImpulseError> {
+        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
+        let attr = rel.attributes.get(attribute_index).ok_or(ImpulseError::NotFound)?;
+        if attr.offsets_bytes == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = attr.offsets_offset as usize;
+        let bytes = attr.offsets_bytes as usize;
+        if start + bytes > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let offsets = unsafe {
+            std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4)
+        };
+        Ok(Some(offsets))
+    }
+
+    pub fn get_relation_statistics(&self, relation_index: usize) -> Result<crate::stats::RelationStatistics, ImpulseError> {
+        crate::stats::RelationStatisticsCalculator::calculate(self, relation_index, crate::stats::RelationStatisticsCalculator::DEFAULT_SUPERNODE_ZSCORE_THRESHOLD)
+    }
+
+    pub fn get_graph_statistics(&self) -> Result<crate::stats::GraphStatistics, ImpulseError> {
+        let mut rel_map = std::collections::HashMap::new();
+        let mut attr_map = std::collections::HashMap::new();
+
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            let stats = self.get_relation_statistics(r_idx)?;
+            let rel_name = if r.name.is_empty() { format!("rel_{}", r.relation_id) } else { r.name.clone() };
+            rel_map.insert(rel_name.clone(), stats);
+
+            for (a_idx, a) in r.attributes.iter().enumerate() {
+                if let Ok(data) = self.get_attribute_data(r_idx, a_idx) {
+                    let attr_stats = match a.type_code {
+                        1 => crate::stats::AttributeStatisticsCalculator::calculate_int32(&a.name, data),
+                        2 => crate::stats::AttributeStatisticsCalculator::calculate_int64(&a.name, data),
+                        3 => crate::stats::AttributeStatisticsCalculator::calculate_float32(&a.name, data),
+                        4 => crate::stats::AttributeStatisticsCalculator::calculate_float64(&a.name, data),
+                        _ => crate::stats::AttributeStatistics::empty(&a.name),
+                    };
+                    attr_map.insert(format!("{}.{}", rel_name, a.name), attr_stats);
+                }
+            }
+        }
+
+        let metadata = self.get_metadata().unwrap_or_default();
+
+        Ok(crate::stats::GraphStatistics {
+            relation_stats: rel_map,
+            attribute_stats: attr_map,
+            metadata_sketches: metadata,
+        })
+    }
+
     /// Initializes a fluent multi-hop graph traversal starting at `start_node`.
     pub fn traverse(&self, start_node: u64) -> crate::traversal::Traversal<'_> {
         crate::traversal::Traversal::new(self, start_node)
