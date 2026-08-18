@@ -109,3 +109,19 @@ Because AST compilation is faster than thread-safe concurrent LRU hash table loo
 * **Google Highway Portable SIMD**: Dynamically targets AVX-512, AVX2, ARM Neon, or RISC-V Vector instructions based on runtime CPUID detection.
 * **128-Byte Section Alignment**: Every section in `.imps` is 128-byte aligned, enabling hardware vector units, GPU Direct Storage (`cuFile`), and DMA engines to read data directly.
 * **Lock-Free Read-Only Traversal**: Traversal kernels operate exclusively on read-only memory maps without mutexes, spinlocks, or atomic CAS contention in query hot paths.
+
+---
+
+## 5. SQLite-Style C-ABI Execution & Arrow-Style Projections
+
+Impulse Graph provides a canonical, zero-allocation C-ABI based on SQLite statement lifecycles (`impulse_stmt_*`) paired with Apache Arrow-style columnar output arrays:
+
+1. **`impulse_stmt_prepare()`**: Compiles query text down to `impOps` in $< 3 \text{ µs}$ and determines exact buffer sizing from snapshot catalog metadata.
+2. **`impulse_stmt_buffer_size()`**: Computes the exact bytes required for internal VM scratch bitsets and result column arrays.
+3. **`impulse_stmt_execute()`**: Executes in a single SIMD pass inside the caller-provided buffer with **zero heap allocations (`malloc`/`new`)**.
+4. **`impulse_stmt_column_data()`**: Exposes contiguous, 128-byte aligned columnar arrays for direct zero-copy consumption by NumPy, PyTorch, Java FFM `MemorySegment`, and Rust slices.
+5. **Arrow-Compatible Nullability**: Nullable columns use 1-bit-per-row validity bitmaps (`impulse_stmt_column_is_null`), while non-null columns incur zero memory overhead.
+6. **Domain Key Resolution**: External identifiers (Strings, UUIDs, SQL IDs) map to dense internal IDs via Section 4/5 Minimal Perfect Hash Functions ($O(1)$) and project as direct zero-copy pointers into the memory-mapped string table.
+
+*For complete normative specification of key mapping and projection memory layouts, see [`docs/KEY_MAPPING_AND_PROJECTIONS.md`](file:///Users/jesse/impulse/impulse-graph-core/docs/KEY_MAPPING_AND_PROJECTIONS.md).*
+
