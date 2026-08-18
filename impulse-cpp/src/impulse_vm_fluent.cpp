@@ -648,12 +648,25 @@ impulse_vm_status_t impulse_compile_and_execute(
         auto ast = parse_script_to_ast(script, lang, &catalog);
         auto compiled = ImpulseCompiler::compile(ast, &catalog);
 
-        return impulse_vm_execute(
+        impulse_vm_context_t* temp_ctx = nullptr;
+        if (state->query_context == nullptr && snapshot != nullptr) {
+            temp_ctx = impulse_vm_context_create(snapshot);
+            state->query_context = temp_ctx;
+        }
+
+        impulse_vm_status_t status = impulse_vm_execute(
             compiled.instructions.data(),
             compiled.instructions.size(),
             state,
             input_seed
         );
+
+        if (temp_ctx) {
+            impulse_vm_context_destroy(temp_ctx);
+            state->query_context = nullptr;
+        }
+
+        return status;
     } catch (...) {
         return IMPULSE_VM_ERR_TRAP;
     }
