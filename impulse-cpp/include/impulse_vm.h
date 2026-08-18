@@ -409,6 +409,77 @@ IMPULSE_API impulse_vm_status_t impulse_vm_execute_to_buffer(
     size_t* out_words_written
 );
 
+// ---------------------------------------------------------------------------
+// Unified In-Kernel Compiler C-ABI Interface
+// ---------------------------------------------------------------------------
+
+/**
+ * @enum impulse_language_t
+ * @brief Supported DSL frontend dialects for the unified C++20 in-kernel compiler.
+ */
+typedef enum {
+    IMPULSE_LANG_IMPSCM = 0,  /**< ImpScheme S-Expression IR (.impscm) */
+    IMPULSE_LANG_IMPK   = 1,  /**< ImpK Array/Vector DSL (.impk) */
+    IMPULSE_LANG_IMPLOG = 2,  /**< ImpLog Datalog DSL (.implog) */
+    IMPULSE_LANG_CYPHER = 3,  /**< openCypher Pattern Matcher */
+    IMPULSE_LANG_CEL    = 4   /**< Common Expression Language */
+} impulse_language_t;
+
+/**
+ * @brief Compiles a DSL query string into physical 8-byte VM instructions using snapshot catalog statistics.
+ * @param snapshot Snapshot handle (can be NULL for snapshot-less compilation).
+ * @param script Source query text.
+ * @param lang Language dialect (ImpLog, ImpK, ImpScheme, Cypher, CEL).
+ * @param out_instructions Output buffer for compiled impulse_instruction_t bytecode.
+ * @param out_capacity Capacity of out_instructions buffer.
+ * @param out_count Pointer to store actual count of generated instructions.
+ * @return IMPULSE_OK on success, or non-zero error code.
+ */
+IMPULSE_API impulse_status_t impulse_compile_query(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_instruction_t* out_instructions,
+    size_t out_capacity,
+    size_t* out_count
+);
+
+/**
+ * @brief Compiles a DSL query string into human-readable ImpAsm (.impas) assembly text.
+ * @param snapshot Snapshot handle (can be NULL).
+ * @param script Source query text.
+ * @param lang Language dialect.
+ * @param out_impas_buffer Output buffer to write assembly text string.
+ * @param out_capacity Capacity of out_impas_buffer.
+ * @param out_bytes_written Pointer to store written byte count (including null terminator).
+ * @return IMPULSE_OK on success.
+ */
+IMPULSE_API impulse_status_t impulse_compile_to_impas(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    char* out_impas_buffer,
+    size_t out_capacity,
+    size_t* out_bytes_written
+);
+
+/**
+ * @brief Compiles and directly executes a DSL query string against a snapshot.
+ * @param snapshot Snapshot handle.
+ * @param script Source query text.
+ * @param lang Language dialect.
+ * @param state VM execution state frame.
+ * @param input_seed Initial seed node ID (placed in R0).
+ * @return IMPULSE_VM_OK on success.
+ */
+IMPULSE_API impulse_vm_status_t impulse_compile_and_execute(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_vm_state_t* state,
+    uint64_t input_seed
+);
+
 #ifdef __cplusplus
 }
 #endif

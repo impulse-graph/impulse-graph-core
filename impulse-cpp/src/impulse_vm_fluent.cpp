@@ -1,7 +1,15 @@
 #include "impulse_vm_fluent.hpp"
+#include "impulse_compiler.hpp"
+#include "impulse_cypher.hpp"
+#include "impulse_datalog.hpp"
+#include "impulse_impk.hpp"
+#include "impulse_cel.h"
 
 #include <stdexcept>
 #include <cstring>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace impulse::vm {
 
@@ -467,3 +475,189 @@ CompiledQuery QueryBuilder::compile() {
 }
 
 } // namespace impulse::vm
+
+namespace {
+
+using namespace impulse::compiler;
+
+static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impulse_language_t lang, const GraphCatalog* /*catalog*/) {
+    if (!script || script[0] == '\0') {
+        throw std::invalid_argument("Empty script provided to compiler");
+    }
+
+    std::string script_str(script);
+
+    switch (lang) {
+        case IMPULSE_LANG_CYPHER: {
+            auto res = CypherCompiler::compile(script_str);
+            return res.ast;
+        }
+        case IMPULSE_LANG_IMPLOG: {
+            return impulse::datalog::DatalogParser::parse(script_str);
+        }
+        case IMPULSE_LANG_IMPK: {
+            auto stmts = impulse::impk::ImpKCompiler::parse(script_str);
+            std::vector<AstPtr> steps;
+            for (const auto& s : stmts) {
+                switch (s.op_type) {
+                    case impulse::impk::ImpKOpType::MatrixVectorMul:
+                        steps.push_back(ScmWalk::forward("edge"));
+                        break;
+                    case impulse::impk::ImpKOpType::PageRankStep:
+                        steps.push_back(ScmWalk::forward("edge"));
+                        break;
+                    case impulse::impk::ImpKOpType::ConnectedComponents:
+                        steps.push_back(ScmWalk::forward("edge"));
+                        break;
+                    default:
+                        steps.push_back(ScmWalk::forward("edge"));
+                        break;
+                }
+            }
+            if (steps.empty()) {
+                steps.push_back(ScmWalk::forward("edge"));
+            }
+            steps.push_back(ScmCollect::bitset());
+            return std::make_shared<ScmProgram>(std::move(steps));
+        }
+        case IMPULSE_LANG_CEL: {
+            std::vector<AstPtr> steps;
+            steps.push_back(ScmWalk::forward("edge", std::make_shared<ScmCelExpr>(script_str)));
+            steps.push_back(ScmCollect::bitset());
+            return std::make_shared<ScmProgram>(std::move(steps));
+        }
+        case IMPULSE_LANG_IMPSCM:
+        default: {
+            // Default S-Expression pipeline: single forward walk + collect
+            std::vector<AstPtr> steps;
+            steps.push_back(ScmWalk::forward("edge"));
+            steps.push_back(ScmCollect::bitset());
+            return std::make_shared<ScmProgram>(std::move(steps));
+        }
+    }
+}
+
+static GraphCatalog build_catalog_from_snapshot(const impulse_snapshot_t* snapshot) {
+    GraphCatalog catalog;
+    if (!snapshot) {
+        catalog.register_relation("edge", 0);
+        catalog.register_relation("FOLLOWS", 0);
+        catalog.register_relation("Follows", 0);
+        catalog.register_relation("KNOWS", 0);
+        catalog.register_relation("DaG", 0);
+        catalog.register_relation("GpPW", 1);
+        catalog.register_relation("CbG", 2);
+        return catalog;
+    }
+
+    uint16_t rel_count = impulse_snapshot_relation_count(snapshot);
+    for (uint16_t i = 0; i < rel_count; ++i) {
+        impulse_relation_directory_entry_t entry{};
+        if (impulse_snapshot_get_relation_entry(snapshot, i, &entry) == IMPULSE_OK) {
+            std::string rel_name = "rel_" + std::to_string(i);
+            catalog.register_relation(rel_name, i);
+        }
+    }
+
+    if (rel_count == 0) {
+        catalog.register_relation("edge", 0);
+    }
+    return catalog;
+}
+
+} // anonymous namespace
+
+extern "C" {
+
+impulse_status_t impulse_compile_query(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_instruction_t* out_instructions,
+    size_t out_capacity,
+    size_t* out_count)
+{
+    if (!script || !out_instructions || out_capacity == 0) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+
+        if (compiled.instructions.size() > out_capacity) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+
+        std::memcpy(out_instructions, compiled.instructions.data(), compiled.instructions.size() * sizeof(impulse_instruction_t));
+        if (out_count) {
+            *out_count = compiled.instructions.size();
+        }
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+impulse_status_t impulse_compile_to_impas(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    char* out_impas_buffer,
+    size_t out_capacity,
+    size_t* out_bytes_written)
+{
+    if (!script || !out_impas_buffer || out_capacity == 0) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+        std::string impas = compiled.to_impas_string(&catalog);
+
+        if (impas.size() + 1 > out_capacity) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+
+        std::memcpy(out_impas_buffer, impas.c_str(), impas.size() + 1);
+        if (out_bytes_written) {
+            *out_bytes_written = impas.size() + 1;
+        }
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+impulse_vm_status_t impulse_compile_and_execute(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_vm_state_t* state,
+    uint64_t input_seed)
+{
+    if (!script || !state) {
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+
+        return impulse_vm_execute(
+            compiled.instructions.data(),
+            compiled.instructions.size(),
+            state,
+            input_seed
+        );
+    } catch (...) {
+        return IMPULSE_VM_ERR_TRAP;
+    }
+}
+
+} // extern "C"
+
