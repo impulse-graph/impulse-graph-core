@@ -135,7 +135,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Standalone CLI Binary
-        shell: bash
         run: |
           cd impulse-graph-tooling
           cargo build --release

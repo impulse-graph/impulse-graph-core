@@ -33,7 +33,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
     }
 
     if is_windows {
-        let compiler = env::var("CXX").unwrap_or_else(|_| "cl".to_string());
+        let compiler = env::var("CXX").unwrap_or_else(|_| "cl.exe".to_string());
         let mut args = vec![
             "/nologo".to_string(),
             "/std:c++20".to_string(),
@@ -42,6 +42,9 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             "/EHsc".to_string(),
             "/DNOMINMAX".to_string(),
             "/DWIN32_LEAN_AND_MEAN".to_string(),
+            "/D_CRT_SECURE_NO_WARNINGS".to_string(),
+            "/utf-8".to_string(),
+            "/permissive-".to_string(),
             "/c".to_string(),
             src.to_string(),
             format!("/I{}", include_dir),
