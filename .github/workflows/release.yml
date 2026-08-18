@@ -127,6 +127,12 @@ jobs:
           repository: impulse-graph/impulse-graph-tooling
           path: impulse-graph-tooling
 
+      - name: Disable Git link.exe on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Remove-Item -Path "C:\Program Files\Git\usr\bin\link.exe" -Force -ErrorAction SilentlyContinue
+
       - name: Setup MSVC Toolchain (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
