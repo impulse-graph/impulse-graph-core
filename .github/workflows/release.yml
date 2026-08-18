@@ -268,42 +268,57 @@ jobs:
         run: |
           TAG_NAME="${{ steps.prerelease_check.outputs.release_tag }}"
           cat << EOF > release_description.md
-          ## Impulse Graph Release Assets & Quick Downloads
+          # 🚀 Impulse Graph Release \`${TAG_NAME}\`
 
-          Impulse Graph is an ultra-high-performance, zero-copy, C-ABI binary snapshot graph engine.
-
-          ---
-
-          ### 🛠️ Standalone Impulse CLI Tooling
-
-          Pre-compiled standalone executables (\`impulse\` / \`impulse-graph\`) with embedded C++20 engine kernel:
-
-          | Platform / Architecture | Archive Format | Direct Download |
-          | :--- | :--- | :--- |
-          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz) |
-          | **Linux x86_64** | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz) |
-          | **Linux ARM64** | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz) |
-          | **Windows x86_64** | \`.zip\` | [\`impulse-cli-${TAG_NAME}-windows-x86_64.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-windows-x86_64.zip) |
+          **Impulse Graph Engine** is a high-performance, zero-copy, C-ABI binary snapshot graph engine.
 
           ---
 
-          ### 📦 C++ Kernel & C-ABI SDK Headers
+          ## 🛠️ 1. Standalone Impulse CLI Tooling
 
-          Headers include \`impulse_graph.h\`, \`impulse_vm.h\`, \`impulse_compiler.hpp\`, and static/shared libraries with Google Highway SIMD vectorization:
+          Pre-compiled standalone executables (\`impulse\` / \`impulse-graph\`) with embedded C++20 engine kernel. No runtime dependencies required.
 
-          | Platform / Architecture | Archive Format | Direct Download |
-          | :--- | :--- | :--- |
-          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz) |
-          | **Linux x86_64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz) |
-          | **Linux ARM64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz) |
-          | **Windows x86_64** (\`MSVC\`) | \`.zip\` | [\`impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip) |
+          | Platform | Architecture | Binary Archive | Quick Verify Command |
+          | :--- | :--- | :--- | :--- |
+          | 🍏 **macOS** | Apple Silicon (\`arm64\`) | [⬇️ \`impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz) | \`./impulse --version\` |
+          | 🐧 **Linux** | x86_64 (\`amd64\`) | [⬇️ \`impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz) | \`./impulse --version\` |
+          | 🐧 **Linux** | ARM64 (\`aarch64\`) | [⬇️ \`impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz) | \`./impulse --version\` |
+          | 🪟 **Windows** | x86_64 (\`amd64\`) | [⬇️ \`impulse-cli-${TAG_NAME}-windows-x86_64.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-windows-x86_64.zip) | \`.\\impulse.exe --version\` |
 
           ---
 
-          ### 🦀 Rust Engine Crate
+          ## 📦 2. Native C / C++ Engine SDK
 
-          - **Crate Archive**: [\`impulse-graph-0.9.0.crate\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-graph-0.9.0.crate)
-          - **Cargo Dependency**:
+          Includes C-ABI headers (\`impulse_graph.h\`, \`impulse_vm.h\`, \`impulse_compiler.hpp\`), static libraries (\`libimpulse_graph_static.a\`), dynamic libraries (\`libimpulse_graph.so\`/\`.dylib\`/\`.dll\`), and CMake export configurations.
+
+          | Platform | Architecture | Libc / Toolchain | Direct Download |
+          | :--- | :--- | :--- | :--- |
+          | 🍏 **macOS** | Apple Silicon (\`arm64\`) | Clang / \`libc++\` | [⬇️ \`impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz) |
+          | 🐧 **Linux** | x86_64 | GNU (\`glibc >= 2.28\`) | [⬇️ \`impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz) |
+          | 🐧 **Linux** | ARM64 (\`aarch64\`) | GNU (\`glibc >= 2.28\`) | [⬇️ \`impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz) |
+          | 🪟 **Windows** | x86_64 | MSVC (\`/MT\` Static CRT) | [⬇️ \`impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip) |
+
+          ---
+
+          ## 🐍 3. Python SDK & Zero-Copy Wheels
+
+          Pre-compiled binary wheels with native zero-copy NumPy and PyTorch tensor memory-mapping:
+
+          | Platform | Python 3.13 | Python 3.12 | Python 3.11 | Python 3.10 | Python 3.9 |
+          | :--- | :---: | :---: | :---: | :---: | :---: |
+          | 🍏 **macOS arm64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-macosx_11_0_arm64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-macosx_11_0_arm64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-macosx_11_0_arm64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-macosx_11_0_arm64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-macosx_11_0_arm64.whl) |
+          | 🐧 **Linux x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) |
+          | 🐧 **Linux aarch64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) |
+          | 🪟 **Windows amd64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-win_amd64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-win_amd64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-win_amd64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-win_amd64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-win_amd64.whl) |
+
+          - **Source Tarball**: [⬇️ \`impulse_graph-0.9.0.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0.tar.gz)
+
+          ---
+
+          ## 🦀 4. Rust Engine Crate
+
+          - **Crate Download**: [⬇️ \`impulse-graph-0.9.0.crate\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-graph-0.9.0.crate)
+          - **Add to \`Cargo.toml\`**:
             \`\`\`toml
             [dependencies]
             impulse-graph = "0.9.0"
@@ -311,32 +326,36 @@ jobs:
 
           ---
 
-          ### 🐍 Python Pre-Compiled Wheels (CPython 3.9 – 3.13)
+          ## ⚡ 5. Quick Install via Package Managers
 
-          Pre-compiled binary wheels with native zero-copy NumPy / PyTorch tensor memory-mapping:
+          \`\`\`bash
+          # Python
+          pip install impulse-graph
 
-          | Platform | Python 3.13 | Python 3.12 | Python 3.11 | Python 3.10 | Python 3.9 |
-          | :--- | :--- | :--- | :--- | :--- | :--- |
-          | **macOS Apple Silicon** (\`arm64\`) | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-macosx_11_0_arm64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-macosx_11_0_arm64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-macosx_11_0_arm64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-macosx_11_0_arm64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-macosx_11_0_arm64.whl) |
-          | **Linux x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) |
-          | **Linux ARM64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) |
-          | **Windows x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-win_amd64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-win_amd64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-win_amd64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-win_amd64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-win_amd64.whl) |
+          # Rust
+          cargo add impulse-graph
 
-          - **Source Distribution**: [\`impulse_graph-0.9.0.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0.tar.gz)
+          # Node.js
+          npm install impulse-graph
+
+          # .NET / C#
+          dotnet add package ImpulseGraph
+          \`\`\`
 
           ---
 
-          ### 🛡️ SLSA Level 3 Attestation & Verification
+          ## 🛡️ 6. Cryptographic Integrity & SLSA Level 3 Attestation
 
-          Every artifact is cryptographically hashed and signed with Sigstore / Cosign keyless OIDC:
-          - **Checksums**: [\`SHA256SUMS\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS)
-          - **Signature**: [\`SHA256SUMS.sig\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS.sig)
+          Every release artifact is cryptographically hashed and signed via Sigstore / Cosign keyless OIDC:
+
+          * **SHA-256 Checksums**: [⬇️ \`SHA256SUMS\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS)
+          * **Cosign Signature**: [⬇️ \`SHA256SUMS.sig\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS.sig)
 
           \`\`\`bash
-          # Verify checksums
+          # Verify file integrity
           sha256sum -c SHA256SUMS
 
-          # Verify Cosign keyless signature
+          # Verify cryptographic signature
           cosign verify-blob \
             --certificate-identity-regexp "https://github.com/impulse-graph/impulse-graph-core/" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
