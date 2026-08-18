@@ -67,14 +67,14 @@ jobs:
             ${{ matrix.target.cmake_flags }}
           cmake --build build-cpp --config Release --target install
 
-      - name: Package Distributable C++ Core Archive
+      - name: Package Distributable C-ABI SDK Archive
         shell: bash
         run: |
           TAG_NAME="${{ github.ref_name }}"
           if [ -n "${{ inputs.version }}" ]; then
             TAG_NAME="${{ inputs.version }}"
           fi
-          DIST_NAME="impulse-core-cpp-${TAG_NAME}-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}"
+          DIST_NAME="impulse-sdk-${TAG_NAME}-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}"
           mkdir -p dist
 
           if [ "${{ matrix.target.os }}" == "windows" ]; then
@@ -85,10 +85,82 @@ jobs:
             tar -czvf "dist/${DIST_NAME}.tar.gz" "$DIST_NAME"
           fi
 
-      - name: Upload C++ Distributable Artifact
+      - name: Upload C-ABI SDK Distributable Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: core-cpp-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}
+          name: core-sdk-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}
+          path: dist/*
+
+  build-cli-tooling:
+    name: Build CLI Tooling (${{ matrix.target.os }}-${{ matrix.target.arch }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Linux x86_64
+          - os: linux
+            arch: x86_64
+            runner: ubuntu-22.04
+          # Linux ARM64
+          - os: linux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+          # macOS Apple Silicon arm64
+          - os: darwin
+            arch: arm64
+            runner: macos-14
+          # Windows x86_64
+          - os: windows
+            arch: x86_64
+            runner: windows-latest
+
+    steps:
+      - name: Checkout Core Repository
+        uses: actions/checkout@v4
+        with:
+          path: impulse-graph-core
+
+      - name: Checkout Tooling Repository
+        uses: actions/checkout@v4
+        with:
+          repository: impulse-graph/impulse-graph-tooling
+          path: impulse-graph-tooling
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Standalone CLI Binary
+        shell: bash
+        run: |
+          cd impulse-graph-tooling
+          cargo build --release
+
+      - name: Package Distributable CLI Archive
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="${{ inputs.version }}"
+          fi
+          CLI_DIST="impulse-cli-${TAG_NAME}-${{ matrix.target.os }}-${{ matrix.target.arch }}"
+          mkdir -p "$CLI_DIST" dist
+
+          if [ "${{ matrix.target.os }}" == "windows" ]; then
+            cp impulse-graph-tooling/target/release/impulse-graph.exe "$CLI_DIST/impulse-graph.exe"
+            cp impulse-graph-tooling/target/release/impulse-graph.exe "$CLI_DIST/impulse.exe"
+            7z a "dist/${CLI_DIST}.zip" "$CLI_DIST"
+          else
+            cp impulse-graph-tooling/target/release/impulse-graph "$CLI_DIST/impulse-graph"
+            cp impulse-graph-tooling/target/release/impulse-graph "$CLI_DIST/impulse"
+            chmod +x "$CLI_DIST/impulse-graph" "$CLI_DIST/impulse"
+            tar -czvf "dist/${CLI_DIST}.tar.gz" "$CLI_DIST"
+          fi
+
+      - name: Upload CLI Distributable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target.os }}-${{ matrix.target.arch }}
           path: dist/*
 
   build-rust-crates:
@@ -155,7 +227,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release & Sign Artifacts
-    needs: [build-cpp-kernel, build-rust-crates, build-python-wheels]
+    needs: [build-cpp-kernel, build-cli-tooling, build-rust-crates, build-python-wheels]
     runs-on: ubuntu-latest
     steps:
       - name: Download All Artifacts
@@ -196,22 +268,35 @@ jobs:
         run: |
           TAG_NAME="${{ steps.prerelease_check.outputs.release_tag }}"
           cat << EOF > release_description.md
-          ## Impulse Graph Core Release Assets & Quick Links
+          ## Impulse Graph Release Assets & Quick Downloads
 
           Impulse Graph is an ultra-high-performance, zero-copy, C-ABI binary snapshot graph engine.
 
           ---
 
-          ### 📦 C++ Kernel & C-ABI Headers
+          ### 🛠️ Standalone Impulse CLI Tooling
 
-          Headers include \`impulse_graph.h\`, \`impulse_vm.h\`, \`impulse_simd.h\`, and static/shared library binaries with Google Highway SIMD vectorization.
+          Pre-compiled standalone executables (\`impulse\` / \`impulse-graph\`) with embedded C++20 engine kernel:
 
           | Platform / Architecture | Archive Format | Direct Download |
           | :--- | :--- | :--- |
-          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-core-cpp-${TAG_NAME}-darwin-arm64-darwin.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-core-cpp-${TAG_NAME}-darwin-arm64-darwin.tar.gz) |
-          | **Linux x86_64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-core-cpp-${TAG_NAME}-linux-x86_64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-core-cpp-${TAG_NAME}-linux-x86_64-glibc.tar.gz) |
-          | **Linux ARM64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-core-cpp-${TAG_NAME}-linux-aarch64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-core-cpp-${TAG_NAME}-linux-aarch64-glibc.tar.gz) |
-          | **Windows x86_64** (\`MSVC\`) | \`.zip\` | [\`impulse-core-cpp-${TAG_NAME}-windows-x86_64-msvc.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-core-cpp-${TAG_NAME}-windows-x86_64-msvc.zip) |
+          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-darwin-arm64.tar.gz) |
+          | **Linux x86_64** | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-x86_64.tar.gz) |
+          | **Linux ARM64** | \`.tar.gz\` | [\`impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-linux-aarch64.tar.gz) |
+          | **Windows x86_64** | \`.zip\` | [\`impulse-cli-${TAG_NAME}-windows-x86_64.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-cli-${TAG_NAME}-windows-x86_64.zip) |
+
+          ---
+
+          ### 📦 C++ Kernel & C-ABI SDK Headers
+
+          Headers include \`impulse_graph.h\`, \`impulse_vm.h\`, \`impulse_compiler.hpp\`, and static/shared libraries with Google Highway SIMD vectorization:
+
+          | Platform / Architecture | Archive Format | Direct Download |
+          | :--- | :--- | :--- |
+          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-darwin-arm64-darwin.tar.gz) |
+          | **Linux x86_64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-x86_64-glibc.tar.gz) |
+          | **Linux ARM64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-linux-aarch64-glibc.tar.gz) |
+          | **Windows x86_64** (\`MSVC\`) | \`.zip\` | [\`impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-sdk-${TAG_NAME}-windows-x86_64-msvc.zip) |
 
           ---
 
@@ -238,10 +323,6 @@ jobs:
           | **Windows x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-win_amd64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-win_amd64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-win_amd64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-win_amd64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-win_amd64.whl) |
 
           - **Source Distribution**: [\`impulse_graph-0.9.0.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0.tar.gz)
-          - **Direct Pip Installation Example**:
-            \`\`\`bash
-            pip install https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-macosx_11_0_arm64.whl
-            \`\`\`
 
           ---
 
