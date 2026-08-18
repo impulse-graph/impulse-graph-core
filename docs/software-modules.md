@@ -10,7 +10,7 @@ This document defines the logical software module organization, class boundaries
 
 ### 1.1 `ImpulseGraphSnapshot` (Read-Only Binary Snapshot Interface)
 * **Purpose**: Provides a read-only, zero-copy interface for querying immutable graph snapshots.
-* **Underlying Storage**: Backed directly by memory-mapped (`mmap`) off-heap files conforming to the [C-ABI Binary Snapshot Specification v2.3](FORMAT_SPECIFICATION.md).
+* **Underlying Storage**: Backed directly by memory-mapped (`mmap`) off-heap files conforming to the [C-ABI Binary Snapshot Specification v0.9.0](KEY_MAPPING_AND_PROJECTIONS.md).
 * **Guarantees**: Thread-safe, lock-free, zero-allocation reads; 64-byte / 128-byte cache-line and 4KB page aligned.
 
 ### 1.2 `ImpulseGraph` (Snapshot + Live Delta Overlay)
@@ -24,7 +24,7 @@ This document defines the logical software module organization, class boundaries
 
 ### 1.4 `ImpulseGraphQueryEvaluator` (SIMD Vector Execution Engine)
 * **Purpose**: Evaluates an `ImpulseGraphQuery` AST against a target graph instance.
-* **Optimization**: Employs SIMD vector acceleration (Java `VectorAPI`, C++ AVX2/AVX-512/NEON, Rust SIMD) over off-heap CSR matrices and delta arrays. Operates lock-free and allocation-free in query hot paths.
+* **Optimization**: Employs SIMD vector acceleration (Java `VectorAPI`, C++ Highway / AVX2 / AVX-512 / NEON, Rust SIMD) over off-heap CSR matrices and delta arrays. Operates lock-free and allocation-free in query hot paths.
 
 ### 1.5 `SnapshotBuilder` (Streaming Compactor & Snapshot Generator)
 * **Purpose**: Builds a brand-new immutable binary snapshot by compacting an active `ImpulseGraph` (base snapshot + delta overlay) or combining multiple snapshots.
@@ -34,39 +34,38 @@ This document defines the logical software module organization, class boundaries
 
 ---
 
-## 2. Polyglot Tri-Core Architecture & Repository Organization
+## 2. Multi-Repository Ecosystem Organization
 
-The core engine is structured as a **Unified Polyglot Workspace** in the `impulse-graph` repository:
+Per `AGENTS.md`, the Impulse Graph Engine ecosystem is partitioned into specialized repositories:
 
 ```
-impulse-graph/
-├── docs/
-│   ├── spec/                   # C-ABI Binary Snapshot Specification (FORMAT_SPECIFICATION.md)
-│   └── software-modules.md     # Software Modules & System Design (This File)
-├── test-vectors/               # Language-agnostic binary snapshot test files
-├── impulse-java/               # Pure Java 25 Engine & Modules (Maven)
-│   ├── impulse-spec/           # C-ABI binary protocol constants & FFM layout definitions
-│   ├── impulse-api/            # Interfaces: Snapshot, Graph, Query, Evaluator, Builder
-│   ├── impulse-core/           # Pure in-memory FFM engine (0 external dependencies)
-│   ├── impulse-store/          # Optional RocksDB cold-start persistence & WAL logger
-│   └── impulse-ingestion/      # Optional streaming CDC (Kafka/Pulsar) event consumer
-├── impulse-cpp/                # C++20 Native Engine Kernel (CMake & C-ABI C header libimpulse_graph)
-├── impulse-rust/               # Rust Native Engine Kernel & Crate
-├── impulse-kotlin/             # Kotlin Coroutines & DSL
-├── impulse-scala/              # Scala 3 Extension Methods & ZIO
-├── impulse-python/             # Python Bindings & PyTorch Zero-Copy mmap Tensors
-├── impulse-csharp/             # .NET 9 P/Invoke Managed API
-└── impulse-fsharp/             # F# Functional Facade
+~/impulse/
+├── impulse-graph-core/         # C++20 Zero-Copy Kernel, Rust Crate & Polyglot FFI Bindings
+│   ├── impulse-cpp/            # C++20 Native Engine Kernel (libimpulse_graph) & In-Kernel Compiler
+│   ├── impulse-rust/           # Rust Native Engine Kernel & Crates.io crate
+│   ├── impulse-python/         # Python C-ABI bindings & PyTorch zero-copy mmap tensors
+│   ├── impulse-node/           # Node.js / Bun N-API C-ABI native bindings
+│   ├── impulse-go/             # Go CGo C-ABI bindings
+│   └── impulse-dotnet/         # .NET 9 P/Invoke C-ABI bindings
+├── impulse-graph-spec/         # Normative Binary Snapshot Specification & Test Vectors (tc01..tc36)
+├── impulse-graph-java/         # Standalone Java 25 FFM Core Engine & MethodHandle JIT
+├── impulse-graph-tooling/      # Developer CLI Suite (assemble, disassemble, compile, inspect, run, opt)
+├── impulse-platform/           # Enterprise Cloud Infrastructure (Spring Boot, gRPC, Kafka WAL, RocksDB)
+├── impulse-benchmarks/         # Reproducible Performance Benchmarks (Neo4j, PyG, NetworkX, JMH)
+├── impulse-website/            # Documentation Portal (docs.impulsegraph.io)
+├── impulse-powergrid/          # Showcase: IEC 61970 CIM XML 60Hz PMU Contingency Simulator
+├── impulse-gnn/                # Showcase: PyTorch GNN SIMD Neighborhood Sampler
+└── impulse-authz/              # Showcase: Zanzibar / ReBAC Fine-Grained Authorization Server
 ```
 
 ### 2.1 Language Strategy
-1. **Java (`impulse-java`)**: Pure Java 25 implementation using Foreign Function & Memory (FFM `Arena` / `MemorySegment`) and `VectorAPI`. Critical for enterprise JVM integration with zero native binary compilation overhead.
-2. **C++20 (`impulse-cpp`)**: Native C++ kernel delivering the canonical C-ABI C header (`impulse_graph.h`) for embedded, high-performance, and native bindings (Python, .NET, Rust FFI).
-3. **Rust (`impulse-rust`)**: Safe, concurrent native implementation providing zero-cost Rust abstractions and C-ABI export.
+1. **Java 25 (`impulse-graph-java`)**: Pure Java 25 implementation using Foreign Function & Memory (FFM `Arena` / `MemorySegment`) and `VectorAPI`.
+2. **C++20 (`impulse-graph-core/impulse-cpp`)**: Native C++ kernel delivering the canonical C-ABI C header (`impulse_graph.h`) for embedded, high-performance, and native bindings.
+3. **Rust (`impulse-graph-core/impulse-rust`)**: Safe, concurrent native implementation providing zero-cost Rust abstractions and C-ABI export.
 
 ### 2.2 Dependency & Modularity Rule
-* **`impulse-core` is Ultra-Lean**: Pure in-memory graph primitives with **zero third-party dependencies**.
-* **Storage and Ingestion Decoupled**: Disk persistence (RocksDB), WAL sinking, and CDC ingestion are isolated into optional extension modules (`impulse-store`, `impulse-ingestion`), preventing dependency bloat in lightweight embedded or query-only environments.
+* **`impulse-core` is Ultra-Lean**: Pure in-memory graph primitives with **zero third-party runtime dependencies**.
+* **Storage and Ingestion Decoupled**: Disk persistence (RocksDB), WAL sinking, and CDC ingestion belong exclusively in `impulse-platform`.
 
 ---
 
