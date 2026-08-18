@@ -29,6 +29,7 @@ void test_fluent_basic_input_and_const() {
     QueryResult res = query.executeWithContext(nullptr, &state, 100);
 
     assert(res.isOk());
+    (void)res;
     assert(state.registers[0] == 100);
     assert(state.registers[1] == 42);
     assert(state.registers[3] == 42);

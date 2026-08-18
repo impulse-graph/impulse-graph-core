@@ -27,11 +27,13 @@ void test_index_1_permutation() {
     size_t out_count = 0;
     st = impulse_index_permutation_range_query(index_bytes, index_size, 20.0, 25.0, ages.data(), out_nodes.data(), N, &out_count);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(out_count > 0);
 
     for (size_t k = 0; k < out_count; ++k) {
         float val = ages[out_nodes[k]];
         assert(val >= 20.0f && val <= 25.0f);
+        (void)val;
     }
     impulse_index_free(index_bytes);
     std::cout << "    Matched " << out_count << " nodes with age in [20.0, 25.0]. PASSED!" << std::endl;
@@ -52,6 +54,7 @@ void test_index_2_zone_map() {
     size_t eligible_pages = 0;
     st = impulse_index_zone_map_filter(index_bytes, index_size, 52.0, 55.0, bitmask.data(), bitmask.size(), &eligible_pages);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(eligible_pages == 1);
     assert(bitmask[0] == (1ULL << 5));
 
@@ -78,6 +81,7 @@ void test_index_3_inverted_bitset() {
     size_t num_words = 0;
     st = impulse_index_inverted_bitset_lookup(index_bytes, index_size, "HI", &words, &num_words);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(words != nullptr);
 
     impulse_index_free(index_bytes);
@@ -102,6 +106,7 @@ void test_index_4_minimal_perfect_hash() {
     uint32_t found_node = 0;
     st = impulse_index_minimal_perfect_hash_lookup(index_bytes, index_size, "user_42@example.com", &found_node);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(found_node == 42);
 
     impulse_index_free(index_bytes);
@@ -126,6 +131,7 @@ void test_index_5_trigram_3gram() {
     size_t num_words = 0;
     st = impulse_index_trigram_search(index_bytes, index_size, "jes", out_words.data(), 2, &num_words);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert((out_words[0] & 1ULL) != 0); // Node 0 ("jessica") matched "jes"!
 
     impulse_index_free(index_bytes);
@@ -151,6 +157,7 @@ void test_index_6_domain_split() {
     size_t num_words = 0;
     st = impulse_index_domain_split_lookup(index_bytes, index_size, "gmail.com", &words, &num_words);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(words != nullptr);
     assert((words[0] & 1ULL) != 0); // Node 0 (alice@gmail.com) matched domain!
 
@@ -178,6 +185,7 @@ void test_index_7_temporal_interval() {
     size_t out_count = 0;
     st = impulse_index_temporal_interval_query(index_bytes, index_size, 45, out_nodes.data(), N, &out_count);
     assert(st == IMPULSE_OK);
+    (void)st;
     assert(out_count > 0);
 
     impulse_index_free(index_bytes);

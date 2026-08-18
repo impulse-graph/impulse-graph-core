@@ -67,6 +67,7 @@ static void test_cel_vector_math_calls() {
     for (const char* name : all_math_names) {
         int func_id = CelCompiler::resolve_math_func(name);
         assert(func_id >= 0);
+        (void)func_id;
         std::string expr_str = std::string(name) + "(x)";
         Parser p(expr_str);
         auto ast = p.parse_expression();

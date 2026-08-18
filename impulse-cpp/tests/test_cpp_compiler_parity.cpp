@@ -192,6 +192,7 @@ static void test_execution_on_vm() {
 
     impulse_vm_status_t st = impulse_vm_execute(compiled.data(), compiled.instruction_count(), &state, 10);
     assert(st == IMPULSE_VM_OK);
+    (void)st;
 
     uint16_t res_reg = compiled.result_register;
     assert(state.register_types[res_reg] == TYPE_BITSET_HANDLE);

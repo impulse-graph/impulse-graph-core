@@ -7521,6 +7521,7 @@ impulse_vm_status_t impulse_vm_validate(
 }
 
 size_t impulse_vm_get_required_buffer_size(const impulse_snapshot_t* snapshot, uint16_t domain_id) {
+    (void)domain_id;
     if (!snapshot) return 0;
     return 10000000;
 }
@@ -7536,6 +7537,7 @@ impulse_vm_status_t impulse_vm_execute_to_buffer(
     size_t out_words_capacity,
     size_t* out_words_written) {
     
+    (void)target_domain_id;
     impulse_vm_status_t st = impulse_vm_execute(bytecode, instruction_count, vm_state, input_param);
     if (st != IMPULSE_VM_OK) return st;
     

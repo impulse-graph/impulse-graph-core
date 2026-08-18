@@ -124,6 +124,7 @@ static void test_vm_vector_math_opcodes() {
 
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
+    (void)status;
 
     const float* exp_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[2]);
     const float* relu_vec = impulse_vm_context_get_float_vector(ctx, (int)state.registers[3]);
@@ -134,6 +135,11 @@ static void test_vm_vector_math_opcodes() {
     assert(relu_vec != nullptr && relu_vec[0] == 0.0f && relu_vec[5] == 1.0f);
     assert(gelu_vec != nullptr && std::fabs(gelu_vec[3]) < 1e-4f);
     assert(sig_vec != nullptr && std::fabs(sig_vec[3] - 0.5f) < 1e-4f);
+
+    (void)exp_vec;
+    (void)relu_vec;
+    (void)gelu_vec;
+    (void)sig_vec;
 
     impulse_vm_context_destroy(ctx);
     std::cout << "  -> PASSED" << std::endl;
@@ -170,6 +176,7 @@ static void test_vector_predicates_and_masks() {
 
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
+    (void)status;
 
     int h_gt = (int)state.registers[3];
     int h_lt = (int)state.registers[4];
@@ -191,6 +198,11 @@ static void test_vector_predicates_and_masks() {
 
     assert(!impulse_vm_context_bitset_test(ctx, h_and, 0));
     assert(!impulse_vm_context_bitset_test(ctx, h_and, 3));
+
+    (void)h_gt;
+    (void)h_lt;
+    (void)h_or;
+    (void)h_and;
 
     impulse_vm_context_destroy(ctx);
     std::cout << "  -> PASSED" << std::endl;
@@ -225,6 +237,7 @@ static void test_fixpoint_and_frontier_diff() {
 
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
+    (void)status;
 
     int h_diff = (int)state.registers[2];
     int h_all = (int)state.registers[3];
@@ -236,6 +249,9 @@ static void test_fixpoint_and_frontier_diff() {
     assert(impulse_vm_context_bitset_test(ctx, h_all, 0));
     assert(impulse_vm_context_bitset_test(ctx, h_all, 1));
     assert(impulse_vm_context_bitset_test(ctx, h_all, 4));
+
+    (void)h_diff;
+    (void)h_all;
 
     impulse_vm_context_destroy(ctx);
     std::cout << "  -> PASSED" << std::endl;
@@ -269,6 +285,7 @@ static void test_multi_layout_sweeps() {
 
     impulse_vm_status_t status = impulse_vm_execute(program.data(), program.size(), &state, 0);
     assert(status == IMPULSE_VM_OK);
+    (void)status;
 
     assert(impulse_vm_context_bitset_test(ctx, (int)state.registers[1], 1));
     assert(impulse_vm_context_bitset_test(ctx, (int)state.registers[3], 1));
@@ -293,6 +310,7 @@ static void test_fp_assertions_and_safe_math() {
     assert(impulse_math_unary_f32(MATH_FUNC_ISINF, inf_val) == 1.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_ISFINITE, 5.0f) == 1.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_ISFINITE, nan_val) == 0.0f);
+    (void)inf_val;
 
     // 3. OP_ASSERT_FINITE on clean vector -> PASSED
     std::vector<impulse_instruction_t> clean_prog = {
@@ -308,6 +326,7 @@ static void test_fp_assertions_and_safe_math() {
     impulse_vm_context_bind_inline_data(ctx1, clean_data, sizeof(clean_data));
     impulse_vm_status_t st1 = impulse_vm_execute(clean_prog.data(), clean_prog.size(), &state1, 0);
     assert(st1 == IMPULSE_VM_OK);
+    (void)st1;
     impulse_vm_context_destroy(ctx1);
 
     // 4. OP_ASSERT_FINITE on NaN vector -> TRAPPED with IMPULSE_VM_ERR_FLOATING_POINT
@@ -325,6 +344,7 @@ static void test_fp_assertions_and_safe_math() {
     impulse_vm_status_t st2 = impulse_vm_execute(nan_prog.data(), nan_prog.size(), &state2, 0);
     assert(st2 == IMPULSE_VM_ERR_FLOATING_POINT);
     assert(state2.registers[0] == 1); // Exact offending index 1 captured!
+    (void)st2;
     impulse_vm_context_destroy(ctx2);
 
     std::cout << "  -> PASSED: FP assertions, NaN traps, and safe division verified." << std::endl;

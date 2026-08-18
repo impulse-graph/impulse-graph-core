@@ -33,6 +33,7 @@ static void run_cypher_benchmark(
     const GraphCatalog& catalog,
     uint32_t seed_node
 ) {
+    (void)snapshot;
     auto compilation = CypherCompiler::compile(cypher_query);
     auto compiled = ImpulseCompiler::compile(compilation.ast, &catalog);
 

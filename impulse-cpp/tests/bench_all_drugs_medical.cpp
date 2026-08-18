@@ -105,13 +105,13 @@ int main() {
                 impulse_vm_context_release_bitset(het_ctx, state.registers[compiledQ1.result_register]);
             }
         }
+        (void)total_discoveries_seq;
         auto t1_seq = std::chrono::high_resolution_clock::now();
         double dur_seq_ms = std::chrono::duration<double, std::milli>(t1_seq - t0_seq).count();
         double per_disease_us = (dur_seq_ms * 1000.0) / active_diseases.size();
 
         // Parallel Multi-Core Screen
         auto t0_par = std::chrono::high_resolution_clock::now();
-        std::atomic<uint64_t> total_discoveries_par{0};
         #pragma omp parallel
         {
             auto* thread_ctx = impulse_vm_context_create(het_snap);
@@ -218,7 +218,6 @@ int main() {
 
         // Parallel Multi-Core Screen
         auto t0_par = std::chrono::high_resolution_clock::now();
-        std::atomic<uint64_t> total_warnings_par{0};
         #pragma omp parallel
         {
             auto* thread_ctx = impulse_vm_context_create(drkg_snap);
