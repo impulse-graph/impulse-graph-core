@@ -5,6 +5,7 @@
 #include "impulse_graph.h"
 
 #include <vector>
+#include <array>
 #include <string>
 #include <functional>
 #include <memory>

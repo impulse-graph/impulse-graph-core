@@ -41,7 +41,7 @@ hwy_lib = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-build
 extra_objects = [hwy_lib] if os.path.exists(hwy_lib) else []
 
 import sys
-extra_compile_args = ["/std:c++20", "/EHsc", "/DNOMINMAX", "/DWIN32_LEAN_AND_MEAN", "/utf-8", "/permissive-"] if sys.platform == "win32" else ["-std=c++20"]
+extra_compile_args = ["/std:c++20", "/EHsc", "/DNOMINMAX", "/DWIN32_LEAN_AND_MEAN", "/D_CRT_SECURE_NO_WARNINGS", "/utf-8", "/permissive-"] if sys.platform == "win32" else ["-std=c++20"]
 
 ext_modules = [
     Pybind11Extension(
