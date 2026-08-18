@@ -63,7 +63,7 @@ jobs:
         run: |
           cmake -B build-cpp -S impulse-cpp \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=install-cpp \
+            -DCMAKE_INSTALL_PREFIX="${PWD}/install-cpp" \
             ${{ matrix.target.cmake_flags }}
           cmake --build build-cpp --config Release --target install
 

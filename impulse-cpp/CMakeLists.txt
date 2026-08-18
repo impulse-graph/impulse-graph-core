@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Warnings -------------------------------------------------
 if(MSVC)
-    add_compile_options(/W4 /wd4189)
+    add_compile_options(/W4 /wd4189 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /utf-8 /permissive-)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -52,7 +53,9 @@ target_link_libraries(impulse_graph_static PUBLIC hwy)
 # --- Install Targets & Exports -------------------------------------------
 install(TARGETS impulse_graph impulse_graph_static
     EXPORT ImpulseGraphTargets
-    DESTINATION lib
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 install(FILES
     include/impulse_format_v0_9.h
