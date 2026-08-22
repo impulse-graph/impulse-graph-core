@@ -62,12 +62,50 @@ struct VmBitSet {
 };
 
 struct BoundRelationSlot {
-    const uint32_t* offsets_ptr = nullptr;
-    const uint32_t* targets_ptr = nullptr;
-    const uint32_t* csc_offsets_ptr = nullptr;
-    const uint32_t* csc_targets_ptr = nullptr;
-    uint64_t node_count = 0;
-    uint64_t edge_count = 0;
+    const void* offsets_ptr = nullptr;
+    const void* targets_ptr = nullptr;
+    const void* csc_offsets_ptr = nullptr;
+    const void* csc_targets_ptr = nullptr;
+    uint8_t     node_id_width = 4;
+    uint8_t     edge_index_width = 4;
+    uint64_t    node_count = 0;
+    uint64_t    edge_count = 0;
+
+    inline uint64_t get_csr_offset(uint64_t u) const {
+        if (!offsets_ptr) return 0;
+        if (edge_index_width == 8 || edge_index_width == 64) {
+            return static_cast<const uint64_t*>(offsets_ptr)[u];
+        }
+        return static_cast<const uint32_t*>(offsets_ptr)[u];
+    }
+
+    inline uint64_t get_csr_target(uint64_t edge_idx) const {
+        if (!targets_ptr) return 0;
+        if (node_id_width == 2 || node_id_width == 16) {
+            return static_cast<const uint16_t*>(targets_ptr)[edge_idx];
+        } else if (node_id_width == 8 || node_id_width == 64) {
+            return static_cast<const uint64_t*>(targets_ptr)[edge_idx];
+        }
+        return static_cast<const uint32_t*>(targets_ptr)[edge_idx];
+    }
+
+    inline uint64_t get_csc_offset(uint64_t v) const {
+        if (!csc_offsets_ptr) return 0;
+        if (edge_index_width == 8 || edge_index_width == 64) {
+            return static_cast<const uint64_t*>(csc_offsets_ptr)[v];
+        }
+        return static_cast<const uint32_t*>(csc_offsets_ptr)[v];
+    }
+
+    inline uint64_t get_csc_target(uint64_t edge_idx) const {
+        if (!csc_targets_ptr) return 0;
+        if (node_id_width == 2 || node_id_width == 16) {
+            return static_cast<const uint16_t*>(csc_targets_ptr)[edge_idx];
+        } else if (node_id_width == 8 || node_id_width == 64) {
+            return static_cast<const uint64_t*>(csc_targets_ptr)[edge_idx];
+        }
+        return static_cast<const uint32_t*>(csc_targets_ptr)[edge_idx];
+    }
 };
 
 struct BoundAttributeSlot {
@@ -345,23 +383,27 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->attribute_slots.resize(rel_count);
         for (uint16_t r = 0; r < rel_count; ++r) {
             // CSR buffers
-            const uint32_t* offsets = nullptr;
-            const uint32_t* targets = nullptr;
+            const void* offsets = nullptr;
+            const void* targets = nullptr;
             uint64_t node_count = 0;
             uint64_t edge_count = 0;
-            impulse_snapshot_get_relation_buffers(
-                snapshot, r, &offsets, &targets, &node_count, &edge_count
+            uint8_t node_id_width = 4;
+            uint8_t edge_index_width = 4;
+            impulse_snapshot_get_relation_raw_buffers(
+                snapshot, r, &offsets, &targets, &node_count, &edge_count, &node_id_width, &edge_index_width
             );
             ctx->slots[r].offsets_ptr = offsets;
             ctx->slots[r].targets_ptr = targets;
             ctx->slots[r].node_count = node_count;
             ctx->slots[r].edge_count = edge_count;
+            ctx->slots[r].node_id_width = node_id_width;
+            ctx->slots[r].edge_index_width = edge_index_width;
 
             // CSC buffers
-            const uint32_t* csc_offsets = nullptr;
-            const uint32_t* csc_targets = nullptr;
-            impulse_snapshot_get_relation_csc_buffers(
-                snapshot, r, &csc_offsets, &csc_targets, nullptr, nullptr
+            const void* csc_offsets = nullptr;
+            const void* csc_targets = nullptr;
+            impulse_snapshot_get_relation_csc_raw_buffers(
+                snapshot, r, &csc_offsets, &csc_targets, nullptr, nullptr, nullptr, nullptr
             );
             ctx->slots[r].csc_offsets_ptr = csc_offsets;
             ctx->slots[r].csc_targets_ptr = csc_targets;
@@ -571,8 +613,7 @@ inline const BoundAttributeSlot* find_key_attribute(const impulse_vm_state_t* vm
 
 static uint32_t run_island_detect_bfs(
     uint32_t N,
-    const uint32_t* row_offsets,
-    const uint32_t* col_targets,
+    const BoundRelationSlot& slot,
     const int32_t* branch_ids,
     int64_t k1,
     int64_t k2
@@ -599,10 +640,10 @@ static uint32_t run_island_detect_bfs(
 
             while (head < queue.size()) {
                 uint32_t u = queue[head++];
-                uint32_t start = row_offsets[u];
-                uint32_t end = row_offsets[u + 1];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
 
-                for (uint32_t e = start; e < end; ++e) {
+                for (uint64_t e = start; e < end; ++e) {
                     if (branch_ids) {
                         int32_t br_id = branch_ids[e];
                         if (br_id == k1 || br_id == k2) {
@@ -610,13 +651,13 @@ static uint32_t run_island_detect_bfs(
                         }
                     }
 
-                    uint32_t v = col_targets[e];
+                    uint64_t v = slot.get_csr_target(e);
                     size_t v_word = v / 64;
                     uint64_t v_bit = 1ULL << (v % 64);
 
                     if (!(visited_words[v_word] & v_bit)) {
                         visited_words[v_word] |= v_bit;
-                        queue.push_back(v);
+                        queue.push_back(static_cast<uint32_t>(v));
                     }
                 }
             }
@@ -685,6 +726,8 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY;
         dispatch_table[OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH;
         dispatch_table[OP_CSR_WALK_2HOP] = &&op_CSR_WALK_2HOP;
+        dispatch_table[OP_CSR_WALK_STATE] = &&op_CSR_WALK_STATE;
+        dispatch_table[OP_PROJECT_STATE] = &&op_PROJECT_STATE;
         dispatch_table[OP_CSR_WALK] = &&op_CSR_WALK;
         dispatch_table[OP_CSR_WALK_FILTERED] = &&op_CSR_WALK_FILTERED;
         dispatch_table[OP_CSR_DEGREE] = &&op_CSR_DEGREE;
@@ -1210,15 +1253,15 @@ op_CSR_WALK_2HOP: {
                     uint64_t u = w * 64 + bit;
                     word &= word - 1;
                     if (u < slot1.node_count) {
-                        uint32_t start1 = slot1.offsets_ptr[u];
-                        uint32_t end1 = slot1.offsets_ptr[u + 1];
-                        for (uint32_t i = start1; i < end1; ++i) {
-                            uint32_t v = slot1.targets_ptr[i];
+                        uint64_t start1 = slot1.get_csr_offset(u);
+                        uint64_t end1 = slot1.get_csr_offset(u + 1);
+                        for (uint64_t i = start1; i < end1; ++i) {
+                            uint64_t v = slot1.get_csr_target(i);
                             if (v < slot2.node_count) {
-                                uint32_t start2 = slot2.offsets_ptr[v];
-                                uint32_t end2 = slot2.offsets_ptr[v + 1];
-                                for (uint32_t j = start2; j < end2; ++j) {
-                                    bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
+                                uint64_t start2 = slot2.get_csr_offset(v);
+                                uint64_t end2 = slot2.get_csr_offset(v + 1);
+                                for (uint64_t j = start2; j < end2; ++j) {
+                                    bitset_add(bs_dst, slot2.get_csr_target(j), vm_state->query_context->max_nodes);
                                 }
                             }
                         }
@@ -1228,15 +1271,15 @@ op_CSR_WALK_2HOP: {
         } else {
             uint64_t u = scalar_src;
             if (u < slot1.node_count) {
-                uint32_t start1 = slot1.offsets_ptr[u];
-                uint32_t end1 = slot1.offsets_ptr[u + 1];
-                for (uint32_t i = start1; i < end1; ++i) {
-                    uint32_t v = slot1.targets_ptr[i];
+                uint64_t start1 = slot1.get_csr_offset(u);
+                uint64_t end1 = slot1.get_csr_offset(u + 1);
+                for (uint64_t i = start1; i < end1; ++i) {
+                    uint64_t v = slot1.get_csr_target(i);
                     if (v < slot2.node_count) {
-                        uint32_t start2 = slot2.offsets_ptr[v];
-                        uint32_t end2 = slot2.offsets_ptr[v + 1];
-                        for (uint32_t j = start2; j < end2; ++j) {
-                            bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
+                        uint64_t start2 = slot2.get_csr_offset(v);
+                        uint64_t end2 = slot2.get_csr_offset(v + 1);
+                        for (uint64_t j = start2; j < end2; ++j) {
+                            bitset_add(bs_dst, slot2.get_csr_target(j), vm_state->query_context->max_nodes);
                         }
                     }
                 }
@@ -1266,6 +1309,29 @@ op_CSR_WALK_2HOP: {
 
     vm_state->pc++;
     DISPATCH();
+}
+
+op_CSR_WALK_STATE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    vm_state->register_types[dst] = TYPE_FRONTIER_STATE;
+    vm_state->registers[dst] = 0;
+    vm_state->pc++;
+    goto *dispatch_table[bytecode[vm_state->pc].opcode];
+}
+
+op_PROJECT_STATE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t src = inst.payload & 0xFFFF;
+    if (src == 0 && inst.payload != 0) src = (inst.payload >> 16) & 0xFFFF;
+    uint16_t dst = inst.dst_reg;
+    if (vm_state->register_types[src] != TYPE_FRONTIER_STATE) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+    vm_state->register_types[dst] = TYPE_FRONTIER_STATE;
+    vm_state->registers[dst] = vm_state->registers[src];
+    vm_state->pc++;
+    goto *dispatch_table[bytecode[vm_state->pc].opcode];
 }
 
 op_CSR_WALK: {
@@ -1352,10 +1418,10 @@ op_CSR_WALK: {
                         uint64_t u = w * 64 + bit;
                         word &= word - 1;
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end = slot.offsets_ptr[u + 1];
-                            for (uint32_t i = start; i < end; ++i) {
-                                bitset_add(priv_bs, slot.targets_ptr[i], max_nodes);
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
+                            for (uint64_t i = start; i < end; ++i) {
+                                bitset_add(priv_bs, slot.get_csr_target(i), max_nodes);
                             }
                         }
                     }
@@ -1382,10 +1448,10 @@ op_CSR_WALK: {
                         uint64_t u = w * 64 + bit;
                         word &= word - 1;
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end = slot.offsets_ptr[u + 1];
-                            for (uint32_t i = start; i < end; ++i) {
-                                bitset_add(bs_dst, slot.targets_ptr[i], vm_state->query_context->max_nodes);
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
+                            for (uint64_t i = start; i < end; ++i) {
+                                bitset_add(bs_dst, slot.get_csr_target(i), vm_state->query_context->max_nodes);
                             }
                         }
                     }
@@ -1394,10 +1460,10 @@ op_CSR_WALK: {
         } else {
             uint64_t u = scalar_src;
             if (u < slot.node_count) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
-                for (uint32_t i = start; i < end; ++i) {
-                    bitset_add(bs_dst, slot.targets_ptr[i], vm_state->query_context->max_nodes);
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
+                for (uint64_t i = start; i < end; ++i) {
+                    bitset_add(bs_dst, slot.get_csr_target(i), vm_state->query_context->max_nodes);
                 }
             }
         }
@@ -1411,8 +1477,8 @@ op_CSR_WALK: {
                     uint64_t u = w * 64 + bit;
                     word &= word - 1;
                     if (u < slot.node_count) {
-                        uint32_t target_node = slot.targets_ptr[u];
-                        if (target_node != 0xFFFFFFFF) {
+                        uint64_t target_node = slot.get_csr_target(u);
+                        if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
                             bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
                         }
                     }
@@ -1421,8 +1487,8 @@ op_CSR_WALK: {
         } else {
             uint64_t u = scalar_src;
             if (u < slot.node_count) {
-                uint32_t v = slot.targets_ptr[u];
-                if (v != 0xFFFFFFFF) {
+                uint64_t v = slot.get_csr_target(u);
+                if (v != 0xFFFFFFFF && v != 0xFFFF && v != ~0ULL) {
                     bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
                 }
             }
@@ -1477,18 +1543,18 @@ op_CSR_WALK_FILTERED: {
     if (slot.offsets_ptr && slot.targets_ptr) {
         uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
         if (u < slot.node_count) {
-            uint32_t start = slot.offsets_ptr[u];
-            uint32_t end   = slot.offsets_ptr[u + 1];
-            for (uint32_t idx = start; idx < end; ++idx) {
-                uint64_t target_node = slot.targets_ptr[idx];
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                uint64_t target_node = slot.get_csr_target(idx);
                 bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
             }
         }
     } else if (!slot.offsets_ptr && slot.targets_ptr) {
         uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
         if (u < slot.node_count) {
-            uint32_t target_node = slot.targets_ptr[u];
-            if (target_node != 0xFFFFFFFF) {
+            uint64_t target_node = slot.get_csr_target(u);
+            if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
                 bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
             }
         }
@@ -1519,18 +1585,18 @@ op_CSR_WALK_PREDICATE: {
     if (slot.offsets_ptr && slot.targets_ptr) {
         uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
         if (u < slot.node_count) {
-            uint32_t start = slot.offsets_ptr[u];
-            uint32_t end   = slot.offsets_ptr[u + 1];
-            for (uint32_t idx = start; idx < end; ++idx) {
-                uint64_t target_node = slot.targets_ptr[idx];
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                uint64_t target_node = slot.get_csr_target(idx);
                 bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
             }
         }
     } else if (!slot.offsets_ptr && slot.targets_ptr) {
         uint64_t u = (vm_state->register_types[src] == TYPE_BITSET_HANDLE) ? 0 : vm_state->registers[src];
         if (u < slot.node_count) {
-            uint32_t target_node = slot.targets_ptr[u];
-            if (target_node != 0xFFFFFFFF) {
+            uint64_t target_node = slot.get_csr_target(u);
+            if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
                 bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
             }
         }
@@ -1611,10 +1677,10 @@ op_CSC_WALK: {
                     if (w_unv & (1ULL << b)) {
                         uint64_t v = i * 64 + b;
                         if (v < slot.node_count) {
-                            uint32_t start = slot.csc_offsets_ptr[v];
-                            uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                            for (uint32_t idx = start; idx < end; ++idx) {
-                                uint64_t u = slot.csc_targets_ptr[idx];
+                            uint64_t start = slot.get_csc_offset(v);
+                            uint64_t end   = slot.get_csc_offset(v + 1);
+                            for (uint64_t idx = start; idx < end; ++idx) {
+                                uint64_t u = slot.get_csc_target(idx);
                                 bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
                                 if (hit) {
                                     w_dst |= (1ULL << b);
@@ -1637,10 +1703,10 @@ op_CSC_WALK: {
                         uint64_t v = w * 64 + bit;
                         word &= word - 1;
                         if (v < slot.node_count) {
-                            uint32_t start = slot.csc_offsets_ptr[v];
-                            uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                            for (uint32_t idx = start; idx < end; ++idx) {
-                                uint64_t u = slot.csc_targets_ptr[idx];
+                            uint64_t start = slot.get_csc_offset(v);
+                            uint64_t end   = slot.get_csc_offset(v + 1);
+                            for (uint64_t idx = start; idx < end; ++idx) {
+                                uint64_t u = slot.get_csc_target(idx);
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                             }
                         }
@@ -1649,10 +1715,10 @@ op_CSC_WALK: {
             } else {
                 uint64_t v = scalar_src;
                 if (v < slot.node_count) {
-                    uint32_t start = slot.csc_offsets_ptr[v];
-                    uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                    for (uint32_t idx = start; idx < end; ++idx) {
-                        uint64_t u = slot.csc_targets_ptr[idx];
+                    uint64_t start = slot.get_csc_offset(v);
+                    uint64_t end   = slot.get_csc_offset(v + 1);
+                    for (uint64_t idx = start; idx < end; ++idx) {
+                        uint64_t u = slot.get_csc_target(idx);
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
                 }
@@ -1665,8 +1731,8 @@ op_CSC_WALK: {
                 for (int b = 0; b < 64; ++b) {
                     uint64_t v = i * 64 + b;
                     if (v < slot.node_count) {
-                        uint32_t u = slot.csc_targets_ptr[v];
-                        if (u != 0xFFFFFFFF) {
+                        uint64_t u = slot.get_csc_target(v);
+                        if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                             bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
                             if (hit) {
                                 w_dst |= (1ULL << b);
@@ -1686,8 +1752,8 @@ op_CSC_WALK: {
                         uint64_t v = w * 64 + bit;
                         word &= word - 1;
                         if (v < slot.node_count) {
-                            uint32_t u = slot.csc_targets_ptr[v];
-                            if (u != 0xFFFFFFFF) {
+                            uint64_t u = slot.get_csc_target(v);
+                            if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                             }
                         }
@@ -1696,8 +1762,8 @@ op_CSC_WALK: {
             } else {
                 uint64_t v = scalar_src;
                 if (v < slot.node_count) {
-                    uint32_t u = slot.csc_targets_ptr[v];
-                    if (u != 0xFFFFFFFF) {
+                    uint64_t u = slot.get_csc_target(v);
+                    if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
                 }
@@ -1833,7 +1899,7 @@ op_CSR_DEGREE: {
     if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         uint64_t u = vm_state->registers[src];
         if (slot.offsets_ptr && u < slot.node_count) {
-            degree = slot.offsets_ptr[u + 1] - slot.offsets_ptr[u];
+            degree = slot.get_csr_offset(u + 1) - slot.get_csr_offset(u);
         }
     }
 
@@ -2304,19 +2370,19 @@ op_MXV: {
             }
 
             if (u < slot.node_count) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     double sum = 0.0;
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csr_target(i);
                         if (v < N) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
                     double min_val = std::numeric_limits<double>::infinity();
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csr_target(i);
                         if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
                     }
                     dst_data[u] = min_val;
@@ -2351,19 +2417,19 @@ op_MXV: {
             }
 
             if (u < slot.node_count) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     float sum = 0.0f;
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csr_target(i);
                         if (v < N) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
                     float min_val = std::numeric_limits<float>::infinity();
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csr_target(i);
                         if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
                     }
                     dst_data[u] = min_val;
@@ -2422,19 +2488,19 @@ op_VXM: {
             }
 
             if (u < slot.node_count) {
-                uint32_t start = slot.csc_offsets_ptr[u];
-                uint32_t end = slot.csc_offsets_ptr[u + 1];
+                uint64_t start = slot.get_csc_offset(u);
+                uint64_t end = slot.get_csc_offset(u + 1);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     double sum = 0.0;
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.csc_targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csc_target(i);
                         if (v < N) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
                     double min_val = std::numeric_limits<double>::infinity();
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.csc_targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csc_target(i);
                         if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
                     }
                     dst_data[u] = min_val;
@@ -2466,19 +2532,19 @@ op_VXM: {
             }
 
             if (u < slot.node_count) {
-                uint32_t start = slot.csc_offsets_ptr[u];
-                uint32_t end = slot.csc_offsets_ptr[u + 1];
+                uint64_t start = slot.get_csc_offset(u);
+                uint64_t end = slot.get_csc_offset(u + 1);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     float sum = 0.0f;
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.csc_targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csc_target(i);
                         if (v < N) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
                     float min_val = std::numeric_limits<float>::infinity();
-                    for (uint32_t i = start; i < end; ++i) {
-                        uint32_t v = slot.csc_targets_ptr[i];
+                    for (uint64_t i = start; i < end; ++i) {
+                        uint64_t v = slot.get_csc_target(i);
                         if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
                     }
                     dst_data[u] = min_val;
@@ -2726,11 +2792,11 @@ op_CC_AFFOREST: {
 #endif
         for (size_t u = 0; u < N; ++u) {
             if (u < slot.node_count) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
-                uint32_t deg = end - start;
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
+                uint64_t deg = end - start;
                 if (r < deg) {
-                    uint32_t v = slot.targets_ptr[start + r];
+                    uint64_t v = slot.get_csr_target(start + r);
                     if (v < N) {
                         uint64_t root_u = find_root_u64(u, comp);
                         uint64_t root_v = find_root_u64(v, comp);
@@ -2768,11 +2834,11 @@ op_CC_AFFOREST: {
         if (find_root_u64(u, comp) == giant_root) continue;
 
         if (u < slot.node_count) {
-            uint32_t start = slot.offsets_ptr[u];
-            uint32_t end = slot.offsets_ptr[u + 1];
-            uint32_t deg = end - start;
-            for (uint32_t i = 0; i < deg; ++i) {
-                uint32_t v = slot.targets_ptr[start + i];
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            uint64_t deg = end - start;
+            for (uint64_t i = 0; i < deg; ++i) {
+                uint64_t v = slot.get_csr_target(start + i);
                 if (v < N) {
                     uint64_t root_u = find_root_u64(u, comp);
                     uint64_t root_v = find_root_u64(v, comp);
@@ -2848,7 +2914,7 @@ op_ISLAND_DETECT: {
             }
 
             uint32_t N = static_cast<uint32_t>(slot.node_count);
-            uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+            uint32_t base_components = run_island_detect_bfs(N, slot, branch_ids, -1, -1);
 
             bool same_set = (src1 == src2);
 
@@ -2858,7 +2924,7 @@ op_ISLAND_DETECT: {
 #endif
                 for (size_t i = 0; i < lines1.size(); ++i) {
                     for (size_t j = i + 1; j < lines1.size(); ++j) {
-                        uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, lines1[i], lines1[j]);
+                        uint32_t comp = run_island_detect_bfs(N, slot, branch_ids, lines1[i], lines1[j]);
                         if (comp > base_components) {
                             critical_pairs_count++;
                         }
@@ -2870,7 +2936,7 @@ op_ISLAND_DETECT: {
 #endif
                 for (size_t i = 0; i < lines1.size(); ++i) {
                     for (size_t j = 0; j < lines2.size(); ++j) {
-                        uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, lines1[i], lines2[j]);
+                        uint32_t comp = run_island_detect_bfs(N, slot, branch_ids, lines1[i], lines2[j]);
                         if (comp > base_components) {
                             critical_pairs_count++;
                         }
@@ -3152,10 +3218,10 @@ op_CSR_WALK_REDUCE_SUM: {
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 double src_val = src_vec[u];
                 if (src_val == 0.0) continue;
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end   = slot.offsets_ptr[u + 1];
-                for (uint32_t idx = start; idx < end; ++idx) {
-                    uint32_t target_node = slot.targets_ptr[idx];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end   = slot.get_csr_offset(u + 1);
+                for (uint64_t idx = start; idx < end; ++idx) {
+                    uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
                         float weight = 1.0f;
                         if (has_edge_attr) {
@@ -3172,10 +3238,10 @@ op_CSR_WALK_REDUCE_SUM: {
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 float src_val = src_vec[u];
                 if (src_val == 0.0f) continue;
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end   = slot.offsets_ptr[u + 1];
-                for (uint32_t idx = start; idx < end; ++idx) {
-                    uint32_t target_node = slot.targets_ptr[idx];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end   = slot.get_csr_offset(u + 1);
+                for (uint64_t idx = start; idx < end; ++idx) {
+                    uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
                         float weight = 1.0f;
                         if (has_edge_attr) {
@@ -3229,10 +3295,10 @@ op_CSR_WALK_REDUCE: {
             const double* src_vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 double src_val = src_vec[u];
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end   = slot.offsets_ptr[u + 1];
-                for (uint32_t idx = start; idx < end; ++idx) {
-                    uint32_t target_node = slot.targets_ptr[idx];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end   = slot.get_csr_offset(u + 1);
+                for (uint64_t idx = start; idx < end; ++idx) {
+                    uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
                         float val = static_cast<float>(src_val);
                         if (reduce_op == 0) {
@@ -3249,10 +3315,10 @@ op_CSR_WALK_REDUCE: {
             const float* src_vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 float src_val = src_vec[u];
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end   = slot.offsets_ptr[u + 1];
-                for (uint32_t idx = start; idx < end; ++idx) {
-                    uint32_t target_node = slot.targets_ptr[idx];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end   = slot.get_csr_offset(u + 1);
+                for (uint64_t idx = start; idx < end; ++idx) {
+                    uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
                         float val = src_val;
                         if (reduce_op == 0) {
@@ -4385,10 +4451,10 @@ op_CSR_WALK_DIRECT_STORE: {
     if (vm_state->register_types[src] == TYPE_NODE_ID) {
         uint64_t u = vm_state->registers[src];
         if (u < slot.node_count || slot.node_count == 0) {
-            uint32_t start = slot.offsets_ptr[u];
-            uint32_t end = slot.offsets_ptr[u + 1];
-            for (uint32_t e = start; e < end; ++e) {
-                uint32_t v = slot.targets_ptr[e];
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t v = slot.get_csr_target(e);
                 bs_dst.set(v);
             }
         }
@@ -4399,10 +4465,10 @@ op_CSR_WALK_DIRECT_STORE: {
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
             if (bs_src.test(u)) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
-                for (uint32_t e = start; e < end; ++e) {
-                    uint32_t v = slot.targets_ptr[e];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
+                for (uint64_t e = start; e < end; ++e) {
+                    uint64_t v = slot.get_csr_target(e);
                     bs_dst.set(v);
                 }
             }
@@ -4437,10 +4503,10 @@ op_CSR_WALK_DENSE_STREAM: {
     if (vm_state->register_types[src] == TYPE_NODE_ID) {
         uint64_t u = vm_state->registers[src];
         if (u < slot.node_count || slot.node_count == 0) {
-            uint32_t start = slot.offsets_ptr[u];
-            uint32_t end = slot.offsets_ptr[u + 1];
-            for (uint32_t e = start; e < end; ++e) {
-                uint32_t v = slot.targets_ptr[e];
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t v = slot.get_csr_target(e);
                 bs_dst.set(v);
             }
         }
@@ -4451,10 +4517,10 @@ op_CSR_WALK_DENSE_STREAM: {
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
             if (bs_src.test(u)) {
-                uint32_t start = slot.offsets_ptr[u];
-                uint32_t end = slot.offsets_ptr[u + 1];
-                for (uint32_t e = start; e < end; ++e) {
-                    uint32_t v = slot.targets_ptr[e];
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end = slot.get_csr_offset(u + 1);
+                for (uint64_t e = start; e < end; ++e) {
+                    uint64_t v = slot.get_csr_target(e);
                     bs_dst.set(v);
                 }
             }
@@ -4491,10 +4557,10 @@ op_CSC_WALK_DIRECT_STORE: {
         uint64_t target_u = vm_state->registers[src];
         #pragma omp parallel for schedule(static)
         for (size_t v = 0; v < N; ++v) {
-            uint32_t start = slot.csc_offsets_ptr[v];
-            uint32_t end = slot.csc_offsets_ptr[v + 1];
-            for (uint32_t e = start; e < end; ++e) {
-                uint32_t u = slot.csc_targets_ptr[e];
+            uint64_t start = slot.get_csc_offset(v);
+            uint64_t end = slot.get_csc_offset(v + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t u = slot.get_csc_target(e);
                 if (u == target_u) {
                     bs_dst.set(v);
                     break;
@@ -4506,10 +4572,10 @@ op_CSC_WALK_DIRECT_STORE: {
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         #pragma omp parallel for schedule(static)
         for (size_t v = 0; v < N; ++v) {
-            uint32_t start = slot.csc_offsets_ptr[v];
-            uint32_t end = slot.csc_offsets_ptr[v + 1];
-            for (uint32_t e = start; e < end; ++e) {
-                uint32_t u = slot.csc_targets_ptr[e];
+            uint64_t start = slot.get_csc_offset(v);
+            uint64_t end = slot.get_csc_offset(v + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t u = slot.get_csc_target(e);
                 if (bs_src.test(u)) {
                     bs_dst.set(v);
                     break;
@@ -4546,10 +4612,10 @@ op_COO_WALK_DIRECT_STORE: {
             if (vm_state->register_types[src] == TYPE_NODE_ID) {
                 uint64_t u = vm_state->registers[src];
                 if (u < slot.node_count || slot.node_count == 0) {
-                    uint32_t start = slot.offsets_ptr[u];
-                    uint32_t end = slot.offsets_ptr[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        bs_dst.set(slot.targets_ptr[e]);
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        bs_dst.set(slot.get_csr_target(e));
                     }
                 }
             } else {
@@ -4559,10 +4625,10 @@ op_COO_WALK_DIRECT_STORE: {
                 #pragma omp parallel for schedule(static)
                 for (size_t u = 0; u < N; ++u) {
                     if (bs_src.test(u)) {
-                        uint32_t start = slot.offsets_ptr[u];
-                        uint32_t end = slot.offsets_ptr[u + 1];
-                        for (uint32_t e = start; e < end; ++e) {
-                            bs_dst.set(slot.targets_ptr[e]);
+                        uint64_t start = slot.get_csr_offset(u);
+                        uint64_t end = slot.get_csr_offset(u + 1);
+                        for (uint64_t e = start; e < end; ++e) {
+                            bs_dst.set(slot.get_csr_target(e));
                         }
                     }
                 }
@@ -4604,10 +4670,10 @@ op_COO_WALK_FILTERED: {
             #pragma omp parallel for schedule(static)
             for (size_t u = 0; u < N; ++u) {
                 if (bs_src.test(u)) {
-                    uint32_t start = slot.offsets_ptr[u];
-                    uint32_t end = slot.offsets_ptr[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        uint32_t v = slot.targets_ptr[e];
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t v = slot.get_csr_target(e);
                         if (bs_flt.test(v)) {
                             bs_dst.set(v);
                         }
@@ -4646,10 +4712,10 @@ op_COO_WALK_REDUCE: {
             #pragma omp parallel for schedule(static)
             for (size_t u = 0; u < N; ++u) {
                 if (bs_src.test(u)) {
-                    uint32_t start = slot.offsets_ptr[u];
-                    uint32_t end = slot.offsets_ptr[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        uint32_t v = slot.targets_ptr[e];
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t v = slot.get_csr_target(e);
                         #pragma omp atomic
                         dst_vec[v] += 1.0f;
                     }
@@ -4687,10 +4753,10 @@ op_DENSE_WALK_DIRECT_STORE: {
             if (vm_state->register_types[src] == TYPE_NODE_ID) {
                 uint64_t u = vm_state->registers[src];
                 if (u < slot.node_count || slot.node_count == 0) {
-                    uint32_t start = slot.offsets_ptr[u];
-                    uint32_t end = slot.offsets_ptr[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        bs_dst.set(slot.targets_ptr[e]);
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        bs_dst.set(slot.get_csr_target(e));
                     }
                 }
             } else {
@@ -4700,10 +4766,10 @@ op_DENSE_WALK_DIRECT_STORE: {
                 #pragma omp parallel for schedule(static)
                 for (size_t u = 0; u < N; ++u) {
                     if (bs_src.test(u)) {
-                        uint32_t start = slot.offsets_ptr[u];
-                        uint32_t end = slot.offsets_ptr[u + 1];
-                        for (uint32_t e = start; e < end; ++e) {
-                            bs_dst.set(slot.targets_ptr[e]);
+                        uint64_t start = slot.get_csr_offset(u);
+                        uint64_t end = slot.get_csr_offset(u + 1);
+                        for (uint64_t e = start; e < end; ++e) {
+                            bs_dst.set(slot.get_csr_target(e));
                         }
                     }
                 }
@@ -4783,10 +4849,10 @@ op_FIXPOINT_KLEENE_STAR: {
             #pragma omp parallel for schedule(static)
             for (size_t u = 0; u < N; ++u) {
                 if (frontier.test(u)) {
-                    uint32_t start = slot.offsets_ptr[u];
-                    uint32_t end = slot.offsets_ptr[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        uint32_t v = slot.targets_ptr[e];
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t v = slot.get_csr_target(e);
                         if (!reached.test(v)) {
                             next_f.set(v);
                         }
@@ -5259,15 +5325,15 @@ op_GAS_EXHAUSTED:
                                 uint64_t u = w * 64 + bit;
                                 word &= word - 1;
                                 if (u < slot1.node_count) {
-                                    uint32_t start1 = slot1.offsets_ptr[u];
-                                    uint32_t end1 = slot1.offsets_ptr[u + 1];
-                                    for (uint32_t i = start1; i < end1; ++i) {
-                                        uint32_t v = slot1.targets_ptr[i];
+                                    uint64_t start1 = slot1.get_csr_offset(u);
+                                    uint64_t end1 = slot1.get_csr_offset(u + 1);
+                                    for (uint64_t i = start1; i < end1; ++i) {
+                                        uint64_t v = slot1.get_csr_target(i);
                                         if (v < slot2.node_count) {
-                                            uint32_t start2 = slot2.offsets_ptr[v];
-                                            uint32_t end2 = slot2.offsets_ptr[v + 1];
-                                            for (uint32_t j = start2; j < end2; ++j) {
-                                                bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
+                                            uint64_t start2 = slot2.get_csr_offset(v);
+                                            uint64_t end2 = slot2.get_csr_offset(v + 1);
+                                            for (uint64_t j = start2; j < end2; ++j) {
+                                                bitset_add(bs_dst, slot2.get_csr_target(j), vm_state->query_context->max_nodes);
                                             }
                                         }
                                     }
@@ -5313,6 +5379,25 @@ op_GAS_EXHAUSTED:
                     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
                 }
 
+                vm_state->pc++;
+                break;
+            }
+            case OP_CSR_WALK_STATE: {
+                uint16_t dst = inst.dst_reg;
+                vm_state->register_types[dst] = TYPE_FRONTIER_STATE;
+                vm_state->registers[dst] = 0;
+                vm_state->pc++;
+                break;
+            }
+            case OP_PROJECT_STATE: {
+                uint16_t src = inst.payload & 0xFFFF;
+                if (src == 0 && inst.payload != 0) src = (inst.payload >> 16) & 0xFFFF;
+                uint16_t dst = inst.dst_reg;
+                if (vm_state->register_types[src] != TYPE_FRONTIER_STATE) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                vm_state->register_types[dst] = TYPE_FRONTIER_STATE;
+                vm_state->registers[dst] = vm_state->registers[src];
                 vm_state->pc++;
                 break;
             }
@@ -5399,10 +5484,10 @@ op_GAS_EXHAUSTED:
                                     uint64_t u = w * 64 + bit;
                                     word &= word - 1;
                                     if (u < slot.node_count) {
-                                        uint32_t start = slot.offsets_ptr[u];
-                                        uint32_t end = slot.offsets_ptr[u + 1];
-                                        for (uint32_t i = start; i < end; ++i) {
-                                            bitset_add(priv_bs, slot.targets_ptr[i], max_nodes);
+                                        uint64_t start = slot.get_csr_offset(u);
+                                        uint64_t end = slot.get_csr_offset(u + 1);
+                                        for (uint64_t i = start; i < end; ++i) {
+                                            bitset_add(priv_bs, slot.get_csr_target(i), max_nodes);
                                         }
                                     }
                                 }
@@ -5429,10 +5514,10 @@ op_GAS_EXHAUSTED:
                                     uint64_t u = w * 64 + bit;
                                     word &= word - 1;
                                     if (u < slot.node_count) {
-                                        uint32_t start = slot.offsets_ptr[u];
-                                        uint32_t end = slot.offsets_ptr[u + 1];
-                                        for (uint32_t i = start; i < end; ++i) {
-                                            bitset_add(bs_dst, slot.targets_ptr[i], vm_state->query_context->max_nodes);
+                                        uint64_t start = slot.get_csr_offset(u);
+                                        uint64_t end = slot.get_csr_offset(u + 1);
+                                        for (uint64_t i = start; i < end; ++i) {
+                                            bitset_add(bs_dst, slot.get_csr_target(i), vm_state->query_context->max_nodes);
                                         }
                                     }
                                 }
@@ -5441,10 +5526,10 @@ op_GAS_EXHAUSTED:
                     } else {
                         uint64_t u = scalar_src;
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
-                            for (uint32_t idx = start; idx < end; ++idx) {
-                                bitset_add(bs_dst, slot.targets_ptr[idx], vm_state->query_context->max_nodes);
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end   = slot.get_csr_offset(u + 1);
+                            for (uint64_t idx = start; idx < end; ++idx) {
+                                bitset_add(bs_dst, slot.get_csr_target(idx), vm_state->query_context->max_nodes);
                             }
                         }
                     }
@@ -5458,8 +5543,8 @@ op_GAS_EXHAUSTED:
                                 uint64_t u = w * 64 + bit;
                                 word &= word - 1;
                                 if (u < slot.node_count) {
-                                    uint32_t target_node = slot.targets_ptr[u];
-                                    if (target_node != 0xFFFFFFFF) {
+                                    uint64_t target_node = slot.get_csr_target(u);
+                                    if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
                                         bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
                                     }
                                 }
@@ -5468,8 +5553,8 @@ op_GAS_EXHAUSTED:
                     } else {
                         uint64_t u = scalar_src;
                         if (u < slot.node_count) {
-                            uint32_t v = slot.targets_ptr[u];
-                            if (v != 0xFFFFFFFF) {
+                            uint64_t v = slot.get_csr_target(u);
+                            if (v != 0xFFFFFFFF && v != 0xFFFF && v != ~0ULL) {
                                 bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
                             }
                         }
@@ -5566,10 +5651,10 @@ op_GAS_EXHAUSTED:
                                 if (w_unv & (1ULL << b)) {
                                     uint64_t v = i * 64 + b;
                                     if (v < slot.node_count) {
-                                        uint32_t start = slot.csc_offsets_ptr[v];
-                                        uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                                        for (uint32_t idx = start; idx < end; ++idx) {
-                                            uint64_t u = slot.csc_targets_ptr[idx];
+                                        uint64_t start = slot.get_csc_offset(v);
+                                        uint64_t end   = slot.get_csc_offset(v + 1);
+                                        for (uint64_t idx = start; idx < end; ++idx) {
+                                            uint64_t u = slot.get_csc_target(idx);
                                             bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
                                             if (hit) {
                                                 w_dst |= (1ULL << b);
@@ -5591,10 +5676,10 @@ op_GAS_EXHAUSTED:
                                     uint64_t v = w * 64 + bit;
                                     word &= word - 1;
                                     if (v < slot.node_count) {
-                                        uint32_t start = slot.csc_offsets_ptr[v];
-                                        uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                                        for (uint32_t idx = start; idx < end; ++idx) {
-                                            uint64_t u = slot.csc_targets_ptr[idx];
+                                        uint64_t start = slot.get_csc_offset(v);
+                                        uint64_t end   = slot.get_csc_offset(v + 1);
+                                        for (uint64_t idx = start; idx < end; ++idx) {
+                                            uint64_t u = slot.get_csc_target(idx);
                                             bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                                         }
                                     }
@@ -5603,10 +5688,10 @@ op_GAS_EXHAUSTED:
                         } else {
                             uint64_t v = scalar_src;
                             if (v < slot.node_count) {
-                                uint32_t start = slot.csc_offsets_ptr[v];
-                                uint32_t end   = slot.csc_offsets_ptr[v + 1];
-                                for (uint32_t idx = start; idx < end; ++idx) {
-                                    uint64_t u = slot.csc_targets_ptr[idx];
+                                uint64_t start = slot.get_csc_offset(v);
+                                uint64_t end   = slot.get_csc_offset(v + 1);
+                                for (uint64_t idx = start; idx < end; ++idx) {
+                                    uint64_t u = slot.get_csc_target(idx);
                                     bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                                 }
                             }
@@ -5619,8 +5704,8 @@ op_GAS_EXHAUSTED:
                             for (int b = 0; b < 64; ++b) {
                                 uint64_t v = i * 64 + b;
                                 if (v < slot.node_count) {
-                                    uint32_t u = slot.csc_targets_ptr[v];
-                                    if (u != 0xFFFFFFFF) {
+                                    uint64_t u = slot.get_csc_target(v);
+                                    if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                                         bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
                                         if (hit) {
                                             w_dst |= (1ULL << b);
@@ -5640,8 +5725,8 @@ op_GAS_EXHAUSTED:
                                     uint64_t v = w * 64 + bit;
                                     word &= word - 1;
                                     if (v < slot.node_count) {
-                                        uint32_t u = slot.csc_targets_ptr[v];
-                                        if (u != 0xFFFFFFFF) {
+                                        uint64_t u = slot.get_csc_target(v);
+                                        if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                                             bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                                         }
                                     }
@@ -5650,8 +5735,8 @@ op_GAS_EXHAUSTED:
                         } else {
                             uint64_t v = scalar_src;
                             if (v < slot.node_count) {
-                                uint32_t u = slot.csc_targets_ptr[v];
-                                if (u != 0xFFFFFFFF) {
+                                uint64_t u = slot.get_csc_target(v);
+                                if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                                     bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                                 }
                             }
@@ -5704,7 +5789,7 @@ op_GAS_EXHAUSTED:
                 if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
                     uint64_t u = vm_state->registers[src];
                     if (slot.offsets_ptr && u < slot.node_count) {
-                        degree = slot.offsets_ptr[u + 1] - slot.offsets_ptr[u];
+                        degree = slot.get_csr_offset(u + 1) - slot.get_csr_offset(u);
                     }
                 }
 
@@ -6074,19 +6159,19 @@ op_GAS_EXHAUSTED:
                         }
 
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end = slot.offsets_ptr[u + 1];
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
                             if (semiring_id == SEMIRING_PLUS_TIMES) {
                                 double sum = 0.0;
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csr_target(i);
                                     if (v < N) sum += src_data[v];
                                 }
                                 dst_data[u] = sum;
                             } else if (semiring_id == SEMIRING_MIN_PLUS) {
                                 double min_val = std::numeric_limits<double>::infinity();
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csr_target(i);
                                     if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
                                 }
                                 dst_data[u] = min_val;
@@ -6118,19 +6203,19 @@ op_GAS_EXHAUSTED:
                         }
 
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end = slot.offsets_ptr[u + 1];
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
                             if (semiring_id == SEMIRING_PLUS_TIMES) {
                                 float sum = 0.0f;
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csr_target(i);
                                     if (v < N) sum += src_data[v];
                                 }
                                 dst_data[u] = sum;
                             } else if (semiring_id == SEMIRING_MIN_PLUS) {
                                 float min_val = std::numeric_limits<float>::infinity();
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csr_target(i);
                                     if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
                                 }
                                 dst_data[u] = min_val;
@@ -6187,19 +6272,19 @@ op_GAS_EXHAUSTED:
                         }
 
                         if (u < slot.node_count) {
-                            uint32_t start = slot.csc_offsets_ptr[u];
-                            uint32_t end = slot.csc_offsets_ptr[u + 1];
+                            uint64_t start = slot.get_csc_offset(u);
+                            uint64_t end = slot.get_csc_offset(u + 1);
                             if (semiring_id == SEMIRING_PLUS_TIMES) {
                                 double sum = 0.0;
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.csc_targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csc_target(i);
                                     if (v < N) sum += src_data[v];
                                 }
                                 dst_data[u] = sum;
                             } else if (semiring_id == SEMIRING_MIN_PLUS) {
                                 double min_val = std::numeric_limits<double>::infinity();
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.csc_targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csc_target(i);
                                     if (v < N) min_val = std::min(min_val, src_data[v] + 1.0);
                                 }
                                 dst_data[u] = min_val;
@@ -6231,19 +6316,19 @@ op_GAS_EXHAUSTED:
                         }
 
                         if (u < slot.node_count) {
-                            uint32_t start = slot.csc_offsets_ptr[u];
-                            uint32_t end = slot.csc_offsets_ptr[u + 1];
+                            uint64_t start = slot.get_csc_offset(u);
+                            uint64_t end = slot.get_csc_offset(u + 1);
                             if (semiring_id == SEMIRING_PLUS_TIMES) {
                                 float sum = 0.0f;
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.csc_targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csc_target(i);
                                     if (v < N) sum += src_data[v];
                                 }
                                 dst_data[u] = sum;
                             } else if (semiring_id == SEMIRING_MIN_PLUS) {
                                 float min_val = std::numeric_limits<float>::infinity();
-                                for (uint32_t i = start; i < end; ++i) {
-                                    uint32_t v = slot.csc_targets_ptr[i];
+                                for (uint64_t i = start; i < end; ++i) {
+                                    uint64_t v = slot.get_csc_target(i);
                                     if (v < N) min_val = std::min(min_val, src_data[v] + 1.0f);
                                 }
                                 dst_data[u] = min_val;
@@ -7358,6 +7443,19 @@ void impulse_vm_context_mock_csr(
     uint64_t node_count,
     uint64_t edge_count
 ) {
+    impulse_vm_context_mock_csr_typed(ctx, relation_index, csr_offsets, csr_targets, node_count, edge_count, 4, 4);
+}
+
+void impulse_vm_context_mock_csr_typed(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const void* csr_offsets,
+    const void* csr_targets,
+    uint64_t node_count,
+    uint64_t edge_count,
+    uint8_t node_id_width,
+    uint8_t edge_index_width
+) {
     if (ctx) {
         if (relation_index >= ctx->slots.size()) {
             ctx->slots.resize(relation_index + 1);
@@ -7366,6 +7464,8 @@ void impulse_vm_context_mock_csr(
         ctx->slots[relation_index].targets_ptr = csr_targets;
         ctx->slots[relation_index].node_count = node_count;
         ctx->slots[relation_index].edge_count = edge_count;
+        ctx->slots[relation_index].node_id_width = node_id_width ? node_id_width : 4;
+        ctx->slots[relation_index].edge_index_width = edge_index_width ? edge_index_width : 4;
     }
 }
 
@@ -7375,9 +7475,22 @@ void impulse_vm_context_mock_csc(
     const uint32_t* csc_offsets,
     const uint32_t* csc_targets
 ) {
+    impulse_vm_context_mock_csc_typed(ctx, relation_index, csc_offsets, csc_targets, 4, 4);
+}
+
+void impulse_vm_context_mock_csc_typed(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const void* csc_offsets,
+    const void* csc_targets,
+    uint8_t node_id_width,
+    uint8_t edge_index_width
+) {
     if (ctx && relation_index < ctx->slots.size()) {
         ctx->slots[relation_index].csc_offsets_ptr = csc_offsets;
         ctx->slots[relation_index].csc_targets_ptr = csc_targets;
+        ctx->slots[relation_index].node_id_width = node_id_width ? node_id_width : 4;
+        ctx->slots[relation_index].edge_index_width = edge_index_width ? edge_index_width : 4;
     }
 }
 

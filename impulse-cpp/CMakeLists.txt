@@ -155,6 +155,10 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_cpp_compiler_parity PRIVATE impulse_graph_static)
     add_test(NAME test_cpp_compiler_parity COMMAND test_cpp_compiler_parity)
 
+    add_executable(test_variable_node_id_widths tests/test_variable_node_id_widths.cpp)
+    target_link_libraries(test_variable_node_id_widths PRIVATE impulse_graph_static)
+    add_test(NAME test_variable_node_id_widths COMMAND test_variable_node_id_widths)
+
     add_executable(bench_cpp_compiler_ablation tests/bench_cpp_compiler_ablation.cpp)
     target_link_libraries(bench_cpp_compiler_ablation PRIVATE impulse_graph_static)
     add_test(NAME bench_cpp_compiler_ablation COMMAND bench_cpp_compiler_ablation)

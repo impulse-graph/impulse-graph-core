@@ -787,20 +787,29 @@ bool impulse_snapshot_is_reachable(
     if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->file_size) return false;
     if (rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->file_size) return false;
 
-    const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
-    const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+    bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
+    bool is_node16 = (rel.node_id_width == 2 || rel.node_id_width == 16);
+    bool is_node64 = (rel.node_id_width == 8 || rel.node_id_width == 64);
 
-    size_t num_row_offsets = rel.csr_row_off_bytes / 4;
+    size_t edge_width_bytes = is_edge64 ? 8 : 4;
+    size_t node_width_bytes = is_node16 ? 2 : (is_node64 ? 8 : 4);
+
+    size_t num_row_offsets = rel.csr_row_off_bytes / edge_width_bytes;
     if (src_id + 1 >= num_row_offsets) return false;
 
-    uint32_t start_idx = row_offsets[src_id];
-    uint32_t end_idx = row_offsets[src_id + 1];
+    uint64_t start_idx = is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[src_id]
+                                   : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[src_id];
+    uint64_t end_idx = is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[src_id + 1]
+                                 : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[src_id + 1];
 
-    size_t num_col_indices = rel.csr_col_idx_bytes / 4;
+    size_t num_col_indices = rel.csr_col_idx_bytes / node_width_bytes;
     if (start_idx > end_idx || end_idx > num_col_indices) return false;
 
-    for (uint32_t idx = start_idx; idx < end_idx; ++idx) {
-        if (static_cast<uint64_t>(col_indices[idx]) == tgt_id) {
+    for (uint64_t idx = start_idx; idx < end_idx; ++idx) {
+        uint64_t target_val = is_node16 ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[idx]
+                            : (is_node64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[idx]
+                                         : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[idx]);
+        if (target_val == tgt_id) {
             return true;
         }
     }
@@ -1497,6 +1506,30 @@ impulse_status_t impulse_snapshot_get_relation_buffers(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_snapshot_get_relation_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_offsets,
+    const void** out_targets,
+    uint64_t* out_node_count,
+    uint64_t* out_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_offsets || !out_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    *out_offsets = (rel.csr_row_off_offset > 0) ? (raw + rel.csr_row_off_offset) : nullptr;
+    *out_targets = (rel.csr_col_idx_offset > 0) ? (raw + rel.csr_col_idx_offset) : nullptr;
+    if (out_node_count) *out_node_count = rel.node_count;
+    if (out_edge_count) *out_edge_count = rel.edge_count;
+    if (out_node_id_width) *out_node_id_width = rel.node_id_width ? rel.node_id_width : 4;
+    if (out_edge_index_width) *out_edge_index_width = rel.edge_index_width ? rel.edge_index_width : 4;
+    return IMPULSE_OK;
+}
+
 impulse_status_t impulse_snapshot_get_attribute_buffers(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
@@ -1551,6 +1584,30 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     }
     if (out_csc_row_count) *out_csc_row_count = rel.node_count;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_get_relation_csc_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_csc_offsets,
+    const void** out_csc_targets,
+    uint64_t* out_csc_row_count,
+    uint64_t* out_csc_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_csc_offsets || !out_csc_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    *out_csc_offsets = (rel.csc_row_off_offset > 0) ? (raw + rel.csc_row_off_offset) : nullptr;
+    *out_csc_targets = (rel.csc_col_idx_offset > 0) ? (raw + rel.csc_col_idx_offset) : nullptr;
+    if (out_csc_row_count) *out_csc_row_count = rel.node_count;
+    if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
+    if (out_node_id_width) *out_node_id_width = rel.node_id_width ? rel.node_id_width : 4;
+    if (out_edge_index_width) *out_edge_index_width = rel.edge_index_width ? rel.edge_index_width : 4;
     return IMPULSE_OK;
 }
 

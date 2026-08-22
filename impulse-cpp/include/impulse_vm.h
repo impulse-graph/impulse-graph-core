@@ -58,7 +58,7 @@ extern "C" {
 #define OP_RESERVED_0C              0x0C
 #define OP_RESERVED_0D              0x0D
 #define OP_CSR_WALK_2HOP            0x0E
-#define OP_RESERVED_0F              0x0F
+#define OP_CSR_WALK_STATE           0x0F
 
 #define OP_CSR_WALK                 0x10
 #define OP_CSR_WALK_FILTERED        0x11
@@ -108,7 +108,7 @@ extern "C" {
 #define OP_FLOAT_VECTOR_SCALE       0x38
 #define OP_L1_NORM_DIFF             0x39
 
-#define OP_RESERVED_3A              0x3A
+#define OP_PROJECT_STATE            0x3A
 #define OP_RESERVED_3B              0x3B
 #define OP_RESERVED_3C              0x3C
 #define OP_VECTOR_TIME_VALID_AT     0x3D
@@ -247,7 +247,8 @@ typedef enum {
     TYPE_STRING_VECTOR = 0x0B,
     TYPE_FLOAT_VECTOR = 0x0C,
     TYPE_DOUBLE_VECTOR = 0x0D,
-    TYPE_UINT64_VECTOR = 0x0E
+    TYPE_UINT64_VECTOR = 0x0E,
+    TYPE_FRONTIER_STATE = 0x0F
 } impulse_register_type_t;
 
 /** @brief VM Execution Status Codes */
@@ -356,11 +357,31 @@ IMPULSE_API void impulse_vm_context_mock_csr(
     uint64_t edge_count
 );
 
+IMPULSE_API void impulse_vm_context_mock_csr_typed(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const void* csr_offsets,
+    const void* csr_targets,
+    uint64_t node_count,
+    uint64_t edge_count,
+    uint8_t node_id_width,
+    uint8_t edge_index_width
+);
+
 IMPULSE_API void impulse_vm_context_mock_csc(
     impulse_vm_context_t* ctx,
     uint16_t relation_index,
     const uint32_t* csc_offsets,
     const uint32_t* csc_targets
+);
+
+IMPULSE_API void impulse_vm_context_mock_csc_typed(
+    impulse_vm_context_t* ctx,
+    uint16_t relation_index,
+    const void* csc_offsets,
+    const void* csc_targets,
+    uint8_t node_id_width,
+    uint8_t edge_index_width
 );
 
 /**
