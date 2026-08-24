@@ -73,11 +73,9 @@ extern "C" {
 #define OP_HAS_CSC                  0x1A
 #define OP_HAS_COO                  0x1B
 #define OP_HAS_KEY_CATALOG          0x1C
-#define OP_DENSE_WALK_LEGACY        0x1D
+#define OP_ADAPTIVE_WALK            0x1D
 #define OP_CREATE_SCRATCH_INDEX     0x1E
 #define OP_DROP_SCRATCH_INDEX       0x1F
-#define OP_HAS_DENSE                0x20
-#define OP_CSR_WALK_SHARDED         0x21
 
 // Vector Predicate and SIMD Mask Opcodes (0x20 - 0x27)
 #define OP_VEC_CMP_EQ               0x20

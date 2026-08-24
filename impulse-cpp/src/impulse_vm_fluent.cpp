@@ -4,6 +4,7 @@
 #include "impulse_datalog.hpp"
 #include "impulse_impk.hpp"
 #include "impulse_cel.h"
+#include "impulse_sexpr.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -143,15 +144,15 @@ QueryBuilder& QueryBuilder::walkEdge(uint16_t relation_id, uint8_t flags) {
 
 QueryBuilder& QueryBuilder::walkEdgeFiltered(uint16_t relation_id, uint32_t filter_id) {
     uint16_t src_reg = current_reg_;
-    uint32_t payload = (static_cast<uint32_t>(relation_id) << 16) | (src_reg & 0xFFFF);
-    emit(OP_CSR_WALK_FILTERED, 0, filter_id, payload);
+    uint32_t payload = (static_cast<uint32_t>(relation_id) << 16) | ((filter_id & 0xFF) << 8) | (src_reg & 0xFF);
+    emit(OP_CSR_WALK_FILTERED, 0, current_reg_, payload);
     return *this;
 }
 
 QueryBuilder& QueryBuilder::walkEdgePredicate(uint16_t relation_id, uint32_t filter_id) {
     uint16_t src_reg = current_reg_;
-    uint32_t payload = (static_cast<uint32_t>(relation_id) << 16) | (src_reg & 0xFFFF);
-    emit(OP_CSR_WALK_PREDICATE, 0, filter_id, payload);
+    uint32_t payload = (static_cast<uint32_t>(relation_id) << 16) | ((filter_id & 0xFF) << 8) | (src_reg & 0xFF);
+    emit(OP_CSR_WALK_PREDICATE, 0, current_reg_, payload);
     return *this;
 }
 
@@ -496,44 +497,20 @@ static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impul
         case IMPULSE_LANG_IMPLOG: {
             return impulse::datalog::DatalogParser::parse(script_str);
         }
-        case IMPULSE_LANG_IMPK: {
+                case IMPULSE_LANG_IMPK: {
             auto stmts = impulse::impk::ImpKCompiler::parse(script_str);
-            std::vector<AstPtr> steps;
-            for (const auto& s : stmts) {
-                switch (s.op_type) {
-                    case impulse::impk::ImpKOpType::MatrixVectorMul:
-                        steps.push_back(ScmWalk::forward("edge"));
-                        break;
-                    case impulse::impk::ImpKOpType::PageRankStep:
-                        steps.push_back(ScmWalk::forward("edge"));
-                        break;
-                    case impulse::impk::ImpKOpType::ConnectedComponents:
-                        steps.push_back(ScmWalk::forward("edge"));
-                        break;
-                    default:
-                        steps.push_back(ScmWalk::forward("edge"));
-                        break;
-                }
-            }
-            if (steps.empty()) {
-                steps.push_back(ScmWalk::forward("edge"));
-            }
-            steps.push_back(ScmCollect::bitset());
-            return std::make_shared<ScmProgram>(std::move(steps));
+            std::string ir = impulse::impk::ImpKCompiler::to_impscheme(stmts);
+            return impulse::impscm::ImpScmAstBuilder::parse(ir);
         }
-        case IMPULSE_LANG_CEL: {
-            std::vector<AstPtr> steps;
-            steps.push_back(ScmWalk::forward("edge", std::make_shared<ScmCelExpr>(script_str)));
-            steps.push_back(ScmCollect::bitset());
-            return std::make_shared<ScmProgram>(std::move(steps));
+                        case IMPULSE_LANG_CEL: {
+            impulse::cel::Parser p(script_str);
+            auto cel_ast = p.parse_expression();
+            std::string ir = impulse::cel::CelCompiler::to_impscheme(cel_ast);
+            return impulse::impscm::ImpScmAstBuilder::parse(ir);
         }
         case IMPULSE_LANG_IMPSCM:
         default: {
-            // Default S-Expression pipeline: single forward walk + collect
-            std::vector<AstPtr> steps;
-            steps.push_back(ScmWalk::forward("edge"));
-            steps.push_back(ScmCollect::bitset());
-            return std::make_shared<ScmProgram>(std::move(steps));
+            return impulse::impscm::ImpScmAstBuilder::parse(script_str);
         }
     }
 }

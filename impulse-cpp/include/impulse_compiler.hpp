@@ -69,6 +69,14 @@ enum class NodeKind {
     CEL_EXPR,
     REDUCE,
     COLLECT,
+    LET,
+    SET,
+    LOOP_WHILE,
+    RETURN,
+    CARDINALITY,
+    BITSET_INIT,
+    VAR_REF,
+    SET_OP,
     LITERAL,
     SYMBOL
 };
@@ -232,6 +240,7 @@ public:
     uint16_t dst_reg{1};
     bool inlined_seed{false};
     bool halt_on_empty{false};
+    bool is_adaptive{false};
 
     static std::shared_ptr<ScmWalk> forward(std::string rel, AstPtr pred = nullptr) {
         auto n = std::make_shared<ScmWalk>();
@@ -330,6 +339,71 @@ public:
         }
         return "(collect)";
     }
+};
+
+class ScmLet : public ImpScmNode {
+public:
+    std::vector<std::string> vars;
+    std::vector<AstPtr> inits;
+    std::vector<AstPtr> body;
+    NodeKind kind() const override { return NodeKind::LET; }
+    std::string to_scm_string() const override { return "(let)"; }
+};
+
+class ScmSet : public ImpScmNode {
+public:
+    std::string var;
+    AstPtr expr;
+    NodeKind kind() const override { return NodeKind::SET; }
+    std::string to_scm_string() const override { return "(set!)"; }
+};
+
+class ScmLoopWhile : public ImpScmNode {
+public:
+    AstPtr condition;
+    std::vector<AstPtr> body;
+    NodeKind kind() const override { return NodeKind::LOOP_WHILE; }
+    std::string to_scm_string() const override { return "(loop-while)"; }
+};
+
+class ScmReturn : public ImpScmNode {
+public:
+    AstPtr expr;
+    NodeKind kind() const override { return NodeKind::RETURN; }
+    std::string to_scm_string() const override { return "(return)"; }
+};
+
+class ScmCardinality : public ImpScmNode {
+public:
+    std::string var;
+    NodeKind kind() const override { return NodeKind::CARDINALITY; }
+    std::string to_scm_string() const override { return "(bitset:cardinality)"; }
+};
+
+class ScmBitsetInit : public ImpScmNode {
+public:
+    enum class InitType { EMPTY, ALL, FROM_NODE };
+    InitType type;
+    std::string param;
+    NodeKind kind() const override { return NodeKind::BITSET_INIT; }
+    std::string to_scm_string() const override { return "(bitset-init)"; }
+};
+
+class ScmVarRef : public ImpScmNode {
+public:
+    std::string var;
+    NodeKind kind() const override { return NodeKind::VAR_REF; }
+    std::string to_scm_string() const override { return var; }
+};
+
+class ScmSetOp : public ImpScmNode {
+public:
+    enum Op { UNION, DIFFERENCE, INTERSECT };
+    Op op;
+    AstPtr lhs;
+    AstPtr rhs;
+    NodeKind kind() const override { return NodeKind::SET_OP; }
+    std::string to_scm_string() const override { return "(set-op)"; }
 };
 
 class ScmProgram : public ImpScmNode {
@@ -435,6 +509,17 @@ public:
                     comment = "Fused 2-Hop CSR Walk via rel[" + std::to_string(r1) + "] -> rel[" + std::to_string(r2) + "]";
                     break;
                 }
+                case OP_ADAPTIVE_WALK: {
+                    op_name = "OP_ADAPTIVE_WALK";
+                    uint16_t src = inst.payload & 0xFFFF;
+                    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+                    comment = "Adaptive Walk src=R" + std::to_string(src) + " -> dst=R" + std::to_string(inst.dst_reg) + " via rel[" + std::to_string(rel) + "]";
+                    if (catalog) {
+                        std::string name = catalog->get_relation_name(rel);
+                        if (!name.empty()) comment += " (\"" + name + "\")";
+                    }
+                    break;
+                }
                 case OP_CSR_WALK: {
                     op_name = "OP_CSR_WALK";
                     uint16_t src = inst.payload & 0xFFFF;
@@ -464,6 +549,15 @@ public:
                     comment = "Filtered CSR Walk src=R" + std::to_string(src) + " via rel[" + std::to_string(rel) + "]";
                     break;
                 }
+                case OP_CREATE_SCRATCH_INDEX:
+                    op_name = "OP_CREATE_SCRATCH_INDEX";
+                    break;
+                case OP_DROP_SCRATCH_INDEX:
+                    op_name = "OP_DROP_SCRATCH_INDEX";
+                    break;
+                case OP_VECTOR_TIME_VALID_AT:
+                    op_name = "OP_VECTOR_TIME_VALID_AT";
+                    break;
                 case OP_COLLECT_BITSET:
                     op_name = "OP_COLLECT_BITSET";
                     comment = "Collect active result bitset from R" + std::to_string(inst.dst_reg);
@@ -545,6 +639,51 @@ private:
         }
     }
 
+    
+    static AstPtr pass_parameter_binding_node(const AstPtr& step, const std::unordered_map<std::string, double>& params) {
+        if (!step) return nullptr;
+        if (step->kind() == NodeKind::WALK) {
+            auto w = std::static_pointer_cast<ScmWalk>(step);
+            auto new_w = std::make_shared<ScmWalk>(*w);
+            if (new_w->predicate && new_w->predicate->kind() == NodeKind::VECTOR_FILTER) {
+                auto vf = std::static_pointer_cast<ScmVectorFilter>(new_w->predicate);
+                auto new_vf = std::make_shared<ScmVectorFilter>(*vf);
+                if (new_vf->threshold && new_vf->threshold->kind() == NodeKind::SYMBOL) {
+                    auto sym = std::static_pointer_cast<ScmSymbol>(new_vf->threshold);
+                    auto it = params.find(sym->name);
+                    if (it != params.end()) {
+                        new_vf->threshold = ScmLiteral::of_float(it->second);
+                    }
+                }
+                new_w->predicate = new_vf;
+            }
+            return new_w;
+        } else if (step->kind() == NodeKind::LET) {
+            auto let = std::static_pointer_cast<ScmLet>(step);
+            auto new_let = std::make_shared<ScmLet>(*let);
+            for (auto& init : new_let->inits) init = pass_parameter_binding_node(init, params);
+            for (auto& st : new_let->body) st = pass_parameter_binding_node(st, params);
+            return new_let;
+        } else if (step->kind() == NodeKind::SET) {
+            auto set_n = std::static_pointer_cast<ScmSet>(step);
+            auto new_set = std::make_shared<ScmSet>(*set_n);
+            new_set->expr = pass_parameter_binding_node(set_n->expr, params);
+            return new_set;
+        } else if (step->kind() == NodeKind::LOOP_WHILE) {
+            auto loop = std::static_pointer_cast<ScmLoopWhile>(step);
+            auto new_loop = std::make_shared<ScmLoopWhile>(*loop);
+            new_loop->condition = pass_parameter_binding_node(loop->condition, params);
+            for (auto& st : new_loop->body) st = pass_parameter_binding_node(st, params);
+            return new_loop;
+        } else if (step->kind() == NodeKind::RETURN) {
+            auto ret = std::static_pointer_cast<ScmReturn>(step);
+            auto new_ret = std::make_shared<ScmReturn>(*ret);
+            new_ret->expr = pass_parameter_binding_node(ret->expr, params);
+            return new_ret;
+        }
+        return step;
+    }
+
     static AstPtr pass_parameter_binding(
         const std::shared_ptr<ScmProgram>& prog,
         const std::unordered_map<std::string, double>& params,
@@ -552,28 +691,11 @@ private:
     {
         std::vector<AstPtr> new_steps;
         for (const auto& step : prog->steps) {
-            if (step->kind() == NodeKind::WALK) {
-                auto w = std::static_pointer_cast<ScmWalk>(step);
-                auto new_w = std::make_shared<ScmWalk>(*w);
-                if (new_w->predicate && new_w->predicate->kind() == NodeKind::VECTOR_FILTER) {
-                    auto vf = std::static_pointer_cast<ScmVectorFilter>(new_w->predicate);
-                    auto new_vf = std::make_shared<ScmVectorFilter>(*vf);
-                    if (new_vf->threshold && new_vf->threshold->kind() == NodeKind::SYMBOL) {
-                        auto sym = std::static_pointer_cast<ScmSymbol>(new_vf->threshold);
-                        auto it = params.find(sym->name);
-                        if (it != params.end()) {
-                            new_vf->threshold = ScmLiteral::of_float(it->second);
-                        }
-                    }
-                    new_w->predicate = new_vf;
-                }
-                new_steps.push_back(new_w);
-            } else {
-                new_steps.push_back(step);
-            }
+            new_steps.push_back(pass_parameter_binding_node(step, params));
         }
         return std::make_shared<ScmProgram>(std::move(new_steps));
     }
+
 
     static AstPtr pass_kernel_fusion(
         const AstPtr& root,
@@ -635,7 +757,21 @@ private:
     }
 
     static AstPtr pass_direction_selection(const AstPtr& root, const GraphCatalog* /*catalog*/) {
-        return root;
+        auto prog = std::static_pointer_cast<ScmProgram>(root);
+        std::vector<AstPtr> opt_steps;
+        for (const auto& step : prog->steps) {
+            if (step->kind() == NodeKind::WALK) {
+                auto w = std::static_pointer_cast<ScmWalk>(step);
+                auto new_w = std::make_shared<ScmWalk>(*w);
+                if (new_w->direction == WalkDirection::FORWARD_CSR && !new_w->predicate) {
+                    new_w->is_adaptive = true;
+                }
+                opt_steps.push_back(new_w);
+            } else {
+                opt_steps.push_back(step);
+            }
+        }
+        return std::make_shared<ScmProgram>(std::move(opt_steps));
     }
 
     static AstPtr pass_register_allocation(const AstPtr& root, const CompilerOptions& options) {
@@ -679,79 +815,190 @@ private:
         return std::make_shared<ScmProgram>(std::move(alloc_steps));
     }
 
+    
+    struct CompileContext {
+        std::vector<impulse_instruction_t> instructions;
+        std::unordered_map<std::string, uint16_t> env;
+        uint16_t next_reg = 0;
+        uint16_t result_reg = 0;
+
+        uint16_t get_reg(const std::string& name) {
+            if (env.find(name) == env.end()) {
+                env[name] = next_reg++;
+            }
+            return env[name];
+        }
+    };
+
+    static void emit_node(const AstPtr& step, CompileContext& ctx, const CompilerOptions& options) {
+        if (step->kind() == NodeKind::WALK) {
+            auto w = std::static_pointer_cast<ScmWalk>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = (w->direction == WalkDirection::FORWARD_CSR) ? OP_CSR_WALK : OP_CSC_WALK;
+            if (w->is_adaptive) {
+                inst.opcode = OP_ADAPTIVE_WALK;
+            } else if (w->predicate) {
+                inst.opcode = OP_CSR_WALK;
+            }
+            // For now, assume it modifies R2 (frontier) and reads from R2, or reads from env
+            inst.dst_reg = w->dst_reg; // Default
+            if (ctx.env.count("frontier")) {
+                inst.dst_reg = ctx.env["frontier"];
+                w->src_reg = ctx.env["frontier"];
+            }
+            uint16_t rel_id = static_cast<uint16_t>(std::max(0, w->physical_rel_id));
+            inst.payload = (static_cast<uint32_t>(rel_id) << 16) | static_cast<uint32_t>(w->src_reg);
+            inst.flags = 0;
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::COLLECT) {
+            auto c = std::static_pointer_cast<ScmCollect>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_COLLECT_BITSET;
+            inst.dst_reg = ctx.result_reg;
+            inst.payload = ctx.result_reg;
+            inst.flags = 0;
+            ctx.instructions.push_back(inst);
+        } else if (step->kind() == NodeKind::LET) {
+            auto let = std::static_pointer_cast<ScmLet>(step);
+            for (size_t i = 0; i < let->vars.size(); ++i) {
+                uint16_t r = ctx.get_reg(let->vars[i]);
+                emit_node(let->inits[i], ctx, options);
+                if (ctx.result_reg != r) {
+                    impulse_instruction_t mov{};
+                    mov.opcode = OP_MOV;
+                    mov.dst_reg = r;
+                    mov.payload = ctx.result_reg;
+                    ctx.instructions.push_back(mov);
+                }
+            }
+            for (const auto& stmt : let->body) {
+                emit_node(stmt, ctx, options);
+            }
+        } else if (step->kind() == NodeKind::SET) {
+            auto set_node = std::static_pointer_cast<ScmSet>(step);
+            emit_node(set_node->expr, ctx, options);
+            uint16_t r = ctx.get_reg(set_node->var);
+            if (ctx.result_reg != r) {
+                impulse_instruction_t mov{};
+                mov.opcode = OP_MOV;
+                mov.dst_reg = r;
+                mov.payload = ctx.result_reg;
+                ctx.instructions.push_back(mov);
+            }
+        } else if (step->kind() == NodeKind::LOOP_WHILE) {
+            auto loop = std::static_pointer_cast<ScmLoopWhile>(step);
+            size_t start_pc = ctx.instructions.size();
+            
+            // Emit condition
+            emit_node(loop->condition, ctx, options);
+            
+            // JZ instruction (placeholder offset)
+            impulse_instruction_t jz{};
+            jz.opcode = OP_JZ;
+            jz.dst_reg = ctx.result_reg; // condition result
+            jz.payload = 0; // Patch later
+            size_t jz_idx = ctx.instructions.size();
+            ctx.instructions.push_back(jz);
+
+            // Body
+            for (const auto& stmt : loop->body) {
+                emit_node(stmt, ctx, options);
+            }
+
+            // JMP back to start
+            impulse_instruction_t jmp{};
+            jmp.opcode = OP_JMP;
+            jmp.payload = static_cast<uint32_t>(start_pc) - static_cast<uint32_t>(ctx.instructions.size()); // Relative jump backwards
+            ctx.instructions.push_back(jmp);
+
+            // Patch JZ
+            ctx.instructions[jz_idx].payload = static_cast<uint32_t>(ctx.instructions.size()) - static_cast<uint32_t>(jz_idx);
+        } else if (step->kind() == NodeKind::SET_OP) {
+            auto set_op = std::static_pointer_cast<ScmSetOp>(step);
+            emit_node(set_op->lhs, ctx, options);
+            uint16_t lhs_reg = ctx.result_reg;
+            
+            // Avoid clobbering lhs_reg during rhs eval by temporarily marking it used if needed
+            // Actually our simple AST guarantees simple var refs for RHS
+            emit_node(set_op->rhs, ctx, options);
+            uint16_t rhs_reg = ctx.result_reg;
+
+            impulse_instruction_t inst{};
+            if (set_op->op == ScmSetOp::UNION) inst.opcode = OP_SET_UNION;
+            else if (set_op->op == ScmSetOp::DIFFERENCE) inst.opcode = OP_SET_DIFFERENCE;
+            else inst.opcode = OP_SET_INTERSECT;
+
+            ctx.result_reg = ctx.next_reg++;
+            impulse_instruction_t mov{};
+            mov.opcode = OP_MOV;
+            mov.dst_reg = ctx.result_reg;
+            mov.payload = lhs_reg;
+            ctx.instructions.push_back(mov);
+
+            inst.dst_reg = ctx.result_reg;
+            inst.payload = rhs_reg;
+            ctx.instructions.push_back(inst);
+        } else if (step->kind() == NodeKind::VAR_REF) {
+            auto v = std::static_pointer_cast<ScmVarRef>(step);
+            ctx.result_reg = ctx.get_reg(v->var);
+        } else if (step->kind() == NodeKind::BITSET_INIT) {
+            auto init = std::static_pointer_cast<ScmBitsetInit>(step);
+            impulse_instruction_t inst{};
+            ctx.result_reg = ctx.next_reg++; // Allocate a temp register
+            inst.dst_reg = ctx.result_reg;
+            if (init->type == ScmBitsetInit::InitType::EMPTY) {
+                inst.opcode = OP_CLEAR_REG;
+            } else if (init->type == ScmBitsetInit::InitType::ALL) {
+                inst.opcode = OP_INIT_INPUT_SET;
+            } else if (init->type == ScmBitsetInit::InitType::FROM_NODE) {
+                inst.opcode = OP_INIT_INPUT_NODE;
+                // Typically node 0 or a passed param
+                inst.payload = 0; 
+            }
+            ctx.instructions.push_back(inst);
+        } else if (step->kind() == NodeKind::CARDINALITY) {
+            auto card = std::static_pointer_cast<ScmCardinality>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_SET_CARDINALITY;
+            inst.dst_reg = ctx.next_reg++; // Result
+            uint16_t src = ctx.get_reg(card->var);
+            inst.payload = src;
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::RETURN) {
+            auto ret = std::static_pointer_cast<ScmReturn>(step);
+            emit_node(ret->expr, ctx, options);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_HALT;
+            inst.dst_reg = ctx.result_reg;
+            ctx.instructions.push_back(inst);
+        }
+    }
+
     static CompiledImpulseProgram emit_bytecode(const AstPtr& root, const CompilerOptions& options) {
         auto prog = std::static_pointer_cast<ScmProgram>(root);
         CompiledImpulseProgram result;
         result.optimized_ast = root;
 
-        bool is_first_walk = true;
-        uint16_t last_dst_reg = 0;
-
+        CompileContext ctx;
         for (const auto& step : prog->steps) {
-            if (step->kind() == NodeKind::WALK) {
-                auto w = std::static_pointer_cast<ScmWalk>(step);
-                impulse_instruction_t inst{};
-                inst.opcode = (w->direction == WalkDirection::FORWARD_CSR) ? OP_CSR_WALK : OP_CSC_WALK;
-                if (w->predicate) {
-                    inst.opcode = OP_CSR_WALK_FILTERED;
-                }
-                inst.dst_reg = w->dst_reg;
-                uint16_t rel_id = static_cast<uint16_t>(std::max(0, w->physical_rel_id));
-                inst.payload = (static_cast<uint32_t>(rel_id) << 16) | static_cast<uint32_t>(w->src_reg);
-
-                inst.flags = 0;
-                if (is_first_walk && options.enable_seed_inlining) {
-                    inst.flags |= IMPULSE_VM_OP_FLAG_INPUT_SEED;
-                }
-                if (options.enable_early_exit) {
-                    inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
-                }
-
-                result.instructions.push_back(inst);
-                last_dst_reg = w->dst_reg;
-                is_first_walk = false;
-            } else if (step->kind() == NodeKind::WALK_2HOP) {
-                auto w2 = std::static_pointer_cast<ScmWalk2Hop>(step);
-                impulse_instruction_t inst{};
-                inst.opcode = OP_CSR_WALK_2HOP;
-                inst.dst_reg = w2->dst_reg;
-                uint16_t r1 = static_cast<uint16_t>(std::max(0, w2->rel1_id));
-                uint16_t r2 = static_cast<uint16_t>(std::max(0, w2->rel2_id));
-                inst.payload = (static_cast<uint32_t>(r2) << 16) | static_cast<uint32_t>(r1);
-
-                inst.flags = 0;
-                if (is_first_walk && options.enable_seed_inlining) {
-                    inst.flags |= IMPULSE_VM_OP_FLAG_INPUT_SEED;
-                }
-                if (options.enable_early_exit) {
-                    inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
-                }
-
-                result.instructions.push_back(inst);
-                last_dst_reg = w2->dst_reg;
-                is_first_walk = false;
-            } else if (step->kind() == NodeKind::COLLECT) {
-                auto c = std::static_pointer_cast<ScmCollect>(step);
-                impulse_instruction_t inst{};
-                inst.opcode = OP_COLLECT_BITSET;
-                inst.dst_reg = last_dst_reg;
-                inst.payload = last_dst_reg;
-                inst.flags = 0;
-                result.instructions.push_back(inst);
-                result.result_register = last_dst_reg;
-            }
+            emit_node(step, ctx, options);
         }
 
-        // Emit OP_HALT
-        impulse_instruction_t halt_inst{};
-        halt_inst.opcode = OP_HALT;
-        halt_inst.dst_reg = 0;
-        halt_inst.payload = 0;
-        halt_inst.flags = 0;
-        result.instructions.push_back(halt_inst);
+        // Add HALT if not present
+        if (ctx.instructions.empty() || ctx.instructions.back().opcode != OP_HALT) {
+            impulse_instruction_t halt_inst{};
+            halt_inst.opcode = OP_HALT;
+            halt_inst.dst_reg = ctx.result_reg;
+            ctx.instructions.push_back(halt_inst);
+        }
 
+        result.instructions = ctx.instructions;
+        result.result_register = ctx.result_reg;
         return result;
     }
+
 };
 
 } // namespace impulse::compiler
