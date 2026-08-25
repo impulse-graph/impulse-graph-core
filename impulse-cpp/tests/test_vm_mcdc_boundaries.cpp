@@ -473,7 +473,7 @@ void test_mcdc_vm_dispatch_and_fuel() {
     state.pc = 0;
     state.call_stack_depth = 0;
     st = impulse_vm_execute(normal_call_ret_bc.data(), normal_call_ret_bc.size(), &state, 0);
-    assert(st == IMPULSE_VM_OK);
+    if (st != IMPULSE_VM_OK) { printf("DEBUG STATUS: %d\n", st); } assert(st == IMPULSE_VM_OK);
     assert(state.registers[1] == 100);
     assert(state.call_stack_depth == 0);
 
@@ -903,24 +903,112 @@ void test_mcdc_null_context_scalar_stream() {
     impulse_vm_state_t state{};
     state.query_context = nullptr; // Ensure query_context is null!
 
+    // 1. Purely Scalar Stream with Null Context (No bitsets or vector buffers needed)
     std::vector<impulse_instruction_t> scalar_bc = {
         { OP_NOP, 0, 0, 0 },
+        { OP_INIT_INPUT_NODE, 0, 0, 0 }, // R0 = input_param (7)
         { OP_LOAD_CONST_INT, 0, 1, 42 },
-        { OP_LOAD_CONST_FLOAT, 0, 2, 0x40490fdb },
-        { OP_MOV, 0, 3, 1 },
-        { OP_SWAP_REG, 0, 1, 3 },
-        { OP_CLEAR_REG, 0, 2, 0 },
-        { OP_JMP, 0, 0, 2 },
-        { OP_LOAD_CONST_INT, 0, 4, 999 }, // skipped
-        { OP_ASSERT, 0, 1, 42 },
-        { OP_HALT, 0, 0, 0 }
+        { OP_LOAD_CONST_INT, 0, 2, 10 },
+        { OP_LOAD_CONST_FLOAT, 0, 3, 0x40490fdb },
+        { OP_LOAD_CONST_STR_PREFIX, 0, 4, 0x41424344 },
+        { OP_MOV, 0, 5, 1 },
+        { OP_SWAP_REG, 0, 1, 5 },
+        { OP_CLEAR_REG, 0, 5, 0 },
+
+        // Subroutine and frames (R13 -> R1 in callee window)
+        { OP_LOAD_CONST_INT, 0, 13, 42 },// 9
+        { OP_ENTER_FRAME, 0, 0, 0 },     // 10
+        { OP_CALL, 0, 0, 14 },            // 11: call subroutine at 14 (return to 12)
+        { OP_LEAVE_FRAME, 0, 0, 0 },     // 12: executes on return
+        { OP_JMP, 0, 0, 2 },              // 13: relative jump +2 (to 15)
+        // Subroutine target
+        { OP_RET, 0, 0, 0 },             // 14: ret
+        // Continuation
+        { OP_SET_MAX_DOP, 0, 14, 4 },    // 15
+        { OP_ALLOC_SCRATCH, 0, 0, 1024 }, // 16
+        { OP_ASSERT_SCRATCH_BYTES, 0, 0, 512 }, // 17
+        { OP_ASSERT, 0, 1, 42 },         // 18: R1 was passed R13 = 42
+        { OP_HALT, 0, 0, 0 }             // 19
     };
 
     state.pc = 0;
-    impulse_vm_status_t st = impulse_vm_execute(scalar_bc.data(), scalar_bc.size(), &state, 0);
+    impulse_vm_status_t st = impulse_vm_execute(scalar_bc.data(), scalar_bc.size(), &state, 7);
+    if (st != IMPULSE_VM_OK) {
+        printf("DEBUG STATUS: %d, pc=%u\n", st, state.pc);
+    }
     assert(st == IMPULSE_VM_OK);
     assert(state.registers[1] == 42);
-    assert(state.registers[4] == 0);
+
+    // Test graceful null-context trap on bitset/vector opcodes
+    std::vector<impulse_instruction_t> vec_null_bc = {
+        { OP_VEC_CMP_EQ, 0, 6, 1 | (2 << 16) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    st = impulse_vm_execute(vec_null_bc.data(), vec_null_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    // 2. Transcendental Math Suite with Null Context
+    std::vector<impulse_instruction_t> math_null_bc = {
+        { OP_LOAD_CONST_FLOAT, 0, 1, 0x40800000 }, // 4.0f
+        { OP_LOAD_CONST_FLOAT, 0, 2, 0x40000000 }, // 2.0f
+        { OP_LOAD_CONST_FLOAT, 0, 3, 0x3f000000 }, // 0.5f
+
+        { OP_VEC_MATH_UNARY, 0, 4, 1 | (MATH_FUNC_ABS << 16) },
+        { OP_VEC_MATH_UNARY, 0, 5, 1 | (MATH_FUNC_SQRT << 16) },
+        { OP_VEC_MATH_UNARY, 0, 6, 1 | (MATH_FUNC_RSQRT << 16) },
+        { OP_VEC_MATH_UNARY, 0, 7, 1 | (MATH_FUNC_CBRT << 16) },
+        { OP_VEC_MATH_BINARY, 0, 8, 1 | (2 << 8) | (MATH_FUNC_POW << 16) },
+        { OP_VEC_MATH_BINARY, 0, 9, 1 | (2 << 8) | (MATH_FUNC_HYPOT << 16) },
+        { OP_VEC_MATH_TERNARY, 0, 10, 1 | (2 << 8) | (3 << 16) | (MATH_FUNC_LERP << 24) },
+
+        { OP_VEC_MATH_UNARY, 0, 11, 2 | (MATH_FUNC_EXP << 16) },
+        { OP_VEC_MATH_UNARY, 0, 12, 2 | (MATH_FUNC_EXP2 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 13, 2 | (MATH_FUNC_EXP10 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 14, 2 | (MATH_FUNC_EXPM1 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 15, 2 | (MATH_FUNC_LOG << 16) },
+        { OP_VEC_MATH_UNARY, 0, 16, 2 | (MATH_FUNC_LOG2 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 17, 2 | (MATH_FUNC_LOG10 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 18, 2 | (MATH_FUNC_LOG1P << 16) },
+
+        { OP_VEC_MATH_UNARY, 0, 19, 3 | (MATH_FUNC_SIN << 16) },
+        { OP_VEC_MATH_UNARY, 0, 20, 3 | (MATH_FUNC_COS << 16) },
+        { OP_VEC_MATH_UNARY, 0, 21, 3 | (MATH_FUNC_TAN << 16) },
+        { OP_VEC_MATH_UNARY, 0, 22, 3 | (MATH_FUNC_ASIN << 16) },
+        { OP_VEC_MATH_UNARY, 0, 23, 3 | (MATH_FUNC_ACOS << 16) },
+        { OP_VEC_MATH_UNARY, 0, 24, 3 | (MATH_FUNC_ATAN << 16) },
+        { OP_VEC_MATH_BINARY, 0, 25, 1 | (2 << 8) | (MATH_FUNC_ATAN2 << 16) },
+        { OP_VEC_MATH_UNARY, 0, 26, 3 | (MATH_FUNC_SINC << 16) },
+
+        { OP_VEC_MATH_UNARY, 0, 27, 3 | (MATH_FUNC_SINH << 16) },
+        { OP_VEC_MATH_UNARY, 0, 28, 3 | (MATH_FUNC_COSH << 16) },
+        { OP_VEC_MATH_UNARY, 0, 29, 3 | (MATH_FUNC_TANH << 16) },
+        { OP_VEC_MATH_UNARY, 0, 30, 3 | (MATH_FUNC_ASINH << 16) },
+        { OP_VEC_MATH_UNARY, 0, 31, 1 | (MATH_FUNC_ACOSH << 16) },
+        { OP_VEC_MATH_UNARY, 0, 32, 3 | (MATH_FUNC_ATANH << 16) },
+
+        { OP_VEC_MATH_UNARY, 0, 33, 3 | (MATH_FUNC_SIGMOID << 16) },
+        { OP_VEC_MATH_UNARY, 0, 34, 3 | (MATH_FUNC_SILU << 16) },
+        { OP_VEC_MATH_UNARY, 0, 35, 3 | (MATH_FUNC_GELU << 16) },
+        { OP_VEC_MATH_UNARY, 0, 36, 3 | (MATH_FUNC_RELU << 16) },
+        { OP_VEC_MATH_UNARY, 0, 37, 3 | (MATH_FUNC_LEAKY_RELU << 16) },
+        { OP_VEC_MATH_UNARY, 0, 38, 3 | (MATH_FUNC_ERF << 16) },
+        { OP_VEC_MATH_UNARY, 0, 39, 3 | (MATH_FUNC_ERFC << 16) },
+        { OP_VEC_MATH_UNARY, 0, 40, 3 | (MATH_FUNC_SOFTPLUS << 16) },
+
+        { OP_VEC_MATH_UNARY, 0, 41, 1 | (MATH_FUNC_FLOOR << 16) },
+        { OP_VEC_MATH_UNARY, 0, 42, 1 | (MATH_FUNC_CEIL << 16) },
+        { OP_VEC_MATH_UNARY, 0, 43, 1 | (MATH_FUNC_ROUND << 16) },
+        { OP_VEC_MATH_UNARY, 0, 44, 1 | (MATH_FUNC_TRUNC << 16) },
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state = impulse_vm_state_t{};
+    state.query_context = nullptr;
+    state.pc = 0;
+    st = impulse_vm_execute(math_null_bc.data(), math_null_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_NULL_SNAPSHOT);
 }
 
 void test_mcdc_set_ops_type_tags_exhaustive() {
@@ -1776,6 +1864,125 @@ void test_mcdc_vm_pass4_deep_decisions() {
     impulse_vm_context_destroy(ctx);
 }
 
+void test_mcdc_pass10_deep_decisions() {
+    std::cout << "[MC/DC] Testing Pass 10 Deep Decisions (Context Helpers, Analytics, GraphBLAS)..." << std::endl;
+
+    // 1. Context Helper Boundaries
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    assert(ctx != nullptr);
+
+    // Mock CSC typed permutations
+    impulse_vm_context_mock_csc_typed(nullptr, 0, nullptr, nullptr, 4, 4);
+    impulse_vm_context_mock_csc_typed(ctx, 9999, nullptr, nullptr, 4, 4);
+    impulse_vm_context_mock_csc_typed(ctx, 0, nullptr, nullptr, 0, 0); // test default 4/4 fallback
+    impulse_vm_context_mock_csc_typed(ctx, 0, nullptr, nullptr, 8, 8);
+
+    // Bitset fill permutations (rem == 0 vs rem > 0)
+    impulse_vm_context_bitset_fill(nullptr, 0, 128);
+    impulse_vm_context_bitset_fill(ctx, 9999, 128);
+    impulse_vm_context_bitset_fill(ctx, 0, 128); // rem == 0
+    impulse_vm_context_bitset_fill(ctx, 0, 130); // rem == 2 > 0
+
+    // Bitset get word permutations
+    assert(impulse_vm_context_bitset_get_word(nullptr, 0, 0) == 0);
+    assert(impulse_vm_context_bitset_get_word(ctx, 9999, 0) == 0);
+    assert(impulse_vm_context_bitset_get_word(ctx, 0, 99999) == 0);
+    assert(impulse_vm_context_bitset_get_word(ctx, 0, 0) != 0);
+
+    // Bind inline data
+    impulse_vm_context_bind_inline_data(nullptr, nullptr, 0);
+    uint8_t dummy_inline[16] = { 1, 2, 3, 4 };
+    impulse_vm_context_bind_inline_data(ctx, dummy_inline, 16);
+
+    // Bytecode validator MC/DC
+    assert(impulse_vm_validate(nullptr, 10) == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+    assert(impulse_vm_validate(nullptr, 0) == IMPULSE_VM_OK);
+    impulse_instruction_t valid_code[] = { { OP_NOP, 0, 0, 0 }, { OP_HALT, 0, 0, 0 } };
+    assert(impulse_vm_validate(valid_code, 2) == IMPULSE_VM_OK);
+
+    // 2. Mock Graph with CSR/CSC Topology for GraphBLAS & Analytics
+    uint32_t offsets[5] = { 0, 2, 3, 4, 4 }; // 4 nodes: 0->(1,2), 1->(2), 2->(3), 3->()
+    uint32_t targets[4] = { 1, 2, 2, 3 };
+    uint32_t csc_offsets[5] = { 0, 0, 1, 3, 4 };
+    uint32_t csc_targets[4] = { 0, 0, 1, 2 };
+
+    impulse_vm_context_mock_csr(ctx, 0, offsets, targets, 4, 4);
+    impulse_vm_context_mock_csc(ctx, 0, csc_offsets, csc_targets);
+
+    // Set up Float and Double Vectors
+    int h_f1 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f2 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f3 = impulse_vm_context_acquire_float_vector(ctx);
+    for (size_t i = 0; i < 4; ++i) {
+        impulse_vm_context_float_vector_set(ctx, h_f1, i, 1.0f);
+        impulse_vm_context_float_vector_set(ctx, h_f2, i, 2.0f);
+    }
+
+    int h_d1 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d2 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d3 = impulse_vm_context_acquire_double_vector(ctx);
+    for (size_t i = 0; i < 4; ++i) {
+        impulse_vm_context_double_vector_set(ctx, h_d1, i, 1.0);
+        impulse_vm_context_double_vector_set(ctx, h_d2, i, 2.0);
+    }
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // Registers setup
+    state.registers[1] = static_cast<uint64_t>(h_f1);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[2] = static_cast<uint64_t>(h_f2);
+    state.register_types[2] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = static_cast<uint64_t>(h_f3);
+    state.register_types[3] = TYPE_FLOAT_VECTOR;
+
+    state.registers[11] = static_cast<uint64_t>(h_d1);
+    state.register_types[11] = TYPE_DOUBLE_VECTOR;
+    state.registers[12] = static_cast<uint64_t>(h_d2);
+    state.register_types[12] = TYPE_DOUBLE_VECTOR;
+    state.registers[13] = static_cast<uint64_t>(h_d3);
+    state.register_types[13] = TYPE_DOUBLE_VECTOR;
+
+    // 3. GraphBLAS Matrix-Vector & Element-wise Ops (Float & Double)
+    std::vector<impulse_instruction_t> gblas_bc = {
+        // MXV & VXM Float (flags = 0)
+        { OP_MXV, 0, 3, 1 | (0 << 16) },  // R3 = M * R1 (rel 0)
+        { OP_VXM, 0, 3, 1 | (0 << 16) },  // R3 = R1 * M (rel 0)
+        // MXV & VXM Double (flags = 1)
+        { OP_MXV, 1, 13, 11 | (0 << 16) }, // R13 = M * R11
+        { OP_VXM, 1, 13, 11 | (0 << 16) }, // R13 = R11 * M
+
+        // Element-wise Add & Mult Float
+        { OP_EWISE_ADD, 0, 3, 1 | (2 << 16) },
+        { OP_EWISE_MULT, 0, 3, 1 | (2 << 16) },
+        // Element-wise Add & Mult Double
+        { OP_EWISE_ADD, 1, 13, 11 | (12 << 16) },
+        { OP_EWISE_MULT, 1, 13, 11 | (12 << 16) },
+
+        // Reduce Float & Double
+        { OP_REDUCE, 0, 4, 1 },  // R4 = sum(R1) (Float)
+        { OP_REDUCE, 1, 14, 11 },// R14 = sum(R11) (Double)
+
+        // Analytics opcodes
+        { OP_BRANDES_FORWARD, 0, 5, 0 },  // Root node 0
+        { OP_BRANDES_BACKWARD, 0, 6, 0 },
+        { OP_DELTA_STEP_RELAX, 0, 7, 0 | (1 << 16) },
+        { OP_LOUVAIN_MODULARITY, 0, 8, 0 },
+        { OP_KCORE_DECOMPOSITION, 0, 9, 0 | (1 << 16) },
+        { OP_ISLAND_DETECT, 0, 10, 0 },
+        { OP_SPARSE_MATVEC, 0, 15, 0 | (1 << 16) },
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(gblas_bc.data(), gblas_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpulseVM MC/DC Condition Independence & Boundary Test Suite" << std::endl;
@@ -1800,10 +2007,12 @@ int main() {
     test_mcdc_opcodes_key_mapping_and_attributes();
     test_mcdc_opcodes_filtered_and_advanced_traversals();
     test_mcdc_vm_pass4_deep_decisions();
+    test_mcdc_pass10_deep_decisions();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL MC/DC CONDITION INDEPENDENCE TESTS PASSED SUCCESSFULLY!" << std::endl;
     std::cout << "================================================================" << std::endl;
     return 0;
 }
+
 

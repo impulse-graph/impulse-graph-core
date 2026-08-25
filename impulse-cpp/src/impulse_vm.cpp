@@ -836,10 +836,12 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_inited = true;
     }
 
+    bool fuel_active = (vm_state->query_context != nullptr && vm_state->query_context->fuel_enabled);
+
     #define DISPATCH() \
         do { \
             if (vm_state->pc >= instruction_count) goto op_OUT_OF_BOUNDS; \
-            if (vm_state->query_context && vm_state->query_context->fuel_enabled) { \
+            if (fuel_active) { \
                 if (vm_state->query_context->fuel == 0) goto op_GAS_EXHAUSTED; \
                 vm_state->query_context->fuel--; \
             } \
@@ -4142,7 +4144,9 @@ op_SET_MAX_DOP: {
     }
 
     int effective_dop = std::max(1, std::min(req_dop > 0 ? static_cast<int>(req_dop) : host_ceiling, host_ceiling));
-    vm_state->query_context->max_threads = effective_dop;
+    if (vm_state->query_context) {
+        vm_state->query_context->max_threads = effective_dop;
+    }
     vm_state->registers[dst] = effective_dop;
     vm_state->register_types[dst] = TYPE_INT64;
     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
@@ -4587,6 +4591,7 @@ op_VEC_MATH_UNARY: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
     if (type_tag == 1 || vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
@@ -4628,6 +4633,7 @@ op_VEC_MATH_BINARY: {
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
 
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
     if (type_tag == 1 || vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR) {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
@@ -4675,6 +4681,7 @@ op_VEC_MATH_TERNARY: {
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
 
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
     if (type_tag == 1 || vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR) {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
