@@ -133,6 +133,91 @@ void test_fluent_extended_domain_and_graphblas() {
     std::cout << "[VM Fluent Test] Extended Domain & GraphBLAS Compilation: PASSED\n";
 }
 
+void test_fluent_all_operations_exhaustive() {
+    using namespace impulse::vm;
+    std::cout << "[VM Fluent Test] Testing All Fluent QueryBuilder and QueryResult APIs..." << std::endl;
+
+    QueryBuilder qb;
+    const char* keys[] = {"k1", "k2"};
+    qb.inputSet(0)
+      .loadConstStrPrefix("prefix", 1)
+      .loadKeys(keys, 2, 2)
+      .walkEdgeFiltered(0, 101)
+      .walkEdgePredicate(0, 102)
+      .walkDegree(0)
+      .walkReduceSum(0, 3)
+      .walkCsc(0)
+      .filterNodeStrPrefix("pref")
+      .filterCel("age > 21")
+      .intersectWith(1)
+      .differenceWith(2)
+      .cardinality()
+      .vectorMulAttr(3)
+      .vectorReduceSum()
+      .vectorDiv(4)
+      .l1NormDiff(5)
+      .vectorMatrixMul(2, SEMIRING_PLUS_TIMES)
+      .ewiseMult(3, BINARY_OP_MUL)
+      .reduce(BINARY_OP_ADD)
+      .tcSweepBatch()
+      .brandesForward()
+      .brandesBackward()
+      .deltaStepRelax(4)
+      .randomWalk(0, 10, 123)
+      .scatterGather()
+      .roaringBitmapAnd(2)
+      .islandDetect(3)
+      .sparseMatVec()
+      .louvainModularity()
+      .kcoreDecomposition()
+      .motifMatch3()
+      .graphIsomorphism()
+      .clearReg(1)
+      .loadIndirect(2, 0, 1, 0)
+      .loadInlineArray(3, 0, 4)
+      .initMockGraph(0, 0, 10)
+      .throwErr(99)
+      .assertVal(0, 100, 0)
+      .trap(1)
+      .nop()
+      .jmp(2)
+      .jz(1)
+      .jnz(-1)
+      .collectArray()
+      .mapDenseToKeys()
+      .collectValueMap();
+
+    uint16_t cur_r = qb.currentRegister();
+    qb.setCurrentRegister(cur_r + 1);
+    assert(qb.currentRegister() == cur_r + 1);
+    uint16_t reg = qb.allocateRegister();
+    assert(reg >= 1);
+    assert(!qb.rawInstructions().empty());
+
+    CompiledQuery cq = qb.compile();
+    assert(cq.instructionCount() > 40);
+
+    // Test QueryResult accessors
+    QueryResult qr;
+    qr.status = IMPULSE_VM_OK;
+    qr.raw_value = 0x40490fdb; // ~3.14159f in uint32
+    assert(qr.isOk());
+    assert(qr.asInt() == 0x40490fdb);
+    assert(std::fabs(qr.asFloat() - 3.14159f) < 1e-4);
+
+    double dval = 2.718281828;
+    std::memcpy(&qr.raw_value, &dval, sizeof(double));
+    assert(std::fabs(qr.asDouble() - 2.718281828) < 1e-6);
+
+    assert(!qr.testBitset(nullptr, 0));
+    qr.result_type = TYPE_BITSET_HANDLE;
+    assert(!qr.testBitset(nullptr, 0));
+
+    // Execute with null snapshot
+    QueryResult ex_res = cq.execute(nullptr, 0);
+    (void)ex_res;
+}
+
 int main() {
     std::cout << "=========================================================\n";
     std::cout << "       Impulse VM C++ Fluent Style API Test Suite         \n";
@@ -143,6 +228,7 @@ int main() {
     test_fluent_repeat_loops();
     test_fluent_repeat_until_stable();
     test_fluent_extended_domain_and_graphblas();
+    test_fluent_all_operations_exhaustive();
 
     std::cout << "=========================================================\n";
     std::cout << " ALL VM FLUENT API TESTS PASSED SUCCESSFULLY!            \n";

@@ -192,6 +192,50 @@ void test_index_7_temporal_interval() {
     std::cout << "    Temporal Interval query matched active intervals at T=45. PASSED!" << std::endl;
 }
 
+void test_secondary_indexes_null_and_boundaries() {
+    std::cout << ">>> Testing Secondary Indexes Null Arguments & Boundary Trap Guards..." << std::endl;
+
+    void* out_bytes = nullptr;
+    size_t out_size = 0;
+    size_t out_cnt = 0;
+    uint32_t out_node = 0;
+    uint64_t out_bm = 0;
+
+    // Index free null check
+    impulse_index_free(nullptr);
+
+    // 1. Permutation
+    assert(impulse_index_build_permutation(nullptr, 0, 0x06, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_permutation_range_query(nullptr, 0, 0.0, 1.0, nullptr, nullptr, 0, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 2. Zone Map
+    assert(impulse_index_build_zone_map(nullptr, 0, 0x06, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_zone_map_filter(nullptr, 0, 0.0, 1.0, &out_bm, 1, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 3. Inverted Bitset
+    const uint64_t* out_words = nullptr;
+    assert(impulse_index_build_inverted_bitset(nullptr, 0, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_inverted_bitset_lookup(nullptr, 0, "key", &out_words, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 4. MPH
+    assert(impulse_index_build_minimal_perfect_hash(nullptr, 0, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_minimal_perfect_hash_lookup(nullptr, 0, "key", &out_node) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 5. Trigram
+    assert(impulse_index_build_trigram(nullptr, 0, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_trigram_search(nullptr, 0, "tri", &out_bm, 1, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 6. Domain Split
+    assert(impulse_index_build_domain_split(nullptr, 0, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_domain_split_lookup(nullptr, 0, "gmail.com", &out_words, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // 7. Temporal Interval
+    assert(impulse_index_build_temporal_interval(nullptr, 0, 0x0D, &out_bytes, &out_size) == IMPULSE_ERR_INVALID_ARGUMENT);
+    assert(impulse_index_temporal_interval_query(nullptr, 0, 100, nullptr, 0, &out_cnt) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    std::cout << "    All Secondary Index null & boundary checks PASSED!" << std::endl;
+}
+
 int main() {
     std::cout << "\n=========================================================================" << std::endl;
     std::cout << "  IMPULSE GRAPH ENGINE - COMPLETE 7 SECONDARY INDEXES UNIT TEST SUITE    " << std::endl;
@@ -204,6 +248,7 @@ int main() {
     test_index_5_trigram_3gram();
     test_index_6_domain_split();
     test_index_7_temporal_interval();
+    test_secondary_indexes_null_and_boundaries();
 
     std::cout << "=========================================================================" << std::endl;
     std::cout << "  ALL 7 SECONDARY INDEXES PASSED 100% CLEANLY!                           " << std::endl;
