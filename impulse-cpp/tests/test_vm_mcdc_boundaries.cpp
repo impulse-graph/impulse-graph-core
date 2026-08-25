@@ -1023,6 +1023,578 @@ void test_mcdc_traversal_bounds_and_node_counts() {
     impulse_vm_context_destroy(ctx);
 }
 
+void test_mcdc_opcodes_roaring_and_boolean() {
+    std::cout << "[MC/DC] Testing Roaring Bitmaps & Boolean SIMD Masks..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    int h1 = impulse_vm_context_acquire_bitset(ctx);
+    int h2 = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_add(ctx, h1, 10);
+    impulse_vm_context_bitset_add(ctx, h1, 20);
+    impulse_vm_context_bitset_add(ctx, h2, 20);
+    impulse_vm_context_bitset_add(ctx, h2, 30);
+
+    // 1. OP_ROARING_BITMAP_AND across {T,T}, {T,F}, {F,T}
+    std::vector<impulse_instruction_t> roaring_bc = {
+        // Setup registers: R1 = h1 (bitset), R2 = h2 (bitset), R3 = 99 (INT64)
+        { OP_LOAD_CONST_INT, 0, 3, 99 },
+        // {T, T}: both are bitsets -> R10 = R1 & R2 ({20})
+        { OP_ROARING_BITMAP_AND, 0, 10, static_cast<uint32_t>(h1 | (h2 << 16)) },
+        // {T, F}: src1 is bitset, src2 is INT64
+        { OP_ROARING_BITMAP_AND, 0, 11, static_cast<uint32_t>(h1 | (3 << 16)) },
+        // {F, T}: src1 is INT64, src2 is bitset
+        { OP_ROARING_BITMAP_AND, 0, 12, static_cast<uint32_t>(3 | (h2 << 16)) },
+
+        // 2. OP_ROARING_BITMAP_OR across {T,T}, {T,F}, {F,T}
+        { OP_ROARING_BITMAP_OR, 0, 13, static_cast<uint32_t>(h1 | (h2 << 16)) },
+        { OP_ROARING_BITMAP_OR, 0, 14, static_cast<uint32_t>(h1 | (3 << 16)) },
+        { OP_ROARING_BITMAP_OR, 0, 15, static_cast<uint32_t>(3 | (h2 << 16)) },
+
+        // 3. OP_ROARING_BITMAP_AND_NOT across {T,T}, {T,F}, {F,T}
+        { OP_ROARING_BITMAP_AND_NOT, 0, 16, static_cast<uint32_t>(h1 | (h2 << 16)) },
+        { OP_ROARING_BITMAP_AND_NOT, 0, 17, static_cast<uint32_t>(h1 | (3 << 16)) },
+        { OP_ROARING_BITMAP_AND_NOT, 0, 18, static_cast<uint32_t>(3 | (h2 << 16)) },
+
+        // 4. OP_MASK_AND, OP_MASK_OR, OP_MASK_NOT
+        { OP_MASK_AND, 0, 20, static_cast<uint32_t>(h1 | (h2 << 8)) },
+        { OP_MASK_OR, 0, 21, static_cast<uint32_t>(h1 | (h2 << 8)) },
+        { OP_MASK_NOT, 0, 22, static_cast<uint32_t>(h1) },
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.registers[1] = static_cast<uint64_t>(h1);
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[2] = static_cast<uint64_t>(h2);
+    state.register_types[2] = TYPE_BITSET_HANDLE;
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(roaring_bc.data(), roaring_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 5. OP_VEC_BLEND with float and double vectors
+    int h_f1 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f2 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_d1 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d2 = impulse_vm_context_acquire_double_vector(ctx);
+
+    impulse_vm_context_float_vector_set(ctx, h_f1, 0, 10.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f2, 0, 20.0f);
+    impulse_vm_context_double_vector_set(ctx, h_d1, 0, 100.0);
+    impulse_vm_context_double_vector_set(ctx, h_d2, 0, 200.0);
+
+    std::vector<impulse_instruction_t> blend_bc = {
+        // Float blend: R10 = mask ? R1 : R2
+        { OP_VEC_BLEND, 0, 10, static_cast<uint32_t>(1 | (h_f1 << 8) | (h_f2 << 16)) },
+        // Double blend: R11 = mask ? R3 : R4
+        { OP_VEC_BLEND, 0, 11, static_cast<uint32_t>(1 | (3 << 8) | (4 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h1); // mask
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[h_f1] = static_cast<uint64_t>(h_f1);
+    state.register_types[h_f1] = TYPE_FLOAT_VECTOR;
+    state.registers[h_f2] = static_cast<uint64_t>(h_f2);
+    state.register_types[h_f2] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = static_cast<uint64_t>(h_d1);
+    state.register_types[3] = TYPE_DOUBLE_VECTOR;
+    state.registers[4] = static_cast<uint64_t>(h_d2);
+    state.register_types[4] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    st = impulse_vm_execute(blend_bc.data(), blend_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
+void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
+    std::cout << "[MC/DC] Testing Vector Math Unary, Binary, Ternary & Between..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    int h_f1 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f2 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f3 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_d1 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d2 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d3 = impulse_vm_context_acquire_double_vector(ctx);
+
+    impulse_vm_context_float_vector_set(ctx, h_f1, 0, 4.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f2, 0, 2.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f3, 0, 1.0f);
+
+    impulse_vm_context_double_vector_set(ctx, h_d1, 0, 9.0);
+    impulse_vm_context_double_vector_set(ctx, h_d2, 0, 3.0);
+    impulse_vm_context_double_vector_set(ctx, h_d3, 0, 1.5);
+
+    // 1. OP_VEC_MATH_UNARY: float and double, type_tag == 0 vs 1, dst allocated vs unallocated
+    std::vector<impulse_instruction_t> unary_bc = {
+        // Float unary (type_tag=0, dst unallocated)
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) }, // sqrt(R1)
+        // Float unary (type_tag=0, dst already allocated as FLOAT_VECTOR)
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) },
+        // Double unary (type_tag=1, dst unallocated)
+        { OP_VEC_MATH_UNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8)) }, // sqrt(R3)
+        // Double unary (type_tag=0, src is TYPE_DOUBLE_VECTOR)
+        { OP_VEC_MATH_UNARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h_f1);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = static_cast<uint64_t>(h_d1);
+    state.register_types[3] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(unary_bc.data(), unary_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 2. OP_VEC_MATH_BINARY: float and double
+    std::vector<impulse_instruction_t> binary_bc = {
+        // Float binary (func=0 add, type_tag=0)
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        // Float binary (dst already allocated)
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        // Double binary (func=0 add, type_tag=1)
+        { OP_VEC_MATH_BINARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        // Double binary (func=0 add, type_tag=0, src is TYPE_DOUBLE_VECTOR)
+        { OP_VEC_MATH_BINARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[2] = static_cast<uint64_t>(h_f2);
+    state.register_types[2] = TYPE_FLOAT_VECTOR;
+    state.registers[4] = static_cast<uint64_t>(h_d2);
+    state.register_types[4] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    st = impulse_vm_execute(binary_bc.data(), binary_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 3. OP_VEC_MATH_TERNARY: float and double
+    std::vector<impulse_instruction_t> ternary_bc = {
+        // Float ternary (fma: R1 * R2 + R5)
+        { OP_VEC_MATH_TERNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16) | (5 << 24)) },
+        // Double ternary (fma: R3 * R4 + R6)
+        { OP_VEC_MATH_TERNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16) | (6 << 24)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[5] = static_cast<uint64_t>(h_f3);
+    state.register_types[5] = TYPE_FLOAT_VECTOR;
+    state.registers[6] = static_cast<uint64_t>(h_d3);
+    state.register_types[6] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    st = impulse_vm_execute(ternary_bc.data(), ternary_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 4. OP_VEC_CMP_BETWEEN: float and double
+    // Elements: 0: 4.0 (in range [1.0, 5.0]), 1: 0.5 (< min), 2: 10.0 (> max)
+    impulse_vm_context_float_vector_set(ctx, h_f1, 0, 4.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f1, 1, 0.5f);
+    impulse_vm_context_float_vector_set(ctx, h_f1, 2, 10.0f);
+
+    impulse_vm_context_double_vector_set(ctx, h_d1, 0, 4.0);
+    impulse_vm_context_double_vector_set(ctx, h_d1, 1, 0.5);
+    impulse_vm_context_double_vector_set(ctx, h_d1, 2, 10.0);
+
+    std::vector<impulse_instruction_t> between_bc = {
+        // Float between [R7, R8] where R7 = 1.0f, R8 = 5.0f
+        { OP_LOAD_CONST_FLOAT, 0, 7, 0x3f800000 }, // 1.0f
+        { OP_LOAD_CONST_FLOAT, 0, 8, 0x40a00000 }, // 5.0f
+        { OP_VEC_CMP_BETWEEN, 0, 20, static_cast<uint32_t>(1 | (7 << 8) | (8 << 16)) },
+
+        // Double between [R7, R8]
+        { OP_VEC_CMP_BETWEEN, 0, 21, static_cast<uint32_t>(3 | (7 << 8) | (8 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h_f1);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = static_cast<uint64_t>(h_d1);
+    state.register_types[3] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    st = impulse_vm_execute(between_bc.data(), between_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
+void test_mcdc_opcodes_assert_finite_exhaustive() {
+    std::cout << "[MC/DC] Testing Exhaustive OP_ASSERT_FINITE (Floats, Doubles, Vectors & NaNs)..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // 1. TYPE_FLOAT: Finite vs NaN vs +Inf vs -Inf
+    float f_finite = 42.0f;
+    float f_nan = std::numeric_limits<float>::quiet_NaN();
+    float f_inf = std::numeric_limits<float>::infinity();
+
+    std::vector<impulse_instruction_t> assert_f_bc = {
+        { OP_ASSERT_FINITE, 0, 1, 0 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    // Finite float -> OK
+    state.registers[1] = *reinterpret_cast<uint32_t*>(&f_finite);
+    state.register_types[1] = TYPE_FLOAT;
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // NaN float -> ERR_FLOATING_POINT
+    state.registers[1] = *reinterpret_cast<uint32_t*>(&f_nan);
+    state.register_types[1] = TYPE_FLOAT;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // Inf float -> ERR_FLOATING_POINT
+    state.registers[1] = *reinterpret_cast<uint32_t*>(&f_inf);
+    state.register_types[1] = TYPE_FLOAT;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // 2. TYPE_DOUBLE: Finite vs NaN vs Inf
+    double d_finite = 42.0;
+    double d_nan = std::numeric_limits<double>::quiet_NaN();
+    double d_inf = std::numeric_limits<double>::infinity();
+
+    // Finite double -> OK
+    state.registers[1] = *reinterpret_cast<uint64_t*>(&d_finite);
+    state.register_types[1] = TYPE_DOUBLE;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // NaN double -> ERR_FLOATING_POINT
+    state.registers[1] = *reinterpret_cast<uint64_t*>(&d_nan);
+    state.register_types[1] = TYPE_DOUBLE;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // Inf double -> ERR_FLOATING_POINT
+    state.registers[1] = *reinterpret_cast<uint64_t*>(&d_inf);
+    state.register_types[1] = TYPE_DOUBLE;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // 3. TYPE_FLOAT_VECTOR: Finite vs NaN vs Inf vs Bad Handle
+    int h_f = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_f, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f, 1, 2.0f);
+
+    state.registers[1] = static_cast<uint64_t>(h_f);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // Float vector with NaN at index 1
+    impulse_vm_context_float_vector_set(ctx, h_f, 1, f_nan);
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+    assert(state.registers[0] == 1); // error index
+
+    // Float vector with Inf at index 0
+    impulse_vm_context_float_vector_set(ctx, h_f, 0, f_inf);
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // Float vector bad handle (>= 8)
+    state.registers[1] = 99;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    // 4. TYPE_DOUBLE_VECTOR: Finite vs NaN vs Inf vs Bad Handle
+    int h_d = impulse_vm_context_acquire_double_vector(ctx);
+    impulse_vm_context_double_vector_set(ctx, h_d, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, h_d, 1, 2.0);
+
+    state.registers[1] = static_cast<uint64_t>(h_d);
+    state.register_types[1] = TYPE_DOUBLE_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // Double vector with NaN at index 1
+    impulse_vm_context_double_vector_set(ctx, h_d, 1, d_nan);
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_FLOATING_POINT);
+
+    // Double vector bad handle (>= 8)
+    state.registers[1] = 99;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_f_bc.data(), assert_f_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    impulse_vm_context_destroy(ctx);
+}
+
+void test_mcdc_opcodes_graph_traversal_specializations() {
+    std::cout << "[MC/DC] Testing Traversal Specializations (CSR_DEGREE, HAS_*, STABLE, ADAPTIVE)..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // Slot 0: valid CSR and CSC (node_count = 4)
+    uint32_t inline_graph[] = {
+        0, 1, 2, 3, 4, // offsets
+        1, 2, 3, 0     // targets
+    };
+    impulse_vm_context_bind_inline_data(ctx, inline_graph, sizeof(inline_graph));
+
+    // Setup slot 0 with CSR and CSC
+    std::vector<impulse_instruction_t> setup_bc = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 0 | (4 << 16) },
+        // 1. OP_HAS_CSR, OP_HAS_CSC, OP_HAS_COO, OP_HAS_KEY_CATALOG
+        { OP_HAS_CSR, 0, 10, 0 },  // R10 = 1 (CSR present on rel 0)
+        { OP_HAS_CSC, 0, 11, 0 },  // R11 = 1 (CSC present on rel 0)
+        { OP_HAS_COO, 0, 12, 0 },  // R12 = 1 (COO present on rel 0)
+        { OP_HAS_KEY_CATALOG, 0, 13, 0 }, // R13 = 1
+        // On invalid relation 99
+        { OP_HAS_CSR, 0, 14, 99 }, // R14 = 0 (ZF set)
+        { OP_HAS_CSC, 0, 15, 99 }, // R15 = 0 (ZF set)
+        { OP_HAS_COO, 0, 16, 99 }, // R16 = 0 (ZF set)
+
+        // 2. OP_CSR_DEGREE
+        { OP_LOAD_CONST_INT, 0, 1, 0 },  // R1 = 0 (in bounds)
+        { OP_CSR_DEGREE, 0, 20, 1 | (0 << 16) }, // degree of node 0 -> R20 = 1
+        { OP_LOAD_CONST_INT, 0, 2, 99 }, // R2 = 99 (out of bounds)
+        { OP_CSR_DEGREE, 0, 21, 2 | (0 << 16) }, // degree of node 99 -> R21 = 0 (ZF set)
+
+        // 3. OP_CSR_WALK_2HOP (src is implicitly R0, payload is rel1 | (rel2 << 16))
+        { OP_LOAD_CONST_INT, 0, 0, 0 },  // R0 = 0 (scalar source)
+        { OP_CSR_WALK_2HOP, 0, 25, 0 | (0 << 16) }, // dst=R25, rel1=0, rel2=0
+        // Now R25 is a bitset handle. Set R0 = R25 for bitset source 2-hop:
+        { OP_MOV, 0, 0, 25 },
+        { OP_CSR_WALK_2HOP, 0, 26, 0 | (0 << 16) }, // dst=R26, bitset source
+
+        // 4. OP_STABLE_CHECK
+        // Equal bitsets -> ST flag set
+        { OP_STABLE_CHECK, 0, 25, 25 },
+        // Equal scalars
+        { OP_STABLE_CHECK, 0, 1, 1 },
+        // Unequal scalars
+        { OP_STABLE_CHECK, 0, 1, 2 },
+
+        // 5. OP_ADAPTIVE_WALK
+        { OP_ADAPTIVE_WALK, 0, 27, 1 | (0 << 16) },  // scalar source R1
+        { OP_ADAPTIVE_WALK, 0, 28, 25 | (0 << 16) }, // bitset source R25
+
+        // 6. OP_ISLAND_DETECT
+        { OP_ISLAND_DETECT, 0, 30, static_cast<uint32_t>(1 | (1 << 8) | (0 << 16)) }, // same_set
+        { OP_ISLAND_DETECT, 0, 31, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) }, // different sets
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(setup_bc.data(), setup_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+    assert(state.registers[10] == 1);
+    assert(state.registers[14] == 0);
+    assert(state.registers[20] == 1);
+    assert(state.registers[21] == 0);
+
+    impulse_vm_context_destroy(ctx);
+}
+
+void test_mcdc_opcodes_key_mapping_and_attributes() {
+    std::cout << "[MC/DC] Testing Key Mapping & Attribute Catalogs (MAP_KEYS, DENSE_TO_KEYS, VALUE_MAP)..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // 1. OP_LOAD_INLINE_ARRAY
+    uint32_t inline_arr[] = { 111, 222, 333, 444 };
+    impulse_vm_context_bind_inline_data(ctx, inline_arr, sizeof(inline_arr));
+
+    std::vector<impulse_instruction_t> inline_bc = {
+        { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) }, // load inline array to R1
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(inline_bc.data(), inline_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // Null inline data -> ERR_NULL_SNAPSHOT
+    impulse_vm_context_bind_inline_data(ctx, nullptr, 0);
+    state.pc = 0;
+    st = impulse_vm_execute(inline_bc.data(), inline_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_NULL_SNAPSHOT);
+
+    // Restore inline data
+    impulse_vm_context_bind_inline_data(ctx, inline_arr, sizeof(inline_arr));
+
+    // 2. OP_MAP_KEYS_TO_DENSE without attributes (fallback to single node 0)
+    std::vector<impulse_instruction_t> map_keys_bc = {
+        { OP_MAP_KEYS_TO_DENSE, 0, 5, 0 },
+        { OP_MAP_DENSE_TO_KEYS, 0, 6, 5 | (0 << 8) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    st = impulse_vm_execute(map_keys_bc.data(), map_keys_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 3. OP_COLLECT_VALUE_MAP
+    int h_val_f = impulse_vm_context_acquire_float_vector(ctx);
+    int h_val_d = impulse_vm_context_acquire_double_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_val_f, 0, 3.14f);
+    impulse_vm_context_double_vector_set(ctx, h_val_d, 0, 2.718);
+
+    std::vector<impulse_instruction_t> val_map_bc = {
+        // Collect with float vector values
+        { OP_COLLECT_VALUE_MAP, 0, 10, static_cast<uint32_t>(5 | (1 << 8) | (0 << 16)) },
+        // Collect with double vector values
+        { OP_COLLECT_VALUE_MAP, 0, 11, static_cast<uint32_t>(5 | (2 << 8) | (0 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h_val_f);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[2] = static_cast<uint64_t>(h_val_d);
+    state.register_types[2] = TYPE_DOUBLE_VECTOR;
+
+    state.pc = 0;
+    st = impulse_vm_execute(val_map_bc.data(), val_map_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
+void test_mcdc_opcodes_filtered_and_advanced_traversals() {
+    std::cout << "[MC/DC] Testing Filtered CSR, CSC Bottom-Up, Direct Store & Reductions..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    uint32_t inline_graph[] = {
+        0, 1, 2, 3, 4, // offsets
+        1, 2, 3, 0     // targets
+    };
+    impulse_vm_context_bind_inline_data(ctx, inline_graph, sizeof(inline_graph));
+
+    int h_f = impulse_vm_context_acquire_float_vector(ctx);
+    int h_d = impulse_vm_context_acquire_double_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_f, 0, 10.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f, 1, 5.0f);
+    impulse_vm_context_double_vector_set(ctx, h_d, 0, 100.0);
+    impulse_vm_context_double_vector_set(ctx, h_d, 1, 50.0);
+
+    int h_src = impulse_vm_context_acquire_bitset(ctx);
+    int h_filter = impulse_vm_context_acquire_bitset(ctx);
+    int h_unv = impulse_vm_context_acquire_bitset(ctx);
+
+    impulse_vm_context_bitset_add(ctx, h_src, 0);
+    impulse_vm_context_bitset_add(ctx, h_filter, 1);
+    impulse_vm_context_bitset_add(ctx, h_filter, 2);
+    impulse_vm_context_bitset_add(ctx, h_unv, 1);
+    impulse_vm_context_bitset_add(ctx, h_unv, 2);
+
+    std::vector<impulse_instruction_t> adv_bc = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 0 | (4 << 16) },
+
+        // 1. OP_CSR_WALK_FILTERED: bitset source & scalar source
+        { OP_CSR_WALK_FILTERED, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) }, // bitset source R1, filter R2
+        { OP_CSR_WALK_FILTERED, 0, 11, static_cast<uint32_t>(3 | (2 << 8) | (0 << 16)) }, // scalar source R3, filter R2
+
+        // 2. OP_CSR_WALK_PREDICATE: bitset source & scalar source
+        { OP_CSR_WALK_PREDICATE, 0, 12, static_cast<uint32_t>(1 | (0 << 8) | (0 << 16)) }, // bitset source
+        { OP_CSR_WALK_PREDICATE, 0, 13, static_cast<uint32_t>(3 | (0 << 8) | (0 << 16)) }, // scalar source
+
+        // 3. OP_NODE_FILTER: bitset source & scalar source
+        { OP_NODE_FILTER, 0, 14, static_cast<uint32_t>(1 | (4 << 8) | (0 << 16)) }, // bitset source
+        { OP_NODE_FILTER, 0, 15, static_cast<uint32_t>(3 | (4 << 8) | (0 << 16)) }, // scalar source
+
+        // 4. OP_NODE_FILTER_STR_PREFIX: bitset source & scalar source & null prefix
+        { OP_NODE_FILTER_STR_PREFIX, 0, 16, static_cast<uint32_t>(1 | (5 << 8) | (0 << 16)) }, // non-null prefix
+        { OP_NODE_FILTER_STR_PREFIX, 0, 17, static_cast<uint32_t>(1 | (6 << 8) | (0 << 16)) }, // null prefix
+
+        // 5. OP_CSC_WALK:
+        // Top-down CSC with bitset source (unv == 0)
+        { OP_CSC_WALK, 0, 18, static_cast<uint32_t>(1 | (0 << 16)) },
+        // Top-down CSC with scalar source
+        { OP_CSC_WALK, 0, 19, static_cast<uint32_t>(3 | (0 << 16)) },
+        // Bottom-up CSC with candidate unv bitset (unv = R7)
+        { OP_CSC_WALK, 0, 20, static_cast<uint32_t>(1 | (7 << 16) | (0 << 24)) },
+        // CSC with dst == src
+        { OP_CSC_WALK, 0, 1, static_cast<uint32_t>(1 | (0 << 16)) },
+
+        // 6. Direct Store Opcodes
+        { OP_CSR_WALK_DIRECT_STORE, 0, 21, static_cast<uint32_t>(3 | (0 << 16)) },
+        { OP_CSR_WALK_DENSE_STREAM, 0, 22, static_cast<uint32_t>(3 | (0 << 16)) },
+        { OP_CSC_WALK_DIRECT_STORE, 0, 23, static_cast<uint32_t>(3 | (0 << 16)) },
+        { OP_COO_WALK_DIRECT_STORE, 0, 24, static_cast<uint32_t>(3 | (0 << 16)) },
+        { OP_DENSE_WALK_DIRECT_STORE, 0, 25, static_cast<uint32_t>(3 | (0 << 16)) },
+
+        // 7. COO Filtered and Reduced
+        { OP_COO_WALK_FILTERED, 0, 26, static_cast<uint32_t>(3 | (2 << 8) | (0 << 16)) },
+        { OP_COO_WALK_REDUCE, 0, 27, static_cast<uint32_t>(3 | (8 << 8) | (0 << 16)) }, // float vec R8
+
+        // 8. OP_CSR_WALK_REDUCE: min (0) and sum (1) across float and double vectors
+        { OP_CSR_WALK_REDUCE, 0, 28, static_cast<uint32_t>(1 | (8 << 8) | (0 << 16)) }, // float vec R8, min
+        { OP_CSR_WALK_REDUCE, 0, 29, static_cast<uint32_t>(1 | (9 << 8) | (0 << 16)) }, // double vec R9, min
+        { OP_CSR_WALK_REDUCE_SUM, 0, 30, static_cast<uint32_t>(1 | (8 << 8) | (0 << 16)) },
+
+        // 9. OP_COLLECT_ARRAY across all 4 register types
+        { OP_COLLECT_ARRAY, 0, 31, 1 },  // src = R1 (TYPE_BITSET_HANDLE)
+        { OP_COLLECT_ARRAY, 0, 32, 3 },  // src = R3 (TYPE_NODE_ID)
+        { OP_COLLECT_ARRAY, 0, 33, 4 },  // src = R4 (TYPE_INT64)
+        { OP_COLLECT_ARRAY, 0, 34, 35 }, // src = R35 (TYPE_NULL -> empty)
+
+        // 10. GraphBLAS Algorithms: OP_CC_AFFOREST, OP_MXV, OP_VXM, OP_REDUCE
+        { OP_CC_AFFOREST, 0, 36, 0 },
+        { OP_MXV, 0, 37, static_cast<uint32_t>(0 | (8 << 16)) }, // rel 0, vec R8
+        { OP_VXM, 0, 38, static_cast<uint32_t>(0 | (8 << 16)) },
+        { OP_REDUCE, 0, 39, 8 }, // reduce vector R8
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    const char* sample_prefix = "mock";
+    state.registers[1] = static_cast<uint64_t>(h_src);
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[2] = static_cast<uint64_t>(h_filter);
+    state.register_types[2] = TYPE_BITSET_HANDLE;
+    state.registers[3] = 0; // node ID 0
+    state.register_types[3] = TYPE_NODE_ID;
+    state.registers[4] = 42;
+    state.register_types[4] = TYPE_INT64;
+    state.registers[5] = reinterpret_cast<uint64_t>(sample_prefix);
+    state.register_types[5] = TYPE_INT64;
+    state.registers[6] = 0; // null prefix
+    state.register_types[6] = TYPE_INT64;
+    state.registers[7] = static_cast<uint64_t>(h_unv);
+    state.register_types[7] = TYPE_BITSET_HANDLE;
+    state.registers[8] = static_cast<uint64_t>(h_f);
+    state.register_types[8] = TYPE_FLOAT_VECTOR;
+    state.registers[9] = static_cast<uint64_t>(h_d);
+    state.register_types[9] = TYPE_DOUBLE_VECTOR;
+    state.register_types[35] = TYPE_NULL;
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(adv_bc.data(), adv_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpulseVM MC/DC Condition Independence & Boundary Test Suite" << std::endl;
@@ -1040,6 +1612,12 @@ int main() {
     test_mcdc_null_context_scalar_stream();
     test_mcdc_set_ops_type_tags_exhaustive();
     test_mcdc_traversal_bounds_and_node_counts();
+    test_mcdc_opcodes_roaring_and_boolean();
+    test_mcdc_opcodes_vector_math_unary_binary_ternary();
+    test_mcdc_opcodes_assert_finite_exhaustive();
+    test_mcdc_opcodes_graph_traversal_specializations();
+    test_mcdc_opcodes_key_mapping_and_attributes();
+    test_mcdc_opcodes_filtered_and_advanced_traversals();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL MC/DC CONDITION INDEPENDENCE TESTS PASSED SUCCESSFULLY!" << std::endl;
