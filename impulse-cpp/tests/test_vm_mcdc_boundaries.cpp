@@ -1595,6 +1595,187 @@ void test_mcdc_opcodes_filtered_and_advanced_traversals() {
     impulse_vm_context_destroy(ctx);
 }
 
+void test_mcdc_vm_pass4_deep_decisions() {
+    std::cout << "[MC/DC] Testing Pass 4 Deep Decisions (Vector Div, Set Ops, Adaptive Walk, 2Hop)..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // 1. Vector Div permutations: {T,F}, {F,T}, {T,T}, {F,F}
+    int h_f1 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_f2 = impulse_vm_context_acquire_float_vector(ctx);
+    int h_d1 = impulse_vm_context_acquire_double_vector(ctx);
+    int h_d2 = impulse_vm_context_acquire_double_vector(ctx);
+
+    impulse_vm_context_float_vector_set(ctx, h_f1, 0, 10.0f);
+    impulse_vm_context_float_vector_set(ctx, h_f2, 0, 2.0f);
+    impulse_vm_context_double_vector_set(ctx, h_d1, 0, 100.0);
+    impulse_vm_context_double_vector_set(ctx, h_d2, 0, 5.0);
+
+    std::vector<impulse_instruction_t> div_bc = {
+        // Double / Float {T, F}
+        { OP_VECTOR_DIV, 0, 10, static_cast<uint32_t>(1 | (2 << 16)) }, // dst=R10, num=R1(d), denom=R2(f)
+        // Float / Double {F, T}
+        { OP_VECTOR_DIV, 0, 11, static_cast<uint32_t>(2 | (1 << 16)) }, // dst=R11, num=R2(f), denom=R1(d)
+        // Double / Double {T, T}
+        { OP_VECTOR_DIV, 0, 12, static_cast<uint32_t>(1 | (3 << 16)) }, // dst=R12, num=R1(d), denom=R3(d)
+        // Float / Float {F, F}
+        { OP_VECTOR_DIV, 0, 13, static_cast<uint32_t>(2 | (4 << 16)) }, // dst=R13, num=R2(f), denom=R4(f)
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.registers[1] = static_cast<uint64_t>(h_d1);
+    state.register_types[1] = TYPE_DOUBLE_VECTOR;
+    state.registers[2] = static_cast<uint64_t>(h_f1);
+    state.register_types[2] = TYPE_FLOAT_VECTOR;
+    state.registers[3] = static_cast<uint64_t>(h_d2);
+    state.register_types[3] = TYPE_DOUBLE_VECTOR;
+    state.registers[4] = static_cast<uint64_t>(h_f2);
+    state.register_types[4] = TYPE_FLOAT_VECTOR;
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(div_bc.data(), div_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 2. ASSERT_FINITE Condition Independence (C1: null context, C2: h < 0, C3: h >= 8, C4: unallocated)
+    std::vector<impulse_instruction_t> assert_bc = {
+        { OP_ASSERT_FINITE, 0, 1, 0 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    // Float vector tests
+    state.registers[1] = static_cast<uint64_t>(-1); // h < 0
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    state.registers[1] = static_cast<uint64_t>(10); // h >= 8
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    // Double vector tests
+    state.registers[1] = static_cast<uint64_t>(-1); // h < 0
+    state.register_types[1] = TYPE_DOUBLE_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    state.registers[1] = static_cast<uint64_t>(10); // h >= 8
+    state.register_types[1] = TYPE_DOUBLE_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    // Null query context
+    state.query_context = nullptr;
+    state.registers[1] = static_cast<uint64_t>(0);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    state.registers[1] = static_cast<uint64_t>(0);
+    state.register_types[1] = TYPE_DOUBLE_VECTOR;
+    state.pc = 0;
+    st = impulse_vm_execute(assert_bc.data(), assert_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    state.query_context = ctx;
+
+    // 3. OP_CSR_WALK_2HOP Bounds Checks (rel1 >= size vs rel2 >= size)
+    std::vector<impulse_instruction_t> hop_bc = {
+        { OP_CSR_WALK_2HOP, 0, 5, static_cast<uint32_t>(99 | (0 << 16)) }, // rel1 >= size
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    st = impulse_vm_execute(hop_bc.data(), hop_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    std::vector<impulse_instruction_t> hop_bc2 = {
+        { OP_CSR_WALK_2HOP, 0, 5, static_cast<uint32_t>(0 | (99 << 16)) }, // rel2 >= size
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    st = impulse_vm_execute(hop_bc2.data(), hop_bc2.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+    // 4. OP_ADAPTIVE_WALK Condition Independence
+    // Test est_edges > total_edges / 20 and frontier_size > total_nodes / 20
+    uint32_t inline_graph[] = {
+        0, 1, 2, 3, 4,
+        1, 2, 3, 0
+    };
+    impulse_vm_context_bind_inline_data(ctx, inline_graph, sizeof(inline_graph));
+
+    int h_frontier = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_add(ctx, h_frontier, 0);
+    impulse_vm_context_bitset_add(ctx, h_frontier, 1);
+
+    std::vector<impulse_instruction_t> adapt_bc = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 0 | (4 << 16) },
+        // Adaptive walk with bitset frontier
+        { OP_ADAPTIVE_WALK, 0, 10, static_cast<uint32_t>(1 | (0 << 16)) },
+        // Adaptive walk with scalar source
+        { OP_ADAPTIVE_WALK, 0, 11, static_cast<uint32_t>(2 | (0 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h_frontier);
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[2] = 0;
+    state.register_types[2] = TYPE_NODE_ID;
+
+    state.pc = 0;
+    st = impulse_vm_execute(adapt_bc.data(), adapt_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 5. OP_FIXPOINT_KLEENE_STAR with Node ID and BitSet source
+    std::vector<impulse_instruction_t> fixpoint_bc = {
+        { OP_INIT_MOCK_GRAPH, 0, 0, 0 | (4 << 16) },
+        // Fixpoint starting from node ID 0
+        { OP_FIXPOINT_KLEENE_STAR, 0, 12, static_cast<uint32_t>(2 | (0 << 16)) },
+        // Fixpoint starting from bitset frontier
+        { OP_FIXPOINT_KLEENE_STAR, 0, 13, static_cast<uint32_t>(1 | (0 << 16)) },
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    st = impulse_vm_execute(fixpoint_bc.data(), fixpoint_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 6. Set Operations (dst == src2, keeps = true vs keeps = false)
+    int h_bs1 = impulse_vm_context_acquire_bitset(ctx);
+    int h_bs2 = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_add(ctx, h_bs1, 1);
+    impulse_vm_context_bitset_add(ctx, h_bs2, 1);
+    impulse_vm_context_bitset_add(ctx, h_bs2, 2);
+
+    std::vector<impulse_instruction_t> set_deep_bc = {
+        // OP_SET_INTERSECT: dst = src2 (in-place intersect)
+        { OP_SET_INTERSECT, 0, 2, static_cast<uint32_t>(1 | (2 << 16)) }, // dst=R2, src1=R1, src2=R2
+        // OP_SET_DIFFERENCE: dst = src2 (in-place difference)
+        { OP_SET_DIFFERENCE, 0, 2, static_cast<uint32_t>(1 | (2 << 16)) }, // dst=R2, src1=R1, src2=R2
+        // Distinct dst with scalar node ID
+        { OP_SET_INTERSECT, 0, 14, static_cast<uint32_t>(1 | (3 << 16)) }, // dst=R14, src1=R1, src2=R3(node)
+        { OP_SET_DIFFERENCE, 0, 15, static_cast<uint32_t>(1 | (3 << 16)) }, // dst=R15, src1=R1, src2=R3(node)
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.registers[1] = static_cast<uint64_t>(h_bs1);
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[2] = static_cast<uint64_t>(h_bs2);
+    state.register_types[2] = TYPE_BITSET_HANDLE;
+    state.registers[3] = 1;
+    state.register_types[3] = TYPE_NODE_ID;
+
+    state.pc = 0;
+    st = impulse_vm_execute(set_deep_bc.data(), set_deep_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpulseVM MC/DC Condition Independence & Boundary Test Suite" << std::endl;
@@ -1618,6 +1799,7 @@ int main() {
     test_mcdc_opcodes_graph_traversal_specializations();
     test_mcdc_opcodes_key_mapping_and_attributes();
     test_mcdc_opcodes_filtered_and_advanced_traversals();
+    test_mcdc_vm_pass4_deep_decisions();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL MC/DC CONDITION INDEPENDENCE TESTS PASSED SUCCESSFULLY!" << std::endl;
