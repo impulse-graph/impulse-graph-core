@@ -65,8 +65,10 @@ xcrun llvm-cov report \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
+    "${CPP_DIR}/include/impulse_math_ops.h" \
     --show-mcdc-summary
 
 echo "================================================================"
@@ -78,8 +80,10 @@ xcrun llvm-cov show \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
+    "${CPP_DIR}/include/impulse_math_ops.h" \
     --show-mcdc \
     --show-mcdc-summary \
     --show-branches=count > "${REPORT_DIR}/mcdc_report.txt"
@@ -90,8 +94,10 @@ xcrun llvm-cov show \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
+    "${CPP_DIR}/include/impulse_math_ops.h" \
     --show-mcdc \
     --show-branches=count \
     --format=html \
