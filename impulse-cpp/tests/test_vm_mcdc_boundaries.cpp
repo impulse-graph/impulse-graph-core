@@ -1983,6 +1983,158 @@ void test_mcdc_pass10_deep_decisions() {
     impulse_vm_context_destroy(ctx);
 }
 
+void test_mcdc_pass11_exhaustive_vm_matrix() {
+    std::cout << "[MC/DC] Testing Pass 11 Exhaustive VM Matrix (Adaptive CSR/CSC, Parallelism, Attributes)..." << std::endl;
+
+    // 1. Exhaustive Context Vector / String / Value Map Handle & Index Combinations
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    assert(ctx != nullptr);
+
+    // Float vector get/set combinations
+    assert(impulse_vm_context_get_float_vector(nullptr, 0) == nullptr);
+    assert(impulse_vm_context_get_float_vector(ctx, 9999) == nullptr);
+    assert(impulse_vm_context_get_float_vector(ctx, 0) == nullptr); // unallocated handle 0
+    int h_f = impulse_vm_context_acquire_float_vector(ctx);
+    assert(h_f >= 0);
+    assert(impulse_vm_context_get_float_vector(ctx, h_f) != nullptr);
+    impulse_vm_context_float_vector_set(nullptr, h_f, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, 9999, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, 0, 0, 1.0f); // unallocated handle 0 (if h_f != 0)
+    impulse_vm_context_float_vector_set(ctx, h_f, 99999999, 1.0f); // index >= max_nodes
+    impulse_vm_context_float_vector_set(ctx, h_f, 0, 1.0f); // valid
+
+    // Double vector get/set combinations
+    assert(impulse_vm_context_get_double_vector(nullptr, 0) == nullptr);
+    assert(impulse_vm_context_get_double_vector(ctx, 9999) == nullptr);
+    assert(impulse_vm_context_get_double_vector(ctx, 0) == nullptr);
+    int h_d = impulse_vm_context_acquire_double_vector(ctx);
+    assert(h_d >= 0);
+    assert(impulse_vm_context_get_double_vector(ctx, h_d) != nullptr);
+    impulse_vm_context_double_vector_set(nullptr, h_d, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, 9999, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, 0, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, h_d, 99999999, 1.0);
+    impulse_vm_context_double_vector_set(ctx, h_d, 0, 1.0);
+
+    // String vector get/set combinations
+    assert(impulse_vm_context_string_vector_get(nullptr, 0, 0) == nullptr);
+    assert(impulse_vm_context_string_vector_get(ctx, 9999, 0) == nullptr);
+    assert(impulse_vm_context_string_vector_get(ctx, 0, 0) == nullptr);
+    int h_s = impulse_vm_context_acquire_string_vector(ctx);
+    assert(h_s >= 0);
+    impulse_vm_context_string_vector_add(nullptr, h_s, "abc");
+    impulse_vm_context_string_vector_add(ctx, 9999, "abc");
+    impulse_vm_context_string_vector_add(ctx, h_s, "hello");
+    assert(impulse_vm_context_string_vector_size(nullptr, h_s) == 0);
+    assert(impulse_vm_context_string_vector_size(ctx, 9999) == 0);
+    assert(impulse_vm_context_string_vector_size(ctx, h_s) == 1);
+    assert(impulse_vm_context_string_vector_get(ctx, h_s, 9999) == nullptr);
+    assert(impulse_vm_context_string_vector_get(ctx, h_s, 0) != nullptr);
+
+    // Value map get key / value combinations
+    assert(impulse_vm_context_value_map_get_key(nullptr, 0, 0) == nullptr);
+    assert(impulse_vm_context_value_map_get_key(ctx, 9999, 0) == nullptr);
+    assert(impulse_vm_context_value_map_get_value(nullptr, 0, 0) == 0.0f);
+    assert(impulse_vm_context_value_map_get_value(ctx, 9999, 0) == 0.0f);
+
+    // 2. High-Frontier Parallel CSR Walk (use_parallel = true)
+    const size_t HIGH_N = 20000;
+    std::vector<uint32_t> big_offsets(HIGH_N + 1);
+    std::vector<uint32_t> big_targets(HIGH_N);
+    for (size_t i = 0; i < HIGH_N; ++i) {
+        big_offsets[i] = static_cast<uint32_t>(i);
+        big_targets[i] = static_cast<uint32_t>((i + 1) % HIGH_N);
+    }
+    big_offsets[HIGH_N] = static_cast<uint32_t>(HIGH_N);
+
+    impulse_vm_context_mock_csr(ctx, 0, big_offsets.data(), big_targets.data(), HIGH_N, HIGH_N);
+    impulse_vm_context_mock_csc(ctx, 0, big_offsets.data(), big_targets.data());
+
+    int h_frontier = impulse_vm_context_acquire_bitset(ctx);
+    int h_out = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_fill(ctx, h_frontier, HIGH_N); // all 20,000 active to trigger parallel threshold
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+    state.registers[1] = static_cast<uint64_t>(h_frontier);
+    state.register_types[1] = TYPE_BITSET_HANDLE;
+    state.registers[2] = static_cast<uint64_t>(h_out);
+    state.register_types[2] = TYPE_BITSET_HANDLE;
+
+    // Parallel CSR Walk with non-accumulating in-place dst == src
+    std::vector<impulse_instruction_t> parallel_bc = {
+        { OP_SET_MAX_DOP, 0, 0, 4 },          // max threads = 4
+        // Parallel CSR walk
+        { OP_CSR_WALK, 0, 2, 1 | (0 << 16) }, // dst=R2, src=R1
+        // In-place non-accumulating CSR walk (dst == src)
+        { OP_CSR_WALK, 0, 1, 1 | (0 << 16) }, // dst=R1, src=R1
+        // CSC walk where dst == src
+        { OP_CSC_WALK, 0, 1, 1 | (0 << 16) }, // dst=R1, src=R1
+        // Stable check with matching bitsets
+        { OP_STABLE_CHECK, 0, 1, 2 },
+        // Frontier diff
+        { OP_FRONTIER_DIFF, 0, 3, 1 | (2 << 16) },
+        // Fixpoint kleene star on relation slot 0
+        { OP_FIXPOINT_KLEENE_STAR, 0, 1, 2 | (0 << 16) },
+
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.pc = 0;
+    impulse_vm_status_t st = impulse_vm_execute(parallel_bc.data(), parallel_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // 3. Single-Target Layout with Tombstones (0xFFFFFFFF, 0xFFFF, ~0ULL)
+    uint32_t single_targets[4] = { 1, 0xFFFFFFFF, 0xFFFF, static_cast<uint32_t>(~0ULL) };
+    impulse_vm_context_mock_csr(ctx, 1, nullptr, single_targets, 4, 4); // slot 1: single target layout (!offsets_ptr && targets_ptr)
+    impulse_vm_context_mock_csc(ctx, 1, nullptr, single_targets);
+
+    int h_small = impulse_vm_context_acquire_bitset(ctx);
+    impulse_vm_context_bitset_fill(ctx, h_small, 4);
+    state.registers[1] = static_cast<uint64_t>(h_small);
+    state.registers[2] = static_cast<uint64_t>(h_out);
+
+    std::vector<impulse_instruction_t> single_target_bc = {
+        { OP_CSR_WALK, 0, 2, 1 | (1 << 16) }, // slot 1 single target
+        { OP_CSC_WALK, 0, 2, 1 | (1 << 16) },
+        { OP_CSR_WALK_DENSE_STREAM, 0, 2, 0 | (0 << 16) }, // slot 0 dense stream
+        { OP_CSR_WALK_DIRECT_STORE, 0, 2, 1 | (0 << 16) }, // slot 0 direct store
+        { OP_CSC_WALK_DIRECT_STORE, 0, 2, 1 | (0 << 16) }, // slot 0 direct store
+        { OP_CSR_DEGREE, 0, 4, 0 | (1 << 16) }, // degree of node 0
+        { OP_HAS_CSR, 0, 5, 1 },
+        { OP_HAS_CSC, 0, 6, 1 },
+        { OP_HAS_COO, 0, 7, 1 },
+        { OP_HAS_KEY_CATALOG, 0, 8, 1 },
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.pc = 0;
+    st = impulse_vm_execute(single_target_bc.data(), single_target_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    // Direct store null checks on slot 1
+    std::vector<impulse_instruction_t> direct_null_bc = {
+        { OP_CSR_WALK_DIRECT_STORE, 0, 2, 1 | (1 << 16) }, // slot 1 (!offsets) -> null snapshot
+        { OP_HALT, 0, 0, 0 }
+    };
+    state.pc = 0;
+    assert(impulse_vm_execute(direct_null_bc.data(), direct_null_bc.size(), &state, 0) == IMPULSE_VM_ERR_NULL_SNAPSHOT);
+
+    // 4. Roaring Bitmaps Logic & Predicate Range Check
+    std::vector<impulse_instruction_t> roaring_and_not_bc = {
+        { OP_ROARING_BITMAP_AND_NOT, 0, 3, 1 | (2 << 16) },
+        { OP_ROARING_BITMAP_OR, 0, 3, 1 | (2 << 16) },
+        { OP_VEC_CMP_BETWEEN, 0, 4, 0 | (10 << 16) }, // between min/max
+        { OP_HALT, 0, 0, 0 }
+    };
+
+    state.pc = 0;
+    st = impulse_vm_execute(roaring_and_not_bc.data(), roaring_and_not_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_OK);
+
+    impulse_vm_context_destroy(ctx);
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpulseVM MC/DC Condition Independence & Boundary Test Suite" << std::endl;
@@ -2008,11 +2160,13 @@ int main() {
     test_mcdc_opcodes_filtered_and_advanced_traversals();
     test_mcdc_vm_pass4_deep_decisions();
     test_mcdc_pass10_deep_decisions();
+    test_mcdc_pass11_exhaustive_vm_matrix();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL MC/DC CONDITION INDEPENDENCE TESTS PASSED SUCCESSFULLY!" << std::endl;
     std::cout << "================================================================" << std::endl;
     return 0;
 }
+
 
 
