@@ -106,6 +106,7 @@ public:
     QueryBuilder& walkCsc(uint16_t relation_id);
     QueryBuilder& filterNode(uint32_t filter_id);
     QueryBuilder& filterNodeStrPrefix(const char* prefix);
+    QueryBuilder& filterCel(const std::string& expression);
 
     // --- Set & Vector Operations ---
     QueryBuilder& unionWith(uint16_t src_reg);

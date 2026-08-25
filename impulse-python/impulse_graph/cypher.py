@@ -38,6 +38,10 @@ class CypherQuery:
             raise ValueError(f"Invalid Cypher path start node: '{pattern}'")
         self.seed_var = start_node_m.group(1)
 
+        # Check for untyped edges like --> or <-- or -[]->
+        if re.search(r"-(?:\[\s*\])?->|<-(?:\[\s*\])?-", pattern):
+            raise ValueError("Impulse Graph requires typed relationship patterns (e.g. -[:Rel]->)")
+
         # Parse edge steps: (<-|-)->[:Rel]->(node)
         step_regex = re.compile(
             r"(\<-|-\>|-)\s*\[(?::(?:`([^`]+)`|([\w:]+)))?(?:\*(\d+))?\]\s*(-\>|\<-|-)\s*\((?:(\w+)(?::\w+)?)?\)"

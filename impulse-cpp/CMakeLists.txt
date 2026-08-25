@@ -19,6 +19,13 @@ if(IMPULSE_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+# --- MC/DC Coverage Option ----------------------------------------------
+option(IMPULSE_ENABLE_MCDC_COVERAGE "Enable LLVM source-based MC/DC code coverage" OFF)
+if(IMPULSE_ENABLE_MCDC_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc)
+    add_link_options(-fprofile-instr-generate)
+endif()
+
 # --- Dependencies: Google Highway --------------------------------------
 include(FetchContent)
 FetchContent_Declare(
@@ -116,6 +123,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_cel_parser tests/test_cel_parser.cpp)
     target_link_libraries(test_cel_parser PRIVATE impulse_graph_static)
     add_test(NAME test_cel_parser COMMAND test_cel_parser)
+
+    add_executable(test_vm_mcdc_boundaries tests/test_vm_mcdc_boundaries.cpp)
+    target_link_libraries(test_vm_mcdc_boundaries PRIVATE impulse_graph_static)
+    add_test(NAME test_vm_mcdc_boundaries COMMAND test_vm_mcdc_boundaries)
 
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)

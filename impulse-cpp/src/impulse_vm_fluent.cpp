@@ -179,7 +179,14 @@ QueryBuilder& QueryBuilder::walkCsc(uint16_t relation_id) {
 
 QueryBuilder& QueryBuilder::filterNode(uint32_t filter_id) {
     uint16_t src_reg = current_reg_;
-    emit(OP_NODE_FILTER, 0, current_reg_, (filter_id << 8) | (src_reg & 0xFF));
+    uint8_t val_reg = 0;
+    uint8_t attr_id = static_cast<uint8_t>(filter_id & 0xFF);
+    uint8_t rel_id = static_cast<uint8_t>((filter_id >> 8) & 0xFF);
+    uint32_t payload = (static_cast<uint32_t>(rel_id) << 24) |
+                       (static_cast<uint32_t>(attr_id) << 16) |
+                       (static_cast<uint32_t>(val_reg) << 8) |
+                       (src_reg & 0xFF);
+    emit(OP_NODE_FILTER, 0, current_reg_, payload);
     return *this;
 }
 
@@ -194,20 +201,46 @@ QueryBuilder& QueryBuilder::filterNodeStrPrefix(const char* prefix) {
     return *this;
 }
 
+QueryBuilder& QueryBuilder::filterCel(const std::string& expression) {
+    impulse::cel::Parser parser(expression);
+    auto ast = parser.parse();
+    if (!ast) {
+        throw std::invalid_argument("Failed to parse CEL expression: " + expression);
+    }
+    auto optimized = impulse::cel::AstOptimizer::optimize(ast);
+
+    if (optimized->kind == impulse::cel::AstKind::LITERAL_BOOL) {
+        if (!optimized->bool_val) {
+            return clearReg(current_reg_);
+        }
+        return *this;
+    }
+
+    if (optimized->kind == impulse::cel::AstKind::FUNCTION_CALL &&
+        (optimized->text == "startsWith" || optimized->text == "str_prefix") &&
+        optimized->children.size() >= 2 &&
+        optimized->children[1]->kind == impulse::cel::AstKind::LITERAL_STRING) {
+        return filterNodeStrPrefix(optimized->children[1]->str_val.c_str());
+    }
+
+    uint32_t filter_hash = static_cast<uint32_t>(std::hash<std::string>{}(expression));
+    return filterNode(filter_hash & 0xFFFF);
+}
+
 // --- Set & Vector Operations ---
 
 QueryBuilder& QueryBuilder::unionWith(uint16_t src_reg) {
-    emit(OP_SET_UNION, 0, current_reg_, src_reg);
+    emit(OP_SET_UNION, 0, current_reg_, static_cast<uint32_t>(current_reg_ | (src_reg << 16)));
     return *this;
 }
 
 QueryBuilder& QueryBuilder::intersectWith(uint16_t src_reg) {
-    emit(OP_SET_INTERSECT, 0, current_reg_, src_reg);
+    emit(OP_SET_INTERSECT, 0, current_reg_, static_cast<uint32_t>(current_reg_ | (src_reg << 16)));
     return *this;
 }
 
 QueryBuilder& QueryBuilder::differenceWith(uint16_t src_reg) {
-    emit(OP_SET_DIFFERENCE, 0, current_reg_, src_reg);
+    emit(OP_SET_DIFFERENCE, 0, current_reg_, static_cast<uint32_t>(current_reg_ | (src_reg << 16)));
     return *this;
 }
 
@@ -409,8 +442,10 @@ QueryBuilder& QueryBuilder::nop() {
 // --- Control Flow ---
 
 QueryBuilder& QueryBuilder::repeat(int count, const std::function<void(QueryBuilder&)>& body) {
+    uint16_t prev_reg = current_reg_;
     uint16_t counter_reg = allocateRegister();
     loadConstInt(count, counter_reg);
+    current_reg_ = prev_reg;
 
     size_t start_idx = instructions_.size();
     body(*this);

@@ -372,6 +372,14 @@ public:
         return parse_precedence(PREC_CONDITIONAL);
     }
 
+    std::shared_ptr<AstNode> parse() {
+        auto expr = parse_expression();
+        if (!expr || curr_.type != TokenType::END_OF_FILE) {
+            return nullptr;
+        }
+        return expr;
+    }
+
 private:
     Lexer lexer_;
     Token curr_;
@@ -511,6 +519,7 @@ private:
                 // Binary operator
                 auto next_prec = static_cast<Precedence>(get_precedence(op.type) + 1);
                 auto right = parse_precedence(next_prec);
+                if (!right) return nullptr;
                 left = AstNode::make_binary(op.text, left, right);
             }
         }

@@ -5,6 +5,7 @@
 #include "impulse_graph.h"
 #include "impulse_vm.h"
 #include "impulse_vm_fluent.hpp"
+#include "impulse_cel.h"
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -669,6 +670,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("walk_csc", &impulse::vm::QueryBuilder::walkCsc, py::arg("relation_id"), py::return_value_policy::reference)
         .def("filter_node", &impulse::vm::QueryBuilder::filterNode, py::arg("filter_id"), py::return_value_policy::reference)
         .def("filter_node_str_prefix", &impulse::vm::QueryBuilder::filterNodeStrPrefix, py::arg("prefix"), py::return_value_policy::reference)
+        .def("filter_cel", &impulse::vm::QueryBuilder::filterCel, py::arg("expression"), py::return_value_policy::reference)
         .def("union_with", &impulse::vm::QueryBuilder::unionWith, py::arg("src_reg"), py::return_value_policy::reference)
         .def("intersect_with", &impulse::vm::QueryBuilder::intersectWith, py::arg("src_reg"), py::return_value_policy::reference)
         .def("difference_with", &impulse::vm::QueryBuilder::differenceWith, py::arg("src_reg"), py::return_value_policy::reference)
@@ -756,4 +758,23 @@ PYBIND11_MODULE(_impulse_native, m) {
              py::arg("node_count"), py::arg("edge_count"), py::arg("section_features"),
              py::arg("row_offsets"), py::arg("col_indices"))
         .def("finalize", &PyImpulseWriter::finalize);
+
+    m.def("parse_cel", [](const std::string& expr) -> std::string {
+        impulse::cel::Parser parser(expr);
+        auto ast = parser.parse();
+        if (!ast) {
+            throw std::invalid_argument("Failed to parse CEL expression: " + expr);
+        }
+        return impulse::cel::CelCompiler::to_impscheme(ast);
+    }, py::arg("expression"), "Parse a Google CEL expression and compile to ImpScheme IR");
+
+    m.def("optimize_cel", [](const std::string& expr) -> std::string {
+        impulse::cel::Parser parser(expr);
+        auto ast = parser.parse();
+        if (!ast) {
+            throw std::invalid_argument("Failed to parse CEL expression: " + expr);
+        }
+        auto optimized = impulse::cel::AstOptimizer::optimize(ast);
+        return impulse::cel::CelCompiler::to_impscheme(optimized);
+    }, py::arg("expression"), "Parse, optimize, and constant-fold a Google CEL expression into ImpScheme IR");
 }

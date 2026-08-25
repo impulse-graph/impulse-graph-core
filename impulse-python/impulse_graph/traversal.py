@@ -24,6 +24,9 @@ BUILTIN_CATALOGS: Dict[str, Dict[str, int]] = {
     "northwind": {
         "PURCHASED": 0, "CONTAINS": 1, "PRODUCED_BY": 2, "REPORTS_TO": 3,
     },
+    "ecommerce": {
+        "PURCHASED": 0, "MANUFACTURED_BY": 1, "PRODUCED_BY": 1, "REVIEWS": 2, "CONTAINS": 3,
+    },
 }
 
 
@@ -37,31 +40,45 @@ class Traversal:
     def __init__(
         self,
         snapshot: "Snapshot",
-        start_node: int = 0,
+        start_node: Optional[int] = None,
+        start_nodes: Optional[Union[List[int], np.ndarray]] = None,
+        all_nodes: bool = False,
+        initial_domain: Optional[Any] = None,
         catalog: Optional[Union[str, Dict[str, int]]] = None,
     ):
         self._snapshot = snapshot
-        self._start_node = start_node
+        self._start_node = start_node if start_node is not None else 0
+        self._start_nodes = start_nodes
+        self._all_nodes = all_nodes
+        self._initial_domain = initial_domain
+        self._current_domain = initial_domain
         self._steps = []
 
         if isinstance(catalog, str):
             key = catalog.lower().replace("_catalog", "").replace(".imps", "")
             if key in BUILTIN_CATALOGS:
-                self._catalog = BUILTIN_CATALOGS[key]
+                self._catalog = dict(BUILTIN_CATALOGS[key])
             else:
                 raise ValueError(
                     f"Unknown catalog preset '{catalog}'. Available presets: {list(BUILTIN_CATALOGS.keys())}"
                 )
         elif isinstance(catalog, dict):
-            self._catalog = catalog
+            self._catalog = dict(catalog)
         else:
             self._catalog = {}
+
+    @property
+    def current_domain(self) -> Optional[Any]:
+        return self._current_domain
 
     def _resolve_rel(self, rel: Union[str, int]) -> int:
         if isinstance(rel, int):
             return rel
         if rel in self._catalog:
             return self._catalog[rel]
+        for cat in BUILTIN_CATALOGS.values():
+            if rel in cat:
+                return cat[rel]
         raise ValueError(
             f"Unknown relation name '{rel}'. Provide relation ID integer or pass catalog={{'{rel}': id}}."
         )
@@ -79,6 +96,19 @@ class Traversal:
           - predicate_id: fused SIMD boolean predicate filter
         """
         rel = self._resolve_rel(relation)
+
+        # Validate domain transitions if domain context is active
+        if self._current_domain is not None:
+            rel_info = self._snapshot.get_relation(rel)
+            src_dom = rel_info["src_domain_id"]
+            tgt_dom = rel_info["tgt_domain_id"]
+            cur_dom = self._current_domain.domain_id
+            if src_dom != cur_dom:
+                raise ValueError(
+                    f"Cannot traverse relation '{relation}' (src domain {src_dom}) from current domain '{self._current_domain.domain_name}' (domain {cur_dom})"
+                )
+            self._current_domain = self._snapshot.domain(tgt_dom)
+
         if predicate_id is not None:
             self._steps.append(("out_predicate", rel, predicate_id))
         elif filter_id is not None:
@@ -93,6 +123,19 @@ class Traversal:
     ) -> "Traversal":
         """Follow incoming edge (reverse CSC walk): (a)<-[:rel]-(b)"""
         rel = self._resolve_rel(relation)
+
+        # Validate reverse domain transitions if domain context is active
+        if self._current_domain is not None:
+            rel_info = self._snapshot.get_relation(rel)
+            src_dom = rel_info["src_domain_id"]
+            tgt_dom = rel_info["tgt_domain_id"]
+            cur_dom = self._current_domain.domain_id
+            if tgt_dom != cur_dom:
+                raise ValueError(
+                    f"Cannot traverse reverse relation '{relation}' (tgt domain {tgt_dom}) from current domain '{self._current_domain.domain_name}' (domain {cur_dom})"
+                )
+            self._current_domain = self._snapshot.domain(src_dom)
+
         self._steps.append(("in_", rel, 0))
         return self
 
@@ -106,16 +149,32 @@ class Traversal:
         self._steps.append(("filter_prefix", prefix, 0))
         return self
 
+    def filter_cel(self, expression: str) -> "Traversal":
+        """Filter active node set by evaluating a Google CEL expression via C++ Pratt compiler."""
+        self._steps.append(("filter_cel", expression, 0))
+        return self
+
     def filter(
         self,
+        predicate: Optional[Union[str, int]] = None,
+        *,
         filter_id: Optional[int] = None,
         prefix: Optional[str] = None,
+        cel: Optional[str] = None,
     ) -> "Traversal":
         """
-        Convenience node filter:
+        Filter current node set using secondary indices, prefix match, or Google CEL expression:
+          - snap.traverse(...).filter("user.age >= 21 && user.status == 'ACTIVE'")
+          - snap.traverse(...).filter(cel="startsWith(node, 'USER_')")
           - snap.traverse(...).filter(filter_id=42)
           - snap.traverse(...).filter(prefix="COVID-19")
         """
+        if cel is not None:
+            return self.filter_cel(cel)
+        if isinstance(predicate, str):
+            return self.filter_cel(predicate)
+        if isinstance(predicate, int):
+            return self.filter_node(predicate)
         if prefix is not None:
             return self.filter_prefix(prefix)
         if filter_id is not None:
@@ -127,10 +186,15 @@ class Traversal:
         self._steps.append(("degree", self._resolve_rel(relation), 0))
         return self
 
-    def compile(self) -> vm.CompiledQuery:
+    def compile(self, input_type: str = "node") -> vm.CompiledQuery:
         """Compile traversal steps into an optimized ImpulseVM bytecode program."""
-        qb = vm.QueryBuilder()
-        qb.input_node(0)
+        qb = vm.QueryBuilder(start_register=0)
+        if input_type == "node":
+            qb.input_node(0)
+        elif input_type == "set":
+            qb.input_set(0)
+        # if input_type == "none", register 0 is pre-seeded in VmState
+
         for step in self._steps:
             op = step[0]
             if op == "out":
@@ -145,6 +209,8 @@ class Traversal:
                 qb.filter_node(step[1])
             elif op == "filter_prefix":
                 qb.filter_node_str_prefix(step[1])
+            elif op == "filter_cel":
+                qb.filter_cel(step[1])
             elif op == "degree":
                 qb.walk_degree(step[1])
         qb.collect_bitset()
@@ -156,12 +222,41 @@ class Traversal:
 
     def to_list(self, start_node: Optional[int] = None) -> List[int]:
         """Execute traversal and collect matching target node IDs as a list."""
-        seed = self._start_node if start_node is None else start_node
-        compiled = self.compile()
-
         with vm.VmContext(self._snapshot) as ctx:
             state = vm.VmState()
-            res = compiled.execute_with_context(ctx, state, seed)
+
+            if self._all_nodes:
+                bs_in = ctx.acquire_bitset()
+                node_count = self._initial_domain.node_count if self._initial_domain else 0
+                if node_count == 0:
+                    for i in range(self._snapshot.relation_count()):
+                        rel = self._snapshot.get_relation(i)
+                        if self._initial_domain and rel["src_domain_id"] == self._initial_domain.domain_id:
+                            node_count = max(node_count, rel["node_count"])
+                    if node_count == 0:
+                        node_count = 64
+                ctx.bitset_fill(bs_in, node_count)
+                compiled = self.compile(input_type="none")
+                state.set_register(0, bs_in)
+                state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
+                res = compiled.execute_with_context(ctx, state, 0)
+                ctx.release_bitset(bs_in)
+            elif self._start_nodes is not None and len(self._start_nodes) > 1:
+                bs_in = ctx.acquire_bitset()
+                for nid in self._start_nodes:
+                    ctx.bitset_add(bs_in, int(nid))
+                compiled = self.compile(input_type="none")
+                state.set_register(0, bs_in)
+                state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
+                res = compiled.execute_with_context(ctx, state, 0)
+                ctx.release_bitset(bs_in)
+            else:
+                seed = self._start_node if start_node is None else start_node
+                if self._start_nodes is not None and len(self._start_nodes) == 1:
+                    seed = self._start_nodes[0]
+                compiled = self.compile(input_type="node")
+                res = compiled.execute_with_context(ctx, state, seed)
+
             if not res.is_ok():
                 return []
 
@@ -186,6 +281,17 @@ class Traversal:
     def to_set(self, start_node: Optional[int] = None) -> Set[int]:
         """Execute traversal and return set of matching target node IDs."""
         return set(self.to_list(start_node=start_node))
+
+    def to_key_list(self, start_node: Optional[int] = None) -> List[str]:
+        """Execute traversal and resolve target dense IDs into string keys in active domain."""
+        nodes = self.to_list(start_node=start_node)
+        if self._current_domain is not None:
+            return [self._current_domain.to_key(nid) for nid in nodes]
+        return [str(nid) for nid in nodes]
+
+    def to_key_set(self, start_node: Optional[int] = None) -> Set[str]:
+        """Execute traversal and resolve target dense IDs into unique string keys in active domain."""
+        return set(self.to_key_list(start_node=start_node))
 
     def count(self, start_node: Optional[int] = None) -> int:
         """Execute traversal and return count of matching target node IDs."""
