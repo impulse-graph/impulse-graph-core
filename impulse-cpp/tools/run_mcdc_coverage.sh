@@ -65,13 +65,24 @@ xcrun llvm-cov report \
     -object="${BUILD_DIR}/test_vm_vector_math" \
     -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
     -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_cel_parser" \
+    -object="${BUILD_DIR}/test_cypher_compiler" \
+    -object="${BUILD_DIR}/test_datalog_compiler" \
+    -object="${BUILD_DIR}/test_c_statement_api" \
+    -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_index.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
+    "${CPP_DIR}/include/impulse_cel.h" \
+    "${CPP_DIR}/include/impulse_cypher.hpp" \
+    "${CPP_DIR}/include/impulse_datalog.hpp" \
+    "${CPP_DIR}/include/impulse_impk.hpp" \
     --show-mcdc-summary
 
 echo "================================================================"
@@ -83,13 +94,24 @@ xcrun llvm-cov show \
     -object="${BUILD_DIR}/test_vm_vector_math" \
     -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
     -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_cel_parser" \
+    -object="${BUILD_DIR}/test_cypher_compiler" \
+    -object="${BUILD_DIR}/test_datalog_compiler" \
+    -object="${BUILD_DIR}/test_c_statement_api" \
+    -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_index.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
+    "${CPP_DIR}/include/impulse_cel.h" \
+    "${CPP_DIR}/include/impulse_cypher.hpp" \
+    "${CPP_DIR}/include/impulse_datalog.hpp" \
+    "${CPP_DIR}/include/impulse_impk.hpp" \
     --show-mcdc \
     --show-mcdc-summary \
     --show-branches=count > "${REPORT_DIR}/mcdc_report.txt"
@@ -100,17 +122,30 @@ xcrun llvm-cov show \
     -object="${BUILD_DIR}/test_vm_vector_math" \
     -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
     -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_cel_parser" \
+    -object="${BUILD_DIR}/test_cypher_compiler" \
+    -object="${BUILD_DIR}/test_datalog_compiler" \
+    -object="${BUILD_DIR}/test_c_statement_api" \
+    -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_index.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
+    "${CPP_DIR}/include/impulse_cel.h" \
+    "${CPP_DIR}/include/impulse_cypher.hpp" \
+    "${CPP_DIR}/include/impulse_datalog.hpp" \
+    "${CPP_DIR}/include/impulse_impk.hpp" \
     --show-mcdc \
+    --show-mcdc-summary \
     --show-branches=count \
     --format=html \
     --output-dir="${REPORT_DIR}/html"
 
 echo "MC/DC Report saved to: ${REPORT_DIR}/mcdc_report.txt"
 echo "HTML Report saved to: ${REPORT_DIR}/html/index.html"
+

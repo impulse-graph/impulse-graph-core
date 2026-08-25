@@ -384,6 +384,127 @@ void test_mcdc_sexpr_deep_coverage() {
     } catch (const std::runtime_error&) {}
 }
 
+void test_mcdc_ast_nodes_and_passes_exhaustive() {
+    std::cout << "[MC/DC] Testing Exhaustive AST Nodes, Printers, and 7 Optimization Passes..." << std::endl;
+
+    // 1. Compiler options
+    CompilerOptions unopt = CompilerOptions::unoptimized();
+    assert(!unopt.enable_kernel_fusion);
+    assert(!unopt.enable_constant_folding);
+
+    // 2. Compare op to string
+    assert(std::string(compare_op_to_str(CompareOp::EQ)) == "vec-cmp-eq");
+    assert(std::string(compare_op_to_str(CompareOp::NEQ)) == "vec-cmp-neq");
+    assert(std::string(compare_op_to_str(CompareOp::LT)) == "vec-cmp-lt");
+    assert(std::string(compare_op_to_str(CompareOp::LTE)) == "vec-cmp-lte");
+    assert(std::string(compare_op_to_str(CompareOp::GT)) == "vec-cmp-gt");
+    assert(std::string(compare_op_to_str(CompareOp::GTE)) == "vec-cmp-gte");
+
+    // 3. AST Node Creation and Printers (to_scm_string)
+    auto lit_int = ScmLiteral::of_int(42);
+    assert(lit_int->kind() == NodeKind::LITERAL);
+    assert(lit_int->to_scm_string() == "42");
+
+    auto lit_flt = ScmLiteral::of_float(3.14);
+    assert(lit_flt->kind() == NodeKind::LITERAL);
+    assert(!lit_flt->to_scm_string().empty());
+
+    auto lit_bool = ScmLiteral::of_bool(true);
+    assert(lit_bool->kind() == NodeKind::LITERAL);
+    assert(lit_bool->to_scm_string() == "#t");
+
+    auto lit_bool_f = ScmLiteral::of_bool(false);
+    assert(lit_bool_f->to_scm_string() == "#f");
+
+    auto lit_str = ScmLiteral::of_str("hello");
+    assert(lit_str->kind() == NodeKind::LITERAL);
+    assert(lit_str->to_scm_string() == "\"hello\"");
+
+    auto sym = std::make_shared<ScmSymbol>("foo");
+    assert(sym->kind() == NodeKind::SYMBOL);
+    assert(sym->to_scm_string() == "foo");
+
+    auto var = std::make_shared<ScmVarRef>();
+    var->var = "x";
+    assert(var->kind() == NodeKind::VAR_REF);
+    assert(var->to_scm_string() == "x");
+
+    auto let_node = std::make_shared<ScmLet>();
+    let_node->vars = {"x"};
+    let_node->inits = {lit_int};
+    assert(let_node->kind() == NodeKind::LET);
+    assert(!let_node->to_scm_string().empty());
+
+    auto set_node = std::make_shared<ScmSet>();
+    set_node->var = "x";
+    set_node->expr = lit_int;
+    assert(set_node->kind() == NodeKind::SET);
+    assert(!set_node->to_scm_string().empty());
+
+    auto loop_node = std::make_shared<ScmLoopWhile>();
+    loop_node->condition = var;
+    loop_node->body = {set_node};
+    assert(loop_node->kind() == NodeKind::LOOP_WHILE);
+    assert(!loop_node->to_scm_string().empty());
+
+    auto ret_node = std::make_shared<ScmReturn>();
+    ret_node->expr = var;
+    assert(ret_node->kind() == NodeKind::RETURN);
+    assert(!ret_node->to_scm_string().empty());
+
+    auto walk_csr = ScmWalk::forward("edge");
+    assert(walk_csr->kind() == NodeKind::WALK);
+    assert(!walk_csr->to_scm_string().empty());
+
+    auto walk_csc = ScmWalk::reverse("edge");
+    assert(walk_csc->kind() == NodeKind::WALK);
+    assert(!walk_csc->to_scm_string().empty());
+
+    auto walk_2hop = std::make_shared<ScmWalk2Hop>("rel1", "rel2");
+    assert(walk_2hop->kind() == NodeKind::WALK_2HOP);
+    assert(!walk_2hop->to_scm_string().empty());
+
+    auto filter_node = std::make_shared<ScmVectorFilter>("age", CompareOp::GT, lit_int);
+    assert(filter_node->kind() == NodeKind::VECTOR_FILTER);
+    assert(!filter_node->to_scm_string().empty());
+
+    auto collect_bitset = ScmCollect::bitset(0);
+    assert(collect_bitset->kind() == NodeKind::COLLECT);
+    assert(!collect_bitset->to_scm_string().empty());
+
+    auto collect_count = ScmCollect::count(1);
+    assert(collect_count->kind() == NodeKind::COLLECT);
+    assert(!collect_count->to_scm_string().empty());
+
+    auto card_node = std::make_shared<ScmCardinality>();
+    card_node->var = "x";
+    assert(card_node->kind() == NodeKind::CARDINALITY);
+    assert(!card_node->to_scm_string().empty());
+
+    auto bs_node = std::make_shared<ScmBitsetInit>();
+    bs_node->type = ScmBitsetInit::InitType::EMPTY;
+    assert(bs_node->kind() == NodeKind::BITSET_INIT);
+    assert(!bs_node->to_scm_string().empty());
+
+    auto cel_node = std::make_shared<ScmCelExpr>("age > 21");
+    assert(cel_node->kind() == NodeKind::CEL_EXPR);
+    assert(!cel_node->to_scm_string().empty());
+
+    auto prog = ScmProgram::of(walk_csr, collect_bitset);
+    assert(prog->kind() == NodeKind::PROGRAM);
+    assert(!prog->to_scm_string().empty());
+
+    // 4. Compilation with unoptimized pipeline
+    auto res_unopt = ImpulseCompiler::compile(prog, nullptr, {}, unopt);
+    assert(res_unopt.instructions.size() > 0);
+    assert(!res_unopt.to_impas_string().empty());
+
+    // 5. Compilation with default optimized pipeline
+    auto res_opt = ImpulseCompiler::compile(prog, nullptr, {}, CompilerOptions::default_options());
+    assert(res_opt.instructions.size() > 0);
+    assert(!res_opt.to_impas_string().empty());
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpScheme (impscm) Compiler MC/DC Boundary Suite" << std::endl;
@@ -393,9 +514,11 @@ int main() {
     test_mcdc_ast_builder();
     test_mcdc_compiler_pipeline();
     test_mcdc_sexpr_deep_coverage();
+    test_mcdc_ast_nodes_and_passes_exhaustive();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL IMPSCM COMPILER MC/DC CONDITION INDEPENDENCE TESTS PASSED!" << std::endl;
     std::cout << "================================================================" << std::endl;
     return 0;
 }
+
