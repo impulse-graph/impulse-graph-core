@@ -347,15 +347,25 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
         Lexer l_num_double_dot("123.45.67");
         assert(l_num_double_dot.next_token().type == TokenType::FLOAT_LITERAL);
 
-        // Line 188: scientific notation + vs - vs none
+        // Line 184 & 188: scientific notation e, E, +, -, none, and EOF
+        Lexer l_sci_e("1e5");
+        assert(l_sci_e.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_E("1E5");
+        assert(l_sci_E.next_token().type == TokenType::FLOAT_LITERAL);
+
         Lexer l_sci_plus("1e+5");
         assert(l_sci_plus.next_token().type == TokenType::FLOAT_LITERAL);
 
         Lexer l_sci_minus("1e-5");
         assert(l_sci_minus.next_token().type == TokenType::FLOAT_LITERAL);
 
-        Lexer l_sci_none("1e5");
-        assert(l_sci_none.next_token().type == TokenType::FLOAT_LITERAL);
+        Lexer l_sci_eof("1e");
+        assert(l_sci_eof.next_token().type == TokenType::FLOAT_LITERAL);
+
+        // String escape at EOF
+        Lexer l_str_esc("\"\\");
+        assert(l_str_esc.next_token().type == TokenType::STRING_LITERAL);
     }
 
     // 2. Parser::parse() vs parse_expression()
@@ -465,23 +475,29 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(AstOptimizer::optimize(Parser("true == false").parse_expression())->bool_val == false);
     assert(AstOptimizer::optimize(Parser("true != false").parse_expression())->bool_val == true);
 
-    // Algebraic identities
+    // Algebraic identities with zeros and non-zeros
     assert(AstOptimizer::optimize(Parser("x + 0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("0 + x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x + 5").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x + 0.0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("0.0 + x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x + 5.0").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x - 0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("x - 0.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x - 5").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x * 1").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("1 * x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x * 5").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x * 1.0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("1.0 * x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x * 5.0").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x * 0").parse_expression())->float_val == 0.0);
     assert(AstOptimizer::optimize(Parser("0 * x").parse_expression())->float_val == 0.0);
     assert(AstOptimizer::optimize(Parser("x * 0.0").parse_expression())->float_val == 0.0);
     assert(AstOptimizer::optimize(Parser("0.0 * x").parse_expression())->float_val == 0.0);
     assert(AstOptimizer::optimize(Parser("x / 1").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("x / 1.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x / 5").parse_expression())->kind == AstKind::BINARY_OP);
 
     assert(AstOptimizer::optimize(Parser("true && x").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("false && x").parse_expression())->bool_val == false);
@@ -510,9 +526,17 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
     assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
     assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15, 0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
+
+    // Non-constant arguments for function calls (covering false branch of every argument condition)
     assert(AstOptimizer::optimize(Parser("abs(x)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("pow(x, 2.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("pow(2.0, y)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("pow(2, y)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("clamp(x, 0.0, 10.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15.0, y, 10.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15, y, 10)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15, 0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
 
     std::cout << "  -> PASSED: All exhaustive CEL MC/DC truth tables and decision paths verified." << std::endl;
 }
