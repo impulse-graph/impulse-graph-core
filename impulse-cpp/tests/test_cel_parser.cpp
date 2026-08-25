@@ -317,12 +317,18 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
         Lexer l_at_1("@1");
         assert(l_at_1.next_token().type == TokenType::END_OF_FILE);
 
-        // Line 122: _ident vs ident
+        // Line 122: _ident vs ident vs unrecognized character (~, ;, #)
         Lexer l_u("_abc");
         assert(l_u.next_token().type == TokenType::IDENTIFIER);
 
         Lexer l_id("abc");
         assert(l_id.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_tilde("~");
+        assert(l_tilde.next_token().type == TokenType::END_OF_FILE);
+
+        Lexer l_semi(";");
+        assert(l_semi.next_token().type == TokenType::END_OF_FILE);
 
         // Line 144: slash permutations
         Lexer l_slash_eof("/");
@@ -337,6 +343,30 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
         Lexer l_slash_nl("// test\n42");
         assert(l_slash_nl.next_token().type == TokenType::INT_LITERAL);
 
+        // Line 158: string escapes with actual backslashes (using raw string literals)
+        Lexer l_esc_n(R"("test\nline")");
+        Token t_esc_n = l_esc_n.next_token();
+        assert(t_esc_n.type == TokenType::STRING_LITERAL && t_esc_n.text == "test\nline");
+
+        Lexer l_esc_t(R"("test\ttab")");
+        Token t_esc_t = l_esc_t.next_token();
+        assert(t_esc_t.type == TokenType::STRING_LITERAL && t_esc_t.text == "test\ttab");
+
+        Lexer l_esc_r(R"("test\rreturn")");
+        Token t_esc_r = l_esc_r.next_token();
+        assert(t_esc_r.type == TokenType::STRING_LITERAL && t_esc_r.text == "test\rreturn");
+
+        Lexer l_esc_quote(R"("test\"quote")");
+        Token t_esc_quote = l_esc_quote.next_token();
+        assert(t_esc_quote.type == TokenType::STRING_LITERAL && t_esc_quote.text == "test\"quote");
+
+        Lexer l_esc_other(R"("test\xother")");
+        Token t_esc_other = l_esc_other.next_token();
+        assert(t_esc_other.type == TokenType::STRING_LITERAL && t_esc_other.text == "testxother");
+
+        Lexer l_str_esc("\"\\");
+        assert(l_str_esc.next_token().type == TokenType::STRING_LITERAL);
+
         // Line 180: dot permutations in number
         Lexer l_num_dot_eof("123.");
         assert(l_num_dot_eof.next_token().type == TokenType::INT_LITERAL);
@@ -346,6 +376,9 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
 
         Lexer l_num_double_dot("123.45.67");
         assert(l_num_double_dot.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_num_dot_digit("123.456");
+        assert(l_num_dot_digit.next_token().type == TokenType::FLOAT_LITERAL);
 
         // Line 184 & 188: scientific notation e, E, +, -, none, and EOF
         Lexer l_sci_e("1e5");
@@ -362,10 +395,6 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
 
         Lexer l_sci_eof("1e");
         assert(l_sci_eof.next_token().type == TokenType::FLOAT_LITERAL);
-
-        // String escape at EOF
-        Lexer l_str_esc("\"\\");
-        assert(l_str_esc.next_token().type == TokenType::STRING_LITERAL);
     }
 
     // 2. Parser::parse() vs parse_expression()
