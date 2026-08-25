@@ -1057,12 +1057,14 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     align128(dir_table);
 
-    // Calculate directory table size including Relation Entries and Attribute Descriptors
+    // Calculate directory table size including Relation Entries, Attribute Descriptors, and Index Entries
     size_t rel_dir_size = 0;
     for (const auto& rel : writer->relations) {
         rel_dir_size += sizeof(impulse_relation_directory_entry_t);
         rel_dir_size += rel.attributes.size() * sizeof(impulse_attribute_descriptor_t);
     }
+    rel_dir_size += writer->indexes.size() * sizeof(impulse_index_directory_entry_v0_9_t);
+
     size_t total_dir_table_len = dir_table.size() + rel_dir_size;
     size_t aligned_dir_table_len = (total_dir_table_len + 4095) & ~4095;
 
@@ -1158,6 +1160,32 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         }
     }
 
+    // Serialize Secondary Index Directory Entries and Payload Data
+    align128(dir_table);
+    for (const auto& idx : writer->indexes) {
+        uint64_t data_off = 0;
+        uint64_t data_bytes = idx.data.size();
+        if (data_bytes > 0) {
+            align128(payload);
+            data_off = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), idx.data.begin(), idx.data.end());
+        }
+
+        impulse_index_directory_entry_v0_9_t entry{};
+        entry.index_id = idx.index_id;
+        entry.domain_id = idx.domain_id;
+        entry.relation_id = idx.relation_id;
+        entry.attribute_index = idx.attribute_index;
+        entry.index_type = idx.index_type;
+        entry.name_offset = get_or_add_string(idx.index_name);
+        entry.data_offset = data_off;
+        entry.data_bytes = data_bytes;
+        entry.payload_feature_mask = idx.payload_feature_mask;
+
+        dir_table.resize(dir_table.size() + sizeof(entry));
+        std::memcpy(dir_table.data() + dir_table.size() - sizeof(entry), &entry, sizeof(entry));
+    }
+
     dir_table.resize(aligned_dir_table_len, 0x00);
 
     std::vector<uint8_t> footer_payload;
@@ -1188,16 +1216,14 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     for (const auto& kv : writer->metadata) {
         uint16_t klen = static_cast<uint16_t>(kv.first.size());
-        mpos = footer_payload.size();
-        footer_payload.resize(mpos + 2);
-        std::memcpy(footer_payload.data() + mpos, &klen, 2);
-        footer_payload.insert(footer_payload.end(), kv.first.begin(), kv.first.end());
-
         uint32_t vlen = static_cast<uint32_t>(kv.second.size());
-        mpos = footer_payload.size();
-        footer_payload.resize(mpos + 4);
-        std::memcpy(footer_payload.data() + mpos, &vlen, 4);
-        footer_payload.insert(footer_payload.end(), kv.second.begin(), kv.second.end());
+        size_t pos = footer_payload.size();
+        footer_payload.resize(pos + 2 + klen + 4 + vlen);
+        uint8_t* ptr = footer_payload.data() + pos;
+        std::memcpy(ptr, &klen, 2); ptr += 2;
+        std::memcpy(ptr, kv.first.data(), klen); ptr += klen;
+        std::memcpy(ptr, &vlen, 4); ptr += 4;
+        std::memcpy(ptr, kv.second.data(), vlen);
     }
 
     // 16-Byte Footer Trailer
@@ -1218,6 +1244,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     header.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
     header.domain_count = static_cast<uint16_t>(writer->domains.size());
     header.relation_count = static_cast<uint16_t>(writer->relations.size());
+    header.index_count = static_cast<uint16_t>(writer->indexes.size());
     header.timestamp_ms = 1700000000000ULL;
     header.required_features = writer->global_features;
     header.footer_directory_offset = footer_dir_offset;

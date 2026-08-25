@@ -1192,7 +1192,7 @@ void test_mcdc_snapshot_pass8_deep_decisions() {
     uint64_t i_bytes = 0;
     ASSERT_EQ(impulse_snapshot_get_index(nullptr, 0, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
     ASSERT_EQ(impulse_snapshot_get_index(snap, 99, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
-    ASSERT_EQ(impulse_snapshot_get_index(snap, 0, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_index(snap, 0, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_OK);
     // checked
 
     // 10. Secondary index node lookup by key and reverse lookup
@@ -1241,6 +1241,131 @@ void test_mcdc_snapshot_pass8_deep_decisions() {
     std::remove(test_valid_file.c_str());
 }
 
+void test_mcdc_snapshot_pass12_deep_decisions() {
+    std::cout << "[MC/DC] Testing Pass 12 Deep Snapshot Decisions (UTF8, Streaming, Indexes, Delta)..." << std::endl;
+
+    // 1. Malformed UTF-8 3-byte and 4-byte sequences
+    std::string utf8_file = "/tmp/test_mcdc_utf8_malformed.bin";
+    impulse_status_t st = IMPULSE_OK;
+
+    // Helper to generate snapshot with malformed string pool and domain name pointing to offset 1
+    auto write_bad_utf8_snap = [&](const std::vector<uint8_t>& str_bytes_data) {
+        std::vector<uint8_t> buf(8192, 0x00);
+        impulse_snapshot_header_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = IMPULSE_SPEC_VERSION_PACKED;
+        hdr.data_offset = 4096;
+        hdr.domain_count = 1;
+        hdr.header_checksum = compute_test_crc16(reinterpret_cast<const uint8_t*>(&hdr), 0x3E);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+
+        uint32_t str_table_len = static_cast<uint32_t>(str_bytes_data.size());
+        std::memcpy(buf.data() + 4096, &str_table_len, 4);
+        std::memcpy(buf.data() + 4100, str_bytes_data.data(), str_bytes_data.size());
+
+        // Domain entry after string table (aligned to 128B)
+        size_t cur = 4096 + 4 + str_table_len;
+        size_t rem = cur % 128;
+        if (rem != 0) cur += 128 - rem;
+
+        impulse_domain_catalog_entry_v0_9_t dom{};
+        dom.domain_id = 0;
+        dom.name_offset = 1; // points to offset 1
+        dom.node_count = 10;
+        std::memcpy(buf.data() + cur, &dom, sizeof(dom));
+
+        std::ofstream out(utf8_file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+    };
+
+    // 3-byte sequence truncated (i + 2 >= len): '\0', 0xE2, 0x80
+    write_bad_utf8_snap({ '\0', static_cast<uint8_t>(0xE2), static_cast<uint8_t>(0x80), '\0' });
+    impulse_snapshot_t* snap_bad_utf = impulse_snapshot_open(utf8_file.c_str(), &st);
+    ASSERT_EQ(snap_bad_utf, nullptr);
+    std::remove(utf8_file.c_str());
+
+    // 3-byte with invalid second continuation byte: '\0', 0xE2, 0x00, 0x80, '\0'
+    write_bad_utf8_snap({ '\0', static_cast<uint8_t>(0xE2), 0x00, static_cast<uint8_t>(0x80), '\0' });
+    snap_bad_utf = impulse_snapshot_open(utf8_file.c_str(), &st);
+    ASSERT_EQ(snap_bad_utf, nullptr);
+    std::remove(utf8_file.c_str());
+
+    // 4-byte sequence truncated (i + 3 >= len): '\0', 0xF0, 0x90, 0x80
+    write_bad_utf8_snap({ '\0', static_cast<uint8_t>(0xF0), static_cast<uint8_t>(0x90), static_cast<uint8_t>(0x80) });
+    snap_bad_utf = impulse_snapshot_open(utf8_file.c_str(), &st);
+    ASSERT_EQ(snap_bad_utf, nullptr);
+    std::remove(utf8_file.c_str());
+
+    // 4-byte with invalid third continuation byte: '\0', 0xF0, 0x90, 0x00, 0x80, '\0'
+    write_bad_utf8_snap({ '\0', static_cast<uint8_t>(0xF0), static_cast<uint8_t>(0x90), 0x00, static_cast<uint8_t>(0x80), '\0' });
+    snap_bad_utf = impulse_snapshot_open(utf8_file.c_str(), &st);
+    ASSERT_EQ(snap_bad_utf, nullptr);
+    std::remove(utf8_file.c_str());
+
+    // 2. Snapshot Writer with Streaming Callback & Secondary Index
+    std::string stream_file = "/tmp/test_mcdc_stream_writer.bin";
+    std::vector<uint8_t> stream_buf;
+    auto write_cb = [](const void* data, size_t bytes, void* user_data) -> int {
+        auto* vec = static_cast<std::vector<uint8_t>*>(user_data);
+        const auto* ptr = static_cast<const uint8_t*>(data);
+        vec->insert(vec->end(), ptr, ptr + bytes);
+        return 0;
+    };
+
+    impulse_writer_t* sw = impulse_writer_create_stream(write_cb, &stream_buf, 0);
+    ASSERT_TRUE(sw != nullptr);
+    impulse_writer_add_domain(sw, 0, 0, "User");
+
+    uint32_t row_off[3] = { 0, 1, 2 };
+    uint32_t col_idx[2] = { 1, 0 };
+    impulse_writer_add_relation(sw, 0, 0, 2, 2, 4, 4, row_off, sizeof(row_off), col_idx, sizeof(col_idx));
+
+    // Add attribute table with data and offsets
+    float attr_data[2] = { 25.0f, 30.0f };
+    uint32_t attr_offsets[3] = { 0, 4, 8 };
+    impulse_writer_add_attribute(sw, 0, "age", 0x02, 1, attr_data, sizeof(attr_data), attr_offsets, sizeof(attr_offsets));
+
+    // Add Secondary Index
+    uint32_t idx_data[4] = { 0, 1, 0, 1 };
+    impulse_writer_add_index(sw, 0, 0xFFFF, 0, 0x01, "idx_user_key", idx_data, sizeof(idx_data), 2);
+
+    int write_st = impulse_writer_finalize(sw);
+    ASSERT_EQ(write_st, 0);
+    impulse_writer_destroy(sw);
+
+    // Save stream_buf to disk and open
+    {
+        std::ofstream out(stream_file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(stream_buf.data()), stream_buf.size());
+    }
+
+    impulse_snapshot_t* s_snap = impulse_snapshot_open(stream_file.c_str(), &st);
+    ASSERT_TRUE(s_snap != nullptr);
+
+    // Verify index descriptor
+    uint32_t index_id = 0;
+    uint16_t d_id = 0, r_id = 0, a_idx = 0;
+    uint8_t idx_type = 0;
+    const char* idx_name = nullptr;
+    const void* idx_d = nullptr;
+    uint64_t idx_bytes = 0;
+    ASSERT_EQ(impulse_snapshot_get_index(s_snap, 0, &index_id, &d_id, &r_id, &a_idx, &idx_type, &idx_name, &idx_d, &idx_bytes), IMPULSE_OK);
+    ASSERT_TRUE(idx_name != nullptr);
+    ASSERT_EQ(impulse_snapshot_get_index(s_snap, 9999, &index_id, &d_id, &r_id, &a_idx, &idx_type, &idx_name, &idx_d, &idx_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_index(nullptr, 0, &index_id, &d_id, &r_id, &a_idx, &idx_type, &idx_name, &idx_d, &idx_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // Secondary index key lookup
+    uint32_t found_node = 0;
+    std::string test_k = "key_0";
+    impulse_snapshot_resolve_key(s_snap, 0, test_k.data(), test_k.size(), &found_node);
+    const void* out_kb = nullptr;
+    size_t out_klen = 0;
+    impulse_snapshot_resolve_dense_id(s_snap, 0, 0, &out_kb, &out_klen);
+
+    impulse_snapshot_close(s_snap);
+    std::remove(stream_file.c_str());
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " Impulse Snapshot MC/DC Condition Independence & Boundary Suite" << std::endl;
@@ -1256,9 +1381,11 @@ int main() {
     test_mcdc_legacy_snapshot_v24();
     test_mcdc_snapshot_edge_cases_and_decisions();
     test_mcdc_snapshot_pass8_deep_decisions();
+    test_mcdc_snapshot_pass12_deep_decisions();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL SNAPSHOT MC/DC CONDITION INDEPENDENCE TESTS PASSED!" << std::endl;
     std::cout << "================================================================" << std::endl;
     return 0;
 }
+
