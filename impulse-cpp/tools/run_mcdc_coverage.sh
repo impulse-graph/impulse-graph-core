@@ -30,7 +30,7 @@ echo "[3/5] Executing test harnesses with MC/DC profile collection..."
 export LLVM_PROFILE_FILE="${PROFILE_DIR}/cov_%p_%m.profraw"
 
 echo " -> Running test suites..."
-for t in impulse_graph_test test_vector_suite simd_test vm_test vm_fluent_test test_vm_vector_math test_permutation_index test_cel_parser test_variable_node_id_widths test_cpp_compiler_parity test_cypher_compiler test_datalog_compiler test_c_statement_api test_vm_mcdc_boundaries; do
+for t in impulse_graph_test test_vector_suite simd_test vm_test vm_fluent_test test_vm_vector_math test_permutation_index test_cel_parser test_variable_node_id_widths test_cpp_compiler_parity test_cypher_compiler test_datalog_compiler test_c_statement_api test_vm_mcdc_boundaries test_snapshot_mcdc_boundaries; do
     if [[ -x "${BUILD_DIR}/${t}" ]]; then
         echo "    * ${t}"
         "${BUILD_DIR}/${t}" > /dev/null 2>&1 || echo "Warning: ${t} had failures"
@@ -63,6 +63,7 @@ xcrun llvm-cov report \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_graph.cpp" \
     --show-mcdc-summary
 
 echo "================================================================"
@@ -72,6 +73,7 @@ xcrun llvm-cov show \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_graph.cpp" \
     --show-mcdc \
     --show-mcdc-summary \
     --show-branches=count > "${REPORT_DIR}/mcdc_report.txt"
@@ -80,6 +82,7 @@ xcrun llvm-cov show \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_graph.cpp" \
     --show-mcdc \
     --show-branches=count \
     --format=html \
