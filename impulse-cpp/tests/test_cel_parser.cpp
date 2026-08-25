@@ -297,16 +297,30 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     std::cout << "[Test] Exhaustive CEL Lexer, Parser, Compiler & Optimizer MC/DC Truth Tables..." << std::endl;
 
     // 1. Lexer edge cases: $, @, comments without newline, string escapes, float exps, unrecognized chars
-    Parser lex1("$_ident @ident $ @ 42 // comment at eof");
+    Parser lex1("$_ident @ident $ @ $1 @1 _ident ident 42 // comment at eof");
     auto t1 = lex1.parse_expression();
     assert(t1 != nullptr);
 
+    // Comment with newline vs at EOF
+    Parser lex1b("// comment with newline\n100");
+    assert(lex1b.parse_expression() != nullptr);
+
+    // Slash at EOF vs slash not followed by slash
+    Parser lex1c("10 / 2");
+    assert(lex1c.parse_expression() != nullptr);
+
+    // String escapes: \n, \t, \r, \", \\, \x, trailing \ at EOF
     Parser lex2("\"str with \\n \\t \\r \\\" \\\\ \\x\"");
     auto t2 = lex2.parse_expression();
     assert(t2 != nullptr);
     assert(CelCompiler::to_impscheme(t2) == "\"str with \n \t \r \" \\ x\"");
 
-    Parser lex3("1e5 + 2E+3 + 3e-2 + 123.456");
+    Parser lex2b("\"unterminated escape \\");
+    auto t2b = lex2b.parse_expression();
+    (void)t2b;
+
+    // Number formats: scientific with +, with -, without sign; dot with digit, dot without digit, dot at EOF
+    Parser lex3("1e5 + 2E+3 + 3e-2 + 123.456 + 123.");
     auto t3 = lex3.parse_expression();
     assert(t3 != nullptr);
 
@@ -326,8 +340,11 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     Parser p_trailing("1 + 2 extra_token");
     assert(p_trailing.parse() == nullptr);
 
-    // 3. Prefix unary operators (+, -, !)
-    Parser p_unary("+x - (-y) + (!z)");
+    Parser p_empty("");
+    assert(p_empty.parse() == nullptr);
+
+    // 3. Prefix unary operators (+, -, !) and nested unaries
+    Parser p_unary("+x - (-y) + (!z) + !(-w)");
     auto ast_u = p_unary.parse_expression();
     assert(ast_u != nullptr);
     std::string ir_u = CelCompiler::to_impscheme(ast_u);
@@ -338,17 +355,19 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     auto ast_mem = p_mem.parse_expression();
     assert(ast_mem != nullptr);
 
-    // 5. CelCompiler to_impscheme for all AST kinds
+    // 5. CelCompiler to_impscheme for all AST kinds & float formats
     assert(CelCompiler::to_impscheme(nullptr) == "()");
     assert(CelCompiler::to_impscheme(AstNode::make_bool(true)) == "#t");
     assert(CelCompiler::to_impscheme(AstNode::make_bool(false)) == "#f");
     assert(CelCompiler::to_impscheme(AstNode::make_list({AstNode::make_int(1), AstNode::make_int(2)})) == "(list 1 2)");
+    assert(CelCompiler::to_impscheme(AstNode::make_float(10.0)) == "10.0");
+    assert(CelCompiler::to_impscheme(AstNode::make_float(1e20)) == "1e+20");
     assert(CelCompiler::resolve_math_func("non_existent_func") == -1);
 
     // 6. AstOptimizer exhaustive condition coverage
     assert(AstOptimizer::optimize(nullptr) == nullptr);
 
-    // Fold unary: !true, !false, !(!x), -int, -float
+    // Fold unary: !true, !false, !(!x), !(-x), -int, -float
     auto opt_u1 = AstOptimizer::optimize(Parser("!true").parse_expression());
     assert(opt_u1->kind == AstKind::LITERAL_BOOL && opt_u1->bool_val == false);
 
@@ -357,6 +376,9 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
 
     auto opt_u3 = AstOptimizer::optimize(Parser("!(!x)").parse_expression());
     assert(opt_u3->kind == AstKind::IDENTIFIER && opt_u3->text == "x");
+
+    auto opt_u3b = AstOptimizer::optimize(Parser("!(-x)").parse_expression());
+    assert(opt_u3b->kind == AstKind::UNARY_OP);
 
     auto opt_u4 = AstOptimizer::optimize(Parser("-5").parse_expression());
     assert(opt_u4->kind == AstKind::LITERAL_INT && opt_u4->int_val == -5);
@@ -445,10 +467,18 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(AstOptimizer::optimize(Parser("false ? 10 : 20").parse_expression())->int_val == 20);
     assert(AstOptimizer::optimize(Parser("x ? 10 : 20").parse_expression())->kind == AstKind::TERNARY_OP);
 
-    // Math functions folding (unary, binary, ternary)
+    // Math functions folding (unary int/float, binary all 4 permutations, ternary all permutations)
     assert(std::fabs(AstOptimizer::optimize(Parser("abs(-5.0)").parse_expression())->float_val - 5.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("abs(-5)").parse_expression())->float_val - 5.0) < 1e-5);
     assert(std::fabs(AstOptimizer::optimize(Parser("pow(2.0, 3.0)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2, 3.0)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2.0, 3)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2, 3)").parse_expression())->float_val - 8.0) < 1e-5);
     assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15, 0.0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15, 0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
     assert(AstOptimizer::optimize(Parser("abs(x)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("pow(x, 2.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("clamp(x, 0.0, 10.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
