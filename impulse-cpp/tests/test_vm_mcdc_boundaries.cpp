@@ -2135,6 +2135,112 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
     impulse_vm_context_destroy(ctx);
 }
 
+void test_mcdc_pass17_deep_vm_accessors() {
+    std::cout << "[MC/DC] Testing Pass 17 Exhaustive VM Context Accessors & Slot Width Truth Tables..." << std::endl;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    assert(ctx != nullptr);
+
+    // 1. BitSet add/test truth tables
+    impulse_vm_context_bitset_add(nullptr, 0, 1);
+    impulse_vm_context_bitset_add(ctx, 999, 1);
+    impulse_vm_context_bitset_add(ctx, 0, 1); // not allocated
+
+    assert(!impulse_vm_context_bitset_test(nullptr, 0, 1));
+    assert(!impulse_vm_context_bitset_test(ctx, 999, 1));
+    assert(!impulse_vm_context_bitset_test(ctx, 0, 1)); // not allocated
+
+    int b_h = impulse_vm_context_acquire_bitset(ctx);
+    assert(b_h >= 0);
+    impulse_vm_context_bitset_add(ctx, b_h, 1);
+    assert(impulse_vm_context_bitset_test(ctx, b_h, 1));
+    assert(!impulse_vm_context_bitset_test(ctx, b_h, 2));
+
+    // 2. Float vector set/get truth tables
+    impulse_vm_context_float_vector_set(nullptr, 0, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, 999, 0, 1.0f);
+    impulse_vm_context_float_vector_set(ctx, 0, 0, 1.0f); // not allocated
+
+    int f_h = impulse_vm_context_acquire_float_vector(ctx);
+    assert(f_h >= 0);
+    impulse_vm_context_float_vector_set(ctx, f_h, 99999, 1.0f); // index >= max_nodes
+    impulse_vm_context_float_vector_set(ctx, f_h, 5, 3.14f); // valid
+
+    assert(impulse_vm_context_get_float_vector(nullptr, 0) == nullptr);
+    assert(impulse_vm_context_get_float_vector(ctx, 999) == nullptr);
+    assert(impulse_vm_context_get_float_vector(ctx, f_h) != nullptr);
+
+    // 3. Double vector set/get truth tables
+    impulse_vm_context_double_vector_set(nullptr, 0, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, 999, 0, 1.0);
+    impulse_vm_context_double_vector_set(ctx, 0, 0, 1.0); // not allocated
+
+    int d_h = impulse_vm_context_acquire_double_vector(ctx);
+    assert(d_h >= 0);
+    impulse_vm_context_double_vector_set(ctx, d_h, 99999, 1.0); // index >= max_nodes
+    impulse_vm_context_double_vector_set(ctx, d_h, 5, 2.718); // valid
+
+    assert(impulse_vm_context_get_double_vector(nullptr, 0) == nullptr);
+    assert(impulse_vm_context_get_double_vector(ctx, 999) == nullptr);
+    assert(impulse_vm_context_get_double_vector(ctx, d_h) != nullptr);
+
+    // 4. Node vector get truth tables
+    assert(impulse_vm_context_get_node_vector(nullptr, 0) == nullptr);
+    assert(impulse_vm_context_get_node_vector(ctx, 999) == nullptr);
+    assert(impulse_vm_context_get_node_vector(ctx, 0) == nullptr); // not allocated
+    int n_h = impulse_vm_context_acquire_node_vector(ctx);
+    assert(n_h >= 0);
+    assert(impulse_vm_context_get_node_vector(ctx, n_h) != nullptr);
+
+    // 5. String vector add/size/get truth tables
+    impulse_vm_context_string_vector_add(nullptr, 0, "str");
+    impulse_vm_context_string_vector_add(ctx, 999, "str");
+    impulse_vm_context_string_vector_add(ctx, 0, "str"); // not allocated
+
+    assert(impulse_vm_context_string_vector_size(nullptr, 0) == 0);
+    assert(impulse_vm_context_string_vector_size(ctx, 999) == 0);
+    assert(impulse_vm_context_string_vector_size(ctx, 0) == 0);
+
+    assert(impulse_vm_context_string_vector_get(nullptr, 0, 0) == nullptr);
+    assert(impulse_vm_context_string_vector_get(ctx, 999, 0) == nullptr);
+    assert(impulse_vm_context_string_vector_get(ctx, 0, 0) == nullptr);
+
+    int s_h = impulse_vm_context_acquire_string_vector(ctx);
+    assert(s_h >= 0);
+    assert(impulse_vm_context_string_vector_get(ctx, s_h, 0) == nullptr); // index >= size
+    impulse_vm_context_string_vector_add(ctx, s_h, "hello");
+    assert(impulse_vm_context_string_vector_size(ctx, s_h) == 1);
+    assert(std::string(impulse_vm_context_string_vector_get(ctx, s_h, 0)) == "hello");
+
+    // 6. Value map size/get_key/get_value truth tables
+    assert(impulse_vm_context_value_map_size(nullptr, 0) == 0);
+    assert(impulse_vm_context_value_map_size(ctx, 999) == 0);
+    assert(impulse_vm_context_value_map_size(ctx, 0) == 0);
+
+    assert(impulse_vm_context_value_map_get_key(nullptr, 0, 0) == nullptr);
+    assert(impulse_vm_context_value_map_get_key(ctx, 999, 0) == nullptr);
+    assert(impulse_vm_context_value_map_get_key(ctx, 0, 0) == nullptr);
+
+    assert(impulse_vm_context_value_map_get_value(nullptr, 0, 0) == 0.0f);
+    assert(impulse_vm_context_value_map_get_value(ctx, 999, 0) == 0.0f);
+    assert(impulse_vm_context_value_map_get_value(ctx, 0, 0) == 0.0f);
+
+    int m_h = impulse_vm_context_acquire_value_map(ctx);
+    assert(m_h >= 0);
+    assert(impulse_vm_context_value_map_get_key(ctx, m_h, 0) == nullptr); // index >= size
+    assert(impulse_vm_context_value_map_get_value(ctx, m_h, 0) == 0.0f); // index >= size
+
+    // Release handles
+    impulse_vm_context_release_bitset(ctx, b_h);
+    impulse_vm_context_release_float_vector(ctx, f_h);
+    impulse_vm_context_release_double_vector(ctx, d_h);
+    impulse_vm_context_release_node_vector(ctx, n_h);
+    impulse_vm_context_release_string_vector(ctx, s_h);
+    impulse_vm_context_release_value_map(ctx, m_h);
+
+    impulse_vm_context_destroy(ctx);
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpulseVM MC/DC Condition Independence & Boundary Test Suite" << std::endl;
@@ -2161,6 +2267,7 @@ int main() {
     test_mcdc_vm_pass4_deep_decisions();
     test_mcdc_pass10_deep_decisions();
     test_mcdc_pass11_exhaustive_vm_matrix();
+    test_mcdc_pass17_deep_vm_accessors();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL MC/DC CONDITION INDEPENDENCE TESTS PASSED SUCCESSFULLY!" << std::endl;
