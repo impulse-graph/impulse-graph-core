@@ -62,6 +62,9 @@ echo "================================================================"
 xcrun llvm-cov report \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -object="${BUILD_DIR}/test_impscm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_vm_vector_math" \
+    -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
@@ -77,6 +80,9 @@ echo "Generating Detailed MC/DC Analysis to ${REPORT_DIR}/mcdc_report.txt..."
 xcrun llvm-cov show \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -object="${BUILD_DIR}/test_impscm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_vm_vector_math" \
+    -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
@@ -91,6 +97,9 @@ xcrun llvm-cov show \
 xcrun llvm-cov show \
     "${BUILD_DIR}/libimpulse_graph_static.a" \
     -object="${BUILD_DIR}/test_impscm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_vm_vector_math" \
+    -object="${BUILD_DIR}/test_vm_mcdc_boundaries" \
+    -object="${BUILD_DIR}/test_snapshot_mcdc_boundaries" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
