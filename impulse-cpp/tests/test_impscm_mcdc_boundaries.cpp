@@ -1,5 +1,6 @@
 #include "impulse_compiler.hpp"
 #include "impulse_sexpr.hpp"
+#include "impulse_impk.hpp"
 #include "impulse_vm.h"
 #include "impulse_graph.h"
 #include <cassert>
@@ -9,6 +10,7 @@
 
 using namespace impulse::compiler;
 using namespace impulse::impscm;
+using namespace impulse::impk;
 
 void test_mcdc_sexpr_parser() {
     std::cout << "[MC/DC] Testing SExprParser boundary conditions..." << std::endl;
@@ -505,6 +507,55 @@ void test_mcdc_ast_nodes_and_passes_exhaustive() {
     assert(!res_opt.to_impas_string().empty());
 }
 
+void test_mcdc_impk_compiler() {
+    std::cout << "[MC/DC] Testing ImpK DSL Parsing, GraphBLAS Operations, and IR Lowering..." << std::endl;
+
+    std::string script =
+        "// Leading comment\n"
+        "# Another comment\n"
+        "y = A * x\n"
+        "z = a + b\n"
+        "pr = pagerank(A, p, 0.85)\n"
+        "cc1 = afforest(A)\n"
+        "cc2 = connected_components(A)\n"
+        "d = degree(A)\n"
+        "top = topk(v, 5)\n"
+        "num = 42.5\n";
+
+    auto stmts = ImpKCompiler::parse(script);
+    assert(stmts.size() == 7);
+
+    assert(stmts[0].op_type == ImpKOpType::MatrixVectorMul);
+    assert(stmts[0].target_var == "y");
+    assert(stmts[0].matrix_var == "A");
+    assert(stmts[0].vector_var1 == "x");
+
+    assert(stmts[1].op_type == ImpKOpType::VectorAdd);
+    assert(stmts[1].target_var == "z");
+
+    assert(stmts[2].op_type == ImpKOpType::PageRankStep);
+    assert(stmts[2].scalar_param == 0.85);
+
+    assert(stmts[3].op_type == ImpKOpType::ConnectedComponents);
+    assert(stmts[4].op_type == ImpKOpType::ConnectedComponents);
+    assert(stmts[5].op_type == ImpKOpType::DegreeNorm);
+    assert(stmts[6].op_type == ImpKOpType::TopK);
+    assert(stmts[6].top_k == 5);
+
+    std::string impscm_ir = ImpKCompiler::to_impscheme(stmts);
+    assert(!impscm_ir.empty());
+    assert(impscm_ir.find("mxv A x") != std::string::npos);
+    assert(impscm_ir.find("ewise-add a b") != std::string::npos);
+    assert(impscm_ir.find("pagerank-step 0.85") != std::string::npos);
+    assert(impscm_ir.find("cc-afforest") != std::string::npos);
+
+    // Error case: unexpected token in expect()
+    try {
+        ImpKCompiler::parse("pr = pagerank(A p 0.85)");
+        assert(false);
+    } catch (const std::runtime_error&) {}
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpScheme (impscm) Compiler MC/DC Boundary Suite" << std::endl;
@@ -515,6 +566,7 @@ int main() {
     test_mcdc_compiler_pipeline();
     test_mcdc_sexpr_deep_coverage();
     test_mcdc_ast_nodes_and_passes_exhaustive();
+    test_mcdc_impk_compiler();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL IMPSCM COMPILER MC/DC CONDITION INDEPENDENCE TESTS PASSED!" << std::endl;
