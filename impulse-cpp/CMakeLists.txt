@@ -129,8 +129,11 @@ if(IMPULSE_BUILD_TESTS)
     add_test(NAME test_vm_mcdc_boundaries COMMAND test_vm_mcdc_boundaries)
 
     add_executable(test_snapshot_mcdc_boundaries tests/test_snapshot_mcdc_boundaries.cpp)
+
     target_link_libraries(test_snapshot_mcdc_boundaries PRIVATE impulse_graph_static)
+
     add_test(NAME test_snapshot_mcdc_boundaries COMMAND test_snapshot_mcdc_boundaries)
+
 
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)
@@ -216,3 +219,6 @@ if(IMPULSE_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
+target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
+add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
