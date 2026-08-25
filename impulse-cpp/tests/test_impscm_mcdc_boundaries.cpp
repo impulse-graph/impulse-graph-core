@@ -154,6 +154,30 @@ void test_mcdc_compiler_pipeline() {
     prog_missing->steps.push_back(walk2);
     auto ast_miss = ImpulseCompiler::compile(prog_missing); // params empty
 
+    // Predicate not VECTOR_FILTER
+    auto prog_pred_other = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    auto w_other = ScmWalk::forward("edge");
+    w_other->predicate = std::make_shared<ScmLiteral>();
+    prog_pred_other->steps.push_back(w_other);
+    ImpulseCompiler::compile(prog_pred_other, nullptr, params);
+
+    // Threshold not SYMBOL
+    auto prog_thresh_lit = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    auto w_lit = ScmWalk::forward("edge");
+    auto f_lit = std::make_shared<ScmVectorFilter>("attr", CompareOp::EQ, std::make_shared<ScmLiteral>());
+    w_lit->predicate = f_lit;
+    prog_thresh_lit->steps.push_back(w_lit);
+    ImpulseCompiler::compile(prog_thresh_lit, nullptr, params);
+
+    // Threshold NULL
+    auto prog_thresh_null = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    auto w_null = ScmWalk::forward("edge");
+    auto f_null = std::make_shared<ScmVectorFilter>("attr", CompareOp::EQ, nullptr);
+    w_null->predicate = f_null;
+    prog_thresh_null->steps.push_back(w_null);
+    ImpulseCompiler::compile(prog_thresh_null, nullptr, params);
+
+
     // 3. Kernel Fusion
     // T,T,T,T (fusable)
     auto prog_fuse = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
@@ -183,6 +207,33 @@ void test_mcdc_compiler_pipeline() {
     prog_pred->steps.push_back(w_pred1);
     prog_pred->steps.push_back(w_pred2);
     auto ast_pred_fused = ImpulseCompiler::compile(prog_pred, nullptr, {}, opts);
+
+    // Fusion loop: first not WALK
+    auto prog_first_not_walk = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    prog_first_not_walk->steps.push_back(std::make_shared<ScmLiteral>());
+    prog_first_not_walk->steps.push_back(ScmWalk::forward("edge2"));
+    ImpulseCompiler::compile(prog_first_not_walk, nullptr, {}, opts);
+
+    // Fusion loop: second not WALK
+    auto prog_second_not_walk = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    prog_second_not_walk->steps.push_back(ScmWalk::forward("edge1"));
+    prog_second_not_walk->steps.push_back(std::make_shared<ScmLiteral>());
+    ImpulseCompiler::compile(prog_second_not_walk, nullptr, {}, opts);
+
+    // Fusion checks: w1 reverse CSC
+    auto prog_w1_rev = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    prog_w1_rev->steps.push_back(ScmWalk::reverse("edge1"));
+    prog_w1_rev->steps.push_back(ScmWalk::forward("edge2"));
+    ImpulseCompiler::compile(prog_w1_rev, nullptr, {}, opts);
+
+    // Fusion checks: w2 has predicate
+    auto prog_w2_pred = std::make_shared<ScmProgram>(std::vector<AstPtr>{});
+    auto w2p = ScmWalk::forward("edge2");
+    w2p->predicate = std::make_shared<ScmVectorFilter>("attr", CompareOp::EQ, std::make_shared<ScmSymbol>("dummy"));
+    prog_w2_pred->steps.push_back(ScmWalk::forward("edge1"));
+    prog_w2_pred->steps.push_back(w2p);
+    ImpulseCompiler::compile(prog_w2_pred, nullptr, {}, opts);
+
     
     // ScmWalk2Hop to_scm_string with valid relation ids vs without
     auto fuse2hop = std::make_shared<ScmWalk2Hop>("r1", "r2");
@@ -196,6 +247,11 @@ void test_mcdc_compiler_pipeline() {
     fuse2hop_bad->rel2_id = 2;
     std::string s2 = fuse2hop_bad->to_scm_string();
     assert(s2.find("\"r1\" \"r2\"") != std::string::npos);
+    auto fuse2hop_bad2 = std::make_shared<ScmWalk2Hop>("r1", "r2");
+    fuse2hop_bad2->rel1_id = 1;
+    fuse2hop_bad2->rel2_id = -1;
+    fuse2hop_bad2->to_scm_string();
+
 
     // 4. Direction Selection & Emitter OP_HALT appending
 
