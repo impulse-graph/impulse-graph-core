@@ -1000,6 +1000,247 @@ void test_mcdc_snapshot_edge_cases_and_decisions() {
     impulse_snapshot_close(snap);
 }
 
+
+
+
+
+
+void test_mcdc_snapshot_pass8_deep_decisions() {
+    std::cout << "[MC/DC Snapshot] Testing Snapshot Pass 8 Deep Decisions & Boundary Permutations..." << std::endl;
+
+    // 1. resolve_snapshot_path variations
+    setenv("IMPULSE_DATASETS_DIR", "", 1);
+    setenv("IMPULSEGRAPH_DATA_DIR", "/tmp/impulse_test_dir", 1);
+    setenv("IMPULSE_DATA_DIR", "/tmp/impulse_data_dir", 1);
+    impulse_status_t st;
+    impulse_snapshot_t* snap_env = impulse_snapshot_open("nonexistent_test.imps", &st);
+    ASSERT_EQ(snap_env, nullptr);
+
+    unsetenv("IMPULSEGRAPH_DATA_DIR");
+    snap_env = impulse_snapshot_open("nonexistent_test.imps", &st);
+    ASSERT_EQ(snap_env, nullptr);
+    unsetenv("IMPULSE_DATA_DIR");
+
+    // 2. String Table Multi-byte UTF-8 boundary permutations
+    std::string test_utf8_file = "/tmp/test_mcdc_utf8_perm.imps";
+    {
+        std::vector<uint8_t> buf(8192, 0);
+        impulse_snapshot_header_v0_9_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = IMPULSE_SPEC_VERSION_PACKED;
+                hdr.data_offset = 4096;
+        hdr.domain_count = 1;
+        hdr.relation_count = 0;
+        hdr.header_checksum = compute_test_crc16(reinterpret_cast<const uint8_t*>(&hdr), 62);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+
+        uint8_t str_data[] = { 0, (uint8_t)0xC0, 0x00, (uint8_t)0xE0, (uint8_t)0x80, 0x00, (uint8_t)0xF0, (uint8_t)0x80, (uint8_t)0x80, 0x00 };
+        uint32_t str_len = sizeof(str_data);
+        std::memcpy(buf.data() + 4096, &str_len, 4);
+        std::memcpy(buf.data() + 4100, str_data, sizeof(str_data));
+
+        size_t dom_cur = 4096 + 4 + str_len;
+        size_t rem = dom_cur % 128;
+        if (rem != 0) dom_cur += (128 - rem);
+
+        impulse_domain_catalog_entry_v0_9_t dom{};
+        dom.domain_id = 0;
+        dom.name_offset = 1; // points to 0xC0 0x00
+        std::memcpy(buf.data() + dom_cur, &dom, sizeof(dom));
+
+        std::ofstream f(test_utf8_file, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+    }
+    impulse_snapshot_t* snap_utf8 = impulse_snapshot_open(test_utf8_file.c_str(), &st);
+    ASSERT_EQ(snap_utf8, nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+    std::remove(test_utf8_file.c_str());
+
+    // 3. Unaligned index data offset (must be 128B aligned)
+    std::string test_idx_file = "/tmp/test_mcdc_unaligned_idx.imps";
+    {
+        std::vector<uint8_t> buf(8192, 0);
+        impulse_snapshot_header_v0_9_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = IMPULSE_SPEC_VERSION_PACKED;
+                hdr.data_offset = 4096;
+        hdr.domain_count = 0;
+        hdr.relation_count = 0;
+        hdr.index_count = 1;
+        hdr.header_checksum = compute_test_crc16(reinterpret_cast<const uint8_t*>(&hdr), 62);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+
+        uint32_t str_len = 1;
+        std::memcpy(buf.data() + 4096, &str_len, 4);
+        buf[4100] = 0;
+
+        impulse_index_directory_entry_v0_9_t idx{};
+        idx.domain_id = 0;
+        idx.index_type = 1;
+        idx.data_offset = 5001; // unaligned
+        idx.data_bytes = 100;
+        std::memcpy(buf.data() + 4224, &idx, sizeof(idx));
+
+        std::ofstream f(test_idx_file, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+    }
+    impulse_snapshot_t* snap_idx = impulse_snapshot_open(test_idx_file.c_str(), &st);
+    ASSERT_EQ(snap_idx, nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE);
+    std::remove(test_idx_file.c_str());
+
+    // 4. Create a valid complete snapshot using the C-ABI Writer
+    std::string test_valid_file = "/tmp/test_mcdc_valid_full.imps";
+    {
+        impulse_writer_t* w = impulse_writer_create(test_valid_file.c_str(), 0);
+        ASSERT_TRUE(w != nullptr);
+
+        ASSERT_EQ(impulse_writer_add_domain(w, 0, 0, "User"), IMPULSE_OK);
+
+        uint32_t row_off[] = { 0, 1, 2, 3 };
+        uint16_t col_idx[] = { 1, 2, 0 };
+        ASSERT_EQ(impulse_writer_add_relation(w, 0, 0, 0, 3, 3, 0, row_off, sizeof(row_off), col_idx, sizeof(col_idx)), IMPULSE_OK);
+
+        float weights[] = { 1.0f, 2.0f, 3.0f };
+        ASSERT_EQ(impulse_writer_add_attribute(w, 0, "weight", 2, 1, weights, sizeof(weights), nullptr, 0), IMPULSE_OK);
+
+        uint32_t idx_data[] = { 0, 0,  1, 1,  2, 2 };
+        ASSERT_EQ(impulse_writer_add_index(w, 0, 0xFFFF, 0, 4, "mph_idx", idx_data, sizeof(idx_data), 0), IMPULSE_OK);
+
+        ASSERT_EQ(impulse_writer_set_metadata(w, "author", "impulse"), IMPULSE_OK);
+
+        ASSERT_EQ(impulse_writer_finalize(w), IMPULSE_OK);
+        impulse_writer_destroy(w);
+    }
+
+    impulse_snapshot_t* snap = impulse_snapshot_open(test_valid_file.c_str(), &st);
+    ASSERT_TRUE(snap != nullptr);
+    ASSERT_EQ(st, IMPULSE_OK);
+
+    // 5. Test raw pointer accessor
+    ASSERT_EQ(impulse_snapshot_get_buffer(nullptr, 0, 10), nullptr);
+    ASSERT_EQ(impulse_snapshot_get_buffer(snap, 99999999, 10), nullptr);
+    ASSERT_EQ(impulse_snapshot_get_buffer(snap, 100, 99999999), nullptr);
+    ASSERT_TRUE(impulse_snapshot_get_buffer(snap, 0, 64) != nullptr);
+
+    // 6. Test metadata accessor
+    char meta_buf[64];
+    ASSERT_EQ(impulse_snapshot_get_metadata(nullptr, "author", meta_buf, sizeof(meta_buf)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_metadata(snap, nullptr, meta_buf, sizeof(meta_buf)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_metadata(snap, "author", nullptr, sizeof(meta_buf)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_metadata(snap, "author", meta_buf, 0), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_metadata(snap, "nonexistent", meta_buf, sizeof(meta_buf)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_metadata(snap, "author", meta_buf, sizeof(meta_buf)), IMPULSE_OK);
+    ASSERT_EQ(std::string(meta_buf), "impulse");
+
+    // 7. Test relation CSR & CSC accessor permutation branches
+    const uint32_t* u32_offsets = nullptr;
+    const uint32_t* u32_targets = nullptr;
+    const void* raw_offsets = nullptr;
+    const void* raw_targets = nullptr;
+    uint64_t node_cnt = 0;
+    uint64_t edge_cnt = 0;
+    uint8_t n_w = 0;
+    uint8_t e_w = 0;
+
+    ASSERT_EQ(impulse_snapshot_get_relation_buffers(nullptr, 0, &u32_offsets, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_buffers(snap, 99, &u32_offsets, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_buffers(snap, 0, nullptr, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_buffers(snap, 0, &u32_offsets, nullptr, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_buffers(snap, 0, &u32_offsets, &u32_targets, nullptr, nullptr), IMPULSE_OK);
+
+    ASSERT_EQ(impulse_snapshot_get_relation_raw_buffers(nullptr, 0, &raw_offsets, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_raw_buffers(snap, 99, &raw_offsets, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_raw_buffers(snap, 0, nullptr, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_raw_buffers(snap, 0, &raw_offsets, nullptr, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_raw_buffers(snap, 0, &raw_offsets, &raw_targets, nullptr, nullptr, &n_w, &e_w), IMPULSE_OK);
+
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_buffers(nullptr, 0, &u32_offsets, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_buffers(snap, 99, &u32_offsets, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_buffers(snap, 0, nullptr, &u32_targets, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_buffers(snap, 0, &u32_offsets, nullptr, &node_cnt, &edge_cnt), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_buffers(snap, 0, &u32_offsets, &u32_targets, nullptr, nullptr), IMPULSE_OK);
+
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(nullptr, 0, &raw_offsets, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(snap, 99, &raw_offsets, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(snap, 0, nullptr, &raw_targets, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(snap, 0, &raw_offsets, nullptr, &node_cnt, &edge_cnt, &n_w, &e_w), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(snap, 0, &raw_offsets, &raw_targets, nullptr, nullptr, &n_w, &e_w), IMPULSE_OK);
+
+    // 8. Test relation attributes accessor
+    const void* attr_data_ptr = nullptr;
+    uint64_t attr_data_bytes = 0;
+    const void* attr_off_ptr = nullptr;
+    uint64_t attr_off_bytes = 0;
+    uint8_t attr_type = 0;
+    uint32_t attr_dim = 0;
+    ASSERT_EQ(impulse_snapshot_get_attribute_buffers(nullptr, 0, 0, &attr_data_ptr, &attr_data_bytes, &attr_off_ptr, &attr_off_bytes, &attr_type, &attr_dim), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_attribute_buffers(snap, 99, 0, &attr_data_ptr, &attr_data_bytes, &attr_off_ptr, &attr_off_bytes, &attr_type, &attr_dim), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_attribute_buffers(snap, 0, 99, &attr_data_ptr, &attr_data_bytes, &attr_off_ptr, &attr_off_bytes, &attr_type, &attr_dim), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_attribute_buffers(snap, 0, 0, &attr_data_ptr, &attr_data_bytes, &attr_off_ptr, &attr_off_bytes, &attr_type, &attr_dim), IMPULSE_OK);
+    ASSERT_EQ(attr_type, 2); // float
+    ASSERT_EQ(attr_dim, 1);
+
+    // 9. Test index entry accessor
+    uint32_t idx_id = 0;
+    uint16_t d_id = 0;
+    uint16_t r_id = 0;
+    uint16_t a_idx = 0;
+    uint8_t i_type = 0;
+    const char* i_name = nullptr;
+    const void* i_data = nullptr;
+    uint64_t i_bytes = 0;
+    ASSERT_EQ(impulse_snapshot_get_index(nullptr, 0, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_index(snap, 99, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_get_index(snap, 0, &idx_id, &d_id, &r_id, &a_idx, &i_type, &i_name, &i_data, &i_bytes), IMPULSE_ERR_INVALID_ARGUMENT);
+    // checked
+
+    // 10. Secondary index node lookup by key and reverse lookup
+    uint32_t found_node = 0;
+    ASSERT_EQ(impulse_snapshot_resolve_key(nullptr, 0, "User", 4, &found_node), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_key(snap, 99, "User", 4, &found_node), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_key(snap, 0, nullptr, 4, &found_node), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_key(snap, 0, "User", 4, nullptr), IMPULSE_ERR_INVALID_ARGUMENT);
+    impulse_snapshot_resolve_key(snap, 0, "User", 4, &found_node);
+
+    const void* out_k_bytes = nullptr;
+    size_t out_k_len = 0;
+    ASSERT_EQ(impulse_snapshot_resolve_dense_id(nullptr, 0, 0, &out_k_bytes, &out_k_len), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_dense_id(snap, 99, 0, &out_k_bytes, &out_k_len), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_dense_id(snap, 0, 0, nullptr, &out_k_len), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_snapshot_resolve_dense_id(snap, 0, 0, &out_k_bytes, nullptr), IMPULSE_ERR_INVALID_ARGUMENT);
+    impulse_snapshot_resolve_dense_id(snap, 0, 0, &out_k_bytes, &out_k_len);
+    impulse_snapshot_resolve_dense_id(snap, 0, 999, &out_k_bytes, &out_k_len);
+
+    // 11. Sampler deterministic vs randomized branch execution
+    uint64_t src_nodes[] = { 0, 1 };
+    uint64_t sampled_src[10];
+    uint64_t sampled_tgt[10];
+    size_t out_sampled = 0;
+
+    ASSERT_EQ(impulse_snapshot_sample_neighbors(snap, 0, src_nodes, 2, -1, 42, sampled_src, sampled_tgt, 10, &out_sampled), IMPULSE_OK);
+    ASSERT_EQ(impulse_snapshot_sample_neighbors(snap, 0, src_nodes, 2, 1, 42, sampled_src, sampled_tgt, 10, &out_sampled), IMPULSE_OK);
+    ASSERT_EQ(impulse_snapshot_sample_neighbors(snap, 0, src_nodes, 2, 1, 42, nullptr, nullptr, 0, &out_sampled), IMPULSE_OK);
+
+    // 12. Writer null argument permutations
+    uint32_t row_off[] = { 0, 1 };
+    uint16_t col_idx[] = { 0 };
+    impulse_writer_t* w_dummy = impulse_writer_create("/tmp/test_dummy_w.bin", 0);
+    ASSERT_EQ(impulse_writer_add_relation(nullptr, 0, 0, 2, 1, 1, 0, row_off, sizeof(row_off), col_idx, sizeof(col_idx)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_writer_add_relation(w_dummy, 0, 0, 2, 1, 1, 0, nullptr, sizeof(row_off), col_idx, sizeof(col_idx)), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_writer_add_relation(w_dummy, 0, 0, 2, 1, 1, 0, row_off, sizeof(row_off), nullptr, sizeof(col_idx)), IMPULSE_ERR_INVALID_ARGUMENT);
+
+    ASSERT_EQ(impulse_writer_add_index(nullptr, 0, 0, 0, 0, "idx", nullptr, 0, 0), IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_writer_add_index(w_dummy, 0, 0, 0, 0, nullptr, nullptr, 0, 0), IMPULSE_ERR_INVALID_ARGUMENT);
+    impulse_writer_destroy(w_dummy);
+    std::remove("/tmp/test_dummy_w.bin");
+
+    // 13. Snapshot close null check
+    impulse_snapshot_close(nullptr);
+    impulse_snapshot_close(snap);
+    std::remove(test_valid_file.c_str());
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " Impulse Snapshot MC/DC Condition Independence & Boundary Suite" << std::endl;
@@ -1014,6 +1255,7 @@ int main() {
     test_mcdc_multi_width_node_edge_relations();
     test_mcdc_legacy_snapshot_v24();
     test_mcdc_snapshot_edge_cases_and_decisions();
+    test_mcdc_snapshot_pass8_deep_decisions();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL SNAPSHOT MC/DC CONDITION INDEPENDENCE TESTS PASSED!" << std::endl;
