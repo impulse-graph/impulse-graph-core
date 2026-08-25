@@ -270,6 +270,120 @@ void test_mcdc_compiler_pipeline() {
 
 }
 
+
+void test_mcdc_sexpr_deep_coverage() {
+    std::cout << "[MC/DC] Testing SExprParser & AST Builder deep decision paths..." << std::endl;
+
+    // 1. Line 35: Comment terminated by EOF without newline
+    SExprParser p_eof_comment("; comment at eof");
+    p_eof_comment.parse();
+
+    // 2. Line 74: Atom termination characters: '(', ')', '[', ']', space, eof
+    SExprParser p_delim_paren("(foo(bar))");
+    p_delim_paren.parse();
+    SExprParser p_delim_bracket("[foo[bar]]");
+    p_delim_bracket.parse();
+    SExprParser p_delim_close("(foo)bar");
+    p_delim_close.parse();
+    p_delim_close.parse();
+    SExprParser p_delim_brack_close("[foo]bar");
+    p_delim_brack_close.parse();
+    p_delim_brack_close.parse();
+
+    // 3. Line 86: Empty atom with is_list = false
+    SExpr empty_atom{};
+    empty_atom.is_list = false;
+    empty_atom.atom = "";
+    assert(ImpScmAstBuilder::build(empty_atom) == nullptr);
+
+    // 4. Line 101: Head variations for pipeline: "impk-pipeline", "pipeline", "query", "module", non-matching
+    SExprParser p_pipeline("(pipeline (csr-walk edge))");
+    assert(ImpScmAstBuilder::build(p_pipeline.parse())->kind() == NodeKind::PROGRAM);
+    SExprParser p_query("(query (csr-walk edge))");
+    assert(ImpScmAstBuilder::build(p_query.parse())->kind() == NodeKind::PROGRAM);
+    SExprParser p_module("(module (csr-walk edge))");
+    assert(ImpScmAstBuilder::build(p_module.parse())->kind() == NodeKind::PROGRAM);
+
+    // 5. Line 104 & 107: define-query and define-kernel in pipeline
+    // Item is not a list
+    SExprParser p_pipe_atom("(pipeline atom_step)");
+    assert(ImpScmAstBuilder::build(p_pipe_atom.parse())->kind() == NodeKind::PROGRAM);
+    // Item is empty list
+    SExprParser p_pipe_empty_step("(pipeline ())");
+    assert(ImpScmAstBuilder::build(p_pipe_empty_step.parse())->kind() == NodeKind::PROGRAM);
+    // Item is define-kernel
+    SExprParser p_pipe_kernel("(pipeline (define-kernel my_k (csr-walk edge)))");
+    assert(ImpScmAstBuilder::build(p_pipe_kernel.parse())->kind() == NodeKind::PROGRAM);
+    // Item is define-query
+    SExprParser p_pipe_dq("(pipeline (define-query my_q (csr-walk edge)))");
+    assert(ImpScmAstBuilder::build(p_pipe_dq.parse())->kind() == NodeKind::PROGRAM);
+
+    // 6. Line 128: Let bindings variations
+    // Bindings is not a list: (let a (return a))
+    SExprParser p_let_nonlist("(let a (return a))");
+    assert(ImpScmAstBuilder::build(p_let_nonlist.parse())->kind() == NodeKind::LET);
+    // Bind item is not a list: (let (a) (return a))
+    SExprParser p_let_bind_nonlist("(let (a) (return a))");
+    assert(ImpScmAstBuilder::build(p_let_bind_nonlist.parse())->kind() == NodeKind::LET);
+    // Bind item is list of size != 2: (let ((a)) (return a)) and (let ((a 1 2)) (return a))
+    SExprParser p_let_bind_sz1("(let ((a)) (return a))");
+    assert(ImpScmAstBuilder::build(p_let_bind_sz1.parse())->kind() == NodeKind::LET);
+    SExprParser p_let_bind_sz3("(let ((a 1 2)) (return a))");
+    assert(ImpScmAstBuilder::build(p_let_bind_sz3.parse())->kind() == NodeKind::LET);
+
+    // 7. Line 162: bitset:from with size != 2
+    SExprParser p_bs_from_err("(bitset:from)");
+    assert(ImpScmAstBuilder::build(p_bs_from_err.parse()) == nullptr);
+    SExprParser p_bs_from_err3("(bitset:from a b)");
+    assert(ImpScmAstBuilder::build(p_bs_from_err3.parse()) == nullptr);
+
+    // 8. Line 167: bitset:cardinality with size != 2
+    SExprParser p_bs_card_err("(bitset:cardinality)");
+    assert(ImpScmAstBuilder::build(p_bs_card_err.parse()) == nullptr);
+    SExprParser p_bs_card_err3("(bitset:cardinality a b)");
+    assert(ImpScmAstBuilder::build(p_bs_card_err3.parse()) == nullptr);
+
+    // 9. Line 171: > with size != 3
+    SExprParser p_gt_err1("(>)");
+    assert(ImpScmAstBuilder::build(p_gt_err1.parse()) == nullptr);
+    SExprParser p_gt_err2("(> a)");
+    assert(ImpScmAstBuilder::build(p_gt_err2.parse()) == nullptr);
+    SExprParser p_gt_err4("(> a b c)");
+    assert(ImpScmAstBuilder::build(p_gt_err4.parse()) == nullptr);
+
+    // 10. Line 175: Walk heads (g:walk-csr and mxv)
+    SExprParser p_walk_g("(g:walk-csr edge)");
+    assert(ImpScmAstBuilder::build(p_walk_g.parse())->kind() == NodeKind::WALK);
+    SExprParser p_walk_mxv("(mxv edge)");
+    assert(ImpScmAstBuilder::build(p_walk_mxv.parse())->kind() == NodeKind::WALK);
+
+    // 11. Line 178: Walk arguments filtering: is_list, "g", "frontier", "updateEdge"
+    SExprParser p_walk_args("(csr-walk g frontier updateEdge (some-list) custom_rel)");
+    auto ast_walk = ImpScmAstBuilder::build(p_walk_args.parse());
+    assert(ast_walk->kind() == NodeKind::WALK);
+    auto w_node = std::static_pointer_cast<ScmWalk>(ast_walk);
+    assert(w_node->relation_name == "custom_rel");
+
+    // 12. Line 195: Return with size != 2
+    SExprParser p_ret_err1("(return)");
+    assert(ImpScmAstBuilder::build(p_ret_err1.parse()) == nullptr);
+    SExprParser p_ret_err3("(return a b)");
+    assert(ImpScmAstBuilder::build(p_ret_err3.parse()) == nullptr);
+
+    // 13. Top-level ImpScmAstBuilder::parse API
+    // 13a. Program root
+    auto parsed_prog = ImpScmAstBuilder::parse("(pipeline (csr-walk edge))");
+    assert(parsed_prog != nullptr && parsed_prog->kind() == NodeKind::PROGRAM);
+    // 13b. Single statement root wrapped in ScmProgram
+    auto parsed_single = ImpScmAstBuilder::parse("(csr-walk edge)");
+    assert(parsed_single != nullptr && parsed_single->kind() == NodeKind::PROGRAM);
+    // 13c. Parse failure exception
+    try {
+        ImpScmAstBuilder::parse("()");
+        assert(false);
+    } catch (const std::runtime_error&) {}
+}
+
 int main() {
     std::cout << "================================================================" << std::endl;
     std::cout << " ImpScheme (impscm) Compiler MC/DC Boundary Suite" << std::endl;
@@ -278,6 +392,7 @@ int main() {
     test_mcdc_sexpr_parser();
     test_mcdc_ast_builder();
     test_mcdc_compiler_pipeline();
+    test_mcdc_sexpr_deep_coverage();
 
     std::cout << "================================================================" << std::endl;
     std::cout << " ALL IMPSCM COMPILER MC/DC CONDITION INDEPENDENCE TESTS PASSED!" << std::endl;
