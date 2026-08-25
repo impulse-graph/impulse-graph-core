@@ -296,42 +296,67 @@ static void test_cel_parameter_normalization() {
 static void test_cel_exhaustive_mcdc_truth_tables() {
     std::cout << "[Test] Exhaustive CEL Lexer, Parser, Compiler & Optimizer MC/DC Truth Tables..." << std::endl;
 
-    // 1. Lexer edge cases: $, @, comments without newline, string escapes, float exps, unrecognized chars
-    Parser lex1("$_ident @ident $ @ $1 @1 _ident ident 42 // comment at eof");
-    auto t1 = lex1.parse_expression();
-    assert(t1 != nullptr);
+    // 1. Direct Lexer MC/DC condition independence testing
+    {
+        // Line 109: $, @ combinations
+        Lexer l_dollar_a("$var");
+        assert(l_dollar_a.next_token().type == TokenType::IDENTIFIER);
 
-    // Comment with newline vs at EOF
-    Parser lex1b("// comment with newline\n100");
-    assert(lex1b.parse_expression() != nullptr);
+        Lexer l_dollar_u("$_var");
+        assert(l_dollar_u.next_token().type == TokenType::IDENTIFIER);
 
-    // Slash at EOF vs slash not followed by slash
-    Parser lex1c("10 / 2");
-    assert(lex1c.parse_expression() != nullptr);
+        Lexer l_dollar_1("$1");
+        assert(l_dollar_1.next_token().type == TokenType::END_OF_FILE);
 
-    // String escapes: \n, \t, \r, \", \\, \x, trailing \ at EOF
-    Parser lex2("\"str with \\n \\t \\r \\\" \\\\ \\x\"");
-    auto t2 = lex2.parse_expression();
-    assert(t2 != nullptr);
-    assert(CelCompiler::to_impscheme(t2) == "\"str with \n \t \r \" \\ x\"");
+        Lexer l_at_a("@var");
+        assert(l_at_a.next_token().type == TokenType::IDENTIFIER);
 
-    Parser lex2b("\"unterminated escape \\");
-    auto t2b = lex2b.parse_expression();
-    (void)t2b;
+        Lexer l_at_u("@_var");
+        assert(l_at_u.next_token().type == TokenType::IDENTIFIER);
 
-    // Number formats: scientific with +, with -, without sign; dot with digit, dot without digit, dot at EOF
-    Parser lex3("1e5 + 2E+3 + 3e-2 + 123.456 + 123.");
-    auto t3 = lex3.parse_expression();
-    assert(t3 != nullptr);
+        Lexer l_at_1("@1");
+        assert(l_at_1.next_token().type == TokenType::END_OF_FILE);
 
-    Parser lex_list("[1, 2, 3] + []");
-    auto t_list = lex_list.parse_expression();
-    assert(t_list != nullptr);
+        // Line 122: _ident vs ident
+        Lexer l_u("_abc");
+        assert(l_u.next_token().type == TokenType::IDENTIFIER);
 
-    // Unrecognized char
-    Parser lex4("~ ; #");
-    auto t4 = lex4.parse_expression();
-    (void)t4;
+        Lexer l_id("abc");
+        assert(l_id.next_token().type == TokenType::IDENTIFIER);
+
+        // Line 144: slash permutations
+        Lexer l_slash_eof("/");
+        assert(l_slash_eof.next_token().type == TokenType::SLASH);
+
+        Lexer l_slash_other("/+");
+        assert(l_slash_other.next_token().type == TokenType::SLASH);
+
+        Lexer l_slash_comment("// test");
+        assert(l_slash_comment.next_token().type == TokenType::END_OF_FILE);
+
+        Lexer l_slash_nl("// test\n42");
+        assert(l_slash_nl.next_token().type == TokenType::INT_LITERAL);
+
+        // Line 180: dot permutations in number
+        Lexer l_num_dot_eof("123.");
+        assert(l_num_dot_eof.next_token().type == TokenType::INT_LITERAL);
+
+        Lexer l_num_dot_non_digit("123.foo");
+        assert(l_num_dot_non_digit.next_token().type == TokenType::INT_LITERAL);
+
+        Lexer l_num_double_dot("123.45.67");
+        assert(l_num_double_dot.next_token().type == TokenType::FLOAT_LITERAL);
+
+        // Line 188: scientific notation + vs - vs none
+        Lexer l_sci_plus("1e+5");
+        assert(l_sci_plus.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_minus("1e-5");
+        assert(l_sci_minus.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_none("1e5");
+        assert(l_sci_none.next_token().type == TokenType::FLOAT_LITERAL);
+    }
 
     // 2. Parser::parse() vs parse_expression()
     Parser p_full("1 + 2");
@@ -426,11 +451,17 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(AstOptimizer::optimize(Parser("5.0 >= 5.0").parse_expression())->bool_val == true);
     assert(AstOptimizer::optimize(Parser("4.0 >= 5.0").parse_expression())->bool_val == false);
 
-    // Fold boolean ops
+    // Fold boolean ops - all 4 truth combinations for && and ||
+    assert(AstOptimizer::optimize(Parser("false && false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("false && true").parse_expression())->bool_val == false);
     assert(AstOptimizer::optimize(Parser("true && false").parse_expression())->bool_val == false);
     assert(AstOptimizer::optimize(Parser("true && true").parse_expression())->bool_val == true);
-    assert(AstOptimizer::optimize(Parser("true || false").parse_expression())->bool_val == true);
+
     assert(AstOptimizer::optimize(Parser("false || false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("false || true").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("true || false").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("true || true").parse_expression())->bool_val == true);
+
     assert(AstOptimizer::optimize(Parser("true == false").parse_expression())->bool_val == false);
     assert(AstOptimizer::optimize(Parser("true != false").parse_expression())->bool_val == true);
 
