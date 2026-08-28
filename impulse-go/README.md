@@ -163,3 +163,9 @@ func main() {
 	}
 }
 ```
+
+## Idiomatic & Safe Zero-Copy Memory
+The Go bindings utilize strongly-typed View structures (e.g., `Float32VectorView`, `NodeVectorView`) wrapping `unsafe.Slice`. These view objects explicitly hold a reference to their parent `VmContext`, strictly guaranteeing that Go's Garbage Collector will not finalize the underlying C++ VM buffers while you are still accessing the slice. 
+
+> [!WARNING]
+> Long-running graph traversals executing synchronously via CGO can block OS threads and starve the Goroutine scheduler. For operations executing millions of hops, ensure your VM execution is chunked, or rely on explicit context yields in your Go application logic.

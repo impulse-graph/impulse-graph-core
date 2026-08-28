@@ -133,3 +133,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## High Concurrency & Opt-in Parallelism
+In large-scale graph enterprise environments, managing thousands of concurrent requests is often prioritized over single-query parallelism. 
+Because of this, **Rayon integration is strictly opt-in**.
+
+By default, Impulse executes on a single thread (`.iter()`), preserving your CPU cores for concurrent `tokio` handlers. If you desire single-query parallel execution, you must explicitly enable the `rayon` feature in your `Cargo.toml`:
+```toml
+[dependencies]
+impulse-graph = { version = "0.9", features = ["rayon"] }
+```
+And explicitly invoke `.par_iter()` or `.to_par_hashset()` in your pipeline.
+
+## Async Executor Safety (`tokio`)
+Calling memory-mapped graphs can trigger page faults. To prevent these faults from stalling the `tokio` async executor threads, enable the `tokio` feature flag. The SDK automatically wraps deep traversal executions inside `tokio::task::spawn_blocking` to execute safely in the background.

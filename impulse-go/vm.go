@@ -446,3 +446,62 @@ func (b *QueryBuilder) Compile() []Instruction {
 	return bytecode
 }
 
+
+// Float32VectorView provides a zero-copy view into an unmanaged VM execution vector.
+// It explicitly retains a pointer to the VmContext to ensure the C++ memory remains
+// allocated across Garbage Collection sweeps while the view is active.
+type Float32VectorView struct {
+	Data []float32
+	ctx  *VmContext
+}
+
+// Float64VectorView provides a zero-copy view into an unmanaged VM execution vector.
+type Float64VectorView struct {
+	Data []float64
+	ctx  *VmContext
+}
+
+// NodeVectorView provides a zero-copy view into an unmanaged VM node array.
+type NodeVectorView struct {
+	Data []uint64
+	ctx  *VmContext
+}
+
+// GetFloatVector retrieves a handle's float32 vector as a GC-safe zero-copy view.
+func (c *VmContext) GetFloatVector(handle int) Float32VectorView {
+	cPtr := C.impulse_vm_context_get_float_vector(c.handle, C.size_t(handle))
+	sz := c.GetVectorSize()
+	if cPtr == nil || sz == 0 {
+		return Float32VectorView{Data: nil, ctx: c}
+	}
+	return Float32VectorView{
+		Data: unsafe.Slice((*float32)(unsafe.Pointer(cPtr)), sz),
+		ctx:  c,
+	}
+}
+
+// GetDoubleVector retrieves a handle's float64 vector as a GC-safe zero-copy view.
+func (c *VmContext) GetDoubleVector(handle int) Float64VectorView {
+	cPtr := C.impulse_vm_context_get_double_vector(c.handle, C.size_t(handle))
+	sz := c.GetVectorSize()
+	if cPtr == nil || sz == 0 {
+		return Float64VectorView{Data: nil, ctx: c}
+	}
+	return Float64VectorView{
+		Data: unsafe.Slice((*float64)(unsafe.Pointer(cPtr)), sz),
+		ctx:  c,
+	}
+}
+
+// GetNodeVector retrieves a handle's node ID vector as a GC-safe zero-copy view.
+func (c *VmContext) GetNodeVector(handle int) NodeVectorView {
+	cPtr := C.impulse_vm_context_get_node_vector(c.handle, C.size_t(handle))
+	sz := c.GetVectorSize()
+	if cPtr == nil || sz == 0 {
+		return NodeVectorView{Data: nil, ctx: c}
+	}
+	return NodeVectorView{
+		Data: unsafe.Slice((*uint64)(unsafe.Pointer(cPtr)), sz),
+		ctx:  c,
+	}
+}

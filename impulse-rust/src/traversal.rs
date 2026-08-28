@@ -27,7 +27,26 @@ pub struct Traversal<'a> {
     params: HashMap<String, f64>,
 }
 
+
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 impl<'a> Traversal<'a> {
+    #[cfg(feature = "rayon")]
+    pub fn to_par_hashset(&self) -> Result<HashSet<u64>, ImpulseError> {
+        let current_frontier = self.to_vec()?;
+        Ok(current_frontier.into_par_iter().collect())
+    }
+
+    #[cfg(feature = "rayon")]
+    pub fn par_count(&self) -> Result<usize, ImpulseError> {
+        let current_frontier = self.to_vec()?;
+        Ok(current_frontier.par_iter().count())
+    }
+
+
+    
+
     /// Creates a new Traversal starting at start_node.
     pub fn new(reader: &'a SnapshotReader, start_node: u64) -> Self {
         Self {

@@ -440,8 +440,10 @@ private:
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::TypedArrayOf<float>::New(env, 0);
-        Napi::Float32Array arr = Napi::Float32Array::New(env, sz);
-        std::memcpy(arr.Data(), ptr, sz * sizeof(float));
+        auto noop = [](Napi::Env, void*) {};
+        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<float*>(ptr), sz * sizeof(float), noop);
+        Napi::Float32Array arr = Napi::Float32Array::New(env, sz, buf, 0);
+        arr.Set("_ctx", info.This());
         return arr;
     }
 
@@ -475,8 +477,10 @@ private:
         const double* ptr = impulse_vm_context_get_double_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::TypedArrayOf<double>::New(env, 0);
-        Napi::Float64Array arr = Napi::Float64Array::New(env, sz);
-        std::memcpy(arr.Data(), ptr, sz * sizeof(double));
+        auto noop = [](Napi::Env, void*) {};
+        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<double*>(ptr), sz * sizeof(double), noop);
+        Napi::Float64Array arr = Napi::Float64Array::New(env, sz, buf, 0);
+        arr.Set("_ctx", info.This());
         return arr;
     }
 
@@ -500,8 +504,10 @@ private:
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::BigUint64Array::New(env, 0);
-        Napi::BigUint64Array arr = Napi::BigUint64Array::New(env, sz);
-        std::memcpy(arr.Data(), ptr, sz * sizeof(uint64_t));
+        auto noop = [](Napi::Env, void*) {};
+        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<uint64_t*>(ptr), sz * sizeof(uint64_t), noop);
+        Napi::BigUint64Array arr = Napi::BigUint64Array::New(env, sz, buf, 0);
+        arr.Set("_ctx", info.This());
         return arr;
     }
 
@@ -1272,6 +1278,113 @@ Napi::Value ExecuteBytecode(const Napi::CallbackInfo& info) {
 // ============================================================================
 // Addon Initialization & Export Definitions
 // ============================================================================
+
+class VmExecuteWorker : public Napi::AsyncWorker {
+public:
+    VmExecuteWorker(Napi::Env& env, NodeSnapshot* snap_obj, const uint8_t* bc_bytes, size_t byte_len, uint64_t input_param)
+        : Napi::AsyncWorker(env),
+          snap_obj(snap_obj),
+          bc_bytes(bc_bytes),
+          inst_count(byte_len / sizeof(impulse_instruction_t)),
+          input_param(input_param),
+          deferred(Napi::Promise::Deferred::New(env)) {}
+
+    Napi::Promise GetPromise() { return deferred.Promise(); }
+
+protected:
+    void Execute() override {
+        const impulse_instruction_t* instructions = reinterpret_cast<const impulse_instruction_t*>(bc_bytes);
+        ctx = impulse_vm_context_create(snap_obj->RawSnapshot());
+        if (!ctx) {
+            SetError("Failed to create VM context");
+            return;
+        }
+
+        std::memset(&state, 0, sizeof(impulse_vm_state_t));
+        state.query_context = ctx;
+
+        status = impulse_vm_execute(instructions, inst_count, &state, input_param);
+
+        res.status = status;
+        if (inst_count > 0) {
+            res.result_register = instructions[inst_count - 1].dst_reg;
+        }
+        if (res.result_register < 64) {
+            res.result_type = static_cast<impulse_register_type_t>(state.register_types[res.result_register]);
+            res.raw_value = state.registers[res.result_register];
+        }
+
+        impulse_vm_context_destroy(ctx);
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        Napi::Value result = NodeQueryResult::CreateInstance(env, res);
+        deferred.Resolve(result);
+    }
+
+    void OnError(const Napi::Error& e) override {
+        deferred.Reject(e.Value());
+    }
+
+private:
+    NodeSnapshot* snap_obj;
+    const uint8_t* bc_bytes;
+    size_t inst_count;
+    uint64_t input_param;
+
+    impulse_vm_context_t* ctx = nullptr;
+    alignas(64) impulse_vm_state_t state;
+    impulse_vm_status_t status = IMPULSE_VM_OK;
+    impulse::vm::QueryResult res;
+
+    Napi::Promise::Deferred deferred;
+};
+
+Napi::Value ExecuteBytecodeAsync(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2) {
+        Napi::TypeError::New(env, "Snapshot and Bytecode Buffer arguments required").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    NodeSnapshot* snap_obj = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[0].As<Napi::Object>());
+    if (!snap_obj || !snap_obj->RawSnapshot()) {
+        Napi::Error::New(env, "Invalid Snapshot").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    const uint8_t* bc_bytes = nullptr;
+    size_t byte_len = 0;
+
+    if (info[1].IsBuffer()) {
+        Napi::Buffer<uint8_t> buf = info[1].As<Napi::Buffer<uint8_t>>();
+        bc_bytes = buf.Data();
+        byte_len = buf.Length();
+    } else if (info[1].IsTypedArray()) {
+        Napi::TypedArray arr = info[1].As<Napi::TypedArray>();
+        bc_bytes = reinterpret_cast<const uint8_t*>(arr.ArrayBuffer().Data()) + arr.ByteOffset();
+        byte_len = arr.ByteLength();
+    } else {
+        Napi::TypeError::New(env, "Bytecode must be a Buffer or TypedArray").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    if (byte_len % sizeof(impulse_instruction_t) != 0) {
+        Napi::Error::New(env, "Bytecode buffer size must be a multiple of 8 bytes").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    uint64_t input_param = 0;
+    if (info.Length() > 2) {
+        input_param = GetUint64(info[2]);
+    }
+
+    VmExecuteWorker* worker = new VmExecuteWorker(env, snap_obj, bc_bytes, byte_len, input_param);
+    worker->Queue();
+    return worker->GetPromise();
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     NodeSnapshot::Init(env, exports);
     NodeWriter::Init(env, exports);
@@ -1282,6 +1395,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     NodeQueryBuilder::Init(env, exports);
 
     exports.Set("executeBytecode", Napi::Function::New(env, ExecuteBytecode));
+    exports.Set("executeBytecodeAsync", Napi::Function::New(env, ExecuteBytecodeAsync));
 
     // Export Opcodes
     Napi::Object opcodes = Napi::Object::New(env);
