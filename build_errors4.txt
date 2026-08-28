@@ -1,0 +1,426 @@
+[  8%] Built target hwy
+[  9%] Building CXX object CMakeFiles/impulse_graph.dir/src/impulse_vm.cpp.o
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:5849:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 5849 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6300:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6300 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6441:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6441 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6453:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6453 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6640:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6640 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6648:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6648 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6882:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6882 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6970:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6970 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7049:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7049 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7104:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7104 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7173:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7173 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7220:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7220 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7292:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7292 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7339:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7339 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7403:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7403 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7424:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7424 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7462:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7462 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7483:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7483 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7591:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7591 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7909:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7909 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8001:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8001 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8144:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8144 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8194:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8194 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8260:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8260 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8338:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8338 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+25 warnings generated.
+[ 10%] Building CXX object CMakeFiles/impulse_graph.dir/src/impulse_vm_fluent.cpp.o
+[ 11%] Linking CXX shared library libimpulse_graph.dylib
+[ 15%] Built target impulse_graph
+[ 16%] Building CXX object CMakeFiles/impulse_graph_static.dir/src/impulse_graph.cpp.o
+[ 17%] Building CXX object CMakeFiles/impulse_graph_static.dir/src/impulse_index.cpp.o
+[ 18%] Building CXX object CMakeFiles/impulse_graph_static.dir/src/impulse_simd.cpp.o
+In file included from /Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_simd.cpp:9:
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/foreach_target.h:174:
+In file included from /Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_simd.cpp:10:
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/highway.h:19:
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+  253 |   ::hwy::Abort(__FILE__, __LINE__, format, ##__VA_ARGS__)
+      |                                            ^
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: warning: token pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments]
+70 warnings generated.
+[ 19%] Building CXX object CMakeFiles/impulse_graph_static.dir/src/impulse_vm.cpp.o
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:5849:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 5849 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6300:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6300 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6441:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6441 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6453:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6453 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6640:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6640 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6648:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6648 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6882:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6882 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6970:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6970 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7049:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7049 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7104:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7104 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7173:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7173 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7220:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7220 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7292:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7292 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7339:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7339 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7403:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7403 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7424:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7424 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7462:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7462 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7483:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7483 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7591:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7591 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7909:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7909 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8001:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8001 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8144:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8144 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8194:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8194 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8260:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8260 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8338:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8338 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+25 warnings generated.
+[ 20%] Building CXX object CMakeFiles/impulse_graph_static.dir/src/impulse_vm_fluent.cpp.o
+[ 21%] Linking CXX static library libimpulse_graph_static.a
+[ 21%] Built target impulse_graph_static
+[ 22%] Building CXX object CMakeFiles/impulse_graph_test.dir/tests/impulse_graph_test.cpp.o
+[ 23%] Linking CXX executable impulse_graph_test
+[ 23%] Built target impulse_graph_test
+[ 25%] Building CXX object CMakeFiles/test_vector_suite.dir/tests/test_vector_suite.cpp.o
+[ 26%] Linking CXX executable test_vector_suite
+[ 26%] Built target test_vector_suite
+[ 27%] Building CXX object CMakeFiles/simd_test.dir/tests/simd_test.cpp.o
+[ 28%] Linking CXX executable simd_test
+[ 28%] Built target simd_test
+[ 29%] Building CXX object CMakeFiles/vm_test.dir/tests/vm_test.cpp.o
+[ 30%] Linking CXX executable vm_test
+[ 30%] Built target vm_test
+[ 31%] Building CXX object CMakeFiles/vm_fluent_test.dir/tests/vm_fluent_test.cpp.o
+[ 32%] Linking CXX executable vm_fluent_test
+[ 32%] Built target vm_fluent_test
+[ 33%] Building CXX object CMakeFiles/test_permutation_index.dir/tests/test_permutation_index.cpp.o
+[ 34%] Linking CXX executable test_permutation_index
+[ 34%] Built target test_permutation_index
+[ 35%] Building CXX object CMakeFiles/test_vm_vector_math.dir/tests/test_vm_vector_math.cpp.o
+[ 36%] Linking CXX executable test_vm_vector_math
+[ 36%] Built target test_vm_vector_math
+[ 38%] Building CXX object CMakeFiles/test_cel_parser.dir/tests/test_cel_parser.cpp.o
+[ 39%] Linking CXX executable test_cel_parser
+[ 39%] Built target test_cel_parser
+[ 40%] Building CXX object CMakeFiles/test_vm_mcdc_boundaries.dir/tests/test_vm_mcdc_boundaries.cpp.o
+[ 41%] Linking CXX executable test_vm_mcdc_boundaries
+[ 41%] Built target test_vm_mcdc_boundaries
+[ 42%] Building CXX object CMakeFiles/test_snapshot_mcdc_boundaries.dir/tests/test_snapshot_mcdc_boundaries.cpp.o
+[ 43%] Linking CXX executable test_snapshot_mcdc_boundaries
+[ 43%] Built target test_snapshot_mcdc_boundaries
+[ 44%] Building CXX object CMakeFiles/bench_secondary_indexes.dir/tests/bench_secondary_indexes.cpp.o
+[ 45%] Linking CXX executable bench_secondary_indexes
+[ 45%] Built target bench_secondary_indexes
+[ 46%] Building CXX object CMakeFiles/bench_bfs_lazy_csc.dir/tests/bench_bfs_lazy_csc.cpp.o
+[ 47%] Linking CXX executable bench_bfs_lazy_csc
+[ 47%] Built target bench_bfs_lazy_csc
+[ 48%] Building CXX object CMakeFiles/build_northwind_imps.dir/Users/jesse/impulse/datasets/northwind/build_northwind_imps.cpp.o
+[ 50%] Linking CXX executable build_northwind_imps
+[ 50%] Built target build_northwind_imps
+[ 51%] Building CXX object CMakeFiles/convert_neo4j_northwind.dir/Users/jesse/impulse/datasets/northwind/convert_neo4j_northwind.cpp.o
+[ 52%] Linking CXX executable convert_neo4j_northwind
+[ 52%] Built target convert_neo4j_northwind
+[ 53%] Building CXX object CMakeFiles/bench_scratch_indexes_lifecycle.dir/Users/jesse/impulse/datasets/northwind/bench_scratch_indexes_lifecycle.cpp.o
+[ 54%] Linking CXX executable bench_scratch_indexes_lifecycle
+[ 54%] Built target bench_scratch_indexes_lifecycle
+[ 55%] Building CXX object CMakeFiles/bench_large_attribute_dataset.dir/Users/jesse/impulse/datasets/bench_large_attribute_dataset.cpp.o
+[ 56%] Linking CXX executable bench_large_attribute_dataset
+[ 56%] Built target bench_large_attribute_dataset
+[ 57%] Building CXX object CMakeFiles/bench_opcode_dispatch.dir/tests/bench_opcode_dispatch.cpp.o
+[ 58%] Linking CXX executable bench_opcode_dispatch
+[ 58%] Built target bench_opcode_dispatch
+[ 59%] Building CXX object CMakeFiles/bench_cel_compiler.dir/tests/bench_cel_compiler.cpp.o
+[ 60%] Linking CXX executable bench_cel_compiler
+[ 60%] Built target bench_cel_compiler
+[ 61%] Building CXX object CMakeFiles/test_cpp_compiler_parity.dir/tests/test_cpp_compiler_parity.cpp.o
+[ 63%] Linking CXX executable test_cpp_compiler_parity
+[ 63%] Built target test_cpp_compiler_parity
+[ 64%] Building CXX object CMakeFiles/test_variable_node_id_widths.dir/tests/test_variable_node_id_widths.cpp.o
+[ 65%] Linking CXX executable test_variable_node_id_widths
+[ 65%] Built target test_variable_node_id_widths
+[ 66%] Building CXX object CMakeFiles/bench_cpp_compiler_ablation.dir/tests/bench_cpp_compiler_ablation.cpp.o
+[ 67%] Linking CXX executable bench_cpp_compiler_ablation
+[ 67%] Built target bench_cpp_compiler_ablation
+[ 68%] Building CXX object CMakeFiles/bench_prefetch_distance.dir/tests/bench_prefetch_distance.cpp.o
+[ 69%] Linking CXX executable bench_prefetch_distance
+[ 69%] Built target bench_prefetch_distance
+[ 70%] Building CXX object CMakeFiles/bench_all_drugs_medical.dir/tests/bench_all_drugs_medical.cpp.o
+[ 71%] Linking CXX executable bench_all_drugs_medical
+[ 71%] Built target bench_all_drugs_medical
+[ 72%] Building CXX object CMakeFiles/test_cypher_compiler.dir/tests/test_cypher_compiler.cpp.o
+[ 73%] Linking CXX executable test_cypher_compiler
+[ 73%] Built target test_cypher_compiler
+[ 75%] Building CXX object CMakeFiles/bench_cypher_medical.dir/tests/bench_cypher_medical.cpp.o
+[ 76%] Linking CXX executable bench_cypher_medical
+[ 76%] Built target bench_cypher_medical
+[ 77%] Building CXX object CMakeFiles/bench_cypher_all_diseases.dir/tests/bench_cypher_all_diseases.cpp.o
+[ 78%] Linking CXX executable bench_cypher_all_diseases
+[ 78%] Built target bench_cypher_all_diseases
+[ 79%] Building CXX object CMakeFiles/test_datalog_compiler.dir/tests/test_datalog_compiler.cpp.o
+[ 80%] Linking CXX executable test_datalog_compiler
+[ 80%] Built target test_datalog_compiler
+[ 81%] Building CXX object CMakeFiles/test_c_statement_api.dir/tests/test_c_statement_api.cpp.o
+[ 82%] Linking CXX executable test_c_statement_api
+[ 82%] Built target test_c_statement_api
+[ 83%] Building CXX object CMakeFiles/test_enterprise_benchmark.dir/tests/test_enterprise_benchmark.cpp.o
+[ 84%] Linking CXX executable test_enterprise_benchmark
+[ 84%] Built target test_enterprise_benchmark
+[ 85%] Building CXX object CMakeFiles/test_impscm_mcdc_boundaries.dir/tests/test_impscm_mcdc_boundaries.cpp.o
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/tests/test_impscm_mcdc_boundaries.cpp:255:5: warning: ignoring return value of function declared with 'nodiscard' attribute [-Wunused-result]
+  255 |     fuse2hop_bad2->to_scm_string();
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
+[ 86%] Linking CXX executable test_impscm_mcdc_boundaries
+[ 86%] Built target test_impscm_mcdc_boundaries
+[ 88%] Building CXX object _deps/highway-build/CMakeFiles/hwy_test.dir/hwy/tests/test_util.cc.o
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/tests/test_util.cc:16:
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/tests/test_util.h:26:
+[1m/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: [0m[0;1;35mwarning: [0m[1mtoken pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments][0m
+  253 |   ::hwy::Abort(__FILE__, __LINE__, format, ##__VA_ARGS__)[0m
+      | [0;1;32m                                           ^
+[0m[1m/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: [0m[0;1;35mwarning: [0m[1mtoken pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments][0m
+[1m/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: [0m[0;1;35mwarning: [0m[1mtoken pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments][0m
+3 warnings generated.
+[ 89%] Linking CXX static library libhwy_test.a
+[ 89%] Built target hwy_test
+[ 90%] Building CXX object _deps/highway-build/CMakeFiles/hwy_list_targets.dir/hwy/tests/list_targets.cc.o
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/tests/list_targets.cc:21:
+In file included from /Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/highway.h:19:
+[1m/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: [0m[0;1;35mwarning: [0m[1mtoken pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments][0m
+  253 |   ::hwy::Abort(__FILE__, __LINE__, format, ##__VA_ARGS__)[0m
+      | [0;1;32m                                           ^
+[0m[1m/Users/jesse/impulse/impulse-graph-core/build-cpp/_deps/highway-src/hwy/base.h:253:44: [0m[0;1;35mwarning: [0m[1mtoken pasting of ',' and __VA_ARGS__ is a GNU extension [-Wgnu-zero-variadic-macro-arguments][0m
+2 warnings generated.
+[ 91%] Linking CXX executable hwy_list_targets
+Config: emu128:0 scalar:0 static:0 all_attain:0 is_test:0
+Compiled HWY_TARGETS:   SVE2_128 SVE_256 SVE2 SVE NEON_BF16 NEON
+HWY_ATTAINABLE_TARGETS: SVE2_128 SVE_256 SVE2 SVE NEON_BF16 NEON NEON_WITHOUT_AES EMU128
+HWY_BASELINE_TARGETS:   NEON NEON_WITHOUT_AES EMU128
+HWY_STATIC_TARGET:      NEON
+HWY_BROKEN_TARGETS:    
+HWY_DISABLED_TARGETS:  
+Current CPU supports:   NEON NEON_WITHOUT_AES EMU128 SCALAR
+[ 91%] Built target hwy_list_targets
+[ 92%] Building CXX object examples/CMakeFiles/01_snapshot_basics.dir/01_snapshot_basics/main.cpp.o
+[ 93%] Linking CXX executable 01_snapshot_basics
+[ 93%] Built target 01_snapshot_basics
+[ 94%] Building CXX object examples/CMakeFiles/02_social_traversal.dir/02_social_traversal/main.cpp.o
+[ 95%] Linking CXX executable 02_social_traversal
+[ 95%] Built target 02_social_traversal
+[ 96%] Building CXX object examples/CMakeFiles/03_rbac_reachability.dir/03_rbac_reachability/main.cpp.o
+[ 97%] Linking CXX executable 03_rbac_reachability
+[ 97%] Built target 03_rbac_reachability
+[ 98%] Building CXX object examples/CMakeFiles/04_cel_transactions.dir/04_cel_transactions/main.cpp.o
+[100%] Linking CXX executable 04_cel_transactions
+[100%] Built target 04_cel_transactions

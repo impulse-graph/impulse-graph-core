@@ -167,7 +167,7 @@ static void test_vm_vector_math_opcodes() {
     std::cout << "[Test] ImpulseVM Bytecode Execution for OP_VEC_MATH_UNARY, BINARY, TERNARY..." << std::endl;
 
     std::vector<impulse_instruction_t> program = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 8 | (8 << 16) },
+        { OP_NOP, 0, 0, 0 },
         // Load inline float array into R1
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (8 << 16) },
         // R2 = exp(R1)
@@ -217,7 +217,7 @@ static void test_vector_predicates_and_masks() {
     std::cout << "[Test] Vector Predicates (CMP_GT, CMP_BETWEEN) & BitMask Logic (AND, OR, BLEND)..." << std::endl;
 
     std::vector<impulse_instruction_t> program = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 8 | (8 << 16) },
+        { OP_NOP, 0, 0, 0 },
         // Load inline float array into R1
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (8 << 16) },
         // R2 = LOAD_CONST_FLOAT 2.0f
@@ -382,7 +382,7 @@ static void test_fp_assertions_and_safe_math() {
 
     // 3. OP_ASSERT_FINITE on clean vector -> PASSED
     std::vector<impulse_instruction_t> clean_prog = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
+        { OP_NOP, 0, 0, 0 },
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
         { OP_ASSERT_FINITE, 0, 1, 0 },
         { OP_HALT, 0, 0, 0 }
@@ -399,7 +399,7 @@ static void test_fp_assertions_and_safe_math() {
 
     // 4. OP_ASSERT_FINITE on NaN vector -> TRAPPED with IMPULSE_VM_ERR_FLOATING_POINT
     std::vector<impulse_instruction_t> nan_prog = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
+        { OP_NOP, 0, 0, 0 },
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
         { OP_ASSERT_FINITE, 0, 1, 0 },
         { OP_HALT, 0, 0, 0 }

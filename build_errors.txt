@@ -1,0 +1,183 @@
+[  8%] Built target hwy
+[  9%] Building CXX object CMakeFiles/impulse_graph.dir/src/impulse_vm.cpp.o
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:5852:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 5852 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6303:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6303 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6339:64: error: subscript of pointer to incomplete type 'const void'
+ 6339 |                             uint32_t start1 = slot1.offsets_ptr[u];
+      |                                               ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6340:62: error: subscript of pointer to incomplete type 'const void'
+ 6340 |                             uint32_t end1 = slot1.offsets_ptr[u + 1];
+      |                                             ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6342:63: error: subscript of pointer to incomplete type 'const void'
+ 6342 |                                 uint32_t v = slot1.targets_ptr[i];
+      |                                              ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6344:72: error: subscript of pointer to incomplete type 'const void'
+ 6344 |                                     uint32_t start2 = slot2.offsets_ptr[v];
+      |                                                       ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6345:70: error: subscript of pointer to incomplete type 'const void'
+ 6345 |                                     uint32_t end2 = slot2.offsets_ptr[v + 1];
+      |                                                     ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6347:77: error: subscript of pointer to incomplete type 'const void'
+ 6347 |                                         bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
+      |                                                            ~~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6444:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6444 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6456:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6456 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6643:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6643 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6651:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6651 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6885:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6885 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6973:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6973 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7052:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7052 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7107:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7107 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7176:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7176 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7223:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7223 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7295:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7295 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7342:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7342 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7406:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7406 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7427:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7427 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7465:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7465 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7486:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7486 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7594:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7594 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7628:62: error: subscript of pointer to incomplete type 'const void'
+ 7628 |                             uint32_t start = slot.offsets_ptr[u];
+      |                                              ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7629:60: error: subscript of pointer to incomplete type 'const void'
+ 7629 |                             uint32_t end = slot.offsets_ptr[u + 1];
+      |                                            ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7632:62: error: subscript of pointer to incomplete type 'const void'
+ 7632 |                                 uint32_t v = slot.targets_ptr[start + r];
+      |                                              ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7670:58: error: subscript of pointer to incomplete type 'const void'
+ 7670 |                         uint32_t start = slot.offsets_ptr[u];
+      |                                          ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7671:56: error: subscript of pointer to incomplete type 'const void'
+ 7671 |                         uint32_t end = slot.offsets_ptr[u + 1];
+      |                                        ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7674:58: error: subscript of pointer to incomplete type 'const void'
+ 7674 |                             uint32_t v = slot.targets_ptr[start + i];
+      |                                          ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7748:44: error: no matching function for call to 'run_island_detect_bfs'
+ 7748 |                 uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+      |                                            ^~~~~~~~~~~~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:616:17: note: candidate function not viable: requires 5 arguments, but 6 were provided
+  616 | static uint32_t run_island_detect_bfs(
+      |                 ^
+  617 |     uint32_t N,
+      |     ~~~~~~~~~~~
+  618 |     const BoundRelationSlot& slot,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  619 |     const int32_t* branch_ids,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~
+  620 |     int64_t k1,
+      |     ~~~~~~~~~~~
+  621 |     int64_t k2
+      |     ~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7761:45: error: no matching function for call to 'run_island_detect_bfs'
+ 7761 |                             uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+      |                                             ^~~~~~~~~~~~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:616:17: note: candidate function not viable: requires 5 arguments, but 6 were provided
+  616 | static uint32_t run_island_detect_bfs(
+      |                 ^
+  617 |     uint32_t N,
+      |     ~~~~~~~~~~~
+  618 |     const BoundRelationSlot& slot,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  619 |     const int32_t* branch_ids,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~
+  620 |     int64_t k1,
+      |     ~~~~~~~~~~~
+  621 |     int64_t k2
+      |     ~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7776:45: error: no matching function for call to 'run_island_detect_bfs'
+ 7776 |                             uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+      |                                             ^~~~~~~~~~~~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:616:17: note: candidate function not viable: requires 5 arguments, but 6 were provided
+  616 | static uint32_t run_island_detect_bfs(
+      |                 ^
+  617 |     uint32_t N,
+      |     ~~~~~~~~~~~
+  618 |     const BoundRelationSlot& slot,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  619 |     const int32_t* branch_ids,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~
+  620 |     int64_t k1,
+      |     ~~~~~~~~~~~
+  621 |     int64_t k2
+      |     ~~~~~~~~~~
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7912:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7912 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7924:62: error: subscript of pointer to incomplete type 'const void'
+ 7924 |                             uint32_t start = slot.offsets_ptr[u];
+      |                                              ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7925:62: error: subscript of pointer to incomplete type 'const void'
+ 7925 |                             uint32_t end   = slot.offsets_ptr[u + 1];
+      |                                              ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7927:72: error: subscript of pointer to incomplete type 'const void'
+ 7927 |                                 uint32_t target_node = slot.targets_ptr[idx];
+      |                                                        ~~~~~~~~~~~~~~~~^
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7944:62: error: subscript of pointer to incomplete type 'const void'
+ 7944 |                             uint32_t start = slot.offsets_ptr[u];
+      |                                              ~~~~~~~~~~~~~~~~^
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 warnings and 20 errors generated.
+make[2]: *** [CMakeFiles/impulse_graph.dir/src/impulse_vm.cpp.o] Error 1
+make[1]: *** [CMakeFiles/impulse_graph.dir/all] Error 2
+make: *** [all] Error 2

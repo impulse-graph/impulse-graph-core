@@ -1,0 +1,109 @@
+[  8%] Built target hwy
+[  9%] Building CXX object CMakeFiles/impulse_graph.dir/src/impulse_vm.cpp.o
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:5849:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 5849 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6300:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6300 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6441:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6441 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6453:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6453 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6640:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6640 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6648:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6648 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6882:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6882 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:6970:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 6970 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7049:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7049 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7104:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7104 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7173:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7173 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7220:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7220 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7292:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7292 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7339:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7339 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7403:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7403 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7424:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7424 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7462:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7462 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7483:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7483 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7591:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7591 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:7909:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 7909 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8001:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8001 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8144:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8144 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8194:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8194 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8260:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8260 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8338:66: warning: format specifies type 'size_t' (aka 'unsigned long') but the argument has type 'uint32_t' (aka 'unsigned int') [-Wformat]
+ 8338 |         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
+      |                                                          ~~~     ^~~~~~~~~~~~
+      |                                                          %u
+/Users/jesse/impulse/impulse-graph-core/impulse-cpp/src/impulse_vm.cpp:8649:18: error: use of undeclared identifier 'OP_RESERVED_0F'
+ 8649 |             case OP_RESERVED_0F:
+      |                  ^~~~~~~~~~~~~~
+25 warnings and 1 error generated.
+make[2]: *** [CMakeFiles/impulse_graph.dir/src/impulse_vm.cpp.o] Error 1
+make[1]: *** [CMakeFiles/impulse_graph.dir/all] Error 2
+make: *** [all] Error 2
