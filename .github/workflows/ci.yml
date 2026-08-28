@@ -62,6 +62,13 @@ jobs:
           cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build build-cpp --config Release
 
+      - name: Build C++20 Core Kernel (No Computed Goto)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cmake -B build-cpp-fallback -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DIMPULSE_DISABLE_COMPUTED_GOTO=ON
+          cmake --build build-cpp-fallback --config Release
+
+
   test-rust-engine:
     name: Test Rust Engine Crate
     needs: detect-changes

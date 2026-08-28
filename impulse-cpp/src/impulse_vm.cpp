@@ -26,7 +26,7 @@
   #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(IMPULSE_DISABLE_COMPUTED_GOTO)
   #define HAS_COMPUTED_GOTO 1
 #endif
 
@@ -6333,15 +6333,15 @@ op_GAS_EXHAUSTED:
                     } else {
                         uint64_t u = scalar_src;
                         if (u < slot1.node_count) {
-                            uint32_t start1 = slot1.offsets_ptr[u];
-                            uint32_t end1 = slot1.offsets_ptr[u + 1];
+                            uint32_t start1 = slot1.get_csr_offset(u);
+                            uint32_t end1 = slot1.get_csr_offset(u + 1);
                             for (uint32_t i = start1; i < end1; ++i) {
-                                uint32_t v = slot1.targets_ptr[i];
+                                uint32_t v = slot1.get_csr_target(i);
                                 if (v < slot2.node_count) {
-                                    uint32_t start2 = slot2.offsets_ptr[v];
-                                    uint32_t end2 = slot2.offsets_ptr[v + 1];
+                                    uint32_t start2 = slot2.get_csr_offset(v);
+                                    uint32_t end2 = slot2.get_csr_offset(v + 1);
                                     for (uint32_t j = start2; j < end2; ++j) {
-                                        bitset_add(bs_dst, slot2.targets_ptr[j], vm_state->query_context->max_nodes);
+                                        bitset_add(bs_dst, slot2.get_csr_target(j), vm_state->query_context->max_nodes);
                                     }
                                 }
                             }
@@ -7622,11 +7622,11 @@ op_GAS_EXHAUSTED:
 #endif
                     for (size_t u = 0; u < N; ++u) {
                         if (u < slot.node_count) {
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end = slot.get_csr_offset(u + 1);
                             uint32_t deg = end - start;
                             if (r < deg) {
-                                uint32_t v = slot.targets_ptr[start + r];
+                                uint32_t v = slot.get_csr_target(start + r);
                                 if (v < N) {
                                     uint64_t root_u = find_root_u64(u, comp);
                                     uint64_t root_v = find_root_u64(v, comp);
@@ -7664,11 +7664,11 @@ op_GAS_EXHAUSTED:
                     if (find_root_u64(u, comp) == giant_root) continue;
 
                     if (u < slot.node_count) {
-                        uint32_t start = slot.offsets_ptr[u];
-                        uint32_t end = slot.offsets_ptr[u + 1];
+                        uint32_t start = slot.get_csr_offset(u);
+                        uint32_t end = slot.get_csr_offset(u + 1);
                         uint32_t deg = end - start;
                         for (uint32_t i = 0; i < deg; ++i) {
-                            uint32_t v = slot.targets_ptr[start + i];
+                            uint32_t v = slot.get_csr_target(start + i);
                             if (v < N) {
                                 uint64_t root_u = find_root_u64(u, comp);
                                 uint64_t root_v = find_root_u64(v, comp);
@@ -7742,7 +7742,7 @@ op_GAS_EXHAUSTED:
                 }
 
                 uint32_t N = static_cast<uint32_t>(slot.node_count);
-                uint32_t base_components = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, -1, -1);
+                uint32_t base_components = run_island_detect_bfs(N, slot, branch_ids, -1, -1);
 
                 uint64_t critical_pairs_count = 0;
                 bool same_set = (src1 == src2);
@@ -7755,7 +7755,7 @@ op_GAS_EXHAUSTED:
                         uint32_t k1 = lines1[i];
                         for (size_t j = i + 1; j < lines1.size(); ++j) {
                             uint32_t k2 = lines1[j];
-                            uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                            uint32_t comp = run_island_detect_bfs(N, slot, branch_ids, k1, k2);
                             if (comp > base_components) {
                                 critical_pairs_count++;
                             }
@@ -7770,7 +7770,7 @@ op_GAS_EXHAUSTED:
                         for (size_t j = 0; j < lines2.size(); ++j) {
                             uint32_t k2 = lines2[j];
                             if (k1 >= k2) continue;
-                            uint32_t comp = run_island_detect_bfs(N, slot.offsets_ptr, slot.targets_ptr, branch_ids, k1, k2);
+                            uint32_t comp = run_island_detect_bfs(N, slot, branch_ids, k1, k2);
                             if (comp > base_components) {
                                 critical_pairs_count++;
                             }
@@ -7918,10 +7918,10 @@ op_GAS_EXHAUSTED:
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
                             double src_val = src_vec[u];
                             if (src_val == 0.0) continue;
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end   = slot.get_csr_offset(u + 1);
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                uint32_t target_node = slot.targets_ptr[idx];
+                                uint32_t target_node = slot.get_csr_target(idx);
                                 if (target_node < max_nodes) {
                                     float weight = 1.0f;
                                     if (has_edge_attr) {
@@ -7938,10 +7938,10 @@ op_GAS_EXHAUSTED:
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
                             float src_val = src_vec[u];
                             if (src_val == 0.0f) continue;
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end   = slot.get_csr_offset(u + 1);
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                uint32_t target_node = slot.targets_ptr[idx];
+                                uint32_t target_node = slot.get_csr_target(idx);
                                 if (target_node < max_nodes) {
                                     float weight = 1.0f;
                                     if (has_edge_attr) {
@@ -7957,10 +7957,10 @@ op_GAS_EXHAUSTED:
                         size_t h_src = vm_state->registers[src];
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
                             if (!impulse_vm_context_bitset_test(vm_state->query_context, h_src, u)) continue;
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end   = slot.get_csr_offset(u + 1);
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                uint32_t target_node = slot.targets_ptr[idx];
+                                uint32_t target_node = slot.get_csr_target(idx);
                                 if (target_node < max_nodes) {
                                     dst_vec[target_node] += 1.0f;
                                 }
@@ -8009,10 +8009,10 @@ op_GAS_EXHAUSTED:
                         const double* src_vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
                             double src_val = src_vec[u];
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end   = slot.get_csr_offset(u + 1);
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                uint32_t target_node = slot.targets_ptr[idx];
+                                uint32_t target_node = slot.get_csr_target(idx);
                                 if (target_node < max_nodes) {
                                     float val = static_cast<float>(src_val);
                                     if (reduce_op == 0) {
@@ -8029,10 +8029,10 @@ op_GAS_EXHAUSTED:
                         const float* src_vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
                         for (uint64_t u = 0; u < slot.node_count; ++u) {
                             float src_val = src_vec[u];
-                            uint32_t start = slot.offsets_ptr[u];
-                            uint32_t end   = slot.offsets_ptr[u + 1];
+                            uint32_t start = slot.get_csr_offset(u);
+                            uint32_t end   = slot.get_csr_offset(u + 1);
                             for (uint32_t idx = start; idx < end; ++idx) {
-                                uint32_t target_node = slot.targets_ptr[idx];
+                                uint32_t target_node = slot.get_csr_target(idx);
                                 if (target_node < max_nodes) {
                                     float val = src_val;
                                     if (reduce_op == 0) {
@@ -8373,6 +8373,161 @@ op_GAS_EXHAUSTED:
                 vm_state->pc++;
                 break;
             }
+            case OP_LOAD_INLINE_SET: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t offset_bytes = inst.payload & 0xFFFF;
+                uint16_t count = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+                if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+
+                int h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+
+                auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+                bs_dst.clear();
+                const uint32_t* src_nodes = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                for (uint16_t i = 0; i < count; ++i) {
+                    uint32_t node = src_nodes[i];
+                    bitset_add(bs_dst, node, vm_state->query_context->max_nodes);
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+                if (count == 0) {
+                    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+                } else {
+                    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+                }
+
+                vm_state->pc++;
+                break;
+            }
+
+            case OP_INIT_MOCK_NODE_ATTR:
+            case OP_INIT_MOCK_EDGE_ATTR: {
+                uint16_t attr_id = inst.dst_reg;
+                uint16_t src_reg = inst.payload & 0xFF;
+                uint16_t domain = (inst.payload >> 16) & 0xFFFF;
+                if (domain >= vm_state->query_context->attribute_slots.size()) {
+                    vm_state->query_context->attribute_slots.resize(domain + 1);
+                }
+                if (attr_id >= vm_state->query_context->attribute_slots[domain].size()) {
+                    vm_state->query_context->attribute_slots[domain].resize(attr_id + 1);
+                }
+                auto& slot = vm_state->query_context->attribute_slots[domain][attr_id];
+                slot.type_code = 0x03; // int32
+                if (src_reg < 64 && vm_state->register_types[src_reg] == TYPE_FLOAT_VECTOR) {
+                    int h = static_cast<int>(vm_state->registers[src_reg]);
+                    slot.data_ptr = vm_state->query_context->float_vectors[h].data();
+                } else if (vm_state->query_context->inline_data_ptr) {
+                    slot.data_ptr = vm_state->query_context->inline_data_ptr;
+                }
+                vm_state->pc++;
+                break;
+            }
+
+            case OP_LOAD_INLINE_NODE_ARRAY: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t offset_bytes = inst.payload & 0xFFFF;
+                uint16_t count = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+                if (count == 0 && vm_state->query_context->inline_data_bytes > offset_bytes) {
+                    count = static_cast<uint16_t>((vm_state->query_context->inline_data_bytes - offset_bytes) / sizeof(uint32_t));
+                }
+                if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+
+                int h_dst = acquire_node_vector(vm_state->query_context);
+                if (h_dst < 0) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                if (vm_state->query_context->node_vectors[h_dst].size() < count) {
+                    vm_state->query_context->node_vectors[h_dst].resize(count);
+                }
+                uint64_t* dst_vec = vm_state->query_context->node_vectors[h_dst].data();
+
+                const uint32_t* src_data = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                for (uint16_t i = 0; i < count; ++i) {
+                    dst_vec[i] = src_data[i];
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+                vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+
+            case OP_COALESCE: {
+                uint16_t dst = inst.dst_reg;
+                VALIDATE_REG(dst);
+                uint16_t src1 = inst.payload & 0xFFFF;
+                uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(src1);
+                VALIDATE_REG(src2);
+
+                if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
+                    int h_src1 = static_cast<int>(vm_state->registers[src1]);
+                    int h_src2 = static_cast<int>(vm_state->registers[src2]);
+                    int h_dst = acquire_float_vector(vm_state->query_context);
+                    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+                    size_t len = vm_state->query_context->float_vectors[h_src1].size();
+                    vm_state->query_context->float_vectors[h_dst].resize(len);
+                    for (size_t i = 0; i < len; ++i) {
+                        float v1 = vm_state->query_context->float_vectors[h_src1][i];
+                        float v2 = (i < vm_state->query_context->float_vectors[h_src2].size()) ? vm_state->query_context->float_vectors[h_src2][i] : 0.0f;
+                        vm_state->query_context->float_vectors[h_dst][i] = std::isnan(v1) ? v2 : v1;
+                    }
+                    vm_state->registers[dst] = h_dst;
+                    vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                } else {
+                    vm_state->registers[dst] = vm_state->registers[src1];
+                    vm_state->register_types[dst] = vm_state->register_types[src1];
+                }
+                vm_state->pc++;
+                break;
+            }
+
+            case OP_EXTRACT_VALIDITY: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t src = inst.payload & 0xFFFF;
+                VALIDATE_REG(dst);
+                VALIDATE_REG(src);
+
+                int h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                vm_state->query_context->bitsets[h_dst].clear();
+
+                if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
+                    int h_src = static_cast<int>(vm_state->registers[src]);
+                    size_t len = vm_state->query_context->float_vectors[h_src].size();
+                    for (size_t i = 0; i < len; ++i) {
+                        if (!std::isnan(vm_state->query_context->float_vectors[h_src][i])) {
+                            bitset_add(vm_state->query_context->bitsets[h_dst], static_cast<uint32_t>(i), vm_state->query_context->max_nodes);
+                        }
+                    }
+                }
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+                vm_state->pc++;
+                break;
+            }
+
             case OP_LOAD_INDIRECT: {
                 uint16_t dst = inst.dst_reg;
                 uint16_t src_param = inst.payload & 0xFFFF;
@@ -8491,9 +8646,9 @@ op_GAS_EXHAUSTED:
                 vm_state->pc++;
                 break;
             }
-            case OP_RESERVED_0A: case OP_RESERVED_0B: case OP_RESERVED_0C: case OP_RESERVED_0D: case OP_RESERVED_0F:
+            
             case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2B: case OP_RESERVED_2C:
-            case OP_RESERVED_3A: case OP_RESERVED_3B: case OP_RESERVED_3C: case OP_RESERVED_3E: case OP_RESERVED_3F:
+            case OP_RESERVED_3E: case OP_RESERVED_3F:
             case OP_RESERVED_4C: case OP_RESERVED_4D: case OP_RESERVED_4E: case OP_RESERVED_4F:
             case OP_RESERVED_59:
             case OP_RESERVED_5D: case OP_RESERVED_5E: case OP_RESERVED_5F:
@@ -8704,6 +8859,24 @@ impulse_vm_status_t impulse_vm_validate(
 
             case OP_CLEAR_REG:
                 abstract_types[dst] = TYPE_NULL;
+                break;
+
+            case OP_LOAD_INLINE_SET:
+            case OP_EXTRACT_VALIDITY:
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_LOAD_INLINE_NODE_ARRAY:
+                abstract_types[dst] = TYPE_NODE_VECTOR;
+                break;
+                
+            case OP_CSR_WALK_STATE:
+            case OP_PROJECT_STATE:
+                abstract_types[dst] = TYPE_FRONTIER_STATE;
+                break;
+
+            case OP_COALESCE:
+                abstract_types[dst] = TYPE_FLOAT_VECTOR;
                 break;
 
             default:
