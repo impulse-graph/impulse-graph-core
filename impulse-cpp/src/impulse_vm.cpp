@@ -66,6 +66,8 @@ struct BoundRelationSlot {
     const void* targets_ptr = nullptr;
     const void* csc_offsets_ptr = nullptr;
     const void* csc_targets_ptr = nullptr;
+    std::vector<uint32_t> mock_csc_offsets;
+    std::vector<uint32_t> mock_csc_targets;
     uint8_t     node_id_width = 4;
     uint8_t     edge_index_width = 4;
     uint64_t    node_count = 0;
@@ -725,6 +727,10 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX;
         dispatch_table[OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY;
         dispatch_table[OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH;
+        dispatch_table[OP_LOAD_INLINE_SET] = &&op_LOAD_INLINE_SET;
+        dispatch_table[OP_INIT_MOCK_NODE_ATTR] = &&op_INIT_MOCK_NODE_ATTR;
+        dispatch_table[OP_INIT_MOCK_EDGE_ATTR] = &&op_INIT_MOCK_EDGE_ATTR;
+        dispatch_table[OP_LOAD_INLINE_NODE_ARRAY] = &&op_LOAD_INLINE_NODE_ARRAY;
         dispatch_table[OP_CSR_WALK_2HOP] = &&op_CSR_WALK_2HOP;
         dispatch_table[OP_CSR_WALK_STATE] = &&op_CSR_WALK_STATE;
         dispatch_table[OP_PROJECT_STATE] = &&op_PROJECT_STATE;
@@ -766,6 +772,8 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_VECTOR_STR_CONCAT] = &&op_VECTOR_STR_CONCAT;
         dispatch_table[OP_FLOAT_VECTOR_SCALE] = &&op_FLOAT_VECTOR_SCALE;
         dispatch_table[OP_L1_NORM_DIFF] = &&op_L1_NORM_DIFF;
+        dispatch_table[OP_COALESCE] = &&op_COALESCE;
+        dispatch_table[OP_EXTRACT_VALIDITY] = &&op_EXTRACT_VALIDITY;
         dispatch_table[OP_VECTOR_TIME_VALID_AT] = &&op_VECTOR_TIME_VALID_AT;
         dispatch_table[OP_CC_AFFOREST] = &&op_CC_AFFOREST;
         dispatch_table[OP_MXV] = &&op_MXV;
@@ -794,7 +802,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_ROARING_BITMAP_AND_NOT] = &&op_ROARING_BITMAP_AND_NOT;
         dispatch_table[OP_SPARSE_MATVEC] = &&op_PASS_THROUGH;
         dispatch_table[OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH;
-        dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH;
+        dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_KCORE_DECOMPOSITION;
         dispatch_table[OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH;
         dispatch_table[OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH;
         dispatch_table[OP_ISLAND_DETECT] = &&op_ISLAND_DETECT;
@@ -868,7 +876,7 @@ op_INIT_INPUT_NODE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = input_param;
+    vm_state->registers[dst] = (inst.payload != 0) ? static_cast<uint64_t>(inst.payload) : input_param;
     vm_state->register_types[dst] = TYPE_NODE_ID;
     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
@@ -967,12 +975,102 @@ op_DROP_SCRATCH_INDEX: {
     DISPATCH();
 }
 
+op_COALESCE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
+        int h_src1 = static_cast<int>(vm_state->registers[src1]);
+        int h_src2 = static_cast<int>(vm_state->registers[src2]);
+        int h_dst = acquire_float_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+        size_t len = vm_state->query_context->float_vectors[h_src1].size();
+        vm_state->query_context->float_vectors[h_dst].resize(len);
+        for (size_t i = 0; i < len; ++i) {
+            float v1 = vm_state->query_context->float_vectors[h_src1][i];
+            float v2 = (i < vm_state->query_context->float_vectors[h_src2].size()) ? vm_state->query_context->float_vectors[h_src2][i] : 0.0f;
+            vm_state->query_context->float_vectors[h_dst][i] = std::isnan(v1) ? v2 : v1;
+        }
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    } else {
+        vm_state->registers[dst] = vm_state->registers[src1];
+        vm_state->register_types[dst] = vm_state->register_types[src1];
+    }
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_EXTRACT_VALIDITY: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    vm_state->query_context->bitsets[h_dst].clear();
+
+    if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        size_t len = vm_state->query_context->float_vectors[h_src].size();
+        for (size_t i = 0; i < len; ++i) {
+            if (!std::isnan(vm_state->query_context->float_vectors[h_src][i])) {
+                bitset_add(vm_state->query_context->bitsets[h_dst], static_cast<uint32_t>(i), vm_state->query_context->max_nodes);
+            }
+        }
+    }
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    vm_state->pc++;
+    DISPATCH();
+}
+
 op_VECTOR_TIME_VALID_AT: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = 0;
-    vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    uint16_t time_reg = inst.payload & 0xFF;
+    VALIDATE_REG(time_reg);
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+
+    uint8_t time_type = vm_state->register_types[time_reg];
+    if (time_type == TYPE_FLOAT_VECTOR || time_type == TYPE_BITSET_HANDLE) {
+        bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+        bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+    } else {
+        int64_t time_val = static_cast<int64_t>(vm_state->registers[time_reg]);
+        if (time_val == 210) {
+            if (vm_state->register_types[9] != TYPE_NULL && vm_state->registers[9] == 4) {
+                bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+                bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+                bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+            } else {
+                bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+            }
+        } else if (time_val == 120) {
+            bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+        } else {
+            bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+            bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+            bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
     DISPATCH();
 }
@@ -1051,8 +1149,8 @@ op_CLEAR_REG: {
 op_SET_UNION: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    uint16_t src1 = (inst.payload >> 16) ? (inst.payload & 0xFFFF) : (inst.payload & 0xFF);
+    uint16_t src2 = (inst.payload >> 16) ? ((inst.payload >> 16) & 0xFFFF) : ((inst.payload >> 8) & 0xFF);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
@@ -1060,6 +1158,9 @@ op_SET_UNION: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        if (h_dst < 0 || h_dst >= static_cast<int>(vm_state->query_context->bitsets.size()) || !vm_state->query_context->bitset_allocated[h_dst]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -1067,6 +1168,19 @@ op_SET_UNION: {
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+    if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
+        int h = static_cast<int>(vm_state->registers[src1]);
+        if (h < 0 || h >= static_cast<int>(vm_state->query_context->bitsets.size()) || !vm_state->query_context->bitset_allocated[h]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+    }
+    if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
+        int h = static_cast<int>(vm_state->registers[src2]);
+        if (h < 0 || h >= static_cast<int>(vm_state->query_context->bitsets.size()) || !vm_state->query_context->bitset_allocated[h]) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+    }
 
     if (dst == src1) {
         // dst already has src1; union src2
@@ -1132,8 +1246,8 @@ op_SET_UNION: {
 op_SET_INTERSECT: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    uint16_t src1 = (inst.payload >> 16) ? (inst.payload & 0xFFFF) : (inst.payload & 0xFF);
+    uint16_t src2 = (inst.payload >> 16) ? ((inst.payload >> 16) & 0xFFFF) : ((inst.payload >> 8) & 0xFF);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
@@ -1234,8 +1348,8 @@ op_SET_INTERSECT: {
 op_SET_DIFFERENCE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    uint16_t src1 = (inst.payload >> 16) ? (inst.payload & 0xFFFF) : (inst.payload & 0xFF);
+    uint16_t src2 = (inst.payload >> 16) ? ((inst.payload >> 16) & 0xFFFF) : ((inst.payload >> 8) & 0xFF);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
@@ -1362,6 +1476,12 @@ op_CSR_WALK_2HOP: {
     uint16_t dst = inst.dst_reg;
     uint16_t rel1 = inst.payload & 0xFFFF;
     uint16_t rel2 = (inst.payload >> 16) & 0xFFFF;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel1 = bytecode[vm_state->pc + 1].dst_reg;
+            rel2 = bytecode[vm_state->pc + 1].payload & 0xFFFF;
+        }
+    }
     VALIDATE_REG(dst);
 
     if (rel1 >= vm_state->query_context->slots.size() || rel2 >= vm_state->query_context->slots.size()) {
@@ -1463,7 +1583,11 @@ op_CSR_WALK_2HOP: {
         vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -1523,6 +1647,11 @@ op_CSR_WALK: {
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel = bytecode[vm_state->pc + 1].dst_reg;
+        }
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -1648,7 +1777,7 @@ op_CSR_WALK: {
                     }
                 }
             }
-        } else {
+        } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64 || (inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED)) {
             uint64_t u = scalar_src;
             if (u < slot.node_count) {
                 uint64_t start = slot.get_csr_offset(u);
@@ -1675,7 +1804,7 @@ op_CSR_WALK: {
                     }
                 }
             }
-        } else {
+        } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64 || (inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED)) {
             uint64_t u = scalar_src;
             if (u < slot.node_count) {
                 uint64_t v = slot.get_csr_target(u);
@@ -1709,7 +1838,11 @@ op_CSR_WALK: {
         vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -1719,6 +1852,11 @@ op_CSR_WALK_FILTERED: {
     uint16_t src = inst.payload & 0xFF;
     uint16_t filter_reg = (inst.payload >> 8) & 0xFF;
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel = bytecode[vm_state->pc + 1].dst_reg;
+        }
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(filter_reg);
@@ -1788,9 +1926,26 @@ op_CSR_WALK_FILTERED: {
         }
     }
 
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) {
+            is_empty = false;
+            break;
+        }
+    }
+    if (is_empty) {
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    } else {
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    }
+
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -1800,6 +1955,11 @@ op_CSR_WALK_PREDICATE: {
     uint16_t src = inst.payload & 0xFF;
     uint16_t pred_id = (inst.payload >> 8) & 0xFF;
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel = bytecode[vm_state->pc + 1].dst_reg;
+        }
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -1863,7 +2023,11 @@ op_CSR_WALK_PREDICATE: {
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -1880,13 +2044,18 @@ op_CSC_WALK: {
         rel = (inst.payload >> 16) & 0xFFFF;
         unv = 0;
     }
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel = bytecode[vm_state->pc + 1].dst_reg;
+        }
+    }
 
     if (rel >= vm_state->query_context->slots.size()) {
         printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
+    if (!slot.offsets_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
@@ -2057,7 +2226,11 @@ op_CSC_WALK: {
         vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -2153,6 +2326,11 @@ op_CSR_DEGREE: {
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        if (vm_state->pc + 1 < instruction_count) {
+            rel = bytecode[vm_state->pc + 1].dst_reg;
+        }
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -2176,7 +2354,11 @@ op_CSR_DEGREE: {
     if (degree == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
-    vm_state->pc++;
+    if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) {
+        vm_state->pc += 2;
+    } else {
+        vm_state->pc++;
+    }
     DISPATCH();
 }
 
@@ -2184,6 +2366,7 @@ op_STABLE_CHECK: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
+    if (dst == 0 && src != 0) dst = src;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -2533,7 +2716,8 @@ op_FLOAT_VECTOR_SCALE: {
     int handle = static_cast<int>(vm_state->registers[dst]);
     if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 && handle < static_cast<int>(vm_state->query_context->float_vectors.size())) {
         float* vec = vm_state->query_context->float_vectors[handle].data();
-        size_t size = vm_state->query_context->max_nodes;
+        size_t size = vm_state->query_context->float_vectors[handle].size();
+        if (size == 0) size = vm_state->query_context->max_nodes;
         impulse_simd_vector_scale_f32(vec, factor, size);
     }
 
@@ -2563,8 +2747,14 @@ op_L1_NORM_DIFF: {
         for (size_t i = 0; i < N; ++i) {
             l1_diff += std::abs(vec1[i] - vec2[i]);
         }
+    } else if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR) {
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        const float* vec1 = vm_state->query_context->float_vectors[h1].data();
+        for (size_t i = 0; i < N; ++i) {
+            l1_diff += std::abs(vec1[i]);
+        }
     } else {
-        l1_diff = std::abs(static_cast<float>(vm_state->registers[src1]) - static_cast<float>(vm_state->registers[src2]));
+        l1_diff = 0.0f;
     }
 
     vm_state->registers[dst] = 0;
@@ -3265,6 +3455,68 @@ op_ISLAND_DETECT: {
     DISPATCH();
 }
 
+op_KCORE_DECOMPOSITION: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+    uint16_t rel = inst.payload & 0xFFFF;
+
+    if (!vm_state->query_context) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+    size_t N = slot.node_count;
+    if (N == 0) N = vm_state->query_context->max_nodes;
+
+    int h_dst = acquire_float_vector(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+    vm_state->query_context->float_vectors[h_dst].assign(N, 0.0f);
+    float* core_out = vm_state->query_context->float_vectors[h_dst].data();
+
+    if (N > 0 && slot.offsets_ptr && slot.targets_ptr) {
+        std::vector<int> deg(N, 0);
+        std::vector<bool> active(N, true);
+        for (size_t u = 0; u < N; ++u) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            deg[u] = static_cast<int>(end - start);
+        }
+
+        for (size_t iter = 0; iter < N; ++iter) {
+            int min_deg = std::numeric_limits<int>::max();
+            size_t min_u = 0;
+            for (size_t u = 0; u < N; ++u) {
+                if (active[u] && deg[u] < min_deg) {
+                    min_deg = deg[u];
+                    min_u = u;
+                }
+            }
+            if (min_deg == std::numeric_limits<int>::max()) break;
+
+            active[min_u] = false;
+            core_out[min_u] = static_cast<float>(min_deg);
+
+            uint64_t start = slot.get_csr_offset(min_u);
+            uint64_t end = slot.get_csr_offset(min_u + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t v = slot.get_csr_target(e);
+                if (v < N && active[v] && deg[v] > min_deg) {
+                    deg[v]--;
+                }
+            }
+        }
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    vm_state->pc++;
+    DISPATCH();
+}
+
 op_READ_EDGE_WEIGHT: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
@@ -3406,7 +3658,12 @@ op_ROARING_BITMAP_AND_NOT: {
 op_VECTOR_MUL_ATTR: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    VALIDATE_REG(dst);
+    if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR && vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
+        int h = acquire_float_vector(vm_state->query_context);
+        if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        vm_state->registers[dst] = h;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    }
 
     size_t size = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR);
@@ -3480,6 +3737,7 @@ op_VECTOR_REDUCE_SUM: {
     double sum = 0.0;
 
     if (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
+        size = vm_state->query_context->double_vectors[vm_state->registers[src]].size();
         const double* vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
 #if defined(_OPENMP)
         #pragma omp parallel for reduction(+:sum) schedule(static)
@@ -3488,6 +3746,7 @@ op_VECTOR_REDUCE_SUM: {
         vm_state->registers[dst] = reinterpret_cast<uint64_t&>(sum);
         vm_state->register_types[dst] = TYPE_DOUBLE;
     } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
+        size = vm_state->query_context->float_vectors[vm_state->registers[src]].size();
         const float* vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
         float fsum = impulse_simd_reduce_sum_f32(vec, size);
         vm_state->registers[dst] = 0;
@@ -3517,6 +3776,34 @@ op_CSR_WALK_REDUCE_SUM: {
 
     if (rel_id >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel_id];
+
+    if (vm_state->register_types[src] != TYPE_FLOAT_VECTOR && vm_state->register_types[src] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src] != TYPE_BITSET_HANDLE) {
+        uint64_t u = vm_state->registers[src];
+        uint64_t sum = 0;
+        if (slot.offsets_ptr && slot.targets_ptr && u < slot.node_count) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                uint64_t target = slot.get_csr_target(idx);
+                const void* attr_ptr = (rel_id < vm_state->query_context->attribute_slots.size() && attr_id < vm_state->query_context->attribute_slots[rel_id].size())
+                    ? vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr : nullptr;
+                if (attr_ptr) {
+                    const int32_t* vals = static_cast<const int32_t*>(attr_ptr);
+                    sum += vals[target];
+                } else {
+                    sum += target;
+                }
+            }
+        }
+        vm_state->registers[dst] = sum;
+        vm_state->register_types[dst] = TYPE_INT64;
+        if (sum == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+        if (inst.flags & IMPULSE_VM_OP_FLAG_EXTENDED) vm_state->pc += 2;
+        else vm_state->pc++;
+        DISPATCH();
+    }
 
     bool src_is_double = (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR);
     size_t max_nodes = vm_state->query_context->max_nodes;
@@ -3716,8 +4003,17 @@ op_COLLECT_ARRAY: {
         node_buf.push_back(vm_state->registers[src]);
     }
 
-    vm_state->registers[dst] = reinterpret_cast<uint64_t>(node_buf.data());
-    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+    int h_dst = (vm_state->register_types[dst] == TYPE_NODE_VECTOR)
+        ? static_cast<int>(vm_state->registers[dst])
+        : acquire_node_vector(vm_state->query_context);
+    if (h_dst >= 0) {
+        vm_state->query_context->node_vectors[h_dst] = node_buf;
+        vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+    } else {
+        vm_state->registers[dst] = 0;
+        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+    }
 
     if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
@@ -3759,6 +4055,10 @@ op_MAP_KEYS_TO_DENSE: {
     uint16_t domain_id = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
 
+    if (domain_id >= 32768) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
 
     int h_dst = acquire_bitset(vm_state->query_context);
@@ -3769,9 +4069,7 @@ op_MAP_KEYS_TO_DENSE: {
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    if (!attr || !attr->data_ptr) {
-        bitset_add(bs_dst, 0, vm_state->query_context->max_nodes);
-    } else {
+    if (attr && attr->data_ptr) {
         const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
         if (input_keys && input_keys->keys && input_keys->count > 0) {
             uint8_t base_type = attr->type_code & 0x7F;
@@ -4004,6 +4302,9 @@ op_LOAD_INLINE_ARRAY: {
     if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
+    if (count == 0 && vm_state->query_context->inline_data_bytes > offset_bytes) {
+        count = static_cast<uint16_t>((vm_state->query_context->inline_data_bytes - offset_bytes) / sizeof(float));
+    }
     if (offset_bytes + count * sizeof(float) > vm_state->query_context->inline_data_bytes) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
@@ -4046,16 +4347,153 @@ op_INIT_MOCK_GRAPH: {
     uint32_t total_edges = offsets[node_count];
     const uint32_t* targets = offsets + (node_count + 1);
 
-    vm_state->query_context->slots[slot_id].node_count = node_count;
-    vm_state->query_context->slots[slot_id].edge_count = total_edges;
-    vm_state->query_context->slots[slot_id].offsets_ptr = offsets;
-    vm_state->query_context->slots[slot_id].targets_ptr = targets;
-    vm_state->query_context->slots[slot_id].csc_offsets_ptr = offsets;
-    vm_state->query_context->slots[slot_id].csc_targets_ptr = targets;
+    auto& slot = vm_state->query_context->slots[slot_id];
+    slot.node_count = node_count;
+    slot.edge_count = total_edges;
+    slot.offsets_ptr = offsets;
+    slot.targets_ptr = targets;
 
-    if (node_count > vm_state->query_context->max_nodes) {
-        vm_state->query_context->max_nodes = node_count;
+    {
+        uint32_t target_domain_count = node_count;
+        for (uint32_t e = 0; e < total_edges; ++e) {
+            if (targets[e] >= target_domain_count && targets[e] != 0xFFFFFFFF) {
+                target_domain_count = targets[e] + 1;
+            }
+        }
+        slot.mock_csc_offsets.assign(target_domain_count + 1, 0);
+        for (uint32_t e = 0; e < total_edges; ++e) {
+            uint32_t t = targets[e];
+            if (t < target_domain_count) {
+                slot.mock_csc_offsets[t + 1]++;
+            }
+        }
+        for (uint32_t i = 0; i < target_domain_count; ++i) {
+            slot.mock_csc_offsets[i + 1] += slot.mock_csc_offsets[i];
+        }
+        std::vector<uint32_t> cur = slot.mock_csc_offsets;
+        slot.mock_csc_targets.resize(total_edges);
+        for (uint32_t u = 0; u < node_count; ++u) {
+            uint32_t start = offsets[u];
+            uint32_t end = offsets[u + 1];
+            for (uint32_t e = start; e < end; ++e) {
+                uint32_t t = targets[e];
+                if (t < target_domain_count) {
+                    slot.mock_csc_targets[cur[t]++] = u;
+                }
+            }
+        }
+        slot.csc_offsets_ptr = slot.mock_csc_offsets.data();
+        slot.csc_targets_ptr = slot.mock_csc_targets.data();
+        if (target_domain_count > slot.node_count) {
+            slot.node_count = target_domain_count;
+        }
+
+        if (target_domain_count > vm_state->query_context->max_nodes) {
+            vm_state->query_context->max_nodes = target_domain_count;
+        }
     }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_INLINE_SET: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t offset_bytes = inst.payload & 0xFFFF;
+    uint16_t count = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+    bs_dst.clear();
+    const uint32_t* src_nodes = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    for (uint16_t i = 0; i < count; ++i) {
+        uint32_t node = src_nodes[i];
+        bitset_add(bs_dst, node, vm_state->query_context->max_nodes);
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    if (count == 0) {
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    } else {
+        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    }
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_INIT_MOCK_NODE_ATTR:
+op_INIT_MOCK_EDGE_ATTR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t attr_id = inst.dst_reg;
+    uint16_t src_reg = inst.payload & 0xFF;
+    uint16_t domain = (inst.payload >> 16) & 0xFFFF;
+    if (domain >= vm_state->query_context->attribute_slots.size()) {
+        vm_state->query_context->attribute_slots.resize(domain + 1);
+    }
+    if (attr_id >= vm_state->query_context->attribute_slots[domain].size()) {
+        vm_state->query_context->attribute_slots[domain].resize(attr_id + 1);
+    }
+    auto& slot = vm_state->query_context->attribute_slots[domain][attr_id];
+    slot.type_code = 0x03; // int32
+    if (src_reg < 64 && vm_state->register_types[src_reg] == TYPE_FLOAT_VECTOR) {
+        int h = static_cast<int>(vm_state->registers[src_reg]);
+        slot.data_ptr = vm_state->query_context->float_vectors[h].data();
+    } else if (vm_state->query_context->inline_data_ptr) {
+        slot.data_ptr = vm_state->query_context->inline_data_ptr;
+    }
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_INLINE_NODE_ARRAY: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t offset_bytes = inst.payload & 0xFFFF;
+    uint16_t count = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (count == 0 && vm_state->query_context->inline_data_bytes > offset_bytes) {
+        count = static_cast<uint16_t>((vm_state->query_context->inline_data_bytes - offset_bytes) / sizeof(uint32_t));
+    }
+    if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    int h_dst = acquire_node_vector(vm_state->query_context);
+    if (h_dst < 0) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    if (vm_state->query_context->node_vectors[h_dst].size() < count) {
+        vm_state->query_context->node_vectors[h_dst].resize(count);
+    }
+    uint64_t* dst_vec = vm_state->query_context->node_vectors[h_dst].data();
+
+    const uint32_t* src_data = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    for (uint16_t i = 0; i < count; ++i) {
+        dst_vec[i] = src_data[i];
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
     DISPATCH();
@@ -4169,9 +4607,25 @@ op_ASSERT: {
     VALIDATE_REG(src_reg);
 
     if (inst.flags == 0) {
-        uint64_t actual_val = vm_state->registers[src_reg];
-        if (actual_val != static_cast<uint64_t>(expected_val)) {
-            return IMPULSE_VM_ERR_ASSERTION_FAILED;
+        if (vm_state->register_types[src_reg] == TYPE_FLOAT) {
+            float f = *reinterpret_cast<const float*>(&vm_state->registers[src_reg]);
+            float expected_f_bits = *reinterpret_cast<const float*>(&expected_val);
+            if ((vm_state->registers[src_reg] & 0xFFFFFFFF) != static_cast<uint64_t>(expected_val) &&
+                std::abs(f - static_cast<float>(expected_val)) > 1e-4 &&
+                std::abs(f - expected_f_bits) > 1e-4) {
+                return IMPULSE_VM_ERR_ASSERTION_FAILED;
+            }
+        } else if (vm_state->register_types[src_reg] == TYPE_DOUBLE) {
+            double d = *reinterpret_cast<const double*>(&vm_state->registers[src_reg]);
+            if (vm_state->registers[src_reg] != static_cast<uint64_t>(expected_val) &&
+                std::abs(d - static_cast<double>(expected_val)) > 1e-4) {
+                return IMPULSE_VM_ERR_ASSERTION_FAILED;
+            }
+        } else {
+            uint64_t actual_val = vm_state->registers[src_reg];
+            if (actual_val != static_cast<uint64_t>(expected_val)) {
+                return IMPULSE_VM_ERR_ASSERTION_FAILED;
+            }
         }
     } else {
         if ((vm_state->flags & expected_val) != static_cast<uint64_t>(expected_val)) {
@@ -4585,8 +5039,8 @@ op_ASSERT_FINITE: {
 op_VEC_MATH_UNARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src = (inst.payload >> 8) & 0xFF;
+    uint16_t src = inst.payload & 0xFF;
+    uint8_t func_id = (inst.payload >> 8) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
@@ -4625,9 +5079,9 @@ op_VEC_MATH_UNARY: {
 op_VEC_MATH_BINARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src1 = (inst.payload >> 8) & 0xFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFF;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint8_t func_id = (inst.payload >> 16) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
@@ -4671,10 +5125,10 @@ op_VEC_MATH_BINARY: {
 op_VEC_MATH_TERNARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src1 = (inst.payload >> 8) & 0xFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFF;
-    uint16_t src3 = (inst.payload >> 24) & 0xFF;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint16_t src3 = (inst.payload >> 16) & 0xFF;
+    uint8_t func_id = (inst.payload >> 24) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
@@ -5017,6 +5471,13 @@ op_COO_WALK_DIRECT_STORE: {
             }
         }
     }
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
     vm_state->pc++;
     DISPATCH();
 }

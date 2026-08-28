@@ -211,6 +211,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_c_statement_api tests/test_c_statement_api.cpp)
     target_link_libraries(test_c_statement_api PRIVATE impulse_graph_static)
     add_test(NAME test_c_statement_api COMMAND test_c_statement_api)
+
+    add_executable(test_enterprise_benchmark tests/test_enterprise_benchmark.cpp)
+    target_link_libraries(test_enterprise_benchmark PRIVATE impulse_graph_static)
+    add_test(NAME test_enterprise_benchmark COMMAND test_enterprise_benchmark)
 endif()
 
 # --- Examples ------------------------------------------------------------

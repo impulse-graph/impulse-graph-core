@@ -40,6 +40,9 @@ extern "C" {
 #define IMPULSE_VM_OP_FLAG_ACCUMULATE     0x04 /**< Accumulate destination bitset */
 #define IMPULSE_VM_OP_FLAG_INVERT         0x08 /**< Invert filter condition */
 #define IMPULSE_VM_OP_FLAG_OFFHEAP        0x10 /**< Off-heap mode */
+#define IMPULSE_VM_OP_FLAG_EXTENDED       0x80 /**< 16-byte (128-bit) Extended Instruction Format */
+
+#define OP_EXTENSION_PAYLOAD              0xFF /**< Second-word opcode marker for extended instruction */
 
 /// Opcodes Definitions
 #define OP_HALT                     0x00
@@ -53,10 +56,10 @@ extern "C" {
 #define OP_LOAD_INLINE_ARRAY        0x08
 #define OP_INIT_MOCK_GRAPH          0x09
 
-#define OP_RESERVED_0A              0x0A
-#define OP_RESERVED_0B              0x0B
-#define OP_RESERVED_0C              0x0C
-#define OP_RESERVED_0D              0x0D
+#define OP_LOAD_INLINE_SET          0x0A
+#define OP_INIT_MOCK_NODE_ATTR      0x0B
+#define OP_INIT_MOCK_EDGE_ATTR      0x0C
+#define OP_LOAD_INLINE_NODE_ARRAY   0x0D
 #define OP_CSR_WALK_2HOP            0x0E
 #define OP_CSR_WALK_STATE           0x0F
 
@@ -107,8 +110,8 @@ extern "C" {
 #define OP_L1_NORM_DIFF             0x39
 
 #define OP_PROJECT_STATE            0x3A
-#define OP_RESERVED_3B              0x3B
-#define OP_RESERVED_3C              0x3C
+#define OP_COALESCE                 0x3B
+#define OP_EXTRACT_VALIDITY         0x3C
 #define OP_VECTOR_TIME_VALID_AT     0x3D
 #define OP_RESERVED_3E              0x3E
 #define OP_RESERVED_3F              0x3F
