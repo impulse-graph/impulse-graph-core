@@ -30,6 +30,26 @@ async function run() {
         throw new Error("Result was not an array! Result Type: " + res2.resultType);
     }
     
+    
+    // 3. Bitset Query (Hetionet)
+    console.log('Executing Bitset Query Async...');
+    const qbBitset = new QueryBuilder();
+    qbBitset.inputNode(0).walkEdge(0).collectBitset();
+    const resBitset = await qbBitset.compile().executeWithContextAsync(ctx, vmState, 0n);
+    assert.strictEqual(resBitset.isOk(), true);
+    assert.strictEqual(resBitset.resultType, impulse.RegisterType.TYPE_BITSET_HANDLE);
+    console.log(' -> Retrieved Bitset output successfully!');
+
+    // 4. Scalar Math Query (Synthetic/Generated)
+    console.log('Executing Scalar VM Instructions...');
+    const qbScalar = new QueryBuilder();
+    qbScalar.loadConstInt(123456789n).mov(1, 0); // Load scalar into result reg 0
+    const resScalar = await qbScalar.compile().executeWithContextAsync(ctx, vmState, 0n);
+    assert.strictEqual(resScalar.isOk(), true);
+    assert.strictEqual(resScalar.resultType, impulse.RegisterType.TYPE_INT64);
+    assert.strictEqual(resScalar.rawValue, 123456789n);
+    console.log(' -> Scalar computation returned expected value!');
+
     // Clean up
     ctx.destroy();
     snap.close();
