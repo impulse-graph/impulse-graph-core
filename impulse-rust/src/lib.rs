@@ -261,6 +261,31 @@ mod tests {
 
         let _ = fs::remove_file(STATS_TEST_FILE);
     }
+
+    #[test]
+    fn test_comprehensive_hetionet_traversal() {
+        let hetionet_path = "/Users/jesse/impulse/datasets/hetionet/hetionet.v09.imps";
+        // Just verify it opens and reads stats correctly.
+        let reader = SnapshotReader::open(hetionet_path).expect("Failed to open hetionet");
+        assert!(reader.domain_count() > 0);
+
+        // Test sequential traversal
+        let mut count_seq = 0;
+        if reader.relation_count() > 0 {
+            let traversal = reader.traverse(0).out("0");
+            count_seq = traversal.count().unwrap();
+            assert!(count_seq > 0);
+        }
+
+        // Test parallel traversal if enabled
+        #[cfg(feature = "rayon")]
+        {
+            if reader.relation_count() > 0 {
+                let traversal = reader.traverse(0).out("0");
+                let par_count = traversal.par_count().unwrap();
+                assert_eq!(count_seq, par_count);
+            }
+        }
+    }
+
 }
-
-

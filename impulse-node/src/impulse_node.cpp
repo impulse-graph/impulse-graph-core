@@ -440,10 +440,8 @@ private:
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::TypedArrayOf<float>::New(env, 0);
-        auto noop = [](Napi::Env, void*) {};
-        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<float*>(ptr), sz * sizeof(float), noop);
-        Napi::Float32Array arr = Napi::Float32Array::New(env, sz, buf, 0);
-        arr.Set("_ctx", info.This());
+        Napi::Float32Array arr = Napi::Float32Array::New(env, sz);
+        std::memcpy(arr.Data(), ptr, sz * sizeof(float));
         return arr;
     }
 
@@ -477,10 +475,8 @@ private:
         const double* ptr = impulse_vm_context_get_double_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::TypedArrayOf<double>::New(env, 0);
-        auto noop = [](Napi::Env, void*) {};
-        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<double*>(ptr), sz * sizeof(double), noop);
-        Napi::Float64Array arr = Napi::Float64Array::New(env, sz, buf, 0);
-        arr.Set("_ctx", info.This());
+        Napi::Float64Array arr = Napi::Float64Array::New(env, sz);
+        std::memcpy(arr.Data(), ptr, sz * sizeof(double));
         return arr;
     }
 
@@ -504,10 +500,8 @@ private:
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_vector_size(ctx_);
         if (!ptr || sz == 0) return Napi::BigUint64Array::New(env, 0);
-        auto noop = [](Napi::Env, void*) {};
-        Napi::ArrayBuffer buf = Napi::ArrayBuffer::New(env, const_cast<uint64_t*>(ptr), sz * sizeof(uint64_t), noop);
-        Napi::BigUint64Array arr = Napi::BigUint64Array::New(env, sz, buf, 0);
-        arr.Set("_ctx", info.This());
+        Napi::BigUint64Array arr = Napi::BigUint64Array::New(env, sz);
+        std::memcpy(arr.Data(), ptr, sz * sizeof(uint64_t));
         return arr;
     }
 
@@ -724,14 +718,66 @@ Napi::FunctionReference NodeQueryResult::constructor;
 // ============================================================================
 // NodeCompiledQuery Class
 // ============================================================================
+
+
 class NodeCompiledQuery : public Napi::ObjectWrap<NodeCompiledQuery> {
 public:
+
+    class VmExecuteContextWorker : public Napi::AsyncWorker {
+    public:
+        VmExecuteContextWorker(Napi::Env& env, NodeCompiledQuery* query, NodeVmContext* ctx, NodeVmState* st, uint64_t seed)
+            : Napi::AsyncWorker(env), query(query), ctx(ctx), st(st), seed(seed), deferred(Napi::Promise::Deferred::New(env)) {}
+
+        Napi::Promise GetPromise() { return deferred.Promise(); }
+
+    protected:
+        void Execute() override {
+            st->RawState()->query_context = ctx->RawContext();
+            status = impulse_vm_execute(
+                query->compiled_->bytecode().data(),
+                query->compiled_->instructionCount(),
+                st->RawState(),
+                seed
+            );
+
+            res.status = status;
+            if (query->compiled_->instructionCount() > 0) {
+                res.result_register = query->compiled_->bytecode().data()[query->compiled_->instructionCount() - 1].dst_reg;
+            }
+            if (res.result_register < 64) {
+                res.result_type = static_cast<impulse_register_type_t>(st->RawState()->register_types[res.result_register]);
+                res.raw_value = st->RawState()->registers[res.result_register];
+            }
+        }
+
+        void OnOK() override {
+            Napi::Env env = Env();
+            Napi::Value result = NodeQueryResult::CreateInstance(env, res);
+            deferred.Resolve(result);
+        }
+
+        void OnError(const Napi::Error& e) override {
+            deferred.Reject(e.Value());
+        }
+
+    private:
+        NodeCompiledQuery* query;
+        friend class VmExecuteContextWorker;
+        NodeVmContext* ctx;
+        NodeVmState* st;
+        uint64_t seed;
+        impulse_vm_status_t status = IMPULSE_VM_OK;
+        impulse::vm::QueryResult res;
+        Napi::Promise::Deferred deferred;
+    };
+
     static Napi::FunctionReference constructor;
 
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         Napi::Function func = DefineClass(env, "CompiledQuery", {
             InstanceMethod("execute", &NodeCompiledQuery::Execute),
             InstanceMethod("executeWithContext", &NodeCompiledQuery::ExecuteWithContext),
+            InstanceMethod("executeWithContextAsync", &NodeCompiledQuery::ExecuteWithContextAsync),
             InstanceMethod("instructionCount", &NodeCompiledQuery::InstructionCount),
             InstanceMethod("resultRegister", &NodeCompiledQuery::ResultRegister),
             InstanceMethod("bytecode", &NodeCompiledQuery::Bytecode)
@@ -775,6 +821,26 @@ private:
 
         impulse::vm::QueryResult res = compiled_->execute(snap_obj->RawSnapshot(), input_param);
         return NodeQueryResult::CreateInstance(env, res);
+    }
+
+    
+    Napi::Value ExecuteWithContextAsync(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!compiled_) { Napi::Error::New(env, "Uninitialized query").ThrowAsJavaScriptException(); return env.Null(); }
+        if (info.Length() < 2) {
+            Napi::TypeError::New(env, "Context and State arguments required").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+
+        NodeVmContext* ctx = Napi::ObjectWrap<NodeVmContext>::Unwrap(info[0].As<Napi::Object>());
+        NodeVmState* st = Napi::ObjectWrap<NodeVmState>::Unwrap(info[1].As<Napi::Object>());
+
+        uint64_t seed = 0;
+        if (info.Length() > 2) seed = GetUint64(info[2]);
+
+        VmExecuteContextWorker* worker = new VmExecuteContextWorker(env, this, ctx, st, seed);
+        worker->Queue();
+        return worker->GetPromise();
     }
 
     Napi::Value ExecuteWithContext(const Napi::CallbackInfo& info) {

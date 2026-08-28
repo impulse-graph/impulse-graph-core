@@ -143,5 +143,5 @@ writer.finalize();
 ## Asynchronous Non-Blocking Execution
 Impulse Graph fully embraces the Node.js async idiom. By executing `ctx.executeAsync(bytecode)` instead of the synchronous variant, the V8 main thread immediately yields. The multi-terabyte C++ VM traversal executes entirely on the `libuv` background thread pool, completely unblocking your HTTP/WebSocket server event loop during massive network scans.
 
-## Zero-Copy `ArrayBuffer` Views
-Impulse returns `Float32Array` and `BigUint64Array` buffers without performing a single memory copy (`memcpy`). Memory maps are projected natively into V8 via `Napi::ArrayBuffer::New(external_data)`, offering raw bare-metal memory speeds directly in Javascript.
+## V8 Memory Sandboxing & Array Boundaries
+Due to modern V8 memory sandboxing constraints (which disable `napi_create_external_arraybuffer`), Node.js `TypedArray` views (`Float32Array`, `BigUint64Array`) cannot directly alias `mmap` C-ABI memory. The Impulse Node.js bindings utilize ultra-fast `std::memcpy` vector instantiations to securely bridge the V8 heap boundary while maintaining memory safety.
