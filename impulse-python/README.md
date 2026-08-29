@@ -117,6 +117,37 @@ python examples/08_networkx.py
 
 ### Snapshot Data Interchange (PyTorch, SciPy, Arrow, Polars)
 
+
+## Zero-Copy PyTorch & NumPy Tensor Integration
+
+Impulse Graph is optimized for machine learning pipelines (GNNs, embeddings). `impulse-python` utilizes `pybind11` buffer protocols to expose off-heap memory-mapped vectors directly to Python.
+
+Because the memory is tied to the `VmContext` object via a `py::capsule`, you can safely map it to a **zero-copy NumPy array** or a **zero-copy PyTorch tensor** without triggering a single allocation:
+
+```python
+import impulse_graph
+import torch
+
+snap = impulse_graph.Snapshot("my_graph.imps")
+ctx = impulse_graph.VmContext(snap)
+state = impulse_graph.VmState()
+
+# Execute a query returning a vector
+qb = impulse_graph.QueryBuilder()
+qb.input_node(0).walk_edge(0).collect_array()
+compiled = qb.compile()
+res = compiled.execute_with_context(ctx, state, 0)
+
+# 1. Zero-Copy NumPy Array
+numpy_view = ctx.get_node_vector(res.raw_value)
+
+# 2. Zero-Copy PyTorch Tensor
+# torch.from_numpy creates a tensor that shares the exact same memory pointer!
+torch_tensor = torch.from_numpy(numpy_view)
+
+print(f"PyTorch Tensor Shape: {torch_tensor.shape}")
+```
+
 ```python
 from impulse_graph import Snapshot
 

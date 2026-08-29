@@ -22,6 +22,42 @@ public sealed class VmContext : IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Gets the maximum active node vector size allowed in this context.
+    /// </summary>
+    public ulong VectorSize => (ulong)NativeMethods.impulse_vm_context_get_vector_size(_handle);
+
+    /// <summary>
+    /// Retrieves a zero-copy ReadOnlySpan over an off-heap floating-point vector.
+    /// </summary>
+    public unsafe ReadOnlySpan<float> GetFloatVector(nuint handle)
+    {
+        float* ptr = NativeMethods.impulse_vm_context_get_float_vector(_handle, handle);
+        if (ptr == null) return ReadOnlySpan<float>.Empty;
+        return new ReadOnlySpan<float>(ptr, (int)VectorSize);
+    }
+
+    /// <summary>
+    /// Retrieves a zero-copy ReadOnlySpan over an off-heap double-precision vector.
+    /// </summary>
+    public unsafe ReadOnlySpan<double> GetDoubleVector(nuint handle)
+    {
+        double* ptr = NativeMethods.impulse_vm_context_get_double_vector(_handle, handle);
+        if (ptr == null) return ReadOnlySpan<double>.Empty;
+        return new ReadOnlySpan<double>(ptr, (int)VectorSize);
+    }
+
+    /// <summary>
+    /// Retrieves a zero-copy ReadOnlySpan over an off-heap 64-bit integer node vector.
+    /// </summary>
+    public unsafe ReadOnlySpan<ulong> GetNodeVector(nuint handle)
+    {
+        ulong* ptr = NativeMethods.impulse_vm_context_get_node_vector(_handle, handle);
+        if (ptr == null) return ReadOnlySpan<ulong>.Empty;
+        return new ReadOnlySpan<ulong>(ptr, (int)VectorSize);
+    }
+
     public void Dispose()
     {
         if (_handle != nint.Zero)

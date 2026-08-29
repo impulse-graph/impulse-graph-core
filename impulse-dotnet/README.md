@@ -99,6 +99,28 @@ dotnet run --project examples/04_analytical_queries
 
 ### Fluent Traversal Example
 
+
+### Zero-Allocation Vector Iteration (`ReadOnlySpan<T>`)
+
+Impulse Graph is designed to minimize .NET GC pressure during graph analytical queries. C# FFI bindings map unmanaged pointers directly to `ReadOnlySpan<T>` over the C++ VM memory contexts.
+
+```csharp
+using var ctx = new VmContext(snap);
+using var state = new VmState();
+
+// Execute analytical bytecode
+var result = compiledQuery.ExecuteWithContext(ctx, state, 0UL);
+
+// Extract zero-allocation span over off-heap memory
+ReadOnlySpan<ulong> nodes = ctx.GetNodeVector(result.RawValue);
+Console.WriteLine($"Found {nodes.Length} reachable targets.");
+
+// Iterate without allocating managed arrays
+foreach (ulong node in nodes) {
+    Console.WriteLine(node);
+}
+```
+
 ```csharp
 using System;
 using ImpulseGraph;

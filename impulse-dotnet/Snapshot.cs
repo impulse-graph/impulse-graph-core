@@ -57,6 +57,7 @@ public sealed class Snapshot : IDisposable
         return ExecuteQuery(query, ctx, inputParam);
     }
 
+    
     public unsafe ExecutionResult ExecuteQuery(Query query, VmContext context, ulong inputParam = 0UL)
     {
         EnsureOpen();
@@ -84,8 +85,18 @@ public sealed class Snapshot : IDisposable
             registers[i] = state.Registers[i];
         }
 
-        return new ExecutionResult(status, state.Flags, registers);
+        int resultRegister = span[span.Length - 1].DstReg;
+        ulong rawValue = 0;
+        int resultType = 0;
+        if (resultRegister >= 0 && resultRegister < 64)
+        {
+            rawValue = registers[resultRegister];
+            resultType = state.RegisterTypes[resultRegister];
+        }
+
+        return new ExecutionResult(status, state.Flags, registers, resultRegister, rawValue, resultType);
     }
+
 
     private void EnsureOpen()
     {

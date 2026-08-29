@@ -303,94 +303,44 @@ public:
         return ctx_ ? impulse_vm_context_get_vector_size(ctx_) : 0;
     }
 
-    py::array_t<float> get_float_vector(size_t handle) const {
+    py::array_t<float> get_float_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
         size_t sz = vector_size();
         if (!ptr || sz == 0) return py::array_t<float>(0);
-        return py::array_t<float>(sz, ptr);
+        // Zero-copy NumPy view tied to the parent VmContext lifecycle
+        return py::array_t<float>(
+            {sz},
+            {sizeof(float)},
+            ptr,
+            parent
+        );
     }
 
-    py::array_t<double> get_double_vector(size_t handle) const {
+    py::array_t<double> get_double_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const double* ptr = impulse_vm_context_get_double_vector(ctx_, handle);
         size_t sz = vector_size();
         if (!ptr || sz == 0) return py::array_t<double>(0);
-        return py::array_t<double>(sz, ptr);
+        return py::array_t<double>(
+            {sz},
+            {sizeof(double)},
+            ptr,
+            parent
+        );
     }
 
-    int acquire_bitset() {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_acquire_bitset(ctx_);
-    }
-
-    void release_bitset(size_t handle) {
-        if (ctx_) impulse_vm_context_release_bitset(ctx_, handle);
-    }
-
-    void bitset_add(size_t handle, uint64_t node_id) {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        impulse_vm_context_bitset_add(ctx_, handle, node_id);
-    }
-
-    bool bitset_test(size_t handle, uint64_t node_id) const {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_bitset_test(ctx_, handle, node_id);
-    }
-
-    void bitset_fill(size_t handle, uint64_t count) {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        impulse_vm_context_bitset_fill(ctx_, handle, count);
-    }
-
-    uint64_t bitset_get_word(size_t handle, size_t word_idx) const {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_bitset_get_word(ctx_, handle, word_idx);
-    }
-
-    int acquire_float_vector() {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_acquire_float_vector(ctx_);
-    }
-
-    void release_float_vector(size_t handle) {
-        if (ctx_) impulse_vm_context_release_float_vector(ctx_, handle);
-    }
-
-    void float_vector_set(size_t handle, size_t index, float val) {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        impulse_vm_context_float_vector_set(ctx_, handle, index, val);
-    }
-
-    int acquire_double_vector() {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_acquire_double_vector(ctx_);
-    }
-
-    void release_double_vector(size_t handle) {
-        if (ctx_) impulse_vm_context_release_double_vector(ctx_, handle);
-    }
-
-    void double_vector_set(size_t handle, size_t index, double val) {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        impulse_vm_context_double_vector_set(ctx_, handle, index, val);
-    }
-
-    int acquire_node_vector() {
-        if (!ctx_) throw std::runtime_error("Context is destroyed");
-        return impulse_vm_context_acquire_node_vector(ctx_);
-    }
-
-    void release_node_vector(size_t handle) {
-        if (ctx_) impulse_vm_context_release_node_vector(ctx_, handle);
-    }
-
-    py::array_t<uint64_t> get_node_vector(size_t handle) const {
+    py::array_t<uint64_t> get_node_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
         size_t sz = vector_size();
         if (!ptr || sz == 0) return py::array_t<uint64_t>(0);
-        return py::array_t<uint64_t>(sz, ptr);
+        return py::array_t<uint64_t>(
+            {sz},
+            {sizeof(uint64_t)},
+            ptr,
+            parent
+        );
     }
 
     int acquire_string_vector() {
