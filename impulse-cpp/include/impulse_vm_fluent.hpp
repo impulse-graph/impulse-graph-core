@@ -134,6 +134,8 @@ public:
     QueryBuilder& sampleNeighbors(uint16_t relation_id, int32_t k_samples, uint32_t seed = 0);
     QueryBuilder& randomWalk(uint16_t relation_id, int32_t steps, uint32_t seed = 0);
     QueryBuilder& scatterGather();
+    QueryBuilder& gatherNodeAttr(uint16_t frontier_reg, uint16_t attr_idx, uint16_t domain = 0);
+    QueryBuilder& gatherEdgeAttr(uint16_t frontier_reg, uint16_t attr_idx, uint16_t domain = 0);
     QueryBuilder& rebacCheck(uint32_t permission_id);
     QueryBuilder& roaringBitmapAnd(uint16_t other_reg);
     QueryBuilder& islandDetect(uint16_t secondary_reg);

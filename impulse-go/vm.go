@@ -422,6 +422,18 @@ func (b *QueryBuilder) RebacCheck(relationID uint16, targetNodeReg, dstReg uint1
 	return b
 }
 
+func (b *QueryBuilder) GatherNodeAttr(frontierReg uint16, attrIdx uint16, domain uint16) *QueryBuilder {
+	payload := uint32(frontierReg&0xFF) | (uint32(attrIdx&0xFF) << 8) | (uint32(domain&0xFFFF) << 16)
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x81, Flags: 0, DstReg: 0, Payload: payload})
+	return b
+}
+
+func (b *QueryBuilder) GatherEdgeAttr(frontierReg uint16, attrIdx uint16, domain uint16) *QueryBuilder {
+	payload := uint32(frontierReg&0xFF) | (uint32(attrIdx&0xFF) << 8) | (uint32(domain&0xFFFF) << 16)
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x82, Flags: 0, DstReg: 0, Payload: payload})
+	return b
+}
+
 func (b *QueryBuilder) CollectBitset(reg uint16) *QueryBuilder {
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x90, Flags: 0, DstReg: reg, Payload: 0})
 	return b

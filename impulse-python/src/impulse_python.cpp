@@ -308,7 +308,6 @@ public:
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
         size_t sz = impulse_vm_context_get_float_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<float>(0);
-sz == 0) return py::array_t<float>(0);
         return py::array_t<float>({sz}, {sizeof(float)}, ptr, parent);
     }
 

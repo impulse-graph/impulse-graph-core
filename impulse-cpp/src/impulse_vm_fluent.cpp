@@ -346,6 +346,18 @@ QueryBuilder& QueryBuilder::scatterGather() {
     return *this;
 }
 
+QueryBuilder& QueryBuilder::gatherNodeAttr(uint16_t frontier_reg, uint16_t attr_idx, uint16_t domain) {
+    uint32_t payload = (frontier_reg & 0xFF) | ((attr_idx & 0xFF) << 8) | ((domain & 0xFFFF) << 16);
+    emit(OP_GATHER_NODE_ATTR, 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::gatherEdgeAttr(uint16_t frontier_reg, uint16_t attr_idx, uint16_t domain) {
+    uint32_t payload = (frontier_reg & 0xFF) | ((attr_idx & 0xFF) << 8) | ((domain & 0xFFFF) << 16);
+    emit(OP_GATHER_EDGE_ATTR, 0, current_reg_, payload);
+    return *this;
+}
+
 QueryBuilder& QueryBuilder::rebacCheck(uint32_t permission_id) {
     emit(OP_REBAC_CHECK, 0, current_reg_, permission_id);
     return *this;

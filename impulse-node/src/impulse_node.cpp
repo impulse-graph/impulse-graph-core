@@ -935,6 +935,8 @@ public:
             InstanceMethod("sampleNeighbors", &NodeQueryBuilder::SampleNeighbors),
             InstanceMethod("randomWalk", &NodeQueryBuilder::RandomWalk),
             InstanceMethod("scatterGather", &NodeQueryBuilder::ScatterGather),
+            InstanceMethod("gatherNodeAttr", &NodeQueryBuilder::GatherNodeAttr),
+            InstanceMethod("gatherEdgeAttr", &NodeQueryBuilder::GatherEdgeAttr),
             InstanceMethod("rebacCheck", &NodeQueryBuilder::RebacCheck),
             InstanceMethod("roaringBitmapAnd", &NodeQueryBuilder::RoaringBitmapAnd),
             InstanceMethod("islandDetect", &NodeQueryBuilder::IslandDetect),
@@ -1191,6 +1193,24 @@ private:
         return info.This();
     }
     Napi::Value ScatterGather(const Napi::CallbackInfo& info) { builder_.scatterGather(); return info.This(); }
+
+    Napi::Value GatherNodeAttr(const Napi::CallbackInfo& info) {
+        if (info.Length() < 2) return info.This();
+        uint16_t frontier = info[0].As<Napi::Number>().Uint32Value();
+        uint16_t attr = info[1].As<Napi::Number>().Uint32Value();
+        uint16_t domain = info.Length() > 2 ? info[2].As<Napi::Number>().Uint32Value() : 0;
+        builder_.gatherNodeAttr(frontier, attr, domain);
+        return info.This();
+    }
+
+    Napi::Value GatherEdgeAttr(const Napi::CallbackInfo& info) {
+        if (info.Length() < 2) return info.This();
+        uint16_t frontier = info[0].As<Napi::Number>().Uint32Value();
+        uint16_t attr = info[1].As<Napi::Number>().Uint32Value();
+        uint16_t domain = info.Length() > 2 ? info[2].As<Napi::Number>().Uint32Value() : 0;
+        builder_.gatherEdgeAttr(frontier, attr, domain);
+        return info.This();
+    }
     Napi::Value RebacCheck(const Napi::CallbackInfo& info) {
         if (info.Length() >= 1) builder_.rebacCheck(info[0].As<Napi::Number>().Uint32Value());
         return info.This();

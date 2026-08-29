@@ -422,6 +422,14 @@ class QueryBuilder:
         self._native.scatter_gather()
         return self
 
+    def gather_node_attr(self, frontier_reg: int, attr_idx: int, domain: int = 0) -> "QueryBuilder":
+        self._native.gather_node_attr(frontier_reg, attr_idx, domain)
+        return self
+
+    def gather_edge_attr(self, frontier_reg: int, attr_idx: int, domain: int = 0) -> "QueryBuilder":
+        self._native.gather_edge_attr(frontier_reg, attr_idx, domain)
+        return self
+
     def rebac_check(self, permission_id: int) -> "QueryBuilder":
         self._native.rebac_check(permission_id)
         return self
