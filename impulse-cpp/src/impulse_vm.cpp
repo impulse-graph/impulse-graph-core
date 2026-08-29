@@ -457,7 +457,28 @@ void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel) {
 }
 
 size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx) {
-    return ctx ? ctx->node_buffer.size() : 0;
+    return ctx ? ctx->max_nodes : 0;
+}
+
+size_t impulse_vm_context_get_node_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
+        return ctx->node_vectors[handle].size();
+    }
+    return 0;
+}
+
+size_t impulse_vm_context_get_float_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->float_vectors_allocated[handle]) {
+        return ctx->max_nodes;
+    }
+    return 0;
+}
+
+size_t impulse_vm_context_get_double_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle]) {
+        return ctx->max_nodes;
+    }
+    return 0;
 }
 
 const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle) {

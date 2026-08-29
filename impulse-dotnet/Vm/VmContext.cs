@@ -35,7 +35,8 @@ public sealed class VmContext : IDisposable
     {
         float* ptr = NativeMethods.impulse_vm_context_get_float_vector(_handle, handle);
         if (ptr == null) return ReadOnlySpan<float>.Empty;
-        return new ReadOnlySpan<float>(ptr, (int)VectorSize);
+        nuint size = NativeMethods.impulse_vm_context_get_float_vector_size(_handle, handle);
+        return new ReadOnlySpan<float>(ptr, (int)size);
     }
 
     /// <summary>
@@ -45,7 +46,8 @@ public sealed class VmContext : IDisposable
     {
         double* ptr = NativeMethods.impulse_vm_context_get_double_vector(_handle, handle);
         if (ptr == null) return ReadOnlySpan<double>.Empty;
-        return new ReadOnlySpan<double>(ptr, (int)VectorSize);
+        nuint size = NativeMethods.impulse_vm_context_get_double_vector_size(_handle, handle);
+        return new ReadOnlySpan<double>(ptr, (int)size);
     }
 
     /// <summary>
@@ -55,7 +57,8 @@ public sealed class VmContext : IDisposable
     {
         ulong* ptr = NativeMethods.impulse_vm_context_get_node_vector(_handle, handle);
         if (ptr == null) return ReadOnlySpan<ulong>.Empty;
-        return new ReadOnlySpan<ulong>(ptr, (int)VectorSize);
+        nuint size = NativeMethods.impulse_vm_context_get_node_vector_size(_handle, handle);
+        return new ReadOnlySpan<ulong>(ptr, (int)size);
     }
 
     public void Dispose()

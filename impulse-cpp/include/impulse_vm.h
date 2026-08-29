@@ -319,6 +319,9 @@ typedef struct IMPULSE_ALIGN(64) {
 IMPULSE_API impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
 IMPULSE_API void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
 IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
+IMPULSE_API size_t impulse_vm_context_get_node_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_get_float_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_get_double_vector_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);

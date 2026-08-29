@@ -303,20 +303,21 @@ public:
         return ctx_ ? impulse_vm_context_get_vector_size(ctx_) : 0;
     }
 
-    py::array_t<float> get_float_vector(size_t handle) const {
+    py::array_t<float> get_float_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
-        size_t sz = vector_size();
+        size_t sz = impulse_vm_context_get_float_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<float>(0);
-        return py::array_t<float>(sz, ptr);
+sz == 0) return py::array_t<float>(0);
+        return py::array_t<float>({sz}, {sizeof(float)}, ptr, parent);
     }
 
-    py::array_t<double> get_double_vector(size_t handle) const {
+    py::array_t<double> get_double_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const double* ptr = impulse_vm_context_get_double_vector(ctx_, handle);
-        size_t sz = vector_size();
+        size_t sz = impulse_vm_context_get_double_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<double>(0);
-        return py::array_t<double>(sz, ptr);
+        return py::array_t<double>({sz}, {sizeof(double)}, ptr, parent);
     }
 
     int acquire_bitset() {
@@ -385,12 +386,12 @@ public:
         if (ctx_) impulse_vm_context_release_node_vector(ctx_, handle);
     }
 
-    py::array_t<uint64_t> get_node_vector(size_t handle) const {
+    py::array_t<uint64_t> get_node_vector(size_t handle, py::object parent) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
-        size_t sz = vector_size();
+        size_t sz = impulse_vm_context_get_node_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<uint64_t>(0);
-        return py::array_t<uint64_t>(sz, ptr);
+        return py::array_t<uint64_t>({sz}, {sizeof(uint64_t)}, ptr, parent);
     }
 
     int acquire_string_vector() {
@@ -593,8 +594,12 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("__enter__", [](PyImpulseVmContext& self) { return &self; })
         .def("__exit__", [](PyImpulseVmContext& self, py::object, py::object, py::object) { self.destroy(); })
         .def("vector_size", &PyImpulseVmContext::vector_size)
-        .def("get_float_vector", &PyImpulseVmContext::get_float_vector, py::arg("handle"))
-        .def("get_double_vector", &PyImpulseVmContext::get_double_vector, py::arg("handle"))
+                .def("get_float_vector", [](PyImpulseVmContext& self, size_t handle) {
+            return self.get_float_vector(handle, py::cast(self));
+        }, py::arg("handle"), py::return_value_policy::reference_internal)
+        .def("get_double_vector", [](PyImpulseVmContext& self, size_t handle) {
+            return self.get_double_vector(handle, py::cast(self));
+        }, py::arg("handle"), py::return_value_policy::reference_internal)
         .def("acquire_bitset", &PyImpulseVmContext::acquire_bitset)
         .def("release_bitset", &PyImpulseVmContext::release_bitset, py::arg("handle"))
         .def("bitset_add", &PyImpulseVmContext::bitset_add, py::arg("handle"), py::arg("node_id"))
@@ -609,7 +614,9 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("double_vector_set", &PyImpulseVmContext::double_vector_set, py::arg("handle"), py::arg("index"), py::arg("val"))
         .def("acquire_node_vector", &PyImpulseVmContext::acquire_node_vector)
         .def("release_node_vector", &PyImpulseVmContext::release_node_vector, py::arg("handle"))
-        .def("get_node_vector", &PyImpulseVmContext::get_node_vector, py::arg("handle"))
+        .def("get_node_vector", [](PyImpulseVmContext& self, size_t handle) {
+            return self.get_node_vector(handle, py::cast(self));
+        }, py::arg("handle"), py::return_value_policy::reference_internal)
         .def("acquire_string_vector", &PyImpulseVmContext::acquire_string_vector)
         .def("release_string_vector", &PyImpulseVmContext::release_string_vector, py::arg("handle"))
         .def("string_vector_add", &PyImpulseVmContext::string_vector_add, py::arg("handle"), py::arg("str"))

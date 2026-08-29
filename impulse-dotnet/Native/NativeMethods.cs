@@ -61,8 +61,17 @@ internal static unsafe partial class NativeMethods
         ulong inputParam
     );
 
-    [LibraryImport(LibName)]
+[LibraryImport(LibName)]
     public static partial nuint impulse_vm_context_get_vector_size(nint ctx);
+
+    [LibraryImport(LibName)]
+    public static partial nuint impulse_vm_context_get_node_vector_size(nint ctx, nuint handle);
+
+    [LibraryImport(LibName)]
+    public static partial nuint impulse_vm_context_get_float_vector_size(nint ctx, nuint handle);
+
+    [LibraryImport(LibName)]
+    public static partial nuint impulse_vm_context_get_double_vector_size(nint ctx, nuint handle);
 
     [LibraryImport(LibName)]
     public static partial float* impulse_vm_context_get_float_vector(nint ctx, nuint handle);

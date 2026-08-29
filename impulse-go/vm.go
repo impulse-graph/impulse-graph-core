@@ -470,9 +470,11 @@ type NodeVectorView struct {
 // GetFloatVector retrieves a handle's float32 vector as a GC-safe zero-copy view.
 func (c *VmContext) GetFloatVector(handle int) Float32VectorView {
 	cPtr := C.impulse_vm_context_get_float_vector(c.handle, C.size_t(handle))
-	sz := c.GetVectorSize()
+	sz := int(C.impulse_vm_context_get_float_vector_size(c.handle, C.size_t(handle)))
 	if cPtr == nil || sz == 0 {
 		return Float32VectorView{Data: nil, ctx: c}
+	}
+	return Float32VectorView{Data: nil, ctx: c}
 	}
 	return Float32VectorView{
 		Data: unsafe.Slice((*float32)(unsafe.Pointer(cPtr)), sz),
@@ -496,9 +498,11 @@ func (c *VmContext) GetDoubleVector(handle int) Float64VectorView {
 // GetNodeVector retrieves a handle's node ID vector as a GC-safe zero-copy view.
 func (c *VmContext) GetNodeVector(handle int) NodeVectorView {
 	cPtr := C.impulse_vm_context_get_node_vector(c.handle, C.size_t(handle))
-	sz := c.GetVectorSize()
+	sz := int(C.impulse_vm_context_get_node_vector_size(c.handle, C.size_t(handle)))
 	if cPtr == nil || sz == 0 {
 		return NodeVectorView{Data: nil, ctx: c}
+	}
+	return NodeVectorView{Data: nil, ctx: c}
 	}
 	return NodeVectorView{
 		Data: unsafe.Slice((*uint64)(unsafe.Pointer(cPtr)), sz),
