@@ -1569,21 +1569,18 @@ op_SET_CARDINALITY: {
 op_CSR_WALK_2HOP: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFF;
+    uint16_t src = 0;
     uint16_t rel1 = 0;
     uint16_t rel2 = 0;
     if (inst.flags & 0x80) {
-        rel1 = (inst.payload >> 8) & 0xFFFF;
+        src = inst.payload & 0xFFFF;
+        rel1 = (inst.payload >> 16) & 0xFFFF;
         rel2 = bytecode[vm_state->pc + 1].dst_reg;
         vm_state->pc++;
     } else {
-        rel1 = (inst.payload >> 8) & 0xFF;
+        src = 0;
+        rel1 = inst.payload & 0xFFFF;
         rel2 = (inst.payload >> 16) & 0xFFFF;
-        if (rel1 == 0 && rel2 == 0) {
-            rel1 = inst.payload & 0xFFFF;
-            rel2 = (inst.payload >> 16) & 0xFFFF;
-            src = 0;
-        }
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
