@@ -1968,6 +1968,7 @@ op_CSR_WALK: {
     }
     const auto& slot = vm_state->query_context->slots[rel];
 
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED));
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
@@ -2013,7 +2014,7 @@ op_CSR_WALK: {
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-    if (slot.offsets_ptr && slot.targets_ptr) {
+    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
             size_t frontier_size = 0;
@@ -2094,7 +2095,7 @@ op_CSR_WALK: {
                 }
             }
         }
-    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+    } else if (!src_is_null && !slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
             for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
@@ -2178,6 +2179,7 @@ op_CSR_WALK_FILTERED: {
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED));
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
@@ -2189,7 +2191,7 @@ op_CSR_WALK_FILTERED: {
     }
     uint64_t max_nodes = vm_state->query_context->max_nodes;
 
-    if (slot.offsets_ptr && slot.targets_ptr && filter_words) {
+    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr && filter_words) {
         if (src_is_bitset) {
             #pragma omp parallel for schedule(dynamic, 64)
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -2232,6 +2234,14 @@ op_CSR_WALK_FILTERED: {
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
     vm_state->pc++;
     DISPATCH();
 }
@@ -4303,9 +4313,7 @@ op_MAP_KEYS_TO_DENSE: {
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    if (!attr || !attr->data_ptr) {
-        bitset_add(bs_dst, 0, vm_state->query_context->max_nodes);
-    } else {
+    if (attr && attr->data_ptr) {
         const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
         if (input_keys && input_keys->keys && input_keys->count > 0) {
             uint8_t base_type = attr->type_code & 0x7F;
