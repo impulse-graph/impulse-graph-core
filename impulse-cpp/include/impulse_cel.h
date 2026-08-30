@@ -1,3 +1,4 @@
+#include <iostream>
 /**
  * @file impulse_cel.h
  * @brief Google CEL (Common Expression Language) Zero-Dependency Pratt Parser & Compiler for Impulse Graph.
@@ -35,7 +36,7 @@ enum class TokenType {
     EQ_EQ, BANG_EQ, LT, LT_EQ, GT, GT_EQ,
     AMP_AMP, PIPE_PIPE, BANG,
     QUESTION, COLON,
-    DOT, COMMA,
+    DOT, COMMA, EQ,
     
     // Delimiters
     LPAREN, RPAREN,
@@ -87,7 +88,7 @@ public:
 
             case '=':
                 if (peek() == '=') { cursor_++; return Token{TokenType::EQ_EQ, "==", 0, 0.0, false, start}; }
-                break;
+                return Token{TokenType::EQ, "=", 0, 0.0, false, start};
             case '!':
                 if (peek() == '=') { cursor_++; return Token{TokenType::BANG_EQ, "!=", 0, 0.0, false, start}; }
                 return Token{TokenType::BANG, "!", 0, 0.0, false, start};
@@ -352,6 +353,7 @@ struct AstNode {
 // Operator Precedence levels for Pratt parser
 enum Precedence {
     PREC_NONE = 0,
+    PREC_ASSIGN,
     PREC_CONDITIONAL, // ? :
     PREC_OR,          // ||
     PREC_AND,         // &&
@@ -359,6 +361,7 @@ enum Precedence {
     PREC_ADD_SUB,     // + -
     PREC_MUL_DIV,     // * / %
     PREC_UNARY,       // ! - +
+    PREC_COLON,
     PREC_CALL_MEMBER  // . () []
 };
 
@@ -369,7 +372,7 @@ public:
     }
 
     std::shared_ptr<AstNode> parse_expression() {
-        return parse_precedence(PREC_CONDITIONAL);
+        return parse_precedence(PREC_ASSIGN);
     }
 
     std::shared_ptr<AstNode> parse() {
@@ -398,6 +401,8 @@ private:
 
     Precedence get_precedence(TokenType type) const {
         switch (type) {
+            case TokenType::EQ: return PREC_ASSIGN;
+            case TokenType::COLON: return PREC_COLON;
             case TokenType::QUESTION: return PREC_CONDITIONAL;
             case TokenType::PIPE_PIPE: return PREC_OR;
             case TokenType::AMP_AMP: return PREC_AND;
@@ -468,8 +473,8 @@ private:
     }
 
     std::shared_ptr<AstNode> parse_precedence(Precedence prec) {
-        auto left = parse_prefix();
-        if (!left) return nullptr;
+        std::cout << "parse_precedence(" << prec << ") called. curr_=" << curr_.text << std::endl; auto left = parse_prefix();
+        if (!left) { std::cout << "prefix failed on " << curr_.text << std::endl; return nullptr; }
 
         while (prec <= get_precedence(curr_.type)) {
             Token op = curr_;
@@ -517,9 +522,9 @@ private:
                 }
             } else {
                 // Binary operator
-                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + 1);
+                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ || op.type == TokenType::COLON ? 0 : 1)); // Right associative for = and : maybe? Or just 1 for left.
                 auto right = parse_precedence(next_prec);
-                if (!right) return nullptr;
+                if (!right) { std::cout << "right failed on " << op.text << std::endl; return nullptr; }
                 left = AstNode::make_binary(op.text, left, right);
             }
         }
@@ -681,6 +686,29 @@ private:
         auto left = node->children[0];
         auto right = node->children[1];
         const std::string& op = node->text;
+
+        // Monotonic Inverse Pushdown
+        if (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
+            auto check_pushdown = [&](const std::shared_ptr<AstNode>& lhs, const std::shared_ptr<AstNode>& rhs, bool reverse_op) -> std::shared_ptr<AstNode> {
+                if (lhs->kind == AstKind::FUNCTION_CALL && lhs->children.size() == 1 &&
+                    (rhs->kind == AstKind::LITERAL_FLOAT || rhs->kind == AstKind::LITERAL_INT)) {
+                    double c = (rhs->kind == AstKind::LITERAL_FLOAT) ? rhs->float_val : static_cast<double>(rhs->int_val);
+                    std::string new_op = op;
+                    if (reverse_op) {
+                        if (op == "<") new_op = ">";
+                        else if (op == "<=") new_op = ">=";
+                        else if (op == ">") new_op = "<";
+                        else if (op == ">=") new_op = "<=";
+                    }
+                    if (lhs->text == "sqrt") {
+                        if (c >= 0) return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c));
+                    }
+                }
+                return nullptr;
+            };
+            if (auto res = check_pushdown(left, right, false)) return res;
+            if (auto res = check_pushdown(right, left, true)) return res;
+        }
 
         // 1. Integer Constant Folding
         if (left->kind == AstKind::LITERAL_INT && right->kind == AstKind::LITERAL_INT) {

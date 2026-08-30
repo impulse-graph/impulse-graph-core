@@ -107,6 +107,7 @@ public:
     QueryBuilder& filterNode(uint32_t filter_id);
     QueryBuilder& filterNodeStrPrefix(const char* prefix);
     QueryBuilder& filterCel(const std::string& expression);
+    QueryBuilder& project(const std::string& expression);
 
     // --- Set & Vector Operations ---
     QueryBuilder& unionWith(uint16_t src_reg);

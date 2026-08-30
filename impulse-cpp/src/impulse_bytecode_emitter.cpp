@@ -15,33 +15,8 @@ public:
 };
 
 static int resolve_relation_id(const impulse_snapshot_t* snapshot, const std::string& rel_name) {
-    if (!snapshot || rel_name.empty()) return 0;
-    uint16_t count = impulse_snapshot_relation_count(snapshot);
-    
-    auto to_lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
-        return s;
-    };
-    std::string rel_name_lower = to_lower(rel_name);
-
-    for (uint16_t i = 0; i < count; ++i) {
-        char name_buf[256];
-        if (impulse_snapshot_get_relation_entry(snapshot, i, name_buf, sizeof(name_buf), nullptr, nullptr) == IMPULSE_OK) {
-            std::string n = name_buf;
-            if (to_lower(n) == rel_name_lower) return i;
-        }
-    }
-    
-    for (uint16_t i = 0; i < count; ++i) {
-        char name_buf[256];
-        if (impulse_snapshot_get_relation_entry(snapshot, i, name_buf, sizeof(name_buf), nullptr, nullptr) == IMPULSE_OK) {
-            std::string n = to_lower(name_buf);
-            if (n.size() >= rel_name_lower.size() && 
-                n.compare(n.size() - rel_name_lower.size(), rel_name_lower.size(), rel_name_lower) == 0) {
-                return i;
-            }
-        }
-    }
+    // String table lookups for relations are not implemented in the current public C ABI.
+    // Default to relation 0 or handle through delta layers.
     return 0;
 }
 
@@ -401,7 +376,7 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                         
                         uint32_t payload = ((src_reg & 0xFFFF) << 16) | (name_idx & 0xFFFF);
                         impulse_instruction_t inst{};
-                        inst.opcode = OP_VECTOR_LOAD_ATTR;
+                        inst.opcode = OP_GATHER_NODE_ATTR;
                         inst.dst_reg = dst_reg;
                         inst.payload = payload;
                         instr_list.push_back(inst);
