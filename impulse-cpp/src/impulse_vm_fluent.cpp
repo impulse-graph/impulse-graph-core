@@ -201,6 +201,13 @@ QueryBuilder& QueryBuilder::filterNodeStrPrefix(const char* prefix) {
     return *this;
 }
 
+
+QueryBuilder& QueryBuilder::project(const std::string& expression) {
+    uint32_t proj_hash = static_cast<uint32_t>(std::hash<std::string>{}(expression));
+    emit(OP_PROJECT_STATE, 0, current_reg_, proj_hash & 0xFFFF);
+    return *this;
+}
+
 QueryBuilder& QueryBuilder::filterCel(const std::string& expression) {
     impulse::cel::Parser parser(expression);
     auto ast = parser.parse();
@@ -517,6 +524,98 @@ namespace {
 
 using namespace impulse::compiler;
 
+
+static std::shared_ptr<impulse::compiler::ImpScmNode> to_scm_node(const std::shared_ptr<impulse::cel::AstNode>& node) {
+    using namespace impulse::compiler;
+    using namespace impulse::cel;
+    if (!node) return nullptr;
+    
+    switch (node->kind) {
+        case AstKind::LITERAL_INT:
+            return ScmLiteral::of_int(node->int_val);
+        case AstKind::LITERAL_FLOAT:
+            return ScmLiteral::of_float(node->float_val);
+        case AstKind::LITERAL_BOOL:
+            return ScmLiteral::of_bool(node->bool_val);
+        case AstKind::LITERAL_STRING:
+            return ScmLiteral::of_str(node->str_val);
+        case AstKind::IDENTIFIER:
+            return std::make_shared<ScmSymbol>(node->text);
+        case AstKind::MEMBER_ACCESS: {
+            auto target = to_scm_node(node->children[0]);
+            auto attr = ScmLiteral::of_str(node->text);
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>("get-attr"), target, attr
+            });
+        }
+        case AstKind::UNARY_OP: {
+            auto operand = to_scm_node(node->children[0]);
+            std::string op = node->text;
+            if (op == "!") op = "mask-not";
+            else if (op == "-") {
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("-"), ScmLiteral::of_int(0), operand
+                });
+            }
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>(op), operand
+            });
+        }
+        case AstKind::BINARY_OP: {
+            auto lhs = to_scm_node(node->children[0]);
+            auto rhs = to_scm_node(node->children[1]);
+            std::string op = node->text;
+            
+            if (op == "&&") op = "mask-and";
+            else if (op == "||") op = "mask-or";
+            else if (op == ">") op = "vec-cmp-gt";
+            else if (op == "<") op = "vec-cmp-lt";
+            else if (op == "==") op = "vec-cmp-eq";
+            else if (op == "!=") {
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("mask-not"),
+                    std::make_shared<ScmList>(std::vector<AstPtr>{
+                        std::make_shared<ScmSymbol>("vec-cmp-eq"), lhs, rhs
+                    })
+                });
+            }
+            if (op == "=") {
+                return std::make_shared<ScmStreamProject>(rhs);
+            }
+            if (op == ":") {
+                // SPECIAL ASSIGNMENT/COLON TRUNCATION LOGIC:
+                // state.fuel:MIN becomes (project-state ... )
+                // Wait! lhs is "state.fuel" and rhs is "MIN"
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("project-state"), lhs, rhs
+                });
+            }
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>(op), lhs, rhs
+            });
+        }
+        case AstKind::TERNARY_OP: {
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>("vec-blend"),
+                to_scm_node(node->children[0]), to_scm_node(node->children[1]), to_scm_node(node->children[2])
+            });
+        }
+        case AstKind::FUNCTION_CALL: {
+            std::vector<AstPtr> list;
+            list.push_back(std::make_shared<ScmSymbol>(node->text));
+            for (const auto& arg : node->children) list.push_back(to_scm_node(arg));
+            return std::make_shared<ScmList>(list);
+        }
+        case AstKind::LIST_LITERAL: {
+            std::vector<AstPtr> list;
+            list.push_back(std::make_shared<ScmSymbol>("list"));
+            for (const auto& elem : node->children) list.push_back(to_scm_node(elem));
+            return std::make_shared<ScmList>(list);
+        }
+    }
+    return nullptr;
+}
+
 static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impulse_language_t lang, const GraphCatalog* /*catalog*/) {
     if (!script || script[0] == '\0') {
         throw std::invalid_argument("Empty script provided to compiler");
@@ -540,8 +639,7 @@ static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impul
                         case IMPULSE_LANG_CEL: {
             impulse::cel::Parser p(script_str);
             auto cel_ast = p.parse_expression();
-            std::string ir = impulse::cel::CelCompiler::to_impscheme(cel_ast);
-            return impulse::impscm::ImpScmAstBuilder::parse(ir);
+            return std::make_shared<ScmProgram>(std::vector<AstPtr>{to_scm_node(cel_ast)});
         }
         case IMPULSE_LANG_IMPSCM:
         default: {
@@ -998,3 +1096,81 @@ impulse_status_t impulse_exec(
 
 } // extern "C"
 
+
+extern "C" {
+
+IMPULSE_API int impulse_compile_cel(const char* cel_expr, int is_projection, impulse_compiled_query_t** out_query) {
+    if (!cel_expr || !out_query) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        impulse::vm::QueryBuilder builder;
+        builder.walkEdge(0); // Dummy walk
+        if (is_projection) {
+            builder.project(cel_expr);
+        } else {
+            builder.filterCel(cel_expr);
+        }
+        auto compiled = builder.compile();
+        auto q = new impulse_compiled_query_t;
+        q->instruction_count = compiled.instructionCount();
+        q->bytecode_length = q->instruction_count * sizeof(impulse_instruction_t);
+        q->bytecode = new uint8_t[q->bytecode_length];
+        std::memcpy(q->bytecode, compiled.bytecode().data(), q->bytecode_length);
+        *out_query = q;
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+IMPULSE_API void impulse_compiled_query_destroy(impulse_compiled_query_t* query) {
+    if (query) {
+        delete[] query->bytecode;
+        delete query;
+    }
+}
+
+IMPULSE_API int impulse_fluent_project(impulse_query_t* query, const char* cel_expr) {
+    if (!query || !cel_expr) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        auto builder = reinterpret_cast<impulse::vm::QueryBuilder*>(query);
+        builder->project(cel_expr);
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+IMPULSE_API int impulse_execute_compiled_query(
+    const impulse_snapshot_t* snapshot,
+    impulse_compiled_query_t* query,
+    void* state_ptr,
+    uint64_t input_seed
+) {
+    if (!query || !state_ptr) return IMPULSE_ERR_INVALID_ARGUMENT;
+    impulse_vm_state_t* state = reinterpret_cast<impulse_vm_state_t*>(state_ptr);
+    try {
+        impulse_vm_context_t* temp_ctx = nullptr;
+        if (state->query_context == nullptr && snapshot != nullptr) {
+            temp_ctx = impulse_vm_context_create(snapshot);
+            state->query_context = temp_ctx;
+        }
+
+        impulse_vm_status_t status = impulse_vm_execute(
+            reinterpret_cast<impulse_instruction_t*>(query->bytecode),
+            query->instruction_count,
+            state,
+            input_seed
+        );
+
+        if (temp_ctx) {
+            impulse_vm_context_destroy(temp_ctx);
+            state->query_context = nullptr;
+        }
+
+        return status;
+    } catch (...) {
+        return IMPULSE_VM_ERR_TRAP;
+    }
+}
+
+} // extern "C"
