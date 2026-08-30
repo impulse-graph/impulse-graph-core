@@ -1073,8 +1073,9 @@ op_VECTOR_TIME_VALID_AT: {
         uint64_t ts = time_val;
         if (time_type == TYPE_FLOAT_VECTOR || time_type == TYPE_NODE_VECTOR) {
             int h_t = static_cast<int>(time_val);
-            if (h_t >= 0 && static_cast<size_t>(h_t) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->node_vectors_allocated[h_t]) {
-                if (u < vm_state->query_context->node_vectors[h_t].size()) {
+            if (h_t >= 0 && static_cast<size_t>(h_t) < VM_MAX_VECTOR_HANDLES) {
+                if ((vm_state->query_context->node_vectors_allocated[h_t] || vm_state->query_context->float_vectors_allocated[h_t]) &&
+                    u < vm_state->query_context->node_vectors[h_t].size()) {
                     ts = vm_state->query_context->node_vectors[h_t][u];
                 }
             }
@@ -6253,8 +6254,6 @@ op_INIT_MOCK_EDGE_ATTR: {
             int h = static_cast<int>(vm_state->registers[src_reg]);
             if (h >= 0 && static_cast<size_t>(h) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h]) {
                 mock_attr.float_data = vm_state->query_context->float_vectors[h];
-            }
-            if (h >= 0 && static_cast<size_t>(h) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->node_vectors_allocated[h]) {
                 mock_attr.int_data = vm_state->query_context->node_vectors[h];
             }
         } else if (vm_state->register_types[src_reg] == TYPE_NODE_VECTOR || vm_state->register_types[src_reg] == TYPE_UINT64_VECTOR) {
