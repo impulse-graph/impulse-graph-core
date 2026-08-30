@@ -92,6 +92,10 @@ struct BoundRelationSlot {
     }
 
     inline uint64_t get_csc_offset(uint64_t v) const {
+        if (!dynamic_csc_offsets.empty()) {
+            if (v < dynamic_csc_offsets.size()) return dynamic_csc_offsets[v];
+            return dynamic_csc_offsets.back();
+        }
         if (!csc_offsets_ptr) return 0;
         if (edge_index_width == 8 || edge_index_width == 64) {
             return static_cast<const uint64_t*>(csc_offsets_ptr)[v];
@@ -100,6 +104,10 @@ struct BoundRelationSlot {
     }
 
     inline uint64_t get_csc_target(uint64_t edge_idx) const {
+        if (!dynamic_csc_targets.empty()) {
+            if (edge_idx < dynamic_csc_targets.size()) return dynamic_csc_targets[edge_idx];
+            return 0;
+        }
         if (!csc_targets_ptr) return 0;
         if (node_id_width == 2 || node_id_width == 16) {
             return static_cast<const uint16_t*>(csc_targets_ptr)[edge_idx];
@@ -812,7 +820,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_ROARING_BITMAP_AND_NOT] = &&op_ROARING_BITMAP_AND_NOT;
         dispatch_table[OP_SPARSE_MATVEC] = &&op_PASS_THROUGH;
         dispatch_table[OP_LOUVAIN_MODULARITY] = &&op_PASS_THROUGH;
-        dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_PASS_THROUGH;
+        dispatch_table[OP_KCORE_DECOMPOSITION] = &&op_KCORE_DECOMPOSITION;
         dispatch_table[OP_MOTIF_MATCH_3] = &&op_PASS_THROUGH;
         dispatch_table[OP_GRAPH_ISOMORPHISM] = &&op_PASS_THROUGH;
         dispatch_table[OP_ISLAND_DETECT] = &&op_ISLAND_DETECT;
@@ -2426,10 +2434,11 @@ op_CSC_WALK: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
+    if (!slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty()) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED));
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
@@ -2469,7 +2478,7 @@ op_CSC_WALK: {
     int num_threads = vm_state->query_context->max_threads;
 #endif
 
-    if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+    if (!src_is_null && ((slot.csc_offsets_ptr && slot.csc_targets_ptr) || !slot.dynamic_csc_offsets.empty())) {
         if (unv_words != nullptr) {
             // GraphBLAS Bottom-Up BFS: unv is the candidate target set v, src is the source frontier u
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -4133,6 +4142,13 @@ op_CSR_WALK_REDUCE_SUM: {
         if (edge_attr.data_ptr) has_edge_attr = true;
     }
 
+    const impulse_vm_context_t::MockAttribute* mock_node_attr = nullptr;
+    if (vm_state->query_context->mock_node_attrs.count(attr_id)) {
+        mock_node_attr = &vm_state->query_context->mock_node_attrs.at(attr_id);
+    } else if (attr_id == 0 && vm_state->query_context->mock_node_attrs.count(0)) {
+        mock_node_attr = &vm_state->query_context->mock_node_attrs.at(0);
+    }
+
     if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         uint64_t u = vm_state->registers[src];
         int64_t sum = 0;
@@ -4141,7 +4157,15 @@ op_CSR_WALK_REDUCE_SUM: {
             uint64_t end   = slot.get_csr_offset(u + 1);
             for (uint64_t idx = start; idx < end; ++idx) {
                 uint64_t target_node = slot.get_csr_target(idx);
-                if (has_edge_attr) {
+                if (mock_node_attr) {
+                    if (mock_node_attr->has_mask && !mock_node_attr->mask.test(target_node)) {
+                        // masked
+                    } else if (target_node < mock_node_attr->int_data.size()) {
+                        sum += static_cast<int64_t>(mock_node_attr->int_data[target_node]);
+                    } else if (target_node < mock_node_attr->float_data.size()) {
+                        sum += static_cast<int64_t>(mock_node_attr->float_data[target_node]);
+                    }
+                } else if (has_edge_attr) {
                     uint8_t base_type = edge_attr.type_code & 0x7F;
                     if (base_type == 0x03) sum += static_cast<const int32_t*>(edge_attr.data_ptr)[idx];
                     else if (base_type == 0x04) sum += static_cast<const int64_t*>(edge_attr.data_ptr)[idx];
@@ -4733,7 +4757,7 @@ op_INIT_MOCK_GRAPH: {
         for (uint32_t e = 0; e < total_edges; ++e) {
             if (targets[e] > max_target_id) max_target_id = targets[e];
         }
-        uint32_t csc_node_count = std::max(static_cast<uint32_t>(node_count), max_target_id + 1);
+        uint32_t csc_node_count = (total_edges > 0) ? std::max(static_cast<uint32_t>(node_count), max_target_id + 1) : node_count;
 
         auto& slot = vm_state->query_context->slots[slot_id];
         std::vector<uint32_t> in_degrees(csc_node_count, 0);
@@ -4897,6 +4921,92 @@ op_ASSERT: {
 
 op_TRAP: {
     return IMPULSE_VM_ERR_TRAP;
+}
+
+op_KCORE_DECOMPOSITION: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t r_src = inst.payload & 0xFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(r_src);
+
+    uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
+    if (rel_id >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel_id];
+    size_t n = slot.node_count;
+    if (n == 0) n = vm_state->query_context->max_nodes;
+
+    int h_dst = acquire_float_vector(vm_state->query_context);
+    if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (vm_state->query_context->float_vectors[h_dst].size() < n) {
+        vm_state->query_context->float_vectors[h_dst].resize(n);
+    }
+    float* core = vm_state->query_context->float_vectors[h_dst].data();
+    std::fill_n(core, n, 0.0f);
+
+    if (slot.offsets_ptr && slot.targets_ptr && n > 0) {
+        std::vector<int> deg(n, 0);
+        int max_deg = 0;
+        for (size_t i = 0; i < n; ++i) {
+            int d = static_cast<int>(slot.get_csr_offset(i + 1) - slot.get_csr_offset(i));
+            deg[i] = d;
+            if (d > max_deg) max_deg = d;
+        }
+
+        std::vector<int> vert(n, 0);
+        std::vector<int> pos(n, 0);
+        std::vector<int> bin(max_deg + 1, 0);
+
+        for (size_t i = 0; i < n; ++i) bin[deg[i]]++;
+        int start = 0;
+        for (int d = 0; d <= max_deg; ++d) {
+            int num = bin[d];
+            bin[d] = start;
+            start += num;
+        }
+        for (size_t i = 0; i < n; ++i) {
+            int p = bin[deg[i]]++;
+            pos[i] = p;
+            vert[p] = static_cast<int>(i);
+        }
+        for (int d = max_deg; d >= 1; --d) {
+            bin[d] = bin[d - 1];
+        }
+        bin[0] = 0;
+
+        for (size_t i = 0; i < n; ++i) {
+            int v = vert[i];
+            core[v] = static_cast<float>(deg[v]);
+            uint64_t e_start = slot.get_csr_offset(v);
+            uint64_t e_end = slot.get_csr_offset(v + 1);
+            for (uint64_t e = e_start; e < e_end; ++e) {
+                uint64_t u = slot.get_csr_target(e);
+                if (u < n && deg[u] > deg[v]) {
+                    int du = deg[u];
+                    int pu = pos[u];
+                    int pw = bin[du];
+                    int w = vert[pw];
+                    if (static_cast<size_t>(u) != static_cast<size_t>(w)) {
+                        pos[u] = pw;
+                        pos[w] = pu;
+                        vert[pu] = w;
+                        vert[pw] = static_cast<int>(u);
+                    }
+                    bin[du]++;
+                    deg[u]--;
+                }
+            }
+        }
+    }
+
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+    vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
 }
 
 op_PASS_THROUGH: {
