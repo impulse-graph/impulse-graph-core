@@ -1568,9 +1568,24 @@ op_SET_CARDINALITY: {
 op_CSR_WALK_2HOP: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint16_t rel1 = inst.payload & 0xFFFF;
-    uint16_t rel2 = (inst.payload >> 16) & 0xFFFF;
+    uint16_t src = inst.payload & 0xFF;
+    uint16_t rel1 = 0;
+    uint16_t rel2 = 0;
+    if (inst.flags & 0x80) {
+        rel1 = (inst.payload >> 8) & 0xFFFF;
+        rel2 = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel1 = (inst.payload >> 8) & 0xFF;
+        rel2 = (inst.payload >> 16) & 0xFFFF;
+        if (rel1 == 0 && rel2 == 0) {
+            rel1 = inst.payload & 0xFFFF;
+            rel2 = (inst.payload >> 16) & 0xFFFF;
+            src = 0;
+        }
+    }
     VALIDATE_REG(dst);
+    VALIDATE_REG(src);
 
     if (rel1 >= vm_state->query_context->slots.size() || rel2 >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -1586,7 +1601,6 @@ op_CSR_WALK_2HOP: {
         scalar_src = input_param;
         src_is_bitset = false;
     } else {
-        uint16_t src = 0;
         src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
         h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
         scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
@@ -3129,20 +3143,31 @@ op_L1_NORM_DIFF: {
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
-        const float* vec1 = vm_state->query_context->float_vectors[h1].data();
-        const float* vec2 = vm_state->query_context->float_vectors[h2].data();
+        if (h1 >= 0 && h1 < static_cast<int>(vm_state->query_context->float_vectors.size()) &&
+            h2 >= 0 && h2 < static_cast<int>(vm_state->query_context->float_vectors.size())) {
+            const float* vec1 = vm_state->query_context->float_vectors[h1].data();
+            const float* vec2 = vm_state->query_context->float_vectors[h2].data();
 
-        #pragma omp parallel for reduction(+:l1_diff) schedule(static)
-        for (size_t i = 0; i < N; ++i) {
-            l1_diff += std::abs(vec1[i] - vec2[i]);
+            #pragma omp parallel for reduction(+:l1_diff) schedule(static)
+            for (size_t i = 0; i < N; ++i) {
+                l1_diff += std::abs(vec1[i] - vec2[i]);
+            }
         }
-    } else {
-        l1_diff = std::abs(static_cast<float>(vm_state->registers[src1]) - static_cast<float>(vm_state->registers[src2]));
+    } else if ((vm_state->register_types[src1] == TYPE_FLOAT || vm_state->register_types[src1] == TYPE_INT64) &&
+               (vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
+        float val1 = (vm_state->register_types[src1] == TYPE_FLOAT) ?
+            reinterpret_cast<float&>(vm_state->registers[src1]) : static_cast<float>(vm_state->registers[src1]);
+        float val2 = (vm_state->register_types[src2] == TYPE_FLOAT) ?
+            reinterpret_cast<float&>(vm_state->registers[src2]) : static_cast<float>(vm_state->registers[src2]);
+        l1_diff = std::abs(val1 - val2);
     }
 
     vm_state->registers[dst] = 0;
     reinterpret_cast<float&>(vm_state->registers[dst]) = l1_diff;
     vm_state->register_types[dst] = TYPE_FLOAT;
+
+    if (l1_diff < 1e-4f) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
     DISPATCH();
@@ -3648,7 +3673,7 @@ op_CC_AFFOREST: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
+        vm_state->register_types[dst] = TYPE_NODE_VECTOR;
     }
 
     int handle = static_cast<int>(vm_state->registers[dst]);
@@ -4682,7 +4707,6 @@ op_LOAD_INLINE_ARRAY: {
     if (vm_state->query_context->node_vectors[h_dst].size() < count) {
         vm_state->query_context->node_vectors[h_dst].resize(count);
     }
-    vm_state->query_context->node_vectors_allocated[h_dst] = true;
 
     float* dst_vec_f = vm_state->query_context->float_vectors[h_dst].data();
     uint64_t* dst_vec_n = vm_state->query_context->node_vectors[h_dst].data();
@@ -9063,7 +9087,6 @@ op_GAS_EXHAUSTED:
                 if (vm_state->query_context->node_vectors[h_dst].size() < count) {
                     vm_state->query_context->node_vectors[h_dst].resize(count);
                 }
-                vm_state->query_context->node_vectors_allocated[h_dst] = true;
 
                 float* dst_vec_f = vm_state->query_context->float_vectors[h_dst].data();
                 uint64_t* dst_vec_n = vm_state->query_context->node_vectors[h_dst].data();
