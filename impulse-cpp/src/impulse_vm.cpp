@@ -5156,7 +5156,7 @@ op_ASSERT_FINITE: {
         }
     } else if (vm_state->register_types[target_reg] == TYPE_FLOAT_VECTOR) {
         int h = static_cast<int>(vm_state->registers[target_reg]);
-        if (!vm_state->query_context || h < 0 || h >= 8 || !vm_state->query_context->float_vectors_allocated[h]) {
+        if (!vm_state->query_context || h < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->float_vectors_allocated[h]) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         const float* vec = vm_state->query_context->float_vectors[h].data();
@@ -5170,7 +5170,7 @@ op_ASSERT_FINITE: {
         }
     } else if (vm_state->register_types[target_reg] == TYPE_DOUBLE_VECTOR) {
         int h = static_cast<int>(vm_state->registers[target_reg]);
-        if (!vm_state->query_context || h < 0 || h >= 8 || !vm_state->query_context->double_vectors_allocated[h]) {
+        if (!vm_state->query_context || h < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->double_vectors_allocated[h]) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         const double* vec = vm_state->query_context->double_vectors[h].data();
@@ -5183,7 +5183,6 @@ op_ASSERT_FINITE: {
             }
         }
     }
-
     vm_state->pc++;
     DISPATCH();
 }
@@ -5191,11 +5190,15 @@ op_ASSERT_FINITE: {
 op_VEC_MATH_UNARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src = (inst.payload >> 8) & 0xFF;
+    uint16_t src = inst.payload & 0xFF;
+    uint8_t func_id = (inst.payload >> 8) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+
+    if (vm_state->register_types[src] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
@@ -5231,13 +5234,20 @@ op_VEC_MATH_UNARY: {
 op_VEC_MATH_BINARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src1 = (inst.payload >> 8) & 0xFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFF;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint8_t func_id = (inst.payload >> 16) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+
+    if (vm_state->register_types[src1] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src1] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+    if (vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src2] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
@@ -5277,15 +5287,25 @@ op_VEC_MATH_BINARY: {
 op_VEC_MATH_TERNARY: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    uint8_t func_id = inst.payload & 0xFF;
-    uint16_t src1 = (inst.payload >> 8) & 0xFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFF;
-    uint16_t src3 = (inst.payload >> 24) & 0xFF;
+    uint16_t src1 = inst.payload & 0xFF;
+    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    uint16_t src3 = (inst.payload >> 16) & 0xFF;
+    uint8_t func_id = (inst.payload >> 24) & 0xFF;
     uint8_t type_tag = inst.flags;
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
+
+    if (vm_state->register_types[src1] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src1] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+    if (vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src2] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+    if (vm_state->register_types[src3] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src3] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     size_t N = vm_state->query_context->max_nodes;
