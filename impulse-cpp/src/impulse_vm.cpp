@@ -1573,9 +1573,10 @@ op_CSR_WALK_2HOP: {
     uint16_t rel1 = 0;
     uint16_t rel2 = 0;
     if (inst.flags & 0x80) {
-        src = inst.payload & 0xFFFF;
-        rel1 = (inst.payload >> 16) & 0xFFFF;
-        rel2 = bytecode[vm_state->pc + 1].dst_reg;
+        src = inst.payload & 0xFF;
+        rel1 = bytecode[vm_state->pc + 1].dst_reg;
+        rel2 = (inst.payload >> 16) & 0xFFFF;
+        if (rel2 == 0) rel2 = rel1;
         vm_state->pc++;
     } else {
         src = 0;
@@ -6738,9 +6739,22 @@ op_GAS_EXHAUSTED:
             }
             case OP_CSR_WALK_2HOP: {
                 uint16_t dst = inst.dst_reg;
-                uint16_t rel1 = inst.payload & 0xFFFF;
-                uint16_t rel2 = (inst.payload >> 16) & 0xFFFF;
+                uint16_t src = 0;
+                uint16_t rel1 = 0;
+                uint16_t rel2 = 0;
+                if (inst.flags & 0x80) {
+                    src = inst.payload & 0xFF;
+                    rel1 = bytecode[vm_state->pc + 1].dst_reg;
+                    rel2 = (inst.payload >> 16) & 0xFFFF;
+                    if (rel2 == 0) rel2 = rel1;
+                    vm_state->pc++;
+                } else {
+                    src = 0;
+                    rel1 = inst.payload & 0xFFFF;
+                    rel2 = (inst.payload >> 16) & 0xFFFF;
+                }
                 VALIDATE_REG(dst);
+                VALIDATE_REG(src);
 
                 if (rel1 >= vm_state->query_context->slots.size() || rel2 >= vm_state->query_context->slots.size()) {
                     return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
