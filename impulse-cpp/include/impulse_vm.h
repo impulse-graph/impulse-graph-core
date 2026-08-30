@@ -53,9 +53,9 @@ extern "C" {
 #define OP_LOAD_INLINE_ARRAY        0x08
 #define OP_INIT_MOCK_GRAPH          0x09
 
-#define OP_RESERVED_0A              0x0A
-#define OP_RESERVED_0B              0x0B
-#define OP_RESERVED_0C              0x0C
+#define OP_LOAD_INLINE_SET          0x0A
+#define OP_INIT_MOCK_NODE_ATTR      0x0B
+#define OP_INIT_MOCK_EDGE_ATTR      0x0C
 #define OP_RESERVED_0D              0x0D
 #define OP_CSR_WALK_2HOP            0x0E
 #define OP_CSR_WALK_STATE           0x0F
@@ -107,8 +107,8 @@ extern "C" {
 #define OP_L1_NORM_DIFF             0x39
 
 #define OP_PROJECT_STATE            0x3A
-#define OP_RESERVED_3B              0x3B
-#define OP_RESERVED_3C              0x3C
+#define OP_COALESCE                 0x3B
+#define OP_EXTRACT_VALIDITY         0x3C
 #define OP_VECTOR_TIME_VALID_AT     0x3D
 #define OP_RESERVED_3E              0x3E
 #define OP_RESERVED_3F              0x3F
@@ -214,6 +214,40 @@ extern "C" {
 #define OP_COLLECT_VALUE_MAP        0x93
 #define OP_DENSE_WALK_REDUCE        0x94
 #define OP_DENSE_WALK_DIRECT_STORE  0x95
+
+// Edge Stream Shader Opcodes (0xA0 - 0xBF)
+#define OP_COO_WALK_STREAM        0xA0
+#define OP_STREAM_FUNC_BEGIN      0xA1
+#define OP_STREAM_FUNC_END        0xA2
+#define OP_STREAM_LOAD_SRC        0xA3
+#define OP_STREAM_LOAD_EDGE       0xA4
+#define OP_STREAM_MATH_ADD        0xA5
+#define OP_STREAM_MATH_DIV        0xA6
+#define OP_STREAM_FILTER          0xA7
+#define OP_STREAM_REDUCE          0xA8
+#define OP_CSR_WALK_STREAM        0xA9
+#define OP_CSC_WALK_STREAM        0xAA
+#define OP_STREAM_LOAD_TGT        0xAB
+#define OP_STREAM_MATH_SUB        0xAC
+#define OP_STREAM_MATH_MUL        0xAD
+#define OP_STREAM_MATH_MOD        0xAE
+#define OP_STREAM_MATH_UNARY      0xAF
+#define OP_STREAM_CMP_EQ          0xB0
+#define OP_STREAM_CMP_NEQ         0xB1
+#define OP_STREAM_CMP_GT          0xB2
+#define OP_STREAM_CMP_LT          0xB3
+#define OP_STREAM_LOGIC_AND       0xB4
+#define OP_STREAM_LOGIC_OR        0xB5
+#define OP_STREAM_LOGIC_NOT       0xB6
+#define OP_STREAM_SELECT          0xB7
+#define OP_STREAM_REDUCE_ARGMIN   0xB8
+#define OP_STREAM_REDUCE_ARGMAX   0xB9
+#define OP_STREAM_LOAD_SRC_ID     0xBA
+#define OP_STREAM_LOAD_TGT_ID     0xBB
+#define OP_STREAM_LOAD_EDGE_ID    0xBC
+#define OP_STREAM_LOAD_CONST      0xBD
+#define OP_STREAM_YIELD           0xBE
+#define OP_STREAM_SCATTER_REDUCE  0xBF
 
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0

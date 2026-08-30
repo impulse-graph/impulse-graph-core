@@ -703,7 +703,9 @@ impulse_vm_status_t impulse_vm_execute(
     static bool dispatch_inited = false;
     if (!dispatch_inited) {
         for (int i = 0; i < 256; ++i) dispatch_table[i] = &&op_INVALID;
-        for (int i = 0x0A; i <= 0x0F; ++i) dispatch_table[i] = &&op_RESERVED;
+        dispatch_table[OP_INIT_MOCK_NODE_ATTR] = &&op_INIT_MOCK_NODE_ATTR;
+        dispatch_table[OP_INIT_MOCK_EDGE_ATTR] = &&op_INIT_MOCK_EDGE_ATTR;
+        for (int i = 0x0D; i <= 0x0F; ++i) dispatch_table[i] = &&op_RESERVED;
         dispatch_table[0x28] = &&op_RESERVED;
         dispatch_table[0x29] = &&op_RESERVED;
         dispatch_table[0x2B] = &&op_RESERVED;
@@ -756,7 +758,11 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_VEC_MATH_UNARY] = &&op_VEC_MATH_UNARY;
         dispatch_table[OP_VEC_MATH_BINARY] = &&op_VEC_MATH_BINARY;
         dispatch_table[OP_VEC_MATH_TERNARY] = &&op_VEC_MATH_TERNARY;
+
+        dispatch_table[OP_COALESCE] = &&op_COALESCE;
+        dispatch_table[OP_EXTRACT_VALIDITY] = &&op_EXTRACT_VALIDITY;
         dispatch_table[OP_SET_UNION] = &&op_SET_UNION;
+
         dispatch_table[OP_SET_INTERSECT] = &&op_SET_INTERSECT;
         dispatch_table[OP_SET_DIFFERENCE] = &&op_SET_DIFFERENCE;
         dispatch_table[OP_SET_CARDINALITY] = &&op_SET_CARDINALITY;
@@ -833,6 +839,9 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_COLLECT_VALUE_MAP] = &&op_COLLECT_VALUE_MAP;
         dispatch_table[OP_DENSE_WALK_REDUCE] = &&op_DENSE_WALK_REDUCE;
         dispatch_table[OP_DENSE_WALK_DIRECT_STORE] = &&op_DENSE_WALK_DIRECT_STORE;
+        dispatch_table[OP_CSR_WALK_STREAM] = &&op_CSR_WALK_STREAM;
+        dispatch_table[OP_CSC_WALK_STREAM] = &&op_CSC_WALK_STREAM;
+        dispatch_table[OP_COO_WALK_STREAM] = &&op_COO_WALK_STREAM;
         dispatch_inited = true;
     }
 
@@ -1044,6 +1053,90 @@ op_CLEAR_REG: {
     }
     vm_state->registers[dst] = 0;
     vm_state->register_types[dst] = TYPE_NULL;
+    vm_state->pc++;
+    DISPATCH();
+}
+
+
+
+op_COALESCE: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src1 = inst.payload & 0xFFFF;
+    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
+        int hDst = acquire_float_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        auto& vDst = vm_state->query_context->float_vectors[hDst];
+        auto& v1 = vm_state->query_context->float_vectors[h1];
+        auto& v2 = vm_state->query_context->float_vectors[h2];
+        vDst.resize(std::max(v1.size(), v2.size()));
+        for (size_t i = 0; i < vDst.size(); ++i) {
+            float a = (i < v1.size()) ? v1[i] : std::numeric_limits<float>::quiet_NaN();
+            float b = (i < v2.size()) ? v2[i] : 0.0f;
+            vDst[i] = std::isnan(a) ? b : a;
+        }
+        vm_state->registers[dst] = hDst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    } else if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT) {
+        int hDst = acquire_float_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        float scalar = std::bit_cast<float>(static_cast<uint32_t>(vm_state->registers[src2]));
+        auto& vDst = vm_state->query_context->float_vectors[hDst];
+        auto& v1 = vm_state->query_context->float_vectors[h1];
+        vDst.resize(v1.size());
+        for (size_t i = 0; i < vDst.size(); ++i) {
+            float a = v1[i];
+            vDst[i] = std::isnan(a) ? scalar : a;
+        }
+        vm_state->registers[dst] = hDst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    } else if (vm_state->register_types[src1] != TYPE_NULL) {
+        vm_state->registers[dst] = vm_state->registers[src1];
+        vm_state->register_types[dst] = vm_state->register_types[src1];
+    } else {
+        vm_state->registers[dst] = vm_state->registers[src2];
+        vm_state->register_types[dst] = vm_state->register_types[src2];
+    }
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_EXTRACT_VALIDITY: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+    if (vm_state->register_types[src] != TYPE_FLOAT_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+    int h1 = static_cast<int>(vm_state->registers[src]);
+    auto& v1 = vm_state->query_context->float_vectors[h1];
+    
+    int hDst = acquire_bitset(vm_state->query_context);
+    if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    
+    auto& bDst = vm_state->query_context->bitsets[hDst];
+    
+    for (size_t i = 0; i < v1.size(); ++i) {
+        if (!std::isnan(v1[i])) {
+            bitset_add(bDst, i, vm_state->query_context->max_nodes);
+        }
+    }
+
+    vm_state->registers[dst] = hDst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
     DISPATCH();
 }
@@ -1493,7 +1586,13 @@ op_PROJECT_STATE: {
 op_ADAPTIVE_WALK: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t src = inst.payload & 0xFFFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
@@ -1518,11 +1617,271 @@ op_ADAPTIVE_WALK: {
     goto op_CSR_WALK;
 }
 
+op_CSR_WALK_STREAM:
+op_CSC_WALK_STREAM:
+op_COO_WALK_STREAM: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint8_t walk_op = inst.opcode;
+    uint16_t dst = inst.dst_reg;
+    uint16_t src = inst.payload & 0xFFFF;
+    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    int shaderPcStart = inst.flags & 0xFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
+
+    if (rel >= vm_state->query_context->slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    const auto& slot = vm_state->query_context->slots[rel];
+
+    int h_dst = -1;
+    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
+        h_dst = static_cast<int>(vm_state->registers[dst]);
+        vm_state->query_context->bitsets[h_dst].clear();
+    } else {
+        h_dst = acquire_bitset(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+        vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    }
+    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+    std::vector<uint32_t> active_sources;
+    if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+        active_sources.push_back(static_cast<uint32_t>(vm_state->registers[src]));
+    } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR) {
+        int h_src_vec = static_cast<int>(vm_state->registers[src]);
+        const auto& vec = vm_state->query_context->node_vectors[h_src_vec];
+        for (uint64_t v : vec) {
+            active_sources.push_back(static_cast<uint32_t>(v));
+        }
+    } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
+        int h_src_bs = static_cast<int>(vm_state->registers[src]);
+        const auto& bs_src = vm_state->query_context->bitsets[h_src_bs];
+        for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+            uint64_t word = bs_src.words[w];
+            while (word) {
+                int bit = std::countr_zero(word);
+                uint64_t u = w * 64 + bit;
+                word &= word - 1;
+                active_sources.push_back(static_cast<uint32_t>(u));
+            }
+        }
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+
+    for (uint32_t u : active_sources) {
+        if (u >= slot.node_count) continue;
+        uint64_t start = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
+        uint64_t end = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u + 1) : slot.get_csr_offset(u + 1);
+
+        for (uint64_t eIdx = start; eIdx < end; ++eIdx) {
+            uint32_t tgt = (walk_op == OP_CSC_WALK_STREAM) ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
+
+            float s_regs[16] = {0.0f};
+            bool abort = false;
+            size_t mutPc = shaderPcStart;
+
+            while (mutPc < instruction_count) {
+                const auto& sInst = bytecode[mutPc];
+                uint8_t op = sInst.opcode;
+                if (op == OP_STREAM_FUNC_END) break;
+
+                uint16_t sDst = sInst.dst_reg;
+                uint16_t sPayloadLow = sInst.payload & 0xFFFF;
+                uint16_t sPayloadHigh = (sInst.payload >> 16) & 0xFFFF;
+
+                switch (op) {
+                    case OP_STREAM_FUNC_BEGIN: break;
+                    case OP_STREAM_LOAD_SRC: {
+                        uint16_t attr_id = sInst.payload;
+                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                            const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                            s_regs[sDst] = (u < vec.size()) ? vec[u] : 0.0f;
+                        } else {
+                            s_regs[sDst] = 0.0f;
+                        }
+                        break;
+                    }
+                    case OP_STREAM_LOAD_TGT: {
+                        uint16_t attr_id = sInst.payload;
+                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                            const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                            s_regs[sDst] = (tgt < vec.size()) ? vec[tgt] : 0.0f;
+                        } else {
+                            s_regs[sDst] = 0.0f;
+                        }
+                        break;
+                    }
+                    case OP_STREAM_LOAD_EDGE: {
+                        uint16_t attr_id = sInst.payload;
+                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                            const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                            s_regs[sDst] = (eIdx < vec.size()) ? vec[eIdx] : 0.0f;
+                        } else {
+                            s_regs[sDst] = 0.0f;
+                        }
+                        break;
+                    }
+                    case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(u); break;
+                    case OP_STREAM_LOAD_TGT_ID: s_regs[sDst] = static_cast<float>(tgt); break;
+                    case OP_STREAM_LOAD_EDGE_ID: s_regs[sDst] = static_cast<float>(eIdx); break;
+                    case OP_STREAM_LOAD_CONST: {
+                        uint32_t bits = sInst.payload;
+                        float f;
+                        std::memcpy(&f, &bits, sizeof(float));
+                        s_regs[sDst] = f;
+                        break;
+                    }
+                    case OP_STREAM_MATH_ADD: s_regs[sDst] = s_regs[sPayloadLow] + s_regs[sPayloadHigh]; break;
+                    case OP_STREAM_MATH_SUB: s_regs[sDst] = s_regs[sPayloadLow] - s_regs[sPayloadHigh]; break;
+                    case OP_STREAM_MATH_MUL: s_regs[sDst] = s_regs[sPayloadLow] * s_regs[sPayloadHigh]; break;
+                    case OP_STREAM_MATH_DIV: {
+                        float div = s_regs[sPayloadHigh];
+                        s_regs[sDst] = (div == 0.0f) ? 0.0f : (s_regs[sPayloadLow] / div);
+                        break;
+                    }
+                    case OP_STREAM_MATH_MOD: {
+                        float mod = s_regs[sPayloadHigh];
+                        s_regs[sDst] = (mod == 0.0f) ? 0.0f : std::fmod(s_regs[sPayloadLow], mod);
+                        break;
+                    }
+                    case OP_STREAM_CMP_EQ: s_regs[sDst] = (s_regs[sPayloadLow] == s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_CMP_NEQ: s_regs[sDst] = (s_regs[sPayloadLow] != s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_CMP_GT: s_regs[sDst] = (s_regs[sPayloadLow] > s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_CMP_LT: s_regs[sDst] = (s_regs[sPayloadLow] < s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_LOGIC_AND: s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f && s_regs[sPayloadHigh] != 0.0f) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_LOGIC_OR: s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f || s_regs[sPayloadHigh] != 0.0f) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_LOGIC_NOT: s_regs[sDst] = (s_regs[sPayloadLow] == 0.0f) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_SELECT: {
+                        s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f) ? s_regs[sPayloadHigh] : s_regs[sDst];
+                        break;
+                    }
+                    case OP_STREAM_FILTER: {
+                        if (s_regs[sDst] == 0.0f) abort = true;
+                        break;
+                    }
+                    case OP_STREAM_MATH_UNARY: {
+                        float v = s_regs[sPayloadLow];
+                        float res = v;
+                        switch (sPayloadHigh) {
+                            case 0x01: res = std::abs(v); break;
+                            case 0x02: res = std::sqrt(v); break;
+                            case 0x03: res = 1.0f / std::sqrt(v); break;
+                            case 0x04: res = std::copysign(std::pow(std::abs(v), 1.0f / 3.0f), v); break;
+                            case 0x08: res = std::exp(v); break;
+                            case 0x09: res = std::exp2(v); break;
+                            case 0x0A: res = std::pow(10.0f, v); break;
+                            case 0x0B: res = std::expm1(v); break;
+                            case 0x0C: res = std::log(v); break;
+                            case 0x0D: res = std::log2(v); break;
+                            case 0x0E: res = std::log10(v); break;
+                            case 0x0F: res = std::log1p(v); break;
+                            case 0x10: res = std::sin(v); break;
+                            case 0x11: res = std::cos(v); break;
+                            case 0x12: res = std::tan(v); break;
+                            case 0x13: res = std::asin(v); break;
+                            case 0x14: res = std::acos(v); break;
+                            case 0x15: res = std::atan(v); break;
+                            case 0x17: res = (std::abs(v) < 1e-15f) ? 1.0f : (std::sin(v) / v); break;
+                            case 0x18: res = std::sinh(v); break;
+                            case 0x19: res = std::cosh(v); break;
+                            case 0x1A: res = std::tanh(v); break;
+                            case 0x1E: res = std::floor(v); break;
+                            case 0x1F: res = std::ceil(v); break;
+                            case 0x21: res = std::floor(v + 0.5f); break;
+                            case 0x25: res = (v > 0.0f) ? v : 0.0f; break;
+                            case 0x26: res = (v > 0.0f) ? v : 0.01f * v; break;
+                            case 0x27: res = 1.0f / (1.0f + std::exp(-v)); break;
+                            case 0x28: res = 0.5f * v * (1.0f + std::tanh(0.7978845608028654 * (v + 0.044715 * v * v * v))); break;
+                            case 0x29: res = v / (1.0f + std::exp(-v)); break;
+                            case 0x2A: res = std::log(1.0f + std::exp(v)); break;
+                            case 0x34: res = std::isnan(v) ? 1.0f : 0.0f; break;
+                            case 0x35: res = std::isinf(v) ? 1.0f : 0.0f; break;
+                            case 0x36: res = std::isfinite(v) ? 1.0f : 0.0f; break;
+                        }
+                        s_regs[sDst] = res;
+                        break;
+                    }
+                    case OP_STREAM_YIELD: {
+                        bitset_add(bs_dst, tgt, vm_state->query_context->max_nodes);
+                        break;
+                    }
+                    case OP_STREAM_SCATTER_REDUCE: {
+                        float val = s_regs[sDst];
+                        uint16_t attrId = sPayloadLow;
+                        uint16_t monoid = sPayloadHigh;
+                        if (attrId < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attrId]) {
+                            auto& vec = vm_state->query_context->float_vectors[attrId];
+                            if (tgt < vec.size()) {
+                                float current = vec[tgt];
+                                float next = current;
+                                switch (monoid) {
+                                    case 0: next = current + val; break;
+                                    case 1: next = std::max(current, val); break;
+                                    case 2: next = std::min(current, val); break;
+                                }
+                                vec[tgt] = next;
+                            }
+                        }
+                        break;
+                    }
+                    case OP_STREAM_REDUCE: {
+                        float val = s_regs[sDst];
+                        uint16_t globalReg = sPayloadLow;
+                        uint16_t monoid = sPayloadHigh;
+                        
+                        uint8_t rType = vm_state->register_types[globalReg];
+                        uint64_t rVal = vm_state->registers[globalReg];
+                        
+                        float current = 0.0f;
+                        if (rType == TYPE_FLOAT) {
+                            uint32_t bits = static_cast<uint32_t>(rVal & 0xFFFFFFFFULL);
+                            std::memcpy(&current, &bits, sizeof(float));
+                        }
+                        
+                        float next = current;
+                        switch (monoid) {
+                            case 0: next = current + val; break;
+                            case 1: next = std::max(current, val); break;
+                            case 2: next = std::min(current, val); break;
+                        }
+                        
+                        uint32_t nextBits;
+                        std::memcpy(&nextBits, &next, sizeof(float));
+                        vm_state->registers[globalReg] = static_cast<uint64_t>(nextBits);
+                        vm_state->register_types[globalReg] = TYPE_FLOAT;
+                        break;
+                    }
+                }
+                if (abort) break;
+                mutPc++;
+            }
+        }
+    }
+
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+}
+    DISPATCH();
 op_CSR_WALK: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -1718,7 +2077,13 @@ op_CSR_WALK_FILTERED: {
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFF;
     uint16_t filter_reg = (inst.payload >> 8) & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(filter_reg);
@@ -1799,7 +2164,13 @@ op_CSR_WALK_PREDICATE: {
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFF;
     uint16_t pred_id = (inst.payload >> 8) & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -2152,7 +2523,13 @@ op_CSR_DEGREE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -2184,10 +2561,12 @@ op_STABLE_CHECK: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFFFF;
+    if (dst == 0 && src != 0) dst = src;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
     bool is_subset = true;
+    printf("DEBUG STABLE_CHECK: dst=%d, src=%d\n", dst, src);
     bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
     int h_dst = dst_is_bitset ? static_cast<int>(vm_state->registers[dst]) : -1;
     uint64_t scalar_dst = !dst_is_bitset ? vm_state->registers[dst] : 0;
@@ -2914,6 +3293,7 @@ op_EWISE_ADD: {
         }
     }
 
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
     DISPATCH();
 }
@@ -3183,7 +3563,13 @@ op_ISLAND_DETECT: {
 
     uint8_t src1 = inst.payload & 0xFF;
     uint8_t src2 = (inst.payload >> 8) & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
 
     uint64_t critical_pairs_count = 0;
     {
@@ -3270,7 +3656,13 @@ op_READ_EDGE_WEIGHT: {
     uint16_t dst = inst.dst_reg;
     uint8_t u_reg = inst.payload & 0xFF;
     uint8_t v_reg = (inst.payload >> 8) & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(u_reg);
     VALIDATE_REG(v_reg);
@@ -3363,6 +3755,12 @@ op_ROARING_BITMAP_OR: {
 
     vm_state->registers[dst] = h_dst;
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
     DISPATCH();
@@ -3494,6 +3892,21 @@ op_VECTOR_REDUCE_SUM: {
         reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
         vm_state->register_types[dst] = TYPE_FLOAT;
         sum = fsum;
+    } else if (vm_state->register_types[src] == TYPE_FLOAT) {
+        uint32_t bits = static_cast<uint32_t>(vm_state->registers[src] & 0xFFFFFFFFULL);
+        float fval;
+        std::memcpy(&fval, &bits, sizeof(float));
+        vm_state->registers[dst] = 0;
+        reinterpret_cast<float&>(vm_state->registers[dst]) = fval;
+        vm_state->register_types[dst] = TYPE_FLOAT;
+        sum = fval;
+    } else if (vm_state->register_types[src] == TYPE_DOUBLE) {
+        double dval;
+        uint64_t bits = vm_state->registers[src];
+        std::memcpy(&dval, &bits, sizeof(double));
+        vm_state->registers[dst] = reinterpret_cast<uint64_t&>(dval);
+        vm_state->register_types[dst] = TYPE_DOUBLE;
+        sum = dval;
     } else {
         vm_state->registers[dst] = 0;
         vm_state->register_types[dst] = TYPE_NULL;
@@ -3528,6 +3941,33 @@ op_CSR_WALK_REDUCE_SUM: {
         if (edge_attr.data_ptr) has_edge_attr = true;
     }
 
+    if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+        uint64_t u = vm_state->registers[src];
+        int64_t sum = 0;
+        if (slot.offsets_ptr && slot.targets_ptr && u < slot.node_count) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                uint64_t target_node = slot.get_csr_target(idx);
+                if (has_edge_attr) {
+                    uint8_t base_type = edge_attr.type_code & 0x7F;
+                    if (base_type == 0x03) sum += static_cast<const int32_t*>(edge_attr.data_ptr)[idx];
+                    else if (base_type == 0x04) sum += static_cast<const int64_t*>(edge_attr.data_ptr)[idx];
+                    else if (base_type == 0x08) sum += static_cast<int64_t>(static_cast<const float*>(edge_attr.data_ptr)[idx]);
+                    else if (base_type == 0x09) sum += static_cast<int64_t>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
+                    else sum += target_node;
+                } else {
+                    sum += target_node;
+                }
+            }
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(sum);
+        vm_state->register_types[dst] = TYPE_INT64;
+        if (sum == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
@@ -3609,6 +4049,15 @@ op_CSR_WALK_REDUCE: {
     bool src_is_double = (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR);
     size_t max_nodes = vm_state->query_context->max_nodes;
 
+    if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+        int h_dst = acquire_float_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
         printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
@@ -3758,6 +4207,7 @@ op_MAP_KEYS_TO_DENSE: {
     uint16_t dst = inst.dst_reg;
     uint16_t domain_id = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
+    if (domain_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
 
@@ -4812,7 +5262,13 @@ op_CSR_WALK_DIRECT_STORE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t src = inst.payload & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+    uint16_t rel;
+    if (inst.flags & 0x80) {
+        rel = bytecode[vm_state->pc + 1].dst_reg;
+        vm_state->pc++;
+    } else {
+        rel = (inst.payload >> 16) & 0xFFFF;
+    }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
@@ -5017,6 +5473,13 @@ op_COO_WALK_DIRECT_STORE: {
             }
         }
     }
+    bool is_empty = true;
+    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    }
+    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
     vm_state->pc++;
     DISPATCH();
 }
@@ -5339,6 +5802,28 @@ op_FRONTIER_DIFF: {
         vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_INIT_MOCK_NODE_ATTR:
+op_INIT_MOCK_EDGE_ATTR: {
+    const auto& inst = bytecode[vm_state->pc];
+    uint16_t attr_id = inst.dst_reg;
+    uint16_t src_reg = inst.payload & 0xFF;
+    VALIDATE_REG(src_reg);
+
+    if (vm_state->register_types[src_reg] == TYPE_FLOAT_VECTOR) {
+        int h_src = static_cast<int>(vm_state->registers[src_reg]);
+        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        const auto& src_vec = vm_state->query_context->float_vectors[h_src];
+        
+        if (attr_id >= vm_state->query_context->float_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        vm_state->query_context->float_vectors[attr_id] = src_vec;
+        vm_state->query_context->float_vectors_allocated[attr_id] = true;
+    }
     vm_state->pc++;
     DISPATCH();
 }
@@ -5944,6 +6429,259 @@ op_GAS_EXHAUSTED:
                 break;
             }
             case OP_ADAPTIVE_WALK:
+        case OP_CSR_WALK_STREAM:
+        case OP_CSC_WALK_STREAM:
+        case OP_COO_WALK_STREAM: {
+            uint8_t walk_op = inst.opcode;
+            uint16_t dst = inst.dst_reg;
+            uint16_t src = inst.payload & 0xFFFF;
+            uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+            int shaderPcStart = inst.flags & 0xFF;
+            VALIDATE_REG(dst);
+            VALIDATE_REG(src);
+
+            if (rel >= vm_state->query_context->slots.size()) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            const auto& slot = vm_state->query_context->slots[rel];
+
+            int h_dst = -1;
+            if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
+                h_dst = static_cast<int>(vm_state->registers[dst]);
+                vm_state->query_context->bitsets[h_dst].clear();
+            } else {
+                h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+            }
+            auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+            std::vector<uint32_t> active_sources;
+            if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+                active_sources.push_back(static_cast<uint32_t>(vm_state->registers[src]));
+            } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR) {
+                int h_src_vec = static_cast<int>(vm_state->registers[src]);
+                const auto& vec = vm_state->query_context->node_vectors[h_src_vec];
+                for (uint64_t v : vec) {
+                    active_sources.push_back(static_cast<uint32_t>(v));
+                }
+            } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
+                int h_src_bs = static_cast<int>(vm_state->registers[src]);
+                const auto& bs_src = vm_state->query_context->bitsets[h_src_bs];
+                for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                    uint64_t word = bs_src.words[w];
+                    while (word) {
+                        int bit = std::countr_zero(word);
+                        uint64_t u = w * 64 + bit;
+                        word &= word - 1;
+                        active_sources.push_back(static_cast<uint32_t>(u));
+                    }
+                }
+            } else {
+                return IMPULSE_VM_ERR_INVALID_REGISTER;
+            }
+
+            for (uint32_t u : active_sources) {
+                if (u >= slot.node_count) continue;
+                uint64_t start = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
+                uint64_t end = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u + 1) : slot.get_csr_offset(u + 1);
+
+                for (uint64_t eIdx = start; eIdx < end; ++eIdx) {
+                    uint32_t tgt = (walk_op == OP_CSC_WALK_STREAM) ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
+
+                    float s_regs[16] = {0.0f};
+                    bool abort = false;
+                    size_t mutPc = shaderPcStart;
+
+                    while (mutPc < instruction_count) {
+                        const auto& sInst = bytecode[mutPc];
+                        uint8_t op = sInst.opcode;
+                        if (op == OP_STREAM_FUNC_END) break;
+
+                        uint16_t sDst = sInst.dst_reg;
+                        uint16_t sPayloadLow = sInst.payload & 0xFFFF;
+                        uint16_t sPayloadHigh = (sInst.payload >> 16) & 0xFFFF;
+
+                        switch (op) {
+                            case OP_STREAM_FUNC_BEGIN: break;
+                            case OP_STREAM_LOAD_SRC: {
+                                uint16_t attr_id = sInst.payload;
+                                if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                                    const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                                    s_regs[sDst] = (u < vec.size()) ? vec[u] : 0.0f;
+                                } else {
+                                    s_regs[sDst] = 0.0f;
+                                }
+                                break;
+                            }
+                            case OP_STREAM_LOAD_TGT: {
+                                uint16_t attr_id = sInst.payload;
+                                if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                                    const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                                    s_regs[sDst] = (tgt < vec.size()) ? vec[tgt] : 0.0f;
+                                } else {
+                                    s_regs[sDst] = 0.0f;
+                                }
+                                break;
+                            }
+                            case OP_STREAM_LOAD_EDGE: {
+                                uint16_t attr_id = sInst.payload;
+                                if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                                    const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                                    s_regs[sDst] = (eIdx < vec.size()) ? vec[eIdx] : 0.0f;
+                                } else {
+                                    s_regs[sDst] = 0.0f;
+                                }
+                                break;
+                            }
+                            case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(u); break;
+                            case OP_STREAM_LOAD_TGT_ID: s_regs[sDst] = static_cast<float>(tgt); break;
+                            case OP_STREAM_LOAD_EDGE_ID: s_regs[sDst] = static_cast<float>(eIdx); break;
+                            case OP_STREAM_LOAD_CONST: {
+                                uint32_t bits = sInst.payload;
+                                float f;
+                                std::memcpy(&f, &bits, sizeof(float));
+                                s_regs[sDst] = f;
+                                break;
+                            }
+                            case OP_STREAM_MATH_ADD: s_regs[sDst] = s_regs[sPayloadLow] + s_regs[sPayloadHigh]; break;
+                            case OP_STREAM_MATH_SUB: s_regs[sDst] = s_regs[sPayloadLow] - s_regs[sPayloadHigh]; break;
+                            case OP_STREAM_MATH_MUL: s_regs[sDst] = s_regs[sPayloadLow] * s_regs[sPayloadHigh]; break;
+                            case OP_STREAM_MATH_DIV: {
+                                float div = s_regs[sPayloadHigh];
+                                s_regs[sDst] = (div == 0.0f) ? 0.0f : (s_regs[sPayloadLow] / div);
+                                break;
+                            }
+                            case OP_STREAM_MATH_MOD: {
+                                float mod = s_regs[sPayloadHigh];
+                                s_regs[sDst] = (mod == 0.0f) ? 0.0f : std::fmod(s_regs[sPayloadLow], mod);
+                                break;
+                            }
+                            case OP_STREAM_CMP_EQ: s_regs[sDst] = (s_regs[sPayloadLow] == s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_CMP_NEQ: s_regs[sDst] = (s_regs[sPayloadLow] != s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_CMP_GT: s_regs[sDst] = (s_regs[sPayloadLow] > s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_CMP_LT: s_regs[sDst] = (s_regs[sPayloadLow] < s_regs[sPayloadHigh]) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_LOGIC_AND: s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f && s_regs[sPayloadHigh] != 0.0f) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_LOGIC_OR: s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f || s_regs[sPayloadHigh] != 0.0f) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_LOGIC_NOT: s_regs[sDst] = (s_regs[sPayloadLow] == 0.0f) ? 1.0f : 0.0f; break;
+                            case OP_STREAM_SELECT: {
+                                s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f) ? s_regs[sPayloadHigh] : s_regs[sDst];
+                                break;
+                            }
+                            case OP_STREAM_FILTER: {
+                                if (s_regs[sDst] == 0.0f) abort = true;
+                                break;
+                            }
+                            case OP_STREAM_MATH_UNARY: {
+                                float v = s_regs[sPayloadLow];
+                                float res = v;
+                                switch (sPayloadHigh) {
+                                    case 0x01: res = std::abs(v); break;
+                                    case 0x02: res = std::sqrt(v); break;
+                                    case 0x03: res = 1.0f / std::sqrt(v); break;
+                                    case 0x04: res = std::copysign(std::pow(std::abs(v), 1.0f / 3.0f), v); break;
+                                    case 0x08: res = std::exp(v); break;
+                                    case 0x09: res = std::exp2(v); break;
+                                    case 0x0A: res = std::pow(10.0f, v); break;
+                                    case 0x0B: res = std::expm1(v); break;
+                                    case 0x0C: res = std::log(v); break;
+                                    case 0x0D: res = std::log2(v); break;
+                                    case 0x0E: res = std::log10(v); break;
+                                    case 0x0F: res = std::log1p(v); break;
+                                    case 0x10: res = std::sin(v); break;
+                                    case 0x11: res = std::cos(v); break;
+                                    case 0x12: res = std::tan(v); break;
+                                    case 0x13: res = std::asin(v); break;
+                                    case 0x14: res = std::acos(v); break;
+                                    case 0x15: res = std::atan(v); break;
+                                    case 0x17: res = (std::abs(v) < 1e-15f) ? 1.0f : (std::sin(v) / v); break;
+                                    case 0x18: res = std::sinh(v); break;
+                                    case 0x19: res = std::cosh(v); break;
+                                    case 0x1A: res = std::tanh(v); break;
+                                    case 0x1E: res = std::floor(v); break;
+                                    case 0x1F: res = std::ceil(v); break;
+                                    case 0x21: res = std::floor(v + 0.5f); break;
+                                    case 0x25: res = (v > 0.0f) ? v : 0.0f; break;
+                                    case 0x26: res = (v > 0.0f) ? v : 0.01f * v; break;
+                                    case 0x27: res = 1.0f / (1.0f + std::exp(-v)); break;
+                                    case 0x28: res = 0.5f * v * (1.0f + std::tanh(0.7978845608028654 * (v + 0.044715 * v * v * v))); break;
+                                    case 0x29: res = v / (1.0f + std::exp(-v)); break;
+                                    case 0x2A: res = std::log(1.0f + std::exp(v)); break;
+                                    case 0x34: res = std::isnan(v) ? 1.0f : 0.0f; break;
+                                    case 0x35: res = std::isinf(v) ? 1.0f : 0.0f; break;
+                                    case 0x36: res = std::isfinite(v) ? 1.0f : 0.0f; break;
+                                }
+                                s_regs[sDst] = res;
+                                break;
+                            }
+                            case OP_STREAM_YIELD: {
+                                bitset_add(bs_dst, tgt, vm_state->query_context->max_nodes);
+                                break;
+                            }
+                            case OP_STREAM_SCATTER_REDUCE: {
+                                float val = s_regs[sDst];
+                                uint16_t attrId = sPayloadLow;
+                                uint16_t monoid = sPayloadHigh;
+                                if (attrId < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attrId]) {
+                                    auto& vec = vm_state->query_context->float_vectors[attrId];
+                                    if (tgt < vec.size()) {
+                                        float current = vec[tgt];
+                                        float next = current;
+                                        switch (monoid) {
+                                            case 0: next = current + val; break;
+                                            case 1: next = std::max(current, val); break;
+                                            case 2: next = std::min(current, val); break;
+                                        }
+                                        vec[tgt] = next;
+                                    }
+                                }
+                                break;
+                            }
+                            case OP_STREAM_REDUCE: {
+                                float val = s_regs[sDst];
+                                uint16_t globalReg = sPayloadLow;
+                                uint16_t monoid = sPayloadHigh;
+                                
+                                uint8_t rType = vm_state->register_types[globalReg];
+                                uint64_t rVal = vm_state->registers[globalReg];
+                                
+                                float current = 0.0f;
+                                if (rType == TYPE_FLOAT) {
+                                    uint32_t bits = static_cast<uint32_t>(rVal & 0xFFFFFFFFULL);
+                                    std::memcpy(&current, &bits, sizeof(float));
+                                }
+                                
+                                float next = current;
+                                switch (monoid) {
+                                    case 0: next = current + val; break;
+                                    case 1: next = std::max(current, val); break;
+                                    case 2: next = std::min(current, val); break;
+                                }
+                                
+                                uint32_t nextBits;
+                                std::memcpy(&nextBits, &next, sizeof(float));
+                                vm_state->registers[globalReg] = static_cast<uint64_t>(nextBits);
+                                vm_state->register_types[globalReg] = TYPE_FLOAT;
+                                break;
+                            }
+                        }
+                        if (abort) break;
+                        mutPc++;
+                    }
+                }
+            }
+
+            bool is_empty = true;
+            for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                if (bs_dst.words[i] != 0) { is_empty = false; break; }
+            }
+            if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+            break;
+        }
             case OP_CSR_WALK: {
                 uint16_t dst = inst.dst_reg;
                 uint16_t src = inst.payload & 0xFFFF;
@@ -7411,6 +8149,21 @@ op_GAS_EXHAUSTED:
                     reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
                     vm_state->register_types[dst] = TYPE_FLOAT;
                     sum = fsum;
+                } else if (vm_state->register_types[src] == TYPE_FLOAT) {
+                    uint32_t bits = static_cast<uint32_t>(vm_state->registers[src] & 0xFFFFFFFFULL);
+                    float fval;
+                    std::memcpy(&fval, &bits, sizeof(float));
+                    vm_state->registers[dst] = 0;
+                    reinterpret_cast<float&>(vm_state->registers[dst]) = fval;
+                    vm_state->register_types[dst] = TYPE_FLOAT;
+                    sum = fval;
+                } else if (vm_state->register_types[src] == TYPE_DOUBLE) {
+                    double dval;
+                    uint64_t bits = vm_state->registers[src];
+                    std::memcpy(&dval, &bits, sizeof(double));
+                    vm_state->registers[dst] = reinterpret_cast<uint64_t&>(dval);
+                    vm_state->register_types[dst] = TYPE_DOUBLE;
+                    sum = dval;
                 } else {
                     vm_state->registers[dst] = 0;
                     vm_state->register_types[dst] = TYPE_NULL;
@@ -8030,7 +8783,8 @@ op_GAS_EXHAUSTED:
                 vm_state->pc++;
                 break;
             }
-            case OP_RESERVED_0A: case OP_RESERVED_0B: case OP_RESERVED_0C: case OP_RESERVED_0D: case OP_RESERVED_0F:
+            case OP_INIT_MOCK_NODE_ATTR: case OP_INIT_MOCK_EDGE_ATTR: break;
+            case OP_RESERVED_0D: case OP_RESERVED_0F:
             case OP_RESERVED_28: case OP_RESERVED_29: case OP_RESERVED_2B: case OP_RESERVED_2C:
             case OP_RESERVED_3A: case OP_RESERVED_3B: case OP_RESERVED_3C: case OP_RESERVED_3E: case OP_RESERVED_3F:
             case OP_RESERVED_4C: case OP_RESERVED_4D: case OP_RESERVED_4E: case OP_RESERVED_4F:
