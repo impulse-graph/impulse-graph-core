@@ -78,7 +78,10 @@ enum class NodeKind {
     VAR_REF,
     SET_OP,
     LITERAL,
-    SYMBOL
+    SYMBOL,
+    LIST,
+    STREAM_FILTER,
+    STREAM_PROJECT
 };
 
 enum class WalkDirection {
@@ -188,6 +191,43 @@ public:
     [[nodiscard]] std::string to_scm_string() const override { return name; }
 };
 
+class ScmList : public ImpScmNode {
+public:
+    std::vector<AstPtr> elements;
+    
+    explicit ScmList(std::vector<AstPtr> elems) : elements(std::move(elems)) {}
+    
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LIST; }
+    [[nodiscard]] std::string to_scm_string() const override { return "(list)"; }
+};
+
+class ScmReduce : public ImpScmNode {
+public:
+    enum class Op { SUM, COUNT, MIN, MAX, ARGMIN, ARGMAX, FIRST };
+    Op op_val;
+    
+    explicit ScmReduce(Op o) : op_val(o) {}
+    
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::REDUCE; }
+    [[nodiscard]] std::string to_scm_string() const override { return "(reduce)"; }
+};
+
+class ScmStreamFilter : public ImpScmNode {
+public:
+    AstPtr predicate;
+    explicit ScmStreamFilter(AstPtr pred) : predicate(std::move(pred)) {}
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::STREAM_FILTER; }
+    [[nodiscard]] std::string to_scm_string() const override { return "(stream-filter)"; }
+};
+
+class ScmStreamProject : public ImpScmNode {
+public:
+    AstPtr expr;
+    explicit ScmStreamProject(AstPtr e) : expr(std::move(e)) {}
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::STREAM_PROJECT; }
+    [[nodiscard]] std::string to_scm_string() const override { return "(stream-project)"; }
+};
+
 // ---------------------------------------------------------------------------
 // Vector Filter & CEL Expression AST Nodes
 // ---------------------------------------------------------------------------
@@ -241,6 +281,7 @@ public:
     bool inlined_seed{false};
     bool halt_on_empty{false};
     bool is_adaptive{false};
+    std::vector<AstPtr> shader_steps;
 
     static std::shared_ptr<ScmWalk> forward(std::string rel, AstPtr pred = nullptr) {
         auto n = std::make_shared<ScmWalk>();
@@ -311,7 +352,7 @@ public:
 // ---------------------------------------------------------------------------
 class ScmCollect : public ImpScmNode {
 public:
-    enum class OutputType { BITSET, COUNT, SCALAR };
+    enum class OutputType { BITSET, COUNT, SCALAR, VECTOR, LIST };
     OutputType output_type{OutputType::BITSET};
     uint16_t target_reg{0};
 
@@ -336,6 +377,8 @@ public:
             case OutputType::BITSET: return "(collect-bitset)";
             case OutputType::COUNT: return "(collect-count)";
             case OutputType::SCALAR: return "(collect-scalar)";
+            case OutputType::VECTOR: return "(collect-vector)";
+            case OutputType::LIST: return "(collect-list)";
         }
         return "(collect)";
     }
