@@ -70,6 +70,8 @@ struct BoundRelationSlot {
     uint8_t     edge_index_width = 4;
     uint64_t    node_count = 0;
     uint64_t    edge_count = 0;
+    std::vector<uint32_t> dynamic_csc_offsets;
+    std::vector<uint32_t> dynamic_csc_targets;
 
     inline uint64_t get_csr_offset(uint64_t u) const {
         if (!offsets_ptr) return 0;
@@ -914,7 +916,7 @@ op_INIT_INPUT_NODE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = input_param;
+    vm_state->registers[dst] = (inst.payload != 0) ? inst.payload : input_param;
     vm_state->register_types[dst] = TYPE_NODE_ID;
     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
@@ -1694,13 +1696,17 @@ op_COO_WALK_STREAM: {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
 
+    bool isCsc = (walk_op == OP_CSC_WALK_STREAM);
     for (uint32_t u : active_sources) {
         if (u >= slot.node_count) continue;
-        uint64_t start = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
-        uint64_t end = (walk_op == OP_CSC_WALK_STREAM) ? slot.get_csc_offset(u + 1) : slot.get_csr_offset(u + 1);
+        uint64_t start = isCsc ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
+        uint64_t end = isCsc ? slot.get_csc_offset(u + 1) : slot.get_csr_offset(u + 1);
 
         for (uint64_t eIdx = start; eIdx < end; ++eIdx) {
-            uint32_t tgt = (walk_op == OP_CSC_WALK_STREAM) ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
+            uint32_t neighbor = isCsc ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
+            uint32_t actualSource = isCsc ? neighbor : u;
+            uint32_t actualTarget = isCsc ? u : neighbor;
+            bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
 
             float s_regs[16] = {0.0f};
             bool abort = false;
@@ -1718,37 +1724,83 @@ op_COO_WALK_STREAM: {
                 switch (op) {
                     case OP_STREAM_FUNC_BEGIN: break;
                     case OP_STREAM_LOAD_SRC: {
-                        uint16_t attr_id = sInst.payload;
-                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                        uint16_t attr_id = sInst.payload & 0xFFFF;
+                        auto it_mock = vm_state->query_context->mock_node_attrs.find(attr_id);
+                        if (it_mock != vm_state->query_context->mock_node_attrs.end()) {
+                            const auto& ma = it_mock->second;
+                            if (actualSource < ma.float_data.size()) {
+                                s_regs[sDst] = ma.float_data[actualSource];
+                            } else if (actualSource < ma.int_data.size()) {
+                                uint32_t bits = static_cast<uint32_t>(ma.int_data[actualSource]);
+                                std::memcpy(&s_regs[sDst], &bits, sizeof(float));
+                            } else {
+                                s_regs[sDst] = 0.0f;
+                            }
+                        } else if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
                             const auto& vec = vm_state->query_context->float_vectors[attr_id];
-                            s_regs[sDst] = (u < vec.size()) ? vec[u] : 0.0f;
+                            s_regs[sDst] = (actualSource < vec.size()) ? vec[actualSource] : 0.0f;
                         } else {
                             s_regs[sDst] = 0.0f;
                         }
                         break;
                     }
                     case OP_STREAM_LOAD_TGT: {
-                        uint16_t attr_id = sInst.payload;
-                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                        uint16_t attr_id = sInst.payload & 0xFFFF;
+                        auto it_mock = vm_state->query_context->mock_node_attrs.find(attr_id);
+                        if (it_mock != vm_state->query_context->mock_node_attrs.end()) {
+                            const auto& ma = it_mock->second;
+                            if (actualTarget < ma.float_data.size()) {
+                                s_regs[sDst] = ma.float_data[actualTarget];
+                            } else if (actualTarget < ma.int_data.size()) {
+                                uint32_t bits = static_cast<uint32_t>(ma.int_data[actualTarget]);
+                                std::memcpy(&s_regs[sDst], &bits, sizeof(float));
+                            } else {
+                                s_regs[sDst] = 0.0f;
+                            }
+                        } else if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
                             const auto& vec = vm_state->query_context->float_vectors[attr_id];
-                            s_regs[sDst] = (tgt < vec.size()) ? vec[tgt] : 0.0f;
+                            s_regs[sDst] = (actualTarget < vec.size()) ? vec[actualTarget] : 0.0f;
                         } else {
                             s_regs[sDst] = 0.0f;
                         }
                         break;
                     }
                     case OP_STREAM_LOAD_EDGE: {
-                        uint16_t attr_id = sInst.payload;
-                        if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
-                            const auto& vec = vm_state->query_context->float_vectors[attr_id];
-                            s_regs[sDst] = (eIdx < vec.size()) ? vec[eIdx] : 0.0f;
+                        uint16_t attr_id = sInst.payload & 0xFFFF;
+                        auto it_mock_e = vm_state->query_context->mock_edge_attrs.find(attr_id);
+                        if (it_mock_e != vm_state->query_context->mock_edge_attrs.end()) {
+                            const auto& ma = it_mock_e->second;
+                            if (eIdx < ma.float_data.size()) {
+                                s_regs[sDst] = ma.float_data[eIdx];
+                            } else if (eIdx < ma.int_data.size()) {
+                                uint32_t bits = static_cast<uint32_t>(ma.int_data[eIdx]);
+                                std::memcpy(&s_regs[sDst], &bits, sizeof(float));
+                            } else {
+                                s_regs[sDst] = 0.0f;
+                            }
                         } else {
-                            s_regs[sDst] = 0.0f;
+                            auto it_mock_n = vm_state->query_context->mock_node_attrs.find(attr_id);
+                            if (it_mock_n != vm_state->query_context->mock_node_attrs.end()) {
+                                const auto& ma = it_mock_n->second;
+                                if (eIdx < ma.float_data.size()) {
+                                    s_regs[sDst] = ma.float_data[eIdx];
+                                } else if (eIdx < ma.int_data.size()) {
+                                    uint32_t bits = static_cast<uint32_t>(ma.int_data[eIdx]);
+                                    std::memcpy(&s_regs[sDst], &bits, sizeof(float));
+                                } else {
+                                    s_regs[sDst] = 0.0f;
+                                }
+                            } else if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
+                                const auto& vec = vm_state->query_context->float_vectors[attr_id];
+                                s_regs[sDst] = (eIdx < vec.size()) ? vec[eIdx] : 0.0f;
+                            } else {
+                                s_regs[sDst] = 0.0f;
+                            }
                         }
                         break;
                     }
-                    case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(u); break;
-                    case OP_STREAM_LOAD_TGT_ID: s_regs[sDst] = static_cast<float>(tgt); break;
+                    case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(actualSource); break;
+                    case OP_STREAM_LOAD_TGT_ID: s_regs[sDst] = static_cast<float>(actualTarget); break;
                     case OP_STREAM_LOAD_EDGE_ID: s_regs[sDst] = static_cast<float>(eIdx); break;
                     case OP_STREAM_LOAD_CONST: {
                         uint32_t bits = sInst.payload;
@@ -1828,7 +1880,7 @@ op_COO_WALK_STREAM: {
                         break;
                     }
                     case OP_STREAM_YIELD: {
-                        bitset_add(bs_dst, tgt, vm_state->query_context->max_nodes);
+                        bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
                         break;
                     }
                     case OP_STREAM_SCATTER_REDUCE: {
@@ -1837,15 +1889,15 @@ op_COO_WALK_STREAM: {
                         uint16_t monoid = sPayloadHigh;
                         if (attrId < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attrId]) {
                             auto& vec = vm_state->query_context->float_vectors[attrId];
-                            if (tgt < vec.size()) {
-                                float current = vec[tgt];
+                            if (actualTarget < vec.size()) {
+                                float current = vec[actualTarget];
                                 float next = current;
                                 switch (monoid) {
                                     case 0: next = current + val; break;
                                     case 1: next = std::max(current, val); break;
                                     case 2: next = std::min(current, val); break;
                                 }
-                                vec[tgt] = next;
+                                vec[actualTarget] = next;
                             }
                         }
                         break;
@@ -1854,27 +1906,29 @@ op_COO_WALK_STREAM: {
                         float val = s_regs[sDst];
                         uint16_t globalReg = sPayloadLow;
                         uint16_t monoid = sPayloadHigh;
-                        
-                        uint8_t rType = vm_state->register_types[globalReg];
-                        uint64_t rVal = vm_state->registers[globalReg];
-                        
-                        float current = 0.0f;
-                        if (rType == TYPE_FLOAT) {
-                            uint32_t bits = static_cast<uint32_t>(rVal & 0xFFFFFFFFULL);
-                            std::memcpy(&current, &bits, sizeof(float));
+                        int h_vec = -1;
+                        if (vm_state->register_types[globalReg] == TYPE_FLOAT_VECTOR) {
+                            h_vec = static_cast<int>(vm_state->registers[globalReg]);
+                        } else {
+                            h_vec = acquire_float_vector(vm_state->query_context);
+                            if (h_vec >= 0) {
+                                vm_state->registers[globalReg] = static_cast<uint64_t>(h_vec);
+                                vm_state->register_types[globalReg] = TYPE_FLOAT_VECTOR;
+                            }
                         }
-                        
-                        float next = current;
-                        switch (monoid) {
-                            case 0: next = current + val; break;
-                            case 1: next = std::max(current, val); break;
-                            case 2: next = std::min(current, val); break;
+                        if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
+                            auto& vec = vm_state->query_context->float_vectors[h_vec];
+                            if (actualTarget < vec.size()) {
+                                float current = vec[actualTarget];
+                                float next = current;
+                                switch (monoid) {
+                                    case 0: next = current + val; break;
+                                    case 1: next = std::max(current, val); break;
+                                    case 2: next = std::min(current, val); break;
+                                }
+                                vec[actualTarget] = next;
+                            }
                         }
-                        
-                        uint32_t nextBits;
-                        std::memcpy(&nextBits, &next, sizeof(float));
-                        vm_state->registers[globalReg] = static_cast<uint64_t>(nextBits);
-                        vm_state->register_types[globalReg] = TYPE_FLOAT;
                         break;
                     }
                 }
@@ -1890,13 +1944,6 @@ op_COO_WALK_STREAM: {
     }
     if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-
-    size_t skip_pc = vm_state->pc + 1;
-    while (skip_pc < instruction_count) {
-        if (bytecode[skip_pc].opcode == OP_STREAM_FUNC_END) break;
-        skip_pc++;
-    }
-    vm_state->pc = skip_pc;
 
     vm_state->pc++;
 }
@@ -4571,19 +4618,49 @@ op_INIT_MOCK_GRAPH: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
 
-    const uint32_t* offsets = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
-    uint32_t total_edges = offsets[node_count];
-    const uint32_t* targets = offsets + (node_count + 1);
+    {
+        const uint32_t* offsets = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+        uint32_t total_edges = offsets[node_count];
+        const uint32_t* targets = offsets + (node_count + 1);
 
-    vm_state->query_context->slots[slot_id].node_count = node_count;
-    vm_state->query_context->slots[slot_id].edge_count = total_edges;
-    vm_state->query_context->slots[slot_id].offsets_ptr = offsets;
-    vm_state->query_context->slots[slot_id].targets_ptr = targets;
-    vm_state->query_context->slots[slot_id].csc_offsets_ptr = offsets;
-    vm_state->query_context->slots[slot_id].csc_targets_ptr = targets;
+        uint32_t max_target_id = 0;
+        for (uint32_t e = 0; e < total_edges; ++e) {
+            if (targets[e] > max_target_id) max_target_id = targets[e];
+        }
+        uint32_t csc_node_count = std::max(static_cast<uint32_t>(node_count), max_target_id + 1);
 
-    if (node_count > vm_state->query_context->max_nodes) {
-        vm_state->query_context->max_nodes = node_count;
+        auto& slot = vm_state->query_context->slots[slot_id];
+        std::vector<uint32_t> in_degrees(csc_node_count, 0);
+        for (uint32_t e = 0; e < total_edges; ++e) {
+            in_degrees[targets[e]]++;
+        }
+
+        slot.dynamic_csc_offsets.assign(csc_node_count + 1, 0);
+        for (uint32_t i = 0; i < csc_node_count; ++i) {
+            slot.dynamic_csc_offsets[i + 1] = slot.dynamic_csc_offsets[i] + in_degrees[i];
+        }
+
+        slot.dynamic_csc_targets.resize(total_edges);
+        std::vector<uint32_t> cur_pos = slot.dynamic_csc_offsets;
+        for (uint32_t u = 0; u < node_count; ++u) {
+            uint32_t start = offsets[u];
+            uint32_t end = offsets[u + 1];
+            for (uint32_t e = start; e < end; ++e) {
+                uint32_t v = targets[e];
+                slot.dynamic_csc_targets[cur_pos[v]++] = u;
+            }
+        }
+
+        slot.csc_offsets_ptr = slot.dynamic_csc_offsets.data();
+        slot.csc_targets_ptr = slot.dynamic_csc_targets.data();
+        slot.node_count = std::max(static_cast<uint64_t>(csc_node_count), static_cast<uint64_t>(node_count));
+        slot.edge_count = total_edges;
+        slot.offsets_ptr = offsets;
+        slot.targets_ptr = targets;
+
+        if (slot.node_count > vm_state->query_context->max_nodes) {
+            vm_state->query_context->max_nodes = slot.node_count;
+        }
     }
 
     vm_state->pc++;
