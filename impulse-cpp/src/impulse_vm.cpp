@@ -168,6 +168,15 @@ struct impulse_vm_context {
     const uint8_t* inline_data_ptr = nullptr;
     size_t inline_data_bytes = 0;
 
+    struct MockAttribute {
+        std::vector<float> float_data;
+        std::vector<uint64_t> int_data;
+        bool has_mask = false;
+        VmBitSet mask;
+    };
+    std::unordered_map<uint32_t, MockAttribute> mock_node_attrs;
+    std::unordered_map<uint32_t, MockAttribute> mock_edge_attrs;
+
     // Fuel counter for unbounded loop & gas protection
     uint64_t fuel = 0;
     bool fuel_enabled = false;
@@ -727,6 +736,7 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_LOAD_CONST_STR_PREFIX] = &&op_LOAD_CONST_STR_PREFIX;
         dispatch_table[OP_LOAD_INLINE_ARRAY] = &&op_LOAD_INLINE_ARRAY;
         dispatch_table[OP_INIT_MOCK_GRAPH] = &&op_INIT_MOCK_GRAPH;
+        dispatch_table[OP_LOAD_INLINE_SET] = &&op_LOAD_INLINE_SET;
         dispatch_table[OP_CSR_WALK_2HOP] = &&op_CSR_WALK_2HOP;
         dispatch_table[OP_CSR_WALK_STATE] = &&op_CSR_WALK_STATE;
         dispatch_table[OP_PROJECT_STATE] = &&op_PROJECT_STATE;
@@ -861,14 +871,14 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_STREAM_LOGIC_OR] = &&op_INVALID;
         dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_INVALID;
         dispatch_table[OP_STREAM_SELECT] = &&op_INVALID;
-        dispatch_table[OP_STREAM_FILTER] = &&op_STREAM_FILTER;
-        dispatch_table[OP_STREAM_YIELD] = &&op_STREAM_YIELD;
-        dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_STREAM_SCATTER_REDUCE;
-        dispatch_table[OP_STREAM_REDUCE] = &&op_STREAM_REDUCE;
-        dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_STREAM_LOAD_SRC_ID;
-        dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_STREAM_LOAD_TGT_ID;
-        dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_STREAM_LOAD_EDGE_ID;
-        dispatch_table[OP_STREAM_LOAD_CONST] = &&op_STREAM_LOAD_CONST;
+        dispatch_table[OP_STREAM_FILTER] = &&op_INVALID;
+        dispatch_table[OP_STREAM_YIELD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_CONST] = &&op_INVALID;
         dispatch_inited = true;
     }
 
@@ -1108,20 +1118,6 @@ op_COALESCE: {
             float a = (i < v1.size()) ? v1[i] : std::numeric_limits<float>::quiet_NaN();
             float b = (i < v2.size()) ? v2[i] : 0.0f;
             vDst[i] = std::isnan(a) ? b : a;
-        }
-        vm_state->registers[dst] = hDst;
-        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
-    } else if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT) {
-        int hDst = acquire_float_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        int h1 = static_cast<int>(vm_state->registers[src1]);
-        float scalar = std::bit_cast<float>(static_cast<uint32_t>(vm_state->registers[src2]));
-        auto& vDst = vm_state->query_context->float_vectors[hDst];
-        auto& v1 = vm_state->query_context->float_vectors[h1];
-        vDst.resize(v1.size());
-        for (size_t i = 0; i < vDst.size(); ++i) {
-            float a = v1[i];
-            vDst[i] = std::isnan(a) ? scalar : a;
         }
         vm_state->registers[dst] = hDst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
@@ -3842,6 +3838,13 @@ op_VECTOR_MUL_ATTR: {
 
     size_t size = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR);
+    int h_dst = vm_state->registers[dst];
+
+    if (!is_double && vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+        h_dst = impulse_vm_context_acquire_float_vector(vm_state->query_context);
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    }
 
     if (inst.flags == 0) {
         float scalar = reinterpret_cast<const float&>(inst.payload);
@@ -4488,25 +4491,67 @@ op_LOAD_INLINE_ARRAY: {
     if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
-    if (offset_bytes + count * sizeof(float) > vm_state->query_context->inline_data_bytes) {
+    if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
 
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     if (vm_state->query_context->float_vectors[h_dst].size() < count) {
         vm_state->query_context->float_vectors[h_dst].resize(count);
     }
-    float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+    if (vm_state->query_context->node_vectors[h_dst].size() < count) {
+        vm_state->query_context->node_vectors[h_dst].resize(count);
+    }
+    vm_state->query_context->node_vectors_allocated[h_dst] = true;
 
-    const float* src_data = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
-    std::copy(src_data, src_data + count, dst_vec);
+    float* dst_vec_f = vm_state->query_context->float_vectors[h_dst].data();
+    uint64_t* dst_vec_n = vm_state->query_context->node_vectors[h_dst].data();
+
+    const float* src_data_f = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    const uint32_t* src_data_i = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    for (size_t i = 0; i < count; ++i) {
+        dst_vec_f[i] = src_data_f[i];
+        dst_vec_n[i] = src_data_i[i];
+    }
 
     vm_state->registers[dst] = h_dst;
     vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    vm_state->pc++;
+    DISPATCH();
+}
+
+op_LOAD_INLINE_SET: {
+    const impulse_instruction_t& inst = bytecode[vm_state->pc];
+    uint16_t dst = inst.dst_reg;
+    uint16_t offset_bytes = inst.payload & 0xFFFF;
+    uint16_t count = (inst.payload >> 16) & 0xFFFF;
+    VALIDATE_REG(dst);
+
+    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
+    if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
+    int h_dst = acquire_bitset(vm_state->query_context);
+    if (h_dst < 0) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    vm_state->query_context->bitsets[h_dst].clear();
+
+    const uint32_t* src_data = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+    for (uint16_t i = 0; i < count; ++i) {
+        vm_state->query_context->bitsets[h_dst].set(src_data[i]);
+    }
+
+    vm_state->registers[dst] = h_dst;
+    vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
 
     vm_state->pc++;
@@ -5249,7 +5294,22 @@ op_GATHER_NODE_ATTR: {
     int h_front = static_cast<int>(vm_state->registers[frontier_reg]);
     const auto& bs = vm_state->query_context->bitsets[h_front];
 
-    if (domain < vm_state->query_context->attribute_slots.size() &&
+    uint32_t mock_key = (domain != 0) ? domain : attr_idx;
+    auto it_mock = vm_state->query_context->mock_node_attrs.find(mock_key);
+    if (it_mock != vm_state->query_context->mock_node_attrs.end()) {
+        const auto& ma = it_mock->second;
+        for (size_t i = 0; i < N; ++i) {
+            if (bs.test(i)) {
+                if (ma.has_mask && !ma.mask.test(i)) {
+                    dst_vec[i] = std::numeric_limits<float>::quiet_NaN();
+                } else if (i < ma.float_data.size()) {
+                    dst_vec[i] = ma.float_data[i];
+                } else {
+                    dst_vec[i] = std::numeric_limits<float>::quiet_NaN();
+                }
+            }
+        }
+    } else if (domain < vm_state->query_context->attribute_slots.size() &&
         attr_idx < vm_state->query_context->attribute_slots[domain].size()) {
         const auto& slot = vm_state->query_context->attribute_slots[domain][attr_idx];
         if (slot.data_ptr) {
@@ -5845,18 +5905,39 @@ op_INIT_MOCK_EDGE_ATTR: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t attr_id = inst.dst_reg;
     uint16_t src_reg = inst.payload & 0xFF;
+    uint16_t mask_reg = (inst.payload >> 8) & 0xFF;
     VALIDATE_REG(src_reg);
 
-    if (vm_state->register_types[src_reg] == TYPE_FLOAT_VECTOR) {
-        int h_src = static_cast<int>(vm_state->registers[src_reg]);
-        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-        const auto& src_vec = vm_state->query_context->float_vectors[h_src];
-        
-        if (attr_id >= vm_state->query_context->float_vectors.size()) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+
+    {
+        impulse_vm_context_t::MockAttribute mock_attr;
+        if (vm_state->register_types[src_reg] == TYPE_FLOAT_VECTOR) {
+            int h = static_cast<int>(vm_state->registers[src_reg]);
+            if (h >= 0 && static_cast<size_t>(h) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h]) {
+                mock_attr.float_data = vm_state->query_context->float_vectors[h];
+            }
+            if (h >= 0 && static_cast<size_t>(h) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->node_vectors_allocated[h]) {
+                mock_attr.int_data = vm_state->query_context->node_vectors[h];
+            }
+        } else if (vm_state->register_types[src_reg] == TYPE_NODE_VECTOR || vm_state->register_types[src_reg] == TYPE_UINT64_VECTOR) {
+            int h = static_cast<int>(vm_state->registers[src_reg]);
+            if (h >= 0 && static_cast<size_t>(h) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->node_vectors_allocated[h]) {
+                mock_attr.int_data = vm_state->query_context->node_vectors[h];
+            }
         }
-        vm_state->query_context->float_vectors[attr_id] = src_vec;
-        vm_state->query_context->float_vectors_allocated[attr_id] = true;
+        if (mask_reg < 64 && vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE) {
+            int h_mask = static_cast<int>(vm_state->registers[mask_reg]);
+            if (h_mask >= 0 && static_cast<size_t>(h_mask) < VM_MAX_BITSET_HANDLES && vm_state->query_context->bitset_allocated[h_mask]) {
+                mock_attr.has_mask = true;
+                mock_attr.mask = vm_state->query_context->bitsets[h_mask];
+            }
+        }
+        if (inst.opcode == OP_INIT_MOCK_NODE_ATTR) {
+            vm_state->query_context->mock_node_attrs[attr_id] = std::move(mock_attr);
+        } else {
+            vm_state->query_context->mock_edge_attrs[attr_id] = std::move(mock_attr);
+        }
     }
     vm_state->pc++;
     DISPATCH();
@@ -8655,25 +8736,67 @@ op_GAS_EXHAUSTED:
                 if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
                     return IMPULSE_VM_ERR_NULL_SNAPSHOT;
                 }
-                if (offset_bytes + count * sizeof(float) > vm_state->query_context->inline_data_bytes) {
+                if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
                     return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                 }
 
                 int h_dst = acquire_float_vector(vm_state->query_context);
                 if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
                 if (vm_state->query_context->float_vectors[h_dst].size() < count) {
                     vm_state->query_context->float_vectors[h_dst].resize(count);
                 }
-                float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+                if (vm_state->query_context->node_vectors[h_dst].size() < count) {
+                    vm_state->query_context->node_vectors[h_dst].resize(count);
+                }
+                vm_state->query_context->node_vectors_allocated[h_dst] = true;
 
-                const float* src_data = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
-                std::copy(src_data, src_data + count, dst_vec);
+                float* dst_vec_f = vm_state->query_context->float_vectors[h_dst].data();
+                uint64_t* dst_vec_n = vm_state->query_context->node_vectors[h_dst].data();
+
+                const float* src_data_f = reinterpret_cast<const float*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                const uint32_t* src_data_i = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                for (size_t i = 0; i < count; ++i) {
+                    dst_vec_f[i] = src_data_f[i];
+                    dst_vec_n[i] = src_data_i[i];
+                }
 
                 vm_state->registers[dst] = h_dst;
                 vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+                vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+                vm_state->pc++;
+                break;
+            }
+            case OP_LOAD_INLINE_SET: {
+                uint16_t dst = inst.dst_reg;
+                uint16_t offset_bytes = inst.payload & 0xFFFF;
+                uint16_t count = (inst.payload >> 16) & 0xFFFF;
+                VALIDATE_REG(dst);
+
+                if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+                    return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+                }
+                if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+
+                int h_dst = acquire_bitset(vm_state->query_context);
+                if (h_dst < 0) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                vm_state->query_context->bitsets[h_dst].clear();
+
+                const uint32_t* src_data = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+                for (uint16_t i = 0; i < count; ++i) {
+                    vm_state->query_context->bitsets[h_dst].set(src_data[i]);
+                }
+
+                vm_state->registers[dst] = h_dst;
+                vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+                vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
                 vm_state->pc++;
                 break;
             }
