@@ -842,6 +842,33 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_CSR_WALK_STREAM] = &&op_CSR_WALK_STREAM;
         dispatch_table[OP_CSC_WALK_STREAM] = &&op_CSC_WALK_STREAM;
         dispatch_table[OP_COO_WALK_STREAM] = &&op_COO_WALK_STREAM;
+        dispatch_table[OP_STREAM_FUNC_BEGIN] = &&op_STREAM_FUNC_BEGIN;
+        dispatch_table[OP_STREAM_FUNC_END] = &&op_STREAM_FUNC_END;
+        dispatch_table[OP_STREAM_LOAD_SRC] = &&op_STREAM_LOAD_SRC;
+        dispatch_table[OP_STREAM_LOAD_TGT] = &&op_STREAM_LOAD_TGT;
+        dispatch_table[OP_STREAM_LOAD_EDGE] = &&op_STREAM_LOAD_EDGE;
+        dispatch_table[OP_STREAM_MATH_ADD] = &&op_STREAM_MATH_ADD;
+        dispatch_table[OP_STREAM_MATH_SUB] = &&op_STREAM_MATH_SUB;
+        dispatch_table[OP_STREAM_MATH_MUL] = &&op_STREAM_MATH_MUL;
+        dispatch_table[OP_STREAM_MATH_DIV] = &&op_STREAM_MATH_DIV;
+        dispatch_table[OP_STREAM_MATH_MOD] = &&op_STREAM_MATH_MOD;
+        dispatch_table[OP_STREAM_MATH_UNARY] = &&op_STREAM_MATH_UNARY;
+        dispatch_table[OP_STREAM_CMP_EQ] = &&op_STREAM_CMP_EQ;
+        dispatch_table[OP_STREAM_CMP_NEQ] = &&op_STREAM_CMP_NEQ;
+        dispatch_table[OP_STREAM_CMP_GT] = &&op_STREAM_CMP_GT;
+        dispatch_table[OP_STREAM_CMP_LT] = &&op_STREAM_CMP_LT;
+        dispatch_table[OP_STREAM_LOGIC_AND] = &&op_STREAM_LOGIC_AND;
+        dispatch_table[OP_STREAM_LOGIC_OR] = &&op_STREAM_LOGIC_OR;
+        dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_STREAM_LOGIC_NOT;
+        dispatch_table[OP_STREAM_SELECT] = &&op_STREAM_SELECT;
+        dispatch_table[OP_STREAM_FILTER] = &&op_STREAM_FILTER;
+        dispatch_table[OP_STREAM_YIELD] = &&op_STREAM_YIELD;
+        dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_STREAM_SCATTER_REDUCE;
+        dispatch_table[OP_STREAM_REDUCE] = &&op_STREAM_REDUCE;
+        dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_STREAM_LOAD_SRC_ID;
+        dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_STREAM_LOAD_TGT_ID;
+        dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_STREAM_LOAD_EDGE_ID;
+        dispatch_table[OP_STREAM_LOAD_CONST] = &&op_STREAM_LOAD_CONST;
         dispatch_inited = true;
     }
 
@@ -1867,6 +1894,13 @@ op_COO_WALK_STREAM: {
     }
     if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+
+    size_t skip_pc = vm_state->pc + 1;
+    while (skip_pc < instruction_count) {
+        if (bytecode[skip_pc].opcode == OP_STREAM_FUNC_END) break;
+        skip_pc++;
+    }
+    vm_state->pc = skip_pc;
 
     vm_state->pc++;
 }
