@@ -275,6 +275,11 @@ static inline double impulse_math_unary_f64(uint8_t func_id, double x) {
  */
 static inline float impulse_math_binary_f32(uint8_t func_id, float x, float y) {
     switch (func_id) {
+        case 0:                    return x + y;
+        case 1:                    return x - y;
+        case 2:                    return x * y;
+        case 3:                    return (y == 0.0f || isnan(y)) ? 0.0f : (x / y);
+        case 4:                    return powf(x, y);
         case MATH_FUNC_POW:        return powf(x, y);
         case MATH_FUNC_HYPOT:      return hypotf(x, y);
         case MATH_FUNC_ATAN2:      return atan2f(x, y);
@@ -301,6 +306,11 @@ static inline float impulse_math_binary_f32(uint8_t func_id, float x, float y) {
  */
 static inline double impulse_math_binary_f64(uint8_t func_id, double x, double y) {
     switch (func_id) {
+        case 0:                    return x + y;
+        case 1:                    return x - y;
+        case 2:                    return x * y;
+        case 3:                    return (y == 0.0 || isnan(y)) ? 0.0 : (x / y);
+        case 4:                    return pow(x, y);
         case MATH_FUNC_POW:        return pow(x, y);
         case MATH_FUNC_HYPOT:      return hypot(x, y);
         case MATH_FUNC_ATAN2:      return atan2(x, y);
