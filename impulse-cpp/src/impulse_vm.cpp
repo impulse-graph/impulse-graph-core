@@ -2718,6 +2718,22 @@ op_NODE_FILTER: {
                      vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr);
 
     auto eval_match = [&](uint64_t u) -> bool {
+        if (vm_state->query_context->mock_node_attrs.count(attr_id)) {
+            const auto& mock = vm_state->query_context->mock_node_attrs.at(attr_id);
+            if (mock.has_mask) {
+                if (!mock.mask.test(u)) return false;
+            }
+            if (!mock.int_data.empty()) {
+                if (u >= mock.int_data.size()) return false;
+                return mock.int_data[u] == val;
+            }
+            if (!mock.float_data.empty()) {
+                if (u >= mock.float_data.size()) return false;
+                float expected_f = *reinterpret_cast<const float*>(&val);
+                return mock.float_data[u] == expected_f;
+            }
+            return false;
+        }
         if (!has_attr) return true;
         const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
         uint8_t base_type = attr.type_code & 0x7F;
