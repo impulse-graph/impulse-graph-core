@@ -1717,3 +1717,6 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
 }
 
 } // extern "C"
+
+
+

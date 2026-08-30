@@ -842,25 +842,25 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_CSR_WALK_STREAM] = &&op_CSR_WALK_STREAM;
         dispatch_table[OP_CSC_WALK_STREAM] = &&op_CSC_WALK_STREAM;
         dispatch_table[OP_COO_WALK_STREAM] = &&op_COO_WALK_STREAM;
-        dispatch_table[OP_STREAM_FUNC_BEGIN] = &&op_STREAM_FUNC_BEGIN;
-        dispatch_table[OP_STREAM_FUNC_END] = &&op_STREAM_FUNC_END;
-        dispatch_table[OP_STREAM_LOAD_SRC] = &&op_STREAM_LOAD_SRC;
-        dispatch_table[OP_STREAM_LOAD_TGT] = &&op_STREAM_LOAD_TGT;
-        dispatch_table[OP_STREAM_LOAD_EDGE] = &&op_STREAM_LOAD_EDGE;
-        dispatch_table[OP_STREAM_MATH_ADD] = &&op_STREAM_MATH_ADD;
-        dispatch_table[OP_STREAM_MATH_SUB] = &&op_STREAM_MATH_SUB;
-        dispatch_table[OP_STREAM_MATH_MUL] = &&op_STREAM_MATH_MUL;
-        dispatch_table[OP_STREAM_MATH_DIV] = &&op_STREAM_MATH_DIV;
-        dispatch_table[OP_STREAM_MATH_MOD] = &&op_STREAM_MATH_MOD;
-        dispatch_table[OP_STREAM_MATH_UNARY] = &&op_STREAM_MATH_UNARY;
-        dispatch_table[OP_STREAM_CMP_EQ] = &&op_STREAM_CMP_EQ;
-        dispatch_table[OP_STREAM_CMP_NEQ] = &&op_STREAM_CMP_NEQ;
-        dispatch_table[OP_STREAM_CMP_GT] = &&op_STREAM_CMP_GT;
-        dispatch_table[OP_STREAM_CMP_LT] = &&op_STREAM_CMP_LT;
-        dispatch_table[OP_STREAM_LOGIC_AND] = &&op_STREAM_LOGIC_AND;
-        dispatch_table[OP_STREAM_LOGIC_OR] = &&op_STREAM_LOGIC_OR;
-        dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_STREAM_LOGIC_NOT;
-        dispatch_table[OP_STREAM_SELECT] = &&op_STREAM_SELECT;
+        dispatch_table[OP_STREAM_FUNC_BEGIN] = &&op_INVALID;
+        dispatch_table[OP_STREAM_FUNC_END] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_SRC] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_TGT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_EDGE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_ADD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_SUB] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_MUL] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_DIV] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_MOD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_UNARY] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_EQ] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_NEQ] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_GT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_LT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_AND] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_OR] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_SELECT] = &&op_INVALID;
         dispatch_table[OP_STREAM_FILTER] = &&op_STREAM_FILTER;
         dispatch_table[OP_STREAM_YIELD] = &&op_STREAM_YIELD;
         dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_STREAM_SCATTER_REDUCE;
@@ -4199,8 +4199,8 @@ op_COLLECT_ARRAY: {
         node_buf.push_back(vm_state->registers[src]);
     }
 
-    vm_state->registers[dst] = reinterpret_cast<uint64_t>(node_buf.data());
-    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+    vm_state->registers[dst] = 0;
+    vm_state->register_types[dst] = TYPE_INT64;
 
     if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
@@ -8425,8 +8425,8 @@ op_GAS_EXHAUSTED:
                     node_buf.push_back(vm_state->registers[src]);
                 }
 
-                vm_state->registers[dst] = reinterpret_cast<uint64_t>(node_buf.data());
-                vm_state->register_types[dst] = TYPE_NODE_VECTOR;
+                vm_state->registers[dst] = 0;
+                vm_state->register_types[dst] = TYPE_INT64;
 
                 if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
                 else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
