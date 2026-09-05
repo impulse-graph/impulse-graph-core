@@ -6,8 +6,9 @@ alongside side-by-side openCypher query equivalence.
 """
 
 import time
+
 import pandas as pd
-import numpy as np
+
 from impulse_graph import Snapshot, Writer
 
 try:
@@ -20,6 +21,7 @@ try:
 except ImportError:
     pa = None
 
+
 def main():
     print("===============================================================")
     print(" Impulse Graph Engine — Example 07: Columnar Interchange")
@@ -29,14 +31,18 @@ def main():
     # Step 1: Ingesting Tabular DataFrame into .imps Snapshot
     # ------------------------------------------------------------------------
     print("1. Ingesting Tabular Data into .imps via Writer.from_dataframe:")
-    df_raw = pd.DataFrame({
-        "sender": ["alice@co", "alice@co", "bob@co", "carol@co", "dan@co"],
-        "receiver": ["bob@co", "carol@co", "dan@co", "dan@co", "eve@co"]
-    })
+    df_raw = pd.DataFrame(
+        {
+            "sender": ["alice@co", "alice@co", "bob@co", "carol@co", "dan@co"],
+            "receiver": ["bob@co", "carol@co", "dan@co", "dan@co", "eve@co"],
+        }
+    )
     print(df_raw)
 
     snapshot_path = "temp_emails.imps"
-    Writer.from_dataframe(snapshot_path, df_raw, src_col="sender", tgt_col="receiver", domain_name="EmailUser")
+    Writer.from_dataframe(
+        snapshot_path, df_raw, src_col="sender", tgt_col="receiver", domain_name="EmailUser"
+    )
     print(f"   -> Successfully compiled DataFrame into '{snapshot_path}'.")
 
     # ------------------------------------------------------------------------
@@ -70,7 +76,12 @@ def main():
         if pl is not None:
             out_degrees = df_edges.group_by("src").len().sort("len", descending=True)
         else:
-            out_degrees = df_edges.groupby("src").size().reset_index(name="count").sort_values("count", ascending=False)
+            out_degrees = (
+                df_edges.groupby("src")
+                .size()
+                .reset_index(name="count")
+                .sort_values("count", ascending=False)
+            )
         print(f"   -> Top Sender Out-Degrees:\n{out_degrees}")
 
         # --------------------------------------------------------------------
@@ -80,10 +91,7 @@ def main():
         unique_nids = sorted(list(df_edges["src"].unique()))
         resolved_emails = snap.resolve_keys_batch(domain_id=0, node_ids=unique_nids)
 
-        resolved_df = pd.DataFrame({
-            "dense_id": unique_nids,
-            "email_address": resolved_emails
-        })
+        resolved_df = pd.DataFrame({"dense_id": unique_nids, "email_address": resolved_emails})
         print(f"   -> Resolved Catalog:\n{resolved_df}")
 
         # --------------------------------------------------------------------
@@ -101,6 +109,7 @@ def main():
         print(f"   -> Query Result:    {cypher_res}")
 
     print("\n[SUCCESS] Example 07 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

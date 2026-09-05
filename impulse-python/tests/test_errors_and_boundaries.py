@@ -1,6 +1,8 @@
 import os
 import tempfile
+
 import pytest
+
 from impulse_graph import Snapshot, Writer, vm
 from impulse_graph.cypher import CypherQuery
 

@@ -12,7 +12,8 @@ import (
 func main() {
 	fmt.Println("===============================================================")
 	fmt.Println(" Impulse Graph Engine — Example 03: ReBAC Authorization (Go)")
-	fmt.Println("===============================================================\n")
+	fmt.Println("===============================================================")
+	fmt.Println()
 
 	snapshotPath := "rbac_snapshot.imps"
 	snap, err := impulse.OpenSnapshot(snapshotPath)

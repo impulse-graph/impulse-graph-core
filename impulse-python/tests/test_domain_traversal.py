@@ -1,6 +1,8 @@
 import os
 import tempfile
+
 import pytest
+
 from impulse_graph import Snapshot, Writer
 
 
@@ -106,21 +108,13 @@ def test_multi_hop_cross_domain_traversal(ecommerce_snapshot):
         # alice (user 0) -> PURCHASED (rel 0) -> MANUFACTURED_BY (rel 1) -> Brands
         # alice bought laptop (apple: 0) and mouse (logitech: 1)
         brands_alice = (
-            snap.domain("User")
-            .from_node(0)
-            .out("PURCHASED")
-            .out("MANUFACTURED_BY")
-            .to_list()
+            snap.domain("User").from_node(0).out("PURCHASED").out("MANUFACTURED_BY").to_list()
         )
         assert sorted(brands_alice) == [0, 1]
 
         # bob (user 1) bought mouse (logitech: 1) and keyboard (logitech: 1) -> [1]
         brands_bob = (
-            snap.domain("User")
-            .from_node(1)
-            .out("PURCHASED")
-            .out("MANUFACTURED_BY")
-            .to_list()
+            snap.domain("User").from_node(1).out("PURCHASED").out("MANUFACTURED_BY").to_list()
         )
         assert brands_bob == [1]
 

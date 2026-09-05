@@ -1,7 +1,9 @@
 import os
 import tempfile
-import pytest
+
 import numpy as np
+import pytest
+
 from impulse_graph import Snapshot, Writer
 
 
@@ -33,10 +35,12 @@ def test_writer_from_dataframe():
     pd = pytest.importorskip("pandas")
     with tempfile.TemporaryDirectory() as tmpdir:
         snap_path = os.path.join(tmpdir, "df_graph.imps")
-        df = pd.DataFrame({
-            "src": ["alice", "alice", "bob"],
-            "dst": ["bob", "charlie", "charlie"],
-        })
+        df = pd.DataFrame(
+            {
+                "src": ["alice", "alice", "bob"],
+                "dst": ["bob", "charlie", "charlie"],
+            }
+        )
 
         Writer.from_dataframe(snap_path, df, src_col="src", tgt_col="dst", domain_name="User")
 

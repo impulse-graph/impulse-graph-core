@@ -1,7 +1,9 @@
 import os
 import tempfile
-import pytest
+
 import numpy as np
+import pytest
+
 from impulse_graph import Snapshot, Writer
 
 

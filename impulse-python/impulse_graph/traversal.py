@@ -2,30 +2,62 @@
 Impulse Graph Engine - Pythonic Graph Traversal Builder & DSL
 """
 
-from typing import Optional, List, Set, Union, Dict, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
+
 import numpy as np
+
 from . import vm
 
+if TYPE_CHECKING:
+    from . import Snapshot
 
 # Built-in Domain Catalog Presets (Extracted directly from Snapshot Headers)
 BUILTIN_CATALOGS: Dict[str, Dict[str, int]] = {
     "hetionet": {
-        "AdG": 0, "AeG": 1, "AuG": 2, "CbG": 3, "CcSE": 4,
-        "CdG": 5, "CpD": 6, "CrC": 7, "CtD": 8, "CuG": 9,
-        "DaG": 10, "DdG": 11, "DlA": 12, "DpS": 13, "DrD": 14,
-        "DuG": 15, "GcG": 16, "GiG": 17, "GpBP": 18, "GpCC": 19,
-        "GpMF": 20, "GpPW": 21, "Gr>G": 22, "PCiC": 23,
+        "AdG": 0,
+        "AeG": 1,
+        "AuG": 2,
+        "CbG": 3,
+        "CcSE": 4,
+        "CdG": 5,
+        "CpD": 6,
+        "CrC": 7,
+        "CtD": 8,
+        "CuG": 9,
+        "DaG": 10,
+        "DdG": 11,
+        "DlA": 12,
+        "DpS": 13,
+        "DrD": 14,
+        "DuG": 15,
+        "GcG": 16,
+        "GiG": 17,
+        "GpBP": 18,
+        "GpCC": 19,
+        "GpMF": 20,
+        "GpPW": 21,
+        "Gr>G": 22,
+        "PCiC": 23,
     },
     "drkg": {
-        "DISGENET::da": 0, "STRING::interacts_with": 0,
-        "DRUGBANK::target": 101, "DRUGBANK::ddi_interactor_in": 0,
+        "DISGENET::da": 0,
+        "STRING::interacts_with": 0,
+        "DRUGBANK::target": 101,
+        "DRUGBANK::ddi_interactor_in": 0,
         "GNBR::C": 0,
     },
     "northwind": {
-        "PURCHASED": 0, "CONTAINS": 1, "PRODUCED_BY": 2, "REPORTS_TO": 3,
+        "PURCHASED": 0,
+        "CONTAINS": 1,
+        "PRODUCED_BY": 2,
+        "REPORTS_TO": 3,
     },
     "ecommerce": {
-        "PURCHASED": 0, "MANUFACTURED_BY": 1, "PRODUCED_BY": 1, "REVIEWS": 2, "CONTAINS": 3,
+        "PURCHASED": 0,
+        "MANUFACTURED_BY": 1,
+        "PRODUCED_BY": 1,
+        "REVIEWS": 2,
+        "CONTAINS": 3,
     },
 }
 
@@ -231,7 +263,10 @@ class Traversal:
                 if node_count == 0:
                     for i in range(self._snapshot.relation_count()):
                         rel = self._snapshot.get_relation(i)
-                        if self._initial_domain and rel["src_domain_id"] == self._initial_domain.domain_id:
+                        if (
+                            self._initial_domain
+                            and rel["src_domain_id"] == self._initial_domain.domain_id
+                        ):
                             node_count = max(node_count, rel["node_count"])
                     if node_count == 0:
                         node_count = 64
@@ -334,21 +369,33 @@ class Traversal:
             next_reg = curr_reg + 1
 
             if op == "out":
-                lines.append(f"  0x{pc:04x}:  OP_CSR_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Forward CSR walk via [\"{rel_name}\"] (rel_id={rel_id})")
+                lines.append(
+                    f'  0x{pc:04x}:  OP_CSR_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Forward CSR walk via ["{rel_name}"] (rel_id={rel_id})'
+                )
             elif op == "in_":
-                lines.append(f"  0x{pc:04x}:  OP_CSC_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Reverse CSC walk via [\"{rel_name}\"] (rel_id={rel_id})")
+                lines.append(
+                    f'  0x{pc:04x}:  OP_CSC_WALK           R{next_reg}, R{curr_reg}, #{rel_id:<3} ; Reverse CSC walk via ["{rel_name}"] (rel_id={rel_id})'
+                )
             elif op == "filter_node":
-                lines.append(f"  0x{pc:04x}:  OP_NODE_FILTER        R{curr_reg}, #{rel_id:<3}     ; Filter R{curr_reg} by attribute filter #{rel_id}")
+                lines.append(
+                    f"  0x{pc:04x}:  OP_NODE_FILTER        R{curr_reg}, #{rel_id:<3}     ; Filter R{curr_reg} by attribute filter #{rel_id}"
+                )
                 next_reg = curr_reg
             elif op == "filter_prefix":
-                lines.append(f"  0x{pc:04x}:  OP_FILTER_STR_PREFIX  R{curr_reg}, \"{rel_id}\"     ; Filter R{curr_reg} by prefix \"{rel_id}\"")
+                lines.append(
+                    f'  0x{pc:04x}:  OP_FILTER_STR_PREFIX  R{curr_reg}, "{rel_id}"     ; Filter R{curr_reg} by prefix "{rel_id}"'
+                )
                 next_reg = curr_reg
 
             curr_reg = next_reg
             pc += 1
 
-        lines.append(f"  0x{pc:04x}:  OP_COLLECT_BITSET     R{curr_reg}             ; Materialize active target bitset handle")
-        lines.append(f"  0x{pc+1:04x}:  OP_HALT                               ; Execution complete")
+        lines.append(
+            f"  0x{pc:04x}:  OP_COLLECT_BITSET     R{curr_reg}             ; Materialize active target bitset handle"
+        )
+        lines.append(
+            f"  0x{pc + 1:04x}:  OP_HALT                               ; Execution complete"
+        )
         return "\n".join(lines)
 
     def disassemble(self) -> str:

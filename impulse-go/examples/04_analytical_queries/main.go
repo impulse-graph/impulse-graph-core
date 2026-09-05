@@ -12,7 +12,8 @@ import (
 func main() {
 	fmt.Println("===================================================================")
 	fmt.Println(" Impulse Graph Engine — Example 04: Analytical VM Queries (Go)")
-	fmt.Println("===================================================================\n")
+	fmt.Println("===================================================================")
+	fmt.Println()
 
 	snapshotPath := "financial_transactions.imps"
 	snap, err := impulse.OpenSnapshot(snapshotPath)
@@ -59,9 +60,9 @@ func main() {
 	fmt.Println("\n1. Compiling Low-Level impOps Bytecode with QueryBuilder:")
 
 	bytecode := impulse.NewQueryBuilder().
-		InputNode(0).     // R0: Seed Account 0
-		WalkEdge(0, 1).   // R1: 1-hop transfer recipients
-		CollectArray(1).  // Collect array of target IDs
+		InputNode(0).    // R0: Seed Account 0
+		WalkEdge(0, 1).  // R1: 1-hop transfer recipients
+		CollectArray(1). // Collect array of target IDs
 		Compile()
 
 	fmt.Printf("   -> Generated %d bytes of impOps binary bytecode.\n", len(bytecode))

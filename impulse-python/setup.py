@@ -1,7 +1,10 @@
 import os
 import shutil
-from setuptools import setup, find_packages
+import subprocess
+import sys
+
 from pybind11.setup_helpers import Pybind11Extension, build_ext
+from setuptools import find_packages, setup
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 cpp_dir = os.path.abspath(os.path.join(this_dir, "..", "impulse-cpp"))
@@ -22,17 +25,37 @@ else:
     src_dir = "../impulse-cpp/src"
     rel_src_prefix = "../impulse-cpp/src"
 
-import subprocess
-
 hwy_dir = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-src"))
 if not os.path.exists(hwy_dir) and os.path.exists(os.path.join(cpp_dir, "CMakeLists.txt")):
     try:
-        subprocess.run(["cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"], cwd=cpp_dir, check=True)
+        subprocess.run(
+            [
+                "cmake",
+                "-B",
+                "build",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DHWY_ENABLE_CONTRIB=OFF",
+                "-DHWY_ENABLE_TESTS=OFF",
+                "-DHWY_ENABLE_EXAMPLES=OFF",
+            ],
+            cwd=cpp_dir,
+            check=True,
+        )
     except Exception:
         pass
 
 hwy_sources = []
-for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_allocator.cc", "timer.cc", "abort.cc", "base.cc", "stats.cc", "print.cc"]:
+for hwy_file in [
+    "targets.cc",
+    "per_target.cc",
+    "nanobenchmark.cc",
+    "aligned_allocator.cc",
+    "timer.cc",
+    "abort.cc",
+    "base.cc",
+    "stats.cc",
+    "print.cc",
+]:
     full_hwy_file = os.path.join(hwy_dir, "hwy", hwy_file)
     if os.path.exists(full_hwy_file):
         hwy_sources.append(full_hwy_file)
@@ -40,8 +63,19 @@ for hwy_file in ["targets.cc", "per_target.cc", "nanobenchmark.cc", "aligned_all
 hwy_lib = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-build", "libhwy.a"))
 extra_objects = [hwy_lib] if os.path.exists(hwy_lib) else []
 
-import sys
-extra_compile_args = ["/std:c++20", "/EHsc", "/DNOMINMAX", "/DWIN32_LEAN_AND_MEAN", "/D_CRT_SECURE_NO_WARNINGS", "/utf-8", "/permissive-"] if sys.platform == "win32" else ["-std=c++20"]
+extra_compile_args = (
+    [
+        "/std:c++20",
+        "/EHsc",
+        "/DNOMINMAX",
+        "/DWIN32_LEAN_AND_MEAN",
+        "/D_CRT_SECURE_NO_WARNINGS",
+        "/utf-8",
+        "/permissive-",
+    ]
+    if sys.platform == "win32"
+    else ["-std=c++20"]
+)
 
 ext_modules = [
     Pybind11Extension(
@@ -53,7 +87,8 @@ ext_modules = [
             f"{rel_src_prefix}/impulse_simd.cpp",
             f"{rel_src_prefix}/impulse_vm.cpp",
             f"{rel_src_prefix}/impulse_vm_fluent.cpp",
-        ] + (hwy_sources if not extra_objects else []),
+        ]
+        + (hwy_sources if not extra_objects else []),
         include_dirs=[
             inc_dir,
             src_dir,

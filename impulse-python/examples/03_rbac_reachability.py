@@ -11,7 +11,9 @@ Demonstrates:
 
 import os
 import time
+
 from impulse_graph import Snapshot, Writer, vm
+
 
 def main():
     print("=" * 65)
@@ -37,16 +39,26 @@ def main():
 
             # Relation 0: User -> Role (User 0 is Admin(0) and Editor(1))
             writer.add_relation(
-                src_domain_id=0, tgt_domain_id=1, encoding_type=0,
-                node_count=3, edge_count=4, section_features=0,
-                row_offsets=[0, 2, 3, 4], col_indices=[0, 1, 1, 2]
+                src_domain_id=0,
+                tgt_domain_id=1,
+                encoding_type=0,
+                node_count=3,
+                edge_count=4,
+                section_features=0,
+                row_offsets=[0, 2, 3, 4],
+                col_indices=[0, 1, 1, 2],
             )
 
             # Relation 1: Role -> Permission (Admin(0) -> [Read(0), Write(1), Delete(2)])
             writer.add_relation(
-                src_domain_id=1, tgt_domain_id=2, encoding_type=0,
-                node_count=3, edge_count=5, section_features=0,
-                row_offsets=[0, 3, 4, 5], col_indices=[0, 1, 2, 0, 0]
+                src_domain_id=1,
+                tgt_domain_id=2,
+                encoding_type=0,
+                node_count=3,
+                edge_count=5,
+                section_features=0,
+                row_offsets=[0, 3, 4, 5],
+                col_indices=[0, 1, 2, 0, 0],
             )
             writer.finalize()
         snap = Snapshot(temp_path)
@@ -59,11 +71,10 @@ def main():
 
         builder = vm.QueryBuilder()
         query = (
-            builder
-            .input_node(0)            # Seed User 0
-            .walk_edge(relation_id=0) # Walk User -> Role
-            .walk_edge(relation_id=1) # Walk Role -> Permission
-            .collect_bitset()         # Output effective permissions bitset
+            builder.input_node(0)  # Seed User 0
+            .walk_edge(relation_id=0)  # Walk User -> Role
+            .walk_edge(relation_id=1)  # Walk Role -> Permission
+            .collect_bitset()  # Output effective permissions bitset
             .compile()
         )
 
@@ -92,6 +103,7 @@ def main():
         os.remove(temp_path)
 
     print("\n[SUCCESS] Example 03 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

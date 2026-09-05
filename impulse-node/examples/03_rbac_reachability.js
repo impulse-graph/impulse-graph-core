@@ -24,7 +24,7 @@ function main() {
   try {
     snap = new Snapshot(snapshotPath);
     console.log(`[INFO] Successfully resolved and opened '${snapshotPath}'.`);
-  } catch (err) {
+  } catch (_err) {
     console.log(`[INFO] '${snapshotPath}' not found in $IMPULSE_DATASETS_DIR or local paths.`);
     console.log('[INFO] Generating fallback ReBAC snapshot...');
     isTemp = true;
@@ -54,7 +54,8 @@ function main() {
   console.log('\n1. ReBAC Policy: Check permissions for User 0 (User -> Role -> Permission):');
 
   const t0 = process.hrtime.bigint();
-  const effectivePermissions = snap.traverse(0)
+  const effectivePermissions = snap
+    .traverse(0)
     .out(0) // Walk User -> Role
     .out(1) // Walk Role -> Permission
     .toArray();
@@ -70,7 +71,7 @@ function main() {
   const permLabels = [
     { name: 'READ', id: 0 },
     { name: 'WRITE', id: 1 },
-    { name: 'DELETE', id: 2 }
+    { name: 'DELETE', id: 2 },
   ];
 
   for (const perm of permLabels) {

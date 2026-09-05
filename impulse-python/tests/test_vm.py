@@ -1,8 +1,8 @@
 import os
 import tempfile
-import pytest
-import numpy as np
+
 from impulse_graph import Snapshot, Writer, vm
+
 
 def test_vm_constants():
     assert vm.opcodes.OP_NOP == 0x01
@@ -17,6 +17,7 @@ def test_vm_constants():
     assert vm.RegisterType.TYPE_FLOAT_VECTOR == 0x0C
 
     assert vm.VmStatus.OK == 0
+
 
 def test_query_builder_compilation():
     builder = vm.QueryBuilder()
@@ -33,16 +34,18 @@ def test_query_builder_compilation():
     assert len(bytecode) == compiled.instruction_count()
     assert bytecode[0].opcode == vm.opcodes.OP_INIT_INPUT_NODE
 
+
 def test_query_builder_repeat_loop():
     builder = vm.QueryBuilder()
     builder.input_node(0)
-    
+
     # 3-hop graph traversal via repeat loop
     builder.repeat(3, lambda b: b.walk_edge(0))
     builder.collect_array()
 
     compiled = builder.compile()
     assert compiled.instruction_count() > 3
+
 
 def test_query_builder_analytics_opcodes():
     builder = vm.QueryBuilder()
@@ -55,6 +58,7 @@ def test_query_builder_analytics_opcodes():
 
     compiled = builder.compile()
     assert compiled.instruction_count() >= 5
+
 
 def test_vm_context_handles():
     with vm.VmContext() as ctx:
@@ -87,6 +91,7 @@ def test_vm_context_handles():
         assert vm_handle >= 0
         ctx.release_value_map(vm_handle)
 
+
 def test_vm_state_registers():
     state = vm.VmState()
     state.pc = 10
@@ -99,10 +104,11 @@ def test_vm_state_registers():
     assert state.get_register(5) == 9999
     assert state.get_register_type(5) == vm.RegisterType.TYPE_INT64
 
+
 def test_vm_query_execution_on_snapshot():
     with tempfile.TemporaryDirectory() as tmpdir:
         snap_path = os.path.join(tmpdir, "test_vm_graph.imps")
-        
+
         # Build small binary snapshot
         with Writer(snap_path) as w:
             w.add_domain(domain_id=0, key_type=4, name="User")
@@ -114,7 +120,7 @@ def test_vm_query_execution_on_snapshot():
                 edge_count=4,
                 section_features=0,
                 row_offsets=[0, 1, 2, 3, 4],
-                col_indices=[1, 2, 3, 0]
+                col_indices=[1, 2, 3, 0],
             )
             w.finalize()
 

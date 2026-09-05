@@ -1,4 +1,5 @@
 import pytest
+
 from impulse_graph import Snapshot, Writer, vm
 
 
@@ -53,7 +54,8 @@ def test_query_builder_filter_cel_prefix():
 
 def test_traversal_fluent_cel_filter():
     """Verify Traversal.filter() seamlessly delegates CEL strings to C++."""
-    import tempfile, os
+    import os
+    import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         snap_path = os.path.join(tmpdir, "cel_test.imps")

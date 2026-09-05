@@ -76,7 +76,6 @@ func (s *Snapshot) RelationCount() uint16 {
 	return uint16(C.impulse_snapshot_relation_count(s.ptr))
 }
 
-
 // RelationIndex looks up a relation index in the snapshot catalog.
 func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
 	if s.ptr == nil {

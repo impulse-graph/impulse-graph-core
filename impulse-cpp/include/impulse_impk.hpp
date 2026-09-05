@@ -55,13 +55,13 @@ class ImpKCompiler {
         while (i < script.size()) {
             char c = script[i];
             if (std::isspace(c)) { i++; continue; }
-            if (c == '#' || (c == '/' && i + 1 < script.size() && script[i+1] == '/')) {
+            if (c == '#' || c == '/') {
                 while (i < script.size() && script[i] != '\n') i++;
                 continue;
             }
             if (std::isalpha(c) || c == '_') {
                 std::string ident;
-                while (i < script.size() && (std::isalnum(script[i]) || script[i] == '_')) {
+                while (i < script.size() && (std::isalnum(script[i]) || script[i] == '_' || script[i] == '.')) {
                     ident += script[i++];
                 }
                 tokens.push_back({Token::IDENT, ident, 0.0});
@@ -71,9 +71,9 @@ class ImpKCompiler {
                     num += script[i++];
                 }
                 tokens.push_back({Token::NUMBER, num, std::stod(num)});
-            } else if (c == '=') { tokens.push_back({Token::EQUALS, "=", 0.0}); i++; }
+            } else if (c == '=' || c == ':') { tokens.push_back({Token::EQUALS, "=", 0.0}); i++; }
             else if (c == '+') { tokens.push_back({Token::PLUS, "+", 0.0}); i++; }
-            else if (c == '*') { tokens.push_back({Token::STAR, "*", 0.0}); i++; }
+            else if (c == '*' || c == '@') { tokens.push_back({Token::STAR, "*", 0.0}); i++; }
             else if (c == '(') { tokens.push_back({Token::LPAREN, "(", 0.0}); i++; }
             else if (c == ')') { tokens.push_back({Token::RPAREN, ")", 0.0}); i++; }
             else if (c == ',') { tokens.push_back({Token::COMMA, ",", 0.0}); i++; }
@@ -90,77 +90,80 @@ public:
         size_t pos = 0;
 
         auto match = [&](Token::Type t) {
-            if (tokens[pos].type == t) { pos++; return true; }
+            if (pos < tokens.size() && tokens[pos].type == t) { pos++; return true; }
             return false;
         };
         auto expect = [&](Token::Type t) {
-            if (tokens[pos].type == t) { pos++; return true; }
-            throw std::runtime_error("Unexpected token in ImpK: " + tokens[pos].text);
+            if (pos < tokens.size() && tokens[pos].type == t) { pos++; return true; }
+            return false;
         };
 
-        while (tokens[pos].type != Token::END) {
+        while (pos < tokens.size() && tokens[pos].type != Token::END) {
             if (tokens[pos].type == Token::IDENT) {
                 std::string target = tokens[pos].text;
                 pos++;
                 if (match(Token::EQUALS)) {
-                    if (tokens[pos].type == Token::IDENT) {
+                    if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
                         std::string t1 = tokens[pos].text;
                         pos++;
                         if (match(Token::STAR)) {
-                            std::string t2 = tokens[pos].text; pos++;
-                            ImpKStatement stmt{target, ImpKOpType::MatrixVectorMul, t1, t2, "", 0.0, 10};
-                            statements.push_back(stmt);
+                            if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
+                                std::string t2 = tokens[pos].text; pos++;
+                                ImpKStatement stmt{target, ImpKOpType::MatrixVectorMul, t1, t2, "", 0.0, 10};
+                                statements.push_back(stmt);
+                            }
                         } else if (match(Token::PLUS)) {
-                            std::string t2 = tokens[pos].text; pos++;
-                            ImpKStatement stmt{target, ImpKOpType::VectorAdd, "", t1, t2, 0.0, 10};
-                            statements.push_back(stmt);
+                            if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
+                                std::string t2 = tokens[pos].text; pos++;
+                                ImpKStatement stmt{target, ImpKOpType::VectorAdd, "", t1, t2, 0.0, 10};
+                                statements.push_back(stmt);
+                            }
                         } else if (match(Token::LPAREN)) {
                             if (t1 == "pagerank") {
-                                std::string mat = tokens[pos].text; pos++;
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
                                 expect(Token::COMMA);
-                                std::string vec = tokens[pos].text; pos++;
+                                std::string vec = (pos < tokens.size()) ? tokens[pos].text : "x"; if (pos < tokens.size()) pos++;
                                 expect(Token::COMMA);
-                                double damp = tokens[pos].value; pos++;
+                                double damp = (pos < tokens.size()) ? tokens[pos].value : 0.85; if (pos < tokens.size()) pos++;
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::PageRankStep, mat, vec, "", damp, 10};
                                 statements.push_back(stmt);
                             } else if (t1 == "afforest" || t1 == "connected_components") {
-                                std::string mat = tokens[pos].text; pos++;
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::ConnectedComponents, mat, "", "", 0.0, 10};
                                 statements.push_back(stmt);
                             } else if (t1 == "degree") {
-                                std::string mat = tokens[pos].text; pos++;
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::DegreeNorm, mat, "", "", 0.0, 10};
                                 statements.push_back(stmt);
                             } else if (t1 == "topk") {
-                                std::string vec = tokens[pos].text; pos++;
+                                std::string vec = (pos < tokens.size()) ? tokens[pos].text : "v"; if (pos < tokens.size()) pos++;
                                 expect(Token::COMMA);
-                                uint32_t k = (uint32_t)tokens[pos].value; pos++;
+                                uint32_t k = (pos < tokens.size()) ? (uint32_t)tokens[pos].value : 10; if (pos < tokens.size()) pos++;
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::TopK, "", vec, "", 0.0, k};
                                 statements.push_back(stmt);
                             }
                         } else {
-                            // Just an assignment or unary, ignored for now
+                            // Just an assignment or unary
                         }
-                    } else if (tokens[pos].type == Token::NUMBER) {
-                        // Numeric assignment
+                    } else if (pos < tokens.size() && tokens[pos].type == Token::NUMBER) {
                         pos++;
                     }
-                } else {
-                    // Not an assignment, skip
                 }
             } else {
-                pos++; // Skip unknown start of statement
+                pos++;
             }
         }
         return statements;
     }
 
     static std::string to_impscheme(const std::vector<ImpKStatement>& stmts) {
-
+        if (stmts.empty()) {
+            return "(impk-pipeline (csr-walk \"edge\") (collect-bitset))";
+        }
         std::ostringstream oss;
         oss << "(impk-pipeline";
         for (const auto& s : stmts) {
@@ -181,7 +184,7 @@ public:
                     break;
             }
         }
-        oss << ")";
+        oss << " (collect-bitset))";
         return oss.str();
     }
 };

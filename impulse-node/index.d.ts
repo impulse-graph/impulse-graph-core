@@ -1,6 +1,11 @@
 export class Snapshot {
   constructor(path: string);
-  isReachable(srcDomain: number, srcId: number | bigint, tgtDomain: number, tgtId: number | bigint): boolean;
+  isReachable(
+    srcDomain: number,
+    srcId: number | bigint,
+    tgtDomain: number,
+    tgtId: number | bigint
+  ): boolean;
   close(): void;
 }
 

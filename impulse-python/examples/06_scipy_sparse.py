@@ -6,10 +6,13 @@ alongside side-by-side ImpulseVM ImpK matrix-vector equivalence.
 """
 
 import time
+
 import numpy as np
 import scipy.sparse as sp
-from scipy.sparse.csgraph import dijkstra, connected_components
+from scipy.sparse.csgraph import connected_components, dijkstra
+
 from impulse_graph import Snapshot, Writer, vm
+
 
 def main():
     print("===============================================================")
@@ -75,6 +78,7 @@ def main():
         print(f"   -> Execution Status:   {'OK' if res.is_ok() else 'ERROR'}")
 
     print("\n[SUCCESS] Example 06 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

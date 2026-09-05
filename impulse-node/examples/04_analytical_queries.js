@@ -8,16 +8,7 @@
  */
 
 const fs = require('fs');
-const {
-  Writer,
-  Snapshot,
-  QueryBuilder,
-  VmContext,
-  VmState,
-  executeBytecode,
-  RegisterType,
-  VmStatus
-} = require('../index.js');
+const { Writer, Snapshot, QueryBuilder, VmContext, VmState, VmStatus } = require('../index.js');
 
 function main() {
   console.log('===================================================================');
@@ -32,7 +23,7 @@ function main() {
   try {
     snap = new Snapshot(snapshotPath);
     console.log(`[INFO] Successfully resolved and opened '${snapshotPath}'.`);
-  } catch (err) {
+  } catch (_err) {
     console.log(`[INFO] '${snapshotPath}' not found in $IMPULSE_DATASETS_DIR or local paths.`);
     console.log('[INFO] Generating sample transaction snapshot...');
     isTemp = true;
@@ -42,7 +33,7 @@ function main() {
 
     // 5 Accounts, 6 Transfer Edges
     const rowOffsets = new Uint32Array([0, 3, 4, 6, 6, 6]);
-    const colIndices = new Uint32Array([1, 2, 3,  3,  0, 4]);
+    const colIndices = new Uint32Array([1, 2, 3, 3, 0, 4]);
 
     writer.addRelation(0, 0, 0, 5, 6, 0, rowOffsets, colIndices);
     writer.finalize();
@@ -56,9 +47,9 @@ function main() {
   console.log('\n1. Compiling Low-Level impOps Bytecode with QueryBuilder:');
 
   const qb = new QueryBuilder();
-  qb.inputNode(0)            // R0: Seed Account 0
-    .walkEdge(0)             // R1: 1-hop transfers
-    .collectBitset();        // R2: Output bitset
+  qb.inputNode(0) // R0: Seed Account 0
+    .walkEdge(0) // R1: 1-hop transfers
+    .collectBitset(); // R2: Output bitset
 
   const compiled = qb.compile();
   console.log(`   -> Generated ${compiled.instructionCount()} VM bytecode instructions.`);
@@ -74,7 +65,9 @@ function main() {
   const result = compiled.executeWithContext(ctx, state, 0n);
   const elapsedNs = process.hrtime.bigint() - t0;
 
-  console.log(`   -> VM Execution Status: ${result.status === VmStatus.IMPULSE_VM_OK ? 'OK' : 'ERROR'}`);
+  console.log(
+    `   -> VM Execution Status: ${result.status === VmStatus.IMPULSE_VM_OK ? 'OK' : 'ERROR'}`
+  );
   console.log(`   -> VM Execution Time:   ${Number(elapsedNs)} ns`);
   console.log(`   -> Result Register Type: BITSET_HANDLE (${result.resultType})`);
 

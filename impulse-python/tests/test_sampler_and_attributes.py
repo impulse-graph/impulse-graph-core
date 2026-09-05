@@ -1,7 +1,9 @@
 import os
 import tempfile
-import pytest
+
 import numpy as np
+import pytest
+
 from impulse_graph import Snapshot, Writer
 
 
@@ -41,6 +43,8 @@ def test_sample_neighbors(sampling_snapshot):
 
         # Sample with numpy array input
         nodes_np = np.array([0], dtype=np.uint64)
-        src_arr2, tgt_arr2 = snap.sample_neighbors(relation_index=0, nodes=nodes_np, k_samples=5, seed=123)
+        src_arr2, tgt_arr2 = snap.sample_neighbors(
+            relation_index=0, nodes=nodes_np, k_samples=5, seed=123
+        )
         assert len(src_arr2) == 5
         assert len(tgt_arr2) == 5

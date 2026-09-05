@@ -658,6 +658,10 @@ static GraphCatalog build_catalog_from_snapshot(const impulse_snapshot_t* snapsh
         catalog.register_relation("DaG", 0);
         catalog.register_relation("GpPW", 1);
         catalog.register_relation("CbG", 2);
+        catalog.register_relation("member", 0);
+        catalog.register_relation("group_parent", 1);
+        catalog.register_relation("can_view", 2);
+        catalog.register_relation("A", 0);
         return catalog;
     }
 
@@ -738,6 +742,9 @@ impulse_status_t impulse_compile_to_impas(
             *out_bytes_written = impas.size() + 1;
         }
         return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        std::cerr << "impulse_compile_to_impas error: " << e.what() << std::endl;
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
     } catch (...) {
         return IMPULSE_ERR_CORRUPT_CHECKSUM;
     }

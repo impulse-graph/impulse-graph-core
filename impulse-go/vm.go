@@ -445,4 +445,3 @@ func (b *QueryBuilder) Compile() []Instruction {
 	copy(bytecode, b.instructions)
 	return bytecode
 }
-

@@ -172,7 +172,7 @@ public:
             // For (> (bitset:cardinality frontier) 0)
             // Just return the LHS cardinality node since our compiler currently handles this specifically
             return build(expr.list[1]);
-        } else if (head == "csr-walk" || head == "g:walk-csr" || head == "mxv") {
+        } else if (head == "csr-walk" || head == "g:walk-csr" || head == "mxv" || head == "pagerank-step" || head == "cc-afforest" || head == "ewise-add") {
             std::string rel = "edge";
             for (size_t i = 1; i < expr.list.size(); ++i) {
                 if (!expr.list[i].is_list && expr.list[i].atom != "g" && expr.list[i].atom != "frontier" && expr.list[i].atom != "updateEdge") {
@@ -180,6 +180,14 @@ public:
                 }
             }
             return ScmWalk::forward(rel);
+        } else if (head == "csc-walk" || head == "g:walk-csc") {
+            std::string rel = "edge";
+            for (size_t i = 1; i < expr.list.size(); ++i) {
+                if (!expr.list[i].is_list && expr.list[i].atom != "g" && expr.list[i].atom != "frontier" && expr.list[i].atom != "updateEdge") {
+                    rel = expr.list[i].atom;
+                }
+            }
+            return ScmWalk::reverse(rel);
         } else if (head == "collect-bitset") {
             return ScmCollect::bitset();
         } else if (head == "set:difference" || head == "set:union" || head == "set:intersect") {

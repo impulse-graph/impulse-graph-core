@@ -23,7 +23,7 @@ function main() {
   try {
     snap = new Snapshot(snapshotPath);
     console.log(`[INFO] Successfully resolved and opened '${snapshotPath}'.`);
-  } catch (err) {
+  } catch (_err) {
     console.log(`[INFO] '${snapshotPath}' not found in $IMPULSE_DATASETS_DIR or local paths.`);
     console.log('[INFO] Generating fallback in-memory sample social graph...');
     isTemp = true;
@@ -33,7 +33,7 @@ function main() {
 
     // 8 Users with follow relations
     const rowOffsets = new Uint32Array([0, 2, 4, 6, 8, 9, 10, 11, 11]);
-    const colIndices = new Uint32Array([1, 2,  2, 3,  3, 4,  4, 5,  6, 7, 0]);
+    const colIndices = new Uint32Array([1, 2, 2, 3, 3, 4, 4, 5, 6, 7, 0]);
 
     writer.addRelation(0, 0, 0, 8, 11, 0, rowOffsets, colIndices);
     writer.finalize();
@@ -48,10 +48,7 @@ function main() {
   console.log('   Query: Seed(User 0) -> out(0) -> out(0)');
 
   const t0 = process.hrtime.bigint();
-  const hop2Friends = snap.traverse(0)
-    .out(0)
-    .out(0)
-    .toArray();
+  const hop2Friends = snap.traverse(0).out(0).out(0).toArray();
   const elapsedNs = process.hrtime.bigint() - t0;
 
   console.log(`   -> Traversal Latency: ${Number(elapsedNs) / 1000.0} µs`);

@@ -11,7 +11,8 @@ import (
 func main() {
 	fmt.Println("===============================================================")
 	fmt.Println(" Impulse Graph Engine — Example 01: Snapshot Basics (Go)")
-	fmt.Println("===============================================================\n")
+	fmt.Println("===============================================================")
+	fmt.Println()
 
 	snapshotPath := "sample_basics.imps"
 

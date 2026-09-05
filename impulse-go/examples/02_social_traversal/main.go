@@ -12,7 +12,8 @@ import (
 func main() {
 	fmt.Println("===============================================================")
 	fmt.Println(" Impulse Graph Engine — Example 02: Social Graph Traversal (Go)")
-	fmt.Println("===============================================================\n")
+	fmt.Println("===============================================================")
+	fmt.Println()
 
 	snapshotPath := "social_graph.imps"
 	snap, err := impulse.OpenSnapshot(snapshotPath)

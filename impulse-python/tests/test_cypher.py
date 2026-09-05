@@ -1,6 +1,8 @@
 import os
 import tempfile
+
 import pytest
+
 from impulse_graph import Snapshot, Writer
 
 
@@ -69,8 +71,7 @@ def test_cypher_count_query(cypher_snapshot):
     with Snapshot(cypher_snapshot) as snap:
         catalog = {"DaG": 0, "GbC": 1}
         query = (
-            "MATCH (d:Disease)-[:DaG]->(g:Gene)-[:GbC]->(c:Compound) "
-            "WHERE d.id = 0 RETURN count(c)"
+            "MATCH (d:Disease)-[:DaG]->(g:Gene)-[:GbC]->(c:Compound) WHERE d.id = 0 RETURN count(c)"
         )
         count_res = snap.cypher(query, catalog=catalog)
         assert isinstance(count_res, int)

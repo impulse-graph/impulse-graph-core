@@ -17,7 +17,7 @@ const {
   executeBytecode,
   Opcodes,
   RegisterType,
-  VmStatus
+  VmStatus,
 } = impulse;
 
 console.log('=== Running Impulse Graph Engine Node.js VM Native Binding Tests ===\n');
@@ -29,7 +29,11 @@ assert.strictEqual(typeof Writer, 'function', 'Writer class should be exported')
 assert.strictEqual(typeof VmContext, 'function', 'VmContext class should be exported');
 assert.strictEqual(typeof VmState, 'function', 'VmState class should be exported');
 assert.strictEqual(typeof QueryBuilder, 'function', 'QueryBuilder class should be exported');
-assert.strictEqual(typeof executeBytecode, 'function', 'executeBytecode function should be exported');
+assert.strictEqual(
+  typeof executeBytecode,
+  'function',
+  'executeBytecode function should be exported'
+);
 
 assert.strictEqual(Opcodes.OP_NOP, 1, 'OP_NOP should be 1');
 assert.strictEqual(Opcodes.OP_INIT_INPUT_NODE, 2, 'OP_INIT_INPUT_NODE should be 2');
@@ -58,7 +62,11 @@ const hStr = ctx.acquireStringVector();
 ctx.stringVectorAdd(hStr, 'impulse');
 ctx.stringVectorAdd(hStr, 'graph');
 assert.strictEqual(ctx.stringVectorSize(hStr), 2, 'String vector size should be 2');
-assert.strictEqual(ctx.stringVectorGet(hStr, 0), 'impulse', 'String vector at index 0 should match');
+assert.strictEqual(
+  ctx.stringVectorGet(hStr, 0),
+  'impulse',
+  'String vector at index 0 should match'
+);
 assert.strictEqual(ctx.stringVectorGet(hStr, 1), 'graph', 'String vector at index 1 should match');
 ctx.releaseStringVector(hStr);
 
@@ -103,16 +111,22 @@ writer.finalize();
 
 const snap = new Snapshot(testSnapPath);
 assert.strictEqual(snap.isReachable(0, 0, 0, 1), true, '0 -> 1 should be reachable');
-assert.strictEqual(snap.isReachable(0, 0, 0, 3), false, '0 -> 3 direct reachability should be false');
+assert.strictEqual(
+  snap.isReachable(0, 0, 0, 3),
+  false,
+  '0 -> 3 direct reachability should be false'
+);
 
 // Build a query: inputNode(0) -> walkEdge(0) -> collectBitset()
 const qb = new QueryBuilder();
-qb.inputNode(0)
-  .walkEdge(0)
-  .collectBitset();
+qb.inputNode(0).walkEdge(0).collectBitset();
 
 const compiled = qb.compile();
-assert.strictEqual(compiled.instructionCount(), 4, 'Compiled query instruction count should be 4 (including OP_HALT)');
+assert.strictEqual(
+  compiled.instructionCount(),
+  4,
+  'Compiled query instruction count should be 4 (including OP_HALT)'
+);
 
 const testCtx = new VmContext(snap);
 const vmState = new VmState();
@@ -120,11 +134,19 @@ const vmState = new VmState();
 const queryRes = compiled.executeWithContext(testCtx, vmState, 0n); // Seed node 0
 assert.strictEqual(queryRes.isOk(), true, 'VM Query execution should be OK');
 assert.strictEqual(queryRes.status, VmStatus.IMPULSE_VM_OK, 'Status should be OK');
-assert.strictEqual(queryRes.resultType, RegisterType.TYPE_BITSET_HANDLE, 'Result type should be BITSET_HANDLE');
+assert.strictEqual(
+  queryRes.resultType,
+  RegisterType.TYPE_BITSET_HANDLE,
+  'Result type should be BITSET_HANDLE'
+);
 
 assert.strictEqual(queryRes.testBitset(testCtx, 1), true, 'Target 1 should be in bitset output');
 assert.strictEqual(queryRes.testBitset(testCtx, 2), true, 'Target 2 should be in bitset output');
-assert.strictEqual(queryRes.testBitset(testCtx, 3), false, 'Target 3 should not be in bitset output for 1-hop walk');
+assert.strictEqual(
+  queryRes.testBitset(testCtx, 3),
+  false,
+  'Target 3 should not be in bitset output for 1-hop walk'
+);
 
 testCtx.destroy();
 console.log('  -> Fluent VM Query execution passed!\n');
@@ -132,8 +154,7 @@ console.log('  -> Fluent VM Query execution passed!\n');
 // 5. Test Scalar & Constant Instructions
 console.log('[Test 5] Testing loadConstInt & scalar VM instructions...');
 const qb2 = new QueryBuilder();
-qb2.loadConstInt(42n)
-   .mov(1, 0);
+qb2.loadConstInt(42n).mov(1, 0);
 
 const compiled2 = qb2.compile();
 const queryRes2 = compiled2.execute(snap, 0n);

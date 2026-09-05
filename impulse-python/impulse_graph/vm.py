@@ -2,39 +2,66 @@
 Impulse Graph Engine Bytecode Virtual Machine & Fluent Query Pipeline Python SDK
 """
 
-from typing import List, Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional
+
 import numpy as np
 
 try:
-    from . import _impulse_native
     from ._impulse_native import (
-        QueryBuilder as _NativeQueryBuilder,
         CompiledQuery as _NativeCompiledQuery,
-        QueryResult as _NativeQueryResult,
-        VmContext as _NativeVmContext,
-        VmState as _NativeVmState,
+    )
+    from ._impulse_native import (
+        Instruction,
         RegisterType,
         VmStatus,
-        Instruction,
         opcodes,
-        parse_cel as _native_parse_cel,
+    )
+    from ._impulse_native import (
+        QueryBuilder as _NativeQueryBuilder,
+    )
+    from ._impulse_native import (
+        QueryResult as _NativeQueryResult,
+    )
+    from ._impulse_native import (
+        VmContext as _NativeVmContext,
+    )
+    from ._impulse_native import (
+        VmState as _NativeVmState,
+    )
+    from ._impulse_native import (
         optimize_cel as _native_optimize_cel,
+    )
+    from ._impulse_native import (
+        parse_cel as _native_parse_cel,
     )
 except ImportError:
     try:
-        import _impulse_native
         from _impulse_native import (
-            QueryBuilder as _NativeQueryBuilder,
             CompiledQuery as _NativeCompiledQuery,
-            QueryResult as _NativeQueryResult,
-            VmContext as _NativeVmContext,
-            VmState as _NativeVmState,
+        )
+        from _impulse_native import (
+            Instruction,
             RegisterType,
             VmStatus,
-            Instruction,
             opcodes,
-            parse_cel as _native_parse_cel,
+        )
+        from _impulse_native import (
+            QueryBuilder as _NativeQueryBuilder,
+        )
+        from _impulse_native import (
+            QueryResult as _NativeQueryResult,
+        )
+        from _impulse_native import (
+            VmContext as _NativeVmContext,
+        )
+        from _impulse_native import (
+            VmState as _NativeVmState,
+        )
+        from _impulse_native import (
             optimize_cel as _native_optimize_cel,
+        )
+        from _impulse_native import (
+            parse_cel as _native_parse_cel,
         )
     except ImportError:
         _NativeQueryBuilder = None
@@ -263,8 +290,12 @@ class CompiledQuery:
         native_snap = getattr(snapshot, "_native", None) if snapshot else None
         return QueryResult(self._native.execute(native_snap, input_param))
 
-    def execute_with_context(self, ctx: VmContext, state: VmState, input_param: int = 0) -> QueryResult:
-        return QueryResult(self._native.execute_with_context(ctx._native, state._native, input_param))
+    def execute_with_context(
+        self, ctx: VmContext, state: VmState, input_param: int = 0
+    ) -> QueryResult:
+        return QueryResult(
+            self._native.execute_with_context(ctx._native, state._native, input_param)
+        )
 
 
 class QueryBuilder:

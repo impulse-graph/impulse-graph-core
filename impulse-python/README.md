@@ -142,11 +142,10 @@ from impulse_graph import Snapshot, vm
 # 1. Build a bytecode query using QueryBuilder
 builder = vm.QueryBuilder()
 query = (
-    builder
-    .input_node(0)           # Seed node ID 0
-    .walk_edge(relation_id=0) # 1-hop CSR neighbors
-    .walk_edge(relation_id=0) # 2-hop CSR neighbors
-    .collect_bitset()         # Collect destination frontier
+    builder.input_node(0)  # Seed node ID 0
+    .walk_edge(relation_id=0)  # 1-hop CSR neighbors
+    .walk_edge(relation_id=0)  # 2-hop CSR neighbors
+    .collect_bitset()  # Collect destination frontier
     .compile()
 )
 

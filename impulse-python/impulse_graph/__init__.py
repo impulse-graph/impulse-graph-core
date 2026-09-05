@@ -3,14 +3,17 @@ Impulse Graph Engine Python SDK & C++ Bytecode VM Binding
 Spec v0.9.0
 """
 
-from typing import List, Optional, Union, Dict, Any
+from typing import Dict, List, Optional, Union
+
 import numpy as np
 
 try:
-    from ._impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
+    from ._impulse_native import Snapshot as _NativeSnapshot
+    from ._impulse_native import Writer as _NativeWriter
 except ImportError:
     try:
-        from _impulse_native import Snapshot as _NativeSnapshot, Writer as _NativeWriter
+        from _impulse_native import Snapshot as _NativeSnapshot
+        from _impulse_native import Writer as _NativeWriter
     except ImportError:
         _NativeSnapshot = None
         _NativeWriter = None
@@ -41,14 +44,21 @@ class DomainView:
 
     def from_node(self, node_id: int) -> "Traversal":
         from .traversal import Traversal
-        return Traversal(self._snapshot, start_node=node_id, initial_domain=self, catalog=self._catalog)
+
+        return Traversal(
+            self._snapshot, start_node=node_id, initial_domain=self, catalog=self._catalog
+        )
 
     def from_nodes(self, node_ids: Union[List[int], np.ndarray]) -> "Traversal":
         from .traversal import Traversal
-        return Traversal(self._snapshot, start_nodes=node_ids, initial_domain=self, catalog=self._catalog)
+
+        return Traversal(
+            self._snapshot, start_nodes=node_ids, initial_domain=self, catalog=self._catalog
+        )
 
     def all(self) -> "Traversal":
         from .traversal import Traversal
+
         return Traversal(self._snapshot, all_nodes=True, initial_domain=self, catalog=self._catalog)
 
     def to_dense_id(self, key: str) -> int:
@@ -57,7 +67,11 @@ class DomainView:
     def to_key(self, node_id: int) -> str:
         try:
             raw = self._snapshot.resolve_key(self.domain_id, node_id)
-            return raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+            return (
+                raw.decode("utf-8", errors="replace")
+                if isinstance(raw, (bytes, bytearray))
+                else str(raw)
+            )
         except Exception:
             return f"{self.domain_name}::{node_id}"
 
@@ -102,7 +116,9 @@ class Snapshot:
         self._check_open()
         return self._native.get_domain(index)
 
-    def domain(self, name_or_id: Union[str, int], catalog: Optional[Union[str, Dict[str, int]]] = None) -> DomainView:
+    def domain(
+        self, name_or_id: Union[str, int], catalog: Optional[Union[str, Dict[str, int]]] = None
+    ) -> DomainView:
         self._check_open()
         effective_catalog = catalog if catalog is not None else self._catalog
         if isinstance(name_or_id, int):
@@ -149,7 +165,9 @@ class Snapshot:
         self._check_open()
         return self._native.resolve_dense_id(domain_id, key)
 
-    def resolve_keys_batch(self, domain_id: int, node_ids: Union[List[int], np.ndarray]) -> List[str]:
+    def resolve_keys_batch(
+        self, domain_id: int, node_ids: Union[List[int], np.ndarray]
+    ) -> List[str]:
         """Resolve a batch of dense node IDs back to string identifiers."""
         self._check_open()
         result = []
@@ -204,7 +222,11 @@ class Snapshot:
         return arr
 
     def sample_neighbors(
-        self, relation_index: int, nodes: Union[List[int], np.ndarray], k_samples: int, seed: int = 42
+        self,
+        relation_index: int,
+        nodes: Union[List[int], np.ndarray],
+        k_samples: int,
+        seed: int = 42,
     ) -> tuple[np.ndarray, np.ndarray]:
         """High-speed SIMD C++ neighborhood sampler for GNN mini-batching."""
         self._check_open()
@@ -223,6 +245,7 @@ class Snapshot:
         """Initiate a friendly fluent graph path traversal starting from start_node."""
         self._check_open()
         from .traversal import Traversal
+
         effective_catalog = catalog if catalog is not None else self._catalog
         return Traversal(self, start_node=start_node, catalog=effective_catalog)
 
@@ -235,6 +258,7 @@ class Snapshot:
         """Execute a declarative openCypher query directly against the snapshot off-heap."""
         self._check_open()
         from .cypher import CypherQuery
+
         effective_catalog = catalog if catalog is not None else self._catalog
         c_query = CypherQuery(query, catalog=effective_catalog)
         return c_query.execute(self, params=params)
@@ -247,6 +271,7 @@ class Snapshot:
         """Compile a declarative openCypher query into a reusable Traversal / VM executable."""
         self._check_open()
         from .cypher import CypherQuery
+
         effective_catalog = catalog if catalog is not None else self._catalog
         c_query = CypherQuery(query, catalog=effective_catalog)
         return c_query.build_traversal(self)
@@ -257,6 +282,7 @@ class Snapshot:
         Uses zero-copy off-heap pointers.
         """
         import scipy.sparse as sp
+
         rel = self.get_relation(relation_index)
         node_count = rel["node_count"]
         shape = (node_count, node_count)
@@ -283,6 +309,7 @@ class Snapshot:
         Safe for zero-copy read-only inference.
         """
         import torch
+
         rel = self.get_relation(relation_index)
         node_count = rel["node_count"]
         size = (node_count, node_count)
@@ -306,11 +333,14 @@ class Snapshot:
         tensor = torch.sparse_csr_tensor(crow_indices, col_indices, values, size=size)
         return tensor.to(device) if device != "cpu" else tensor
 
-    def to_torch_edge_index(self, relation_index: int = 0, transpose: bool = False, device: str = "cpu"):
+    def to_torch_edge_index(
+        self, relation_index: int = 0, transpose: bool = False, device: str = "cpu"
+    ):
         """
         Convert snapshot CSR topology to PyTorch Geometric COO edge_index tensor of shape (2, num_edges).
         """
         import torch
+
         if transpose:
             try:
                 indptr = self.get_csc_row_offsets_array(relation_index)
@@ -331,6 +361,7 @@ class Snapshot:
     def to_networkx(self, relation_index: int = 0, create_using=None):
         """Convert snapshot CSR topology to a NetworkX Graph or DiGraph."""
         import networkx as nx
+
         if create_using is None:
             create_using = nx.DiGraph
         indptr = self.get_row_offsets_array(relation_index)
@@ -344,6 +375,7 @@ class Snapshot:
     def to_polars(self, relation_index: int = 0):
         """Convert snapshot CSR topology into a Polars DataFrame with columns ['src', 'dst']."""
         import polars as pl
+
         indptr = self.get_row_offsets_array(relation_index)
         indices = self.get_col_indices_array(relation_index)
         degrees = np.diff(indptr)
@@ -353,6 +385,7 @@ class Snapshot:
     def to_pandas(self, relation_index: int = 0):
         """Convert snapshot CSR topology into a Pandas DataFrame with columns ['src', 'dst']."""
         import pandas as pd
+
         indptr = self.get_row_offsets_array(relation_index)
         indices = self.get_col_indices_array(relation_index)
         degrees = np.diff(indptr)
@@ -362,6 +395,7 @@ class Snapshot:
     def to_arrow_table(self, relation_index: int = 0):
         """Convert snapshot CSR topology into an Apache Arrow Table."""
         import pyarrow as pa
+
         indptr = self.get_row_offsets_array(relation_index)
         indices = self.get_col_indices_array(relation_index)
         degrees = np.diff(indptr)
@@ -424,6 +458,7 @@ class Writer:
         Convenience constructor: Compile a scipy.sparse.csr_matrix or csc_matrix into an .imps file.
         """
         import scipy.sparse as sp
+
         if not sp.isspmatrix_csr(matrix):
             matrix = matrix.tocsr()
 
@@ -457,6 +492,7 @@ class Writer:
         Convenience constructor: Compile a PyTorch edge_index tensor (2, E) or torch.sparse_csr_tensor into an .imps file.
         """
         import torch
+
         if hasattr(edge_index, "is_sparse_csr") and edge_index.is_sparse_csr:
             crow = edge_index.crow_indices().cpu().numpy().astype(np.uint32)
             col = edge_index.col_indices().cpu().numpy().astype(np.uint32)
@@ -555,7 +591,6 @@ class Writer:
         """
         Convenience constructor: Compile a NetworkX Graph / DiGraph into an .imps file.
         """
-        import networkx as nx
         nodes = sorted(list(graph.nodes()))
         node_map = {n: i for i, n in enumerate(nodes)}
         n_nodes = len(nodes)
@@ -582,7 +617,7 @@ class Writer:
             writer.finalize()
 
 
-from .traversal import Traversal
+from .traversal import Traversal  # noqa: E402
 
 __version__ = "0.9.0"
 __all__ = ["Snapshot", "DomainView", "Writer", "Traversal", "vm"]
