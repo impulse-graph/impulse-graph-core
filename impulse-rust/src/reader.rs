@@ -606,6 +606,32 @@ impl SnapshotReader {
         Ok(Some(offsets))
     }
 
+    pub fn get_domain_attribute_data(&self, domain_id: u16, name: &str) -> Result<&[u8], ImpulseError> {
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_data(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+        Err(ImpulseError::NotFound)
+    }
+
+    pub fn get_domain_attribute_offsets(&self, domain_id: u16, name: &str) -> Result<Option<&[u32]>, ImpulseError> {
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_offsets(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+        Err(ImpulseError::NotFound)
+    }
+
     pub fn get_relation_statistics(&self, relation_index: usize) -> Result<crate::stats::RelationStatistics, ImpulseError> {
         crate::stats::RelationStatisticsCalculator::calculate(self, relation_index, crate::stats::RelationStatisticsCalculator::DEFAULT_SUPERNODE_ZSCORE_THRESHOLD)
     }
@@ -621,11 +647,12 @@ impl SnapshotReader {
 
             for (a_idx, a) in r.attributes.iter().enumerate() {
                 if let Ok(data) = self.get_attribute_data(r_idx, a_idx) {
-                    let attr_stats = match a.type_code {
-                        1 => crate::stats::AttributeStatisticsCalculator::calculate_int32(&a.name, data),
-                        2 => crate::stats::AttributeStatisticsCalculator::calculate_int64(&a.name, data),
-                        3 => crate::stats::AttributeStatisticsCalculator::calculate_float32(&a.name, data),
-                        4 => crate::stats::AttributeStatisticsCalculator::calculate_float64(&a.name, data),
+                    let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
+                    let attr_stats = match base_type {
+                        1 | 3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(&a.name, data),
+                        2 | 4 => crate::stats::AttributeStatisticsCalculator::calculate_int64(&a.name, data),
+                        6 => crate::stats::AttributeStatisticsCalculator::calculate_float32(&a.name, data),
+                        7 => crate::stats::AttributeStatisticsCalculator::calculate_float64(&a.name, data),
                         _ => crate::stats::AttributeStatistics::empty(&a.name),
                     };
                     attr_map.insert(format!("{}.{}", rel_name, a.name), attr_stats);

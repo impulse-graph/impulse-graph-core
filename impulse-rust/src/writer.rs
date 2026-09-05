@@ -174,6 +174,40 @@ impl SnapshotWriter {
         }
     }
 
+    pub fn add_attribute_to_domain(
+        &mut self,
+        domain_id: u16,
+        name: &str,
+        type_code: u8,
+        dimension: u32,
+        data: Vec<u8>,
+        offsets: Option<Vec<u32>>,
+    ) {
+        let rel_idx = if let Some(idx) = self.relations.iter().position(|r| r.src_domain_id == domain_id) {
+            idx
+        } else {
+            let node_count = self
+                .domains
+                .iter()
+                .find(|d| d.domain_id == domain_id)
+                .map(|d| d.node_count)
+                .unwrap_or(0);
+            let row_offsets = vec![0u32; (node_count + 1) as usize];
+            let col_indices = Vec::new();
+            self.add_relation(domain_id, domain_id, node_count, 0, row_offsets, col_indices);
+            let new_idx = self.relations.len() - 1;
+            let dom_name = self
+                .domains
+                .iter()
+                .find(|d| d.domain_id == domain_id)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| format!("Domain_{}", domain_id));
+            self.set_relation_name(new_idx, &format!("{}_nodes", dom_name));
+            new_idx
+        };
+        self.add_attribute_to_relation(rel_idx, name, type_code, dimension, data, offsets);
+    }
+
     fn align_buffer(buf: &mut Vec<u8>, align: usize) {
         let rem = buf.len() % align;
         if rem != 0 {

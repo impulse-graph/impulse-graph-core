@@ -261,6 +261,46 @@ mod tests {
 
         let _ = fs::remove_file(STATS_TEST_FILE);
     }
+
+    #[test]
+    fn test_v09_domain_attributes_roundtrip() {
+        const DOMAIN_ATTR_TEST_FILE: &str = "__impulse_test_domain_attr_v09.imps";
+        let mut writer = SnapshotWriter::new(DOMAIN_ATTR_TEST_FILE);
+
+        writer.add_domain(0, KeyType::Int32, "User");
+        writer.set_domain_node_count(0, 3);
+
+        let mut age_bytes = Vec::new();
+        age_bytes.extend_from_slice(&25i32.to_ne_bytes());
+        age_bytes.extend_from_slice(&30i32.to_ne_bytes());
+        age_bytes.extend_from_slice(&35i32.to_ne_bytes());
+
+        writer.add_attribute_to_domain(
+            0,
+            "age",
+            BaseDataType::Int32 as u8,
+            1,
+            age_bytes,
+            None,
+        );
+
+        let finalize_res = writer.finalize();
+        assert!(finalize_res.is_ok(), "Finalize failed: {:?}", finalize_res);
+
+        let reader = SnapshotReader::open(DOMAIN_ATTR_TEST_FILE).unwrap();
+        assert_eq!(reader.domain_count(), 1);
+
+        let read_age_bytes = reader.get_domain_attribute_data(0, "age").unwrap();
+        assert_eq!(read_age_bytes.len(), 12);
+        let val0 = i32::from_ne_bytes(read_age_bytes[0..4].try_into().unwrap());
+        let val1 = i32::from_ne_bytes(read_age_bytes[4..8].try_into().unwrap());
+        let val2 = i32::from_ne_bytes(read_age_bytes[8..12].try_into().unwrap());
+        assert_eq!(val0, 25);
+        assert_eq!(val1, 30);
+        assert_eq!(val2, 35);
+
+        let _ = fs::remove_file(DOMAIN_ATTR_TEST_FILE);
+    }
 }
 
 
