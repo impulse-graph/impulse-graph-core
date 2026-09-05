@@ -22,12 +22,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let reader = match SnapshotReader::open(snapshot_path) {
         Ok(r) => {
-            println!("[INFO] Successfully resolved and opened '{}'.", snapshot_path);
+            println!(
+                "[INFO] Successfully resolved and opened '{}'.",
+                snapshot_path
+            );
             is_temp = false;
             r
         }
         Err(_) => {
-            println!("[INFO] '{}' not found in $IMPULSE_DATASETS_DIR or local paths.", snapshot_path);
+            println!(
+                "[INFO] '{}' not found in $IMPULSE_DATASETS_DIR or local paths.",
+                snapshot_path
+            );
             println!("[INFO] Generating fallback ReBAC snapshot...");
             is_temp = true;
 
@@ -70,7 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let perm_labels = [("READ", 0), ("WRITE", 1), ("DELETE", 2)];
     for (name, id) in perm_labels {
         let allowed = effective_permissions.contains(&id);
-        let status_str = if allowed { "ALLOWED [✓]" } else { "DENIED  [✗]" };
+        let status_str = if allowed {
+            "ALLOWED [✓]"
+        } else {
+            "DENIED  [✗]"
+        };
         println!("   -> Permission {}: {}", name, status_str);
     }
 

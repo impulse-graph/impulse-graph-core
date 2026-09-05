@@ -20,15 +20,33 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
         "../impulse-cpp/build/_deps/highway-build/libhwy.a"
     };
 
-    if !Path::new(hwy_lib_file).exists() && !Path::new("../impulse-cpp/build/_deps/highway-build/libhwy.a").exists() {
+    if !Path::new(hwy_lib_file).exists()
+        && !Path::new("../impulse-cpp/build/_deps/highway-build/libhwy.a").exists()
+    {
         let mut cmake_cfg = Command::new("cmake");
-        cmake_cfg.args(["-B", "../impulse-cpp/build", "-S", "../impulse-cpp", "-DCMAKE_BUILD_TYPE=Release", "-DHWY_ENABLE_CONTRIB=OFF", "-DHWY_ENABLE_TESTS=OFF", "-DHWY_ENABLE_EXAMPLES=OFF"]);
+        cmake_cfg.args([
+            "-B",
+            "../impulse-cpp/build",
+            "-S",
+            "../impulse-cpp",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DHWY_ENABLE_CONTRIB=OFF",
+            "-DHWY_ENABLE_TESTS=OFF",
+            "-DHWY_ENABLE_EXAMPLES=OFF",
+        ]);
         if is_windows {
             cmake_cfg.args(["-A", "x64", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"]);
         }
         let _ = cmake_cfg.status();
         let _ = Command::new("cmake")
-            .args(["--build", "../impulse-cpp/build", "--config", "Release", "--target", "hwy"])
+            .args([
+                "--build",
+                "../impulse-cpp/build",
+                "--config",
+                "Release",
+                "--target",
+                "hwy",
+            ])
             .status();
     }
 
@@ -64,17 +82,24 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
-            panic!("Failed to compile C++ source file: {} using {}", src, compiler);
+            panic!(
+                "Failed to compile C++ source file: {} using {}",
+                src, compiler
+            );
         }
     } else {
         let mut args = vec![
             "-std=c++20",
             "-O3",
             "-fPIC",
-            "-c", src,
-            "-I", include_dir,
-            "-I", "../impulse-cpp/src",
-            "-o", &obj_file
+            "-c",
+            src,
+            "-I",
+            include_dir,
+            "-I",
+            "../impulse-cpp/src",
+            "-o",
+            &obj_file,
         ];
 
         if Path::new(hwy_inc).exists() {
@@ -93,8 +118,14 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             args.push("-fopenmp");
         }
 
-        let compiler = env::var("CXX").unwrap_or_else(|_| if is_macos { "clang++".to_string() } else { "c++".to_string() });
-        
+        let compiler = env::var("CXX").unwrap_or_else(|_| {
+            if is_macos {
+                "clang++".to_string()
+            } else {
+                "c++".to_string()
+            }
+        });
+
         let output = Command::new(&compiler)
             .args(&args)
             .output()
@@ -107,7 +138,10 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
-            panic!("Failed to compile C++ source file: {} using {}", src, compiler);
+            panic!(
+                "Failed to compile C++ source file: {} using {}",
+                src, compiler
+            );
         }
     }
 
@@ -145,19 +179,52 @@ fn main() {
     };
 
     // Compile C++ objects
-    let obj_simd = compile_cpp("../impulse-cpp/src/impulse_simd.cpp", cpp_include, &out_dir, has_omp);
-    let obj_vm = compile_cpp("../impulse-cpp/src/impulse_vm.cpp", cpp_include, &out_dir, has_omp);
-    let obj_fluent = compile_cpp("../impulse-cpp/src/impulse_vm_fluent.cpp", cpp_include, &out_dir, has_omp);
-    let obj_graph = compile_cpp("../impulse-cpp/src/impulse_graph.cpp", cpp_include, &out_dir, has_omp);
-    let obj_index = compile_cpp("../impulse-cpp/src/impulse_index.cpp", cpp_include, &out_dir, has_omp);
+    let obj_simd = compile_cpp(
+        "../impulse-cpp/src/impulse_simd.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_vm = compile_cpp(
+        "../impulse-cpp/src/impulse_vm.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_fluent = compile_cpp(
+        "../impulse-cpp/src/impulse_vm_fluent.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_graph = compile_cpp(
+        "../impulse-cpp/src/impulse_graph.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_index = compile_cpp(
+        "../impulse-cpp/src/impulse_index.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
 
     // Archive into a single static library
     if is_windows {
         let lib_file = format!("{}/impulse_native.lib", out_dir);
         let status_lib = Command::new("lib")
-            .args(["/nologo", &format!("/OUT:{}", lib_file), &obj_simd, &obj_vm, &obj_fluent, &obj_graph, &obj_index])
+            .args([
+                "/nologo",
+                &format!("/OUT:{}", lib_file),
+                &obj_simd,
+                &obj_vm,
+                &obj_fluent,
+                &obj_graph,
+                &obj_index,
+            ])
             .status();
-            
+
         assert!(
             status_lib.is_ok() && status_lib.unwrap().success(),
             "Failed to archive objects into static library using lib.exe"
@@ -165,9 +232,17 @@ fn main() {
     } else {
         let lib_file = format!("{}/libimpulse_native.a", out_dir);
         let status_ar = Command::new("ar")
-            .args(["rcs", &lib_file, &obj_simd, &obj_vm, &obj_fluent, &obj_graph, &obj_index])
+            .args([
+                "rcs",
+                &lib_file,
+                &obj_simd,
+                &obj_vm,
+                &obj_fluent,
+                &obj_graph,
+                &obj_index,
+            ])
             .status();
-            
+
         assert!(
             status_ar.is_ok() && status_ar.unwrap().success(),
             "Failed to archive objects into static library"

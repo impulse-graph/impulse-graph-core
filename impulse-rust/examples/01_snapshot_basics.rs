@@ -81,8 +81,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n4. Direct Point Reachability Queries:");
-    println!("   -> Node 0 -> Node 1 reachable? {}", reader.is_reachable(0, 0, 1));
-    println!("   -> Node 0 -> Node 3 reachable? {}", reader.is_reachable(0, 0, 3));
+    println!(
+        "   -> Node 0 -> Node 1 reachable? {}",
+        reader.is_reachable(0, 0, 1)
+    );
+    println!(
+        "   -> Node 0 -> Node 3 reachable? {}",
+        reader.is_reachable(0, 0, 3)
+    );
 
     // Cleanup
     if Path::new(snapshot_path).exists() {

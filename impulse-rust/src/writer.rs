@@ -160,17 +160,19 @@ impl SnapshotWriter {
         offsets: Option<Vec<u32>>,
     ) {
         if relation_index < self.relations.len() {
-            self.relations[relation_index].attributes.push(AttributeField {
-                name: name.to_string(),
-                type_code,
-                dimension,
-                data,
-                offsets,
-                data_offset: 0,
-                data_bytes: 0,
-                offsets_offset: 0,
-                offsets_bytes: 0,
-            });
+            self.relations[relation_index]
+                .attributes
+                .push(AttributeField {
+                    name: name.to_string(),
+                    type_code,
+                    dimension,
+                    data,
+                    offsets,
+                    data_offset: 0,
+                    data_bytes: 0,
+                    offsets_offset: 0,
+                    offsets_bytes: 0,
+                });
         }
     }
 
@@ -183,7 +185,11 @@ impl SnapshotWriter {
         data: Vec<u8>,
         offsets: Option<Vec<u32>>,
     ) {
-        let rel_idx = if let Some(idx) = self.relations.iter().position(|r| r.src_domain_id == domain_id) {
+        let rel_idx = if let Some(idx) = self
+            .relations
+            .iter()
+            .position(|r| r.src_domain_id == domain_id)
+        {
             idx
         } else {
             let node_count = self
@@ -194,7 +200,14 @@ impl SnapshotWriter {
                 .unwrap_or(0);
             let row_offsets = vec![0u32; (node_count + 1) as usize];
             let col_indices = Vec::new();
-            self.add_relation(domain_id, domain_id, node_count, 0, row_offsets, col_indices);
+            self.add_relation(
+                domain_id,
+                domain_id,
+                node_count,
+                0,
+                row_offsets,
+                col_indices,
+            );
             let new_idx = self.relations.len() - 1;
             let dom_name = self
                 .domains
@@ -237,7 +250,6 @@ impl SnapshotWriter {
     }
 
     pub fn finalize_to_writer(&mut self, writer: &mut impl Write) -> Result<(), ImpulseError> {
-
         // Sort relations primary by src_domain_id, secondary by tgt_domain_id
         self.relations.sort_by(|a, b| {
             a.src_domain_id
@@ -250,7 +262,11 @@ impl SnapshotWriter {
 
         // Infer domain node_count from relations if 0
         for rel in &self.relations {
-            if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == rel.src_domain_id) {
+            if let Some(dom) = self
+                .domains
+                .iter_mut()
+                .find(|d| d.domain_id == rel.src_domain_id)
+            {
                 if dom.node_count < rel.node_count {
                     dom.node_count = rel.node_count;
                 }
@@ -277,8 +293,16 @@ impl SnapshotWriter {
         };
 
         // Collect string offsets
-        let domain_name_offsets: Vec<u32> = self.domains.iter().map(|d| get_or_add_string(&d.name)).collect();
-        let rel_name_offsets: Vec<u32> = self.relations.iter().map(|r| get_or_add_string(&r.name)).collect();
+        let domain_name_offsets: Vec<u32> = self
+            .domains
+            .iter()
+            .map(|d| get_or_add_string(&d.name))
+            .collect();
+        let rel_name_offsets: Vec<u32> = self
+            .relations
+            .iter()
+            .map(|r| get_or_add_string(&r.name))
+            .collect();
 
         let mut attr_name_offsets: Vec<Vec<u32>> = Vec::new();
         for rel in &self.relations {
@@ -289,7 +313,11 @@ impl SnapshotWriter {
             attr_name_offsets.push(a_offs);
         }
 
-        let index_name_offsets: Vec<u32> = self.indexes.iter().map(|i| get_or_add_string(&i.name)).collect();
+        let index_name_offsets: Vec<u32> = self
+            .indexes
+            .iter()
+            .map(|i| get_or_add_string(&i.name))
+            .collect();
 
         let mut dir_table_bytes = Vec::new();
 
@@ -333,7 +361,8 @@ impl SnapshotWriter {
         let aligned_dir_table_len = align_4k(total_dir_table_len as u64) as usize;
 
         // Base offset where Relation Blocks payload begins
-        let rel_blocks_base_offset = IMPULSE_DEFAULT_DATA_OFFSET as u64 + aligned_dir_table_len as u64;
+        let rel_blocks_base_offset =
+            IMPULSE_DEFAULT_DATA_OFFSET as u64 + aligned_dir_table_len as u64;
 
         // 2. Serialize Relation Blocks
         let mut payload = Vec::new();
@@ -343,14 +372,22 @@ impl SnapshotWriter {
             // Align csrRowOffsets to 128B
             Self::align_buffer(&mut payload, 128);
             rel.csr_row_off_offset = rel_blocks_base_offset + payload.len() as u64;
-            let row_bytes: Vec<u8> = rel.row_offsets.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let row_bytes: Vec<u8> = rel
+                .row_offsets
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
             rel.csr_row_off_bytes = row_bytes.len() as u64;
             payload.extend_from_slice(&row_bytes);
 
             // Align csrColumnIndices to 128B
             Self::align_buffer(&mut payload, 128);
             rel.csr_col_idx_offset = rel_blocks_base_offset + payload.len() as u64;
-            let col_bytes: Vec<u8> = rel.col_indices.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let col_bytes: Vec<u8> = rel
+                .col_indices
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
             rel.csr_col_idx_bytes = col_bytes.len() as u64;
             payload.extend_from_slice(&col_bytes);
 
@@ -390,7 +427,6 @@ impl SnapshotWriter {
                     attr.offsets_bytes = 0;
                 }
             }
-
         }
         // Serialize Index Blocks
         for idx in &mut self.indexes {
@@ -542,10 +578,7 @@ impl SnapshotWriter {
         };
 
         let header_raw = unsafe {
-            std::slice::from_raw_parts(
-                &header as *const SnapshotHeader as *const u8,
-                0x3E,
-            )
+            std::slice::from_raw_parts(&header as *const SnapshotHeader as *const u8, 0x3E)
         };
         header.header_checksum = compute_crc16(header_raw);
 
@@ -556,8 +589,12 @@ impl SnapshotWriter {
             )
         };
 
-        writer.write_all(header_full_bytes).map_err(|_| ImpulseError::IoFailure)?;
-        writer.write_all(&final_payload).map_err(|_| ImpulseError::IoFailure)?;
+        writer
+            .write_all(header_full_bytes)
+            .map_err(|_| ImpulseError::IoFailure)?;
+        writer
+            .write_all(&final_payload)
+            .map_err(|_| ImpulseError::IoFailure)?;
         writer.flush().map_err(|_| ImpulseError::IoFailure)?;
 
         Ok(())
@@ -568,4 +605,3 @@ impl SnapshotWriter {
         self.finalize_to_writer(&mut file)
     }
 }
-

@@ -56,9 +56,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reader = SnapshotReader::open(snapshot_path)?;
 
     if let Some(rel) = reader.get_relation_entry(0) {
-        println!("   -> Relation: {} (Nodes: {}, Edges: {})", rel.name, rel.node_count, rel.edge_count);
+        println!(
+            "   -> Relation: {} (Nodes: {}, Edges: {})",
+            rel.name, rel.node_count, rel.edge_count
+        );
         for attr in &rel.attributes {
-            println!("   -> Attribute Column: '{}' (Type: 0x{:02X}, Data Bytes: {})", attr.name, attr.type_code, attr.data_bytes);
+            println!(
+                "   -> Attribute Column: '{}' (Type: 0x{:02X}, Data Bytes: {})",
+                attr.name, attr.type_code, attr.data_bytes
+            );
         }
     }
 
@@ -66,7 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 3: Hardware-Accelerated Dynamic SIMD Operations
     // ------------------------------------------------------------------------
     println!("\n3. Dynamic Hardware SIMD Vector Acceleration:");
-    println!("   -> Active Highway SIMD Target: {}", simd::current_target_name());
+    println!(
+        "   -> Active Highway SIMD Target: {}",
+        simd::current_target_name()
+    );
 
     // Vector Dot Product
     let vec_a = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];

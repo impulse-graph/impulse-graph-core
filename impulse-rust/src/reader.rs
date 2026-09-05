@@ -92,7 +92,8 @@ impl SnapshotReader {
                     let dataset = &file_str[..dot_pos];
                     let candidate2 = Path::new(&base_dir).join(dataset).join(p);
                     if candidate2.exists() {
-                        let mmap = MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
+                        let mmap =
+                            MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
                         return Self::from_mmap(mmap);
                     }
                 }
@@ -100,7 +101,12 @@ impl SnapshotReader {
         }
 
         // Check local search paths
-        let local_prefixes = ["datasets/", "../datasets/", "../../datasets/", "../../../datasets/"];
+        let local_prefixes = [
+            "datasets/",
+            "../datasets/",
+            "../../datasets/",
+            "../../../datasets/",
+        ];
         for prefix in &local_prefixes {
             let candidate1 = Path::new(prefix).join(p);
             if candidate1.exists() {
@@ -112,7 +118,8 @@ impl SnapshotReader {
                     let dataset = &file_str[..dot_pos];
                     let candidate2 = Path::new(prefix).join(dataset).join(p);
                     if candidate2.exists() {
-                        let mmap = MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
+                        let mmap =
+                            MemoryMap::open(candidate2).map_err(|_| ImpulseError::IoFailure)?;
                         return Self::from_mmap(mmap);
                     }
                 }
@@ -143,7 +150,11 @@ impl SnapshotReader {
         }
 
         let ver = header.version();
-        if ver != IMPULSE_VERSION_PACKED && (ver >> 8) != IMPULSE_VERSION_MAJOR && ver != 2 && ver != 0x0204 {
+        if ver != IMPULSE_VERSION_PACKED
+            && (ver >> 8) != IMPULSE_VERSION_MAJOR
+            && ver != 2
+            && ver != 0x0204
+        {
             return Err(ImpulseError::UnsupportedVersion);
         }
 
@@ -154,7 +165,10 @@ impl SnapshotReader {
             }
         }
 
-        let dir_offset = if ver == 9 && header.footer_directory_offset() > 0 && (header.footer_directory_offset() as usize) < slice.len() {
+        let dir_offset = if ver == 9
+            && header.footer_directory_offset() > 0
+            && (header.footer_directory_offset() as usize) < slice.len()
+        {
             header.footer_directory_offset() as usize
         } else {
             header.data_offset() as usize
@@ -176,7 +190,8 @@ impl SnapshotReader {
             if cur + 4 > slice.len() {
                 return Err(ImpulseError::BufferOverflow);
             }
-            let string_table_bytes = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
+            let string_table_bytes =
+                u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
             cur += 4;
 
             if cur + string_table_bytes > slice.len() {
@@ -217,7 +232,8 @@ impl SnapshotReader {
                 };
                 cur += std::mem::size_of::<DomainCatalogEntry>();
 
-                let key_type = KeyType::from_u8(dom_entry.key_type()).ok_or(ImpulseError::InvalidArgument)?;
+                let key_type =
+                    KeyType::from_u8(dom_entry.key_type()).ok_or(ImpulseError::InvalidArgument)?;
                 let name = validate_and_get_string(dom_entry.name_offset() as usize)?;
 
                 domains.push(DomainInfo {
@@ -295,17 +311,27 @@ impl SnapshotReader {
             // Legacy v2.4 parsing
             for d_idx in 0..domain_count {
                 if cur + 64 > slice.len() {
-                    eprintln!("Overflow at domain index d_idx={}, cur={}, slice.len()={}", d_idx, cur, slice.len());
+                    eprintln!(
+                        "Overflow at domain index d_idx={}, cur={}, slice.len()={}",
+                        d_idx,
+                        cur,
+                        slice.len()
+                    );
                     return Err(ImpulseError::BufferOverflow);
                 }
                 let dom_id = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap());
-                let key_t = KeyType::from_u8(slice[cur + 2]).ok_or(ImpulseError::InvalidArgument)?;
-                let name_off = u32::from_le_bytes(slice[cur + 44..cur + 48].try_into().unwrap()) as usize;
-                let name_len = u16::from_le_bytes(slice[cur + 48..cur + 50].try_into().unwrap()) as usize;
+                let key_t =
+                    KeyType::from_u8(slice[cur + 2]).ok_or(ImpulseError::InvalidArgument)?;
+                let name_off =
+                    u32::from_le_bytes(slice[cur + 44..cur + 48].try_into().unwrap()) as usize;
+                let name_len =
+                    u16::from_le_bytes(slice[cur + 48..cur + 50].try_into().unwrap()) as usize;
                 cur += 64;
 
                 let name = if name_len > 0 && name_off > 0 && name_off + name_len <= slice.len() {
-                    std::str::from_utf8(&slice[name_off..name_off + name_len]).unwrap_or("").to_string()
+                    std::str::from_utf8(&slice[name_off..name_off + name_len])
+                        .unwrap_or("")
+                        .to_string()
                 } else {
                     String::new()
                 };
@@ -325,7 +351,12 @@ impl SnapshotReader {
 
             for r_idx in 0..relation_count {
                 if cur + 128 > slice.len() {
-                    eprintln!("Overflow at relation index r_idx={}, cur={}, slice.len()={}", r_idx, cur, slice.len());
+                    eprintln!(
+                        "Overflow at relation index r_idx={}, cur={}, slice.len()={}",
+                        r_idx,
+                        cur,
+                        slice.len()
+                    );
                     return Err(ImpulseError::BufferOverflow);
                 }
                 let src_dom = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap());
@@ -334,9 +365,11 @@ impl SnapshotReader {
                 let node_cnt = u64::from_le_bytes(slice[cur + 16..cur + 24].try_into().unwrap());
                 let edge_cnt = u64::from_le_bytes(slice[cur + 24..cur + 32].try_into().unwrap());
                 let csr_row_off = u64::from_le_bytes(slice[cur + 32..cur + 40].try_into().unwrap());
-                let csr_row_bytes = u64::from_le_bytes(slice[cur + 40..cur + 48].try_into().unwrap());
+                let csr_row_bytes =
+                    u64::from_le_bytes(slice[cur + 40..cur + 48].try_into().unwrap());
                 let csr_col_idx = u64::from_le_bytes(slice[cur + 48..cur + 56].try_into().unwrap());
-                let csr_col_bytes = u64::from_le_bytes(slice[cur + 56..cur + 64].try_into().unwrap());
+                let csr_col_bytes =
+                    u64::from_le_bytes(slice[cur + 56..cur + 64].try_into().unwrap());
                 cur += 128;
 
                 relations.push(RelationInfo {
@@ -418,30 +451,34 @@ impl SnapshotReader {
     }
 
     pub fn get_row_offsets(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
-        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
         let slice = self.mmap.as_slice();
         let start = rel.csr_row_off_offset as usize;
         let bytes = rel.csr_row_off_bytes as usize;
         if start + bytes > slice.len() {
             return Err(ImpulseError::BufferOverflow);
         }
-        let row_offsets = unsafe {
-            std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4)
-        };
+        let row_offsets =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(row_offsets)
     }
 
     pub fn get_col_indices(&self, relation_index: usize) -> Result<&[u32], ImpulseError> {
-        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
         let slice = self.mmap.as_slice();
         let start = rel.csr_col_idx_offset as usize;
         let bytes = rel.csr_col_idx_bytes as usize;
         if start + bytes > slice.len() {
             return Err(ImpulseError::BufferOverflow);
         }
-        let col_indices = unsafe {
-            std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4)
-        };
+        let col_indices =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(col_indices)
     }
 
@@ -494,12 +531,24 @@ impl SnapshotReader {
         col_indices[start..end].iter().any(|&v| v as u64 == tgt_id)
     }
 
-    pub fn is_adjacent(&self, relation_index: u16, src_id: u64, tgt_id: u64) -> Result<bool, ImpulseError> {
+    pub fn is_adjacent(
+        &self,
+        relation_index: u16,
+        src_id: u64,
+        tgt_id: u64,
+    ) -> Result<bool, ImpulseError> {
         Ok(self.is_reachable(relation_index, src_id, tgt_id))
     }
 
-    pub fn get_neighbors(&self, relation_index: u16, src_id: u64) -> Result<Vec<u64>, ImpulseError> {
-        let rel = self.relations.get(relation_index as usize).ok_or(ImpulseError::NotFound)?;
+    pub fn get_neighbors(
+        &self,
+        relation_index: u16,
+        src_id: u64,
+    ) -> Result<Vec<u64>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index as usize)
+            .ok_or(ImpulseError::NotFound)?;
         if src_id >= rel.node_count {
             return Ok(Vec::new());
         }
@@ -556,18 +605,30 @@ impl SnapshotReader {
         cur += 4;
 
         for _ in 0..count {
-            if cur + 2 > start + total { break; }
+            if cur + 2 > start + total {
+                break;
+            }
             let klen = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap()) as usize;
             cur += 2;
-            if cur + klen > start + total { break; }
-            let key = std::str::from_utf8(&slice[cur..cur + klen]).unwrap_or("").to_string();
+            if cur + klen > start + total {
+                break;
+            }
+            let key = std::str::from_utf8(&slice[cur..cur + klen])
+                .unwrap_or("")
+                .to_string();
             cur += klen;
 
-            if cur + 4 > start + total { break; }
+            if cur + 4 > start + total {
+                break;
+            }
             let vlen = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
             cur += 4;
-            if cur + vlen > start + total { break; }
-            let val = std::str::from_utf8(&slice[cur..cur + vlen]).unwrap_or("").to_string();
+            if cur + vlen > start + total {
+                break;
+            }
+            let val = std::str::from_utf8(&slice[cur..cur + vlen])
+                .unwrap_or("")
+                .to_string();
             cur += vlen;
 
             map.insert(key, val);
@@ -576,9 +637,19 @@ impl SnapshotReader {
         Ok(map)
     }
 
-    pub fn get_attribute_data(&self, relation_index: usize, attribute_index: usize) -> Result<&[u8], ImpulseError> {
-        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
-        let attr = rel.attributes.get(attribute_index).ok_or(ImpulseError::NotFound)?;
+    pub fn get_attribute_data(
+        &self,
+        relation_index: usize,
+        attribute_index: usize,
+    ) -> Result<&[u8], ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let attr = rel
+            .attributes
+            .get(attribute_index)
+            .ok_or(ImpulseError::NotFound)?;
         let slice = self.mmap.as_slice();
         let start = attr.data_offset as usize;
         let bytes = attr.data_bytes as usize;
@@ -588,9 +659,19 @@ impl SnapshotReader {
         Ok(&slice[start..start + bytes])
     }
 
-    pub fn get_attribute_offsets(&self, relation_index: usize, attribute_index: usize) -> Result<Option<&[u32]>, ImpulseError> {
-        let rel = self.relations.get(relation_index).ok_or(ImpulseError::NotFound)?;
-        let attr = rel.attributes.get(attribute_index).ok_or(ImpulseError::NotFound)?;
+    pub fn get_attribute_offsets(
+        &self,
+        relation_index: usize,
+        attribute_index: usize,
+    ) -> Result<Option<&[u32]>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let attr = rel
+            .attributes
+            .get(attribute_index)
+            .ok_or(ImpulseError::NotFound)?;
         if attr.offsets_bytes == 0 {
             return Ok(None);
         }
@@ -600,13 +681,16 @@ impl SnapshotReader {
         if start + bytes > slice.len() {
             return Err(ImpulseError::BufferOverflow);
         }
-        let offsets = unsafe {
-            std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4)
-        };
+        let offsets =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(Some(offsets))
     }
 
-    pub fn get_domain_attribute_data(&self, domain_id: u16, name: &str) -> Result<&[u8], ImpulseError> {
+    pub fn get_domain_attribute_data(
+        &self,
+        domain_id: u16,
+        name: &str,
+    ) -> Result<&[u8], ImpulseError> {
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -619,7 +703,11 @@ impl SnapshotReader {
         Err(ImpulseError::NotFound)
     }
 
-    pub fn get_domain_attribute_offsets(&self, domain_id: u16, name: &str) -> Result<Option<&[u32]>, ImpulseError> {
+    pub fn get_domain_attribute_offsets(
+        &self,
+        domain_id: u16,
+        name: &str,
+    ) -> Result<Option<&[u32]>, ImpulseError> {
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -632,8 +720,15 @@ impl SnapshotReader {
         Err(ImpulseError::NotFound)
     }
 
-    pub fn get_relation_statistics(&self, relation_index: usize) -> Result<crate::stats::RelationStatistics, ImpulseError> {
-        crate::stats::RelationStatisticsCalculator::calculate(self, relation_index, crate::stats::RelationStatisticsCalculator::DEFAULT_SUPERNODE_ZSCORE_THRESHOLD)
+    pub fn get_relation_statistics(
+        &self,
+        relation_index: usize,
+    ) -> Result<crate::stats::RelationStatistics, ImpulseError> {
+        crate::stats::RelationStatisticsCalculator::calculate(
+            self,
+            relation_index,
+            crate::stats::RelationStatisticsCalculator::DEFAULT_SUPERNODE_ZSCORE_THRESHOLD,
+        )
     }
 
     pub fn get_graph_statistics(&self) -> Result<crate::stats::GraphStatistics, ImpulseError> {
@@ -642,17 +737,29 @@ impl SnapshotReader {
 
         for (r_idx, r) in self.relations.iter().enumerate() {
             let stats = self.get_relation_statistics(r_idx)?;
-            let rel_name = if r.name.is_empty() { format!("rel_{}", r.relation_id) } else { r.name.clone() };
+            let rel_name = if r.name.is_empty() {
+                format!("rel_{}", r.relation_id)
+            } else {
+                r.name.clone()
+            };
             rel_map.insert(rel_name.clone(), stats);
 
             for (a_idx, a) in r.attributes.iter().enumerate() {
                 if let Ok(data) = self.get_attribute_data(r_idx, a_idx) {
                     let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
                     let attr_stats = match base_type {
-                        1 | 3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(&a.name, data),
-                        2 | 4 => crate::stats::AttributeStatisticsCalculator::calculate_int64(&a.name, data),
-                        6 => crate::stats::AttributeStatisticsCalculator::calculate_float32(&a.name, data),
-                        7 => crate::stats::AttributeStatisticsCalculator::calculate_float64(&a.name, data),
+                        1 | 3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(
+                            &a.name, data,
+                        ),
+                        2 | 4 => crate::stats::AttributeStatisticsCalculator::calculate_int64(
+                            &a.name, data,
+                        ),
+                        6 => crate::stats::AttributeStatisticsCalculator::calculate_float32(
+                            &a.name, data,
+                        ),
+                        7 => crate::stats::AttributeStatisticsCalculator::calculate_float64(
+                            &a.name, data,
+                        ),
                         _ => crate::stats::AttributeStatistics::empty(&a.name),
                     };
                     attr_map.insert(format!("{}.{}", rel_name, a.name), attr_stats);

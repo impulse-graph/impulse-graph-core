@@ -15,8 +15,8 @@ pub mod writer;
 pub use ffi::*;
 pub use reader::{AttributeInfo, DomainInfo, RelationInfo, SnapshotReader};
 pub use spec::{
-    BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader,
-    IMPULSE_MAGIC, IMPULSE_VERSION_PACKED,
+    BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader, IMPULSE_MAGIC,
+    IMPULSE_VERSION_PACKED,
 };
 pub use stats::*;
 pub use traversal::{StepDirection, Traversal, TraversalStep};
@@ -60,14 +60,7 @@ mod tests {
         let row_offsets = vec![0u32, 2, 3, 4, 5];
         let col_indices = vec![1u32, 2, 2, 3, 0];
 
-        writer.add_relation(
-            0,
-            0,
-            4,
-            5,
-            row_offsets,
-            col_indices,
-        );
+        writer.add_relation(0, 0, 4, 5, row_offsets, col_indices);
 
         // Add Edge Attribute (SoA mode): "weight" (float32)
         let mut weight_bytes = Vec::new();
@@ -156,7 +149,7 @@ mod tests {
         // 1. Verify relation 0 (node_count = 0) has 1 row offset = 4 bytes, 0 column bytes
         assert_eq!(rels[0].node_count, 0);
         assert_eq!(rels[0].csr_row_off_bytes, 4); // N + 1 = 1 uint32 offset [0]
-        assert_eq!(rels[0].csr_col_idx_bytes, 0);  // 0 column indices
+        assert_eq!(rels[0].csr_col_idx_bytes, 0); // 0 column indices
 
         // 2. Verify relation 1: node_count = 1023 has N + 1 = 1024 uint32 row offsets = 4096 bytes
         assert_eq!(rels[1].node_count, 1023);
@@ -165,10 +158,19 @@ mod tests {
 
         // Verify relation 1 row_offsets ends on a 4KB boundary and relation 2 block starts immediately
         let rel1_end_offset = rels[1].csr_row_off_offset + rels[1].csr_row_off_bytes;
-        assert_eq!(rel1_end_offset % 4096, 0, "Relation 1 end offset 0x{:X} should land exactly on 4KB page boundary", rel1_end_offset);
+        assert_eq!(
+            rel1_end_offset % 4096,
+            0,
+            "Relation 1 end offset 0x{:X} should land exactly on 4KB page boundary",
+            rel1_end_offset
+        );
 
         // Relation 2 start offset should match rel1_end_offset
-        assert_eq!(rels[2].csr_row_off_offset, rel1_end_offset, "Relation 2 row offset 0x{:X} should start immediately at 4KB page boundary 0x{:X}", rels[2].csr_row_off_offset, rel1_end_offset);
+        assert_eq!(
+            rels[2].csr_row_off_offset, rel1_end_offset,
+            "Relation 2 row offset 0x{:X} should start immediately at 4KB page boundary 0x{:X}",
+            rels[2].csr_row_off_offset, rel1_end_offset
+        );
 
         let _ = fs::remove_file(TEST_FILE);
     }
@@ -202,7 +204,13 @@ mod tests {
         assert_eq!(rev1, vec![1, 2]);
 
         // Param binding & count
-        let count = reader.traverse(0).out("0").out("0").with_param("minScore", 0.5).count().unwrap();
+        let count = reader
+            .traverse(0)
+            .out("0")
+            .out("0")
+            .with_param("minScore", 0.5)
+            .count()
+            .unwrap();
         assert_eq!(count, 1);
 
         let _ = fs::remove_file(TRAV_TEST_FILE);
@@ -253,8 +261,14 @@ mod tests {
         assert_eq!(stats.p99_degree, 50);
 
         // Supernode detection
-        assert!(stats.is_supernode(0), "Node 0 (degree 50) should be classified as supernode");
-        assert!(!stats.is_supernode(1), "Node 1 (degree 1) should NOT be classified as supernode");
+        assert!(
+            stats.is_supernode(0),
+            "Node 0 (degree 50) should be classified as supernode"
+        );
+        assert!(
+            !stats.is_supernode(1),
+            "Node 1 (degree 1) should NOT be classified as supernode"
+        );
 
         let graph_stats = reader.get_graph_statistics().unwrap();
         assert_eq!(graph_stats.relation_stats.len(), 1);
@@ -275,14 +289,7 @@ mod tests {
         age_bytes.extend_from_slice(&30i32.to_ne_bytes());
         age_bytes.extend_from_slice(&35i32.to_ne_bytes());
 
-        writer.add_attribute_to_domain(
-            0,
-            "age",
-            BaseDataType::Int32 as u8,
-            1,
-            age_bytes,
-            None,
-        );
+        writer.add_attribute_to_domain(0, "age", BaseDataType::Int32 as u8, 1, age_bytes, None);
 
         let finalize_res = writer.finalize();
         assert!(finalize_res.is_ok(), "Finalize failed: {:?}", finalize_res);
@@ -302,5 +309,3 @@ mod tests {
         let _ = fs::remove_file(DOMAIN_ATTR_TEST_FILE);
     }
 }
-
-
