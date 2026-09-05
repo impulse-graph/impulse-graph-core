@@ -17,6 +17,8 @@ try:
         VmStatus,
         Instruction,
         opcodes,
+        parse_cel as _native_parse_cel,
+        optimize_cel as _native_optimize_cel,
     )
 except ImportError:
     try:
@@ -31,6 +33,8 @@ except ImportError:
             VmStatus,
             Instruction,
             opcodes,
+            parse_cel as _native_parse_cel,
+            optimize_cel as _native_optimize_cel,
         )
     except ImportError:
         _NativeQueryBuilder = None
@@ -38,6 +42,8 @@ except ImportError:
         _NativeQueryResult = None
         _NativeVmContext = None
         _NativeVmState = None
+        _native_parse_cel = None
+        _native_optimize_cel = None
         opcodes = None
     RegisterType = None
     VmStatus = None
@@ -327,6 +333,11 @@ class QueryBuilder:
         self._native.filter_node_str_prefix(prefix)
         return self
 
+    def filter_cel(self, expression: str) -> "QueryBuilder":
+        """Delegate Google CEL expression parsing and SIMD filter lowering to C++ Pratt compiler."""
+        self._native.filter_cel(expression)
+        return self
+
     def union_with(self, src_reg: int) -> "QueryBuilder":
         self._native.union_with(src_reg)
         return self
@@ -520,6 +531,20 @@ class QueryBuilder:
         return CompiledQuery(self._native.compile())
 
 
+def parse_cel(expression: str) -> str:
+    """Parse a Google CEL expression and compile into ImpScheme S-Expression IR via C++ Pratt compiler."""
+    if _native_parse_cel is None:
+        raise RuntimeError("_impulse_native extension is not compiled.")
+    return _native_parse_cel(expression)
+
+
+def optimize_cel(expression: str) -> str:
+    """Parse, optimize, and constant-fold a Google CEL expression into ImpScheme S-Expression IR via C++ optimizer."""
+    if _native_optimize_cel is None:
+        raise RuntimeError("_impulse_native extension is not compiled.")
+    return _native_optimize_cel(expression)
+
+
 __all__ = [
     "VmContext",
     "VmState",
@@ -530,4 +555,6 @@ __all__ = [
     "VmStatus",
     "Instruction",
     "opcodes",
+    "parse_cel",
+    "optimize_cel",
 ]

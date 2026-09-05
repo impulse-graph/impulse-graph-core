@@ -154,7 +154,7 @@ impl RelationStatisticsCalculator {
         let mut unique_source_nodes = 0u64;
         let mut max_out_degree = 0u32;
 
-        if row_offsets.len() >= n + 1 {
+        if row_offsets.len() > n {
             for i in 0..n {
                 let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
                 out_degrees[i] = deg;
@@ -282,19 +282,35 @@ impl AttributeStatisticsCalculator {
                 continue;
             }
 
-            if (val as i64) < min { min = val as i64; }
-            if (val as i64) > max { max = val as i64; }
-            if distinct.len() < 10_000 { distinct.insert(val); }
+            if (val as i64) < min {
+                min = val as i64;
+            }
+            if (val as i64) > max {
+                max = val as i64;
+            }
+            if distinct.len() < 10_000 {
+                distinct.insert(val);
+            }
 
             if first {
                 prev = val;
                 first = false;
             } else {
-                if val != prev { is_constant = false; }
-                if val <= prev { is_strict_inc = false; }
-                if val < prev { is_weak_inc = false; }
-                if val >= prev { is_strict_dec = false; }
-                if val > prev { is_weak_dec = false; }
+                if val != prev {
+                    is_constant = false;
+                }
+                if val <= prev {
+                    is_strict_inc = false;
+                }
+                if val < prev {
+                    is_weak_inc = false;
+                }
+                if val >= prev {
+                    is_strict_dec = false;
+                }
+                if val > prev {
+                    is_weak_dec = false;
+                }
                 prev = val;
             }
         }
@@ -357,19 +373,35 @@ impl AttributeStatisticsCalculator {
                 continue;
             }
 
-            if val < min { min = val; }
-            if val > max { max = val; }
-            if distinct.len() < 10_000 { distinct.insert(val); }
+            if val < min {
+                min = val;
+            }
+            if val > max {
+                max = val;
+            }
+            if distinct.len() < 10_000 {
+                distinct.insert(val);
+            }
 
             if first {
                 prev = val;
                 first = false;
             } else {
-                if val != prev { is_constant = false; }
-                if val <= prev { is_strict_inc = false; }
-                if val < prev { is_weak_inc = false; }
-                if val >= prev { is_strict_dec = false; }
-                if val > prev { is_weak_dec = false; }
+                if val != prev {
+                    is_constant = false;
+                }
+                if val <= prev {
+                    is_strict_inc = false;
+                }
+                if val < prev {
+                    is_weak_inc = false;
+                }
+                if val >= prev {
+                    is_strict_dec = false;
+                }
+                if val > prev {
+                    is_weak_dec = false;
+                }
                 prev = val;
             }
         }
@@ -433,19 +465,35 @@ impl AttributeStatisticsCalculator {
             }
 
             let val_f64 = val as f64;
-            if val_f64 < min { min = val_f64; }
-            if val_f64 > max { max = val_f64; }
-            if distinct.len() < 10_000 { distinct.insert(val.to_bits()); }
+            if val_f64 < min {
+                min = val_f64;
+            }
+            if val_f64 > max {
+                max = val_f64;
+            }
+            if distinct.len() < 10_000 {
+                distinct.insert(val.to_bits());
+            }
 
             if first {
                 prev = val;
                 first = false;
             } else {
-                if val != prev { is_constant = false; }
-                if val <= prev { is_strict_inc = false; }
-                if val < prev { is_weak_inc = false; }
-                if val >= prev { is_strict_dec = false; }
-                if val > prev { is_weak_dec = false; }
+                if val != prev {
+                    is_constant = false;
+                }
+                if val <= prev {
+                    is_strict_inc = false;
+                }
+                if val < prev {
+                    is_weak_inc = false;
+                }
+                if val >= prev {
+                    is_strict_dec = false;
+                }
+                if val > prev {
+                    is_weak_dec = false;
+                }
                 prev = val;
             }
         }
@@ -508,19 +556,35 @@ impl AttributeStatisticsCalculator {
                 continue;
             }
 
-            if val < min { min = val; }
-            if val > max { max = val; }
-            if distinct.len() < 10_000 { distinct.insert(val.to_bits()); }
+            if val < min {
+                min = val;
+            }
+            if val > max {
+                max = val;
+            }
+            if distinct.len() < 10_000 {
+                distinct.insert(val.to_bits());
+            }
 
             if first {
                 prev = val;
                 first = false;
             } else {
-                if val != prev { is_constant = false; }
-                if val <= prev { is_strict_inc = false; }
-                if val < prev { is_weak_inc = false; }
-                if val >= prev { is_strict_dec = false; }
-                if val > prev { is_weak_dec = false; }
+                if val != prev {
+                    is_constant = false;
+                }
+                if val <= prev {
+                    is_strict_inc = false;
+                }
+                if val < prev {
+                    is_weak_inc = false;
+                }
+                if val >= prev {
+                    is_strict_dec = false;
+                }
+                if val > prev {
+                    is_weak_dec = false;
+                }
                 prev = val;
             }
         }
@@ -696,8 +760,12 @@ impl EquiDepthHistogramBuilder {
     }
 
     pub fn offer(&mut self, value: f64) {
-        if value < self.min { self.min = value; }
-        if value > self.max { self.max = value; }
+        if value < self.min {
+            self.min = value;
+        }
+        if value > self.max {
+            self.max = value;
+        }
 
         if self.reservoir.len() < self.sample_size {
             self.reservoir.push(value);
@@ -724,8 +792,10 @@ impl EquiDepthHistogramBuilder {
         for i in 0..actual_buckets {
             let p = (i + 1) as f64 / actual_buckets as f64;
             let mut idx = (p * n as f64).ceil() as usize;
-            if idx > 0 { idx -= 1; }
-            if idx >= n { idx = n - 1; }
+            idx = idx.saturating_sub(1);
+            if idx >= n {
+                idx = n - 1;
+            }
             buckets.push(sorted[idx]);
         }
 
@@ -828,8 +898,12 @@ impl DegreeDistributionSketch {
         if degree == 0 {
             self.zero_count += 1;
         }
-        if degree > self.max { self.max = degree; }
-        if degree < self.min { self.min = degree; }
+        if degree > self.max {
+            self.max = degree;
+        }
+        if degree < self.min {
+            self.min = degree;
+        }
 
         if self.reservoir.len() < self.sample_size {
             self.reservoir.push(degree);
@@ -850,8 +924,10 @@ impl DegreeDistributionSketch {
         sorted.sort_unstable();
         let n = sorted.len();
         let mut idx = (p * n as f64).ceil() as usize;
-        if idx > 0 { idx -= 1; }
-        if idx >= n { idx = n - 1; }
+        idx = idx.saturating_sub(1);
+        if idx >= n {
+            idx = n - 1;
+        }
         sorted[idx]
     }
 

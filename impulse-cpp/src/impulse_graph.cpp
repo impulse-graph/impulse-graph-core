@@ -787,20 +787,29 @@ bool impulse_snapshot_is_reachable(
     if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->file_size) return false;
     if (rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->file_size) return false;
 
-    const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
-    const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+    bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
+    bool is_node16 = (rel.node_id_width == 2 || rel.node_id_width == 16);
+    bool is_node64 = (rel.node_id_width == 8 || rel.node_id_width == 64);
 
-    size_t num_row_offsets = rel.csr_row_off_bytes / 4;
+    size_t edge_width_bytes = is_edge64 ? 8 : 4;
+    size_t node_width_bytes = is_node16 ? 2 : (is_node64 ? 8 : 4);
+
+    size_t num_row_offsets = rel.csr_row_off_bytes / edge_width_bytes;
     if (src_id + 1 >= num_row_offsets) return false;
 
-    uint32_t start_idx = row_offsets[src_id];
-    uint32_t end_idx = row_offsets[src_id + 1];
+    uint64_t start_idx = is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[src_id]
+                                   : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[src_id];
+    uint64_t end_idx = is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[src_id + 1]
+                                 : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[src_id + 1];
 
-    size_t num_col_indices = rel.csr_col_idx_bytes / 4;
+    size_t num_col_indices = rel.csr_col_idx_bytes / node_width_bytes;
     if (start_idx > end_idx || end_idx > num_col_indices) return false;
 
-    for (uint32_t idx = start_idx; idx < end_idx; ++idx) {
-        if (static_cast<uint64_t>(col_indices[idx]) == tgt_id) {
+    for (uint64_t idx = start_idx; idx < end_idx; ++idx) {
+        uint64_t target_val = is_node16 ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[idx]
+                            : (is_node64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[idx]
+                                         : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[idx]);
+        if (target_val == tgt_id) {
             return true;
         }
     }
@@ -1048,12 +1057,14 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     align128(dir_table);
 
-    // Calculate directory table size including Relation Entries and Attribute Descriptors
+    // Calculate directory table size including Relation Entries, Attribute Descriptors, and Index Entries
     size_t rel_dir_size = 0;
     for (const auto& rel : writer->relations) {
         rel_dir_size += sizeof(impulse_relation_directory_entry_t);
         rel_dir_size += rel.attributes.size() * sizeof(impulse_attribute_descriptor_t);
     }
+    rel_dir_size += writer->indexes.size() * sizeof(impulse_index_directory_entry_v0_9_t);
+
     size_t total_dir_table_len = dir_table.size() + rel_dir_size;
     size_t aligned_dir_table_len = (total_dir_table_len + 4095) & ~4095;
 
@@ -1149,6 +1160,32 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         }
     }
 
+    // Serialize Secondary Index Directory Entries and Payload Data
+    align128(dir_table);
+    for (const auto& idx : writer->indexes) {
+        uint64_t data_off = 0;
+        uint64_t data_bytes = idx.data.size();
+        if (data_bytes > 0) {
+            align128(payload);
+            data_off = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), idx.data.begin(), idx.data.end());
+        }
+
+        impulse_index_directory_entry_v0_9_t entry{};
+        entry.index_id = idx.index_id;
+        entry.domain_id = idx.domain_id;
+        entry.relation_id = idx.relation_id;
+        entry.attribute_index = idx.attribute_index;
+        entry.index_type = idx.index_type;
+        entry.name_offset = get_or_add_string(idx.index_name);
+        entry.data_offset = data_off;
+        entry.data_bytes = data_bytes;
+        entry.payload_feature_mask = idx.payload_feature_mask;
+
+        dir_table.resize(dir_table.size() + sizeof(entry));
+        std::memcpy(dir_table.data() + dir_table.size() - sizeof(entry), &entry, sizeof(entry));
+    }
+
     dir_table.resize(aligned_dir_table_len, 0x00);
 
     std::vector<uint8_t> footer_payload;
@@ -1179,16 +1216,14 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     for (const auto& kv : writer->metadata) {
         uint16_t klen = static_cast<uint16_t>(kv.first.size());
-        mpos = footer_payload.size();
-        footer_payload.resize(mpos + 2);
-        std::memcpy(footer_payload.data() + mpos, &klen, 2);
-        footer_payload.insert(footer_payload.end(), kv.first.begin(), kv.first.end());
-
         uint32_t vlen = static_cast<uint32_t>(kv.second.size());
-        mpos = footer_payload.size();
-        footer_payload.resize(mpos + 4);
-        std::memcpy(footer_payload.data() + mpos, &vlen, 4);
-        footer_payload.insert(footer_payload.end(), kv.second.begin(), kv.second.end());
+        size_t pos = footer_payload.size();
+        footer_payload.resize(pos + 2 + klen + 4 + vlen);
+        uint8_t* ptr = footer_payload.data() + pos;
+        std::memcpy(ptr, &klen, 2); ptr += 2;
+        std::memcpy(ptr, kv.first.data(), klen); ptr += klen;
+        std::memcpy(ptr, &vlen, 4); ptr += 4;
+        std::memcpy(ptr, kv.second.data(), vlen);
     }
 
     // 16-Byte Footer Trailer
@@ -1209,6 +1244,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     header.data_offset = IMPULSE_DEFAULT_DATA_OFFSET;
     header.domain_count = static_cast<uint16_t>(writer->domains.size());
     header.relation_count = static_cast<uint16_t>(writer->relations.size());
+    header.index_count = static_cast<uint16_t>(writer->indexes.size());
     header.timestamp_ms = 1700000000000ULL;
     header.required_features = writer->global_features;
     header.footer_directory_offset = footer_dir_offset;
@@ -1497,6 +1533,30 @@ impulse_status_t impulse_snapshot_get_relation_buffers(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_snapshot_get_relation_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_offsets,
+    const void** out_targets,
+    uint64_t* out_node_count,
+    uint64_t* out_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_offsets || !out_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    *out_offsets = (rel.csr_row_off_offset > 0) ? (raw + rel.csr_row_off_offset) : nullptr;
+    *out_targets = (rel.csr_col_idx_offset > 0) ? (raw + rel.csr_col_idx_offset) : nullptr;
+    if (out_node_count) *out_node_count = rel.node_count;
+    if (out_edge_count) *out_edge_count = rel.edge_count;
+    if (out_node_id_width) *out_node_id_width = rel.node_id_width ? rel.node_id_width : 4;
+    if (out_edge_index_width) *out_edge_index_width = rel.edge_index_width ? rel.edge_index_width : 4;
+    return IMPULSE_OK;
+}
+
 impulse_status_t impulse_snapshot_get_attribute_buffers(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
@@ -1551,6 +1611,30 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     }
     if (out_csc_row_count) *out_csc_row_count = rel.node_count;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_get_relation_csc_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_csc_offsets,
+    const void** out_csc_targets,
+    uint64_t* out_csc_row_count,
+    uint64_t* out_csc_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
+) {
+    if (!snapshot || relation_index >= snapshot->relations.size() || !out_csc_offsets || !out_csc_targets) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& rel = snapshot->relations[relation_index];
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    *out_csc_offsets = (rel.csc_row_off_offset > 0) ? (raw + rel.csc_row_off_offset) : nullptr;
+    *out_csc_targets = (rel.csc_col_idx_offset > 0) ? (raw + rel.csc_col_idx_offset) : nullptr;
+    if (out_csc_row_count) *out_csc_row_count = rel.node_count;
+    if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
+    if (out_node_id_width) *out_node_id_width = rel.node_id_width ? rel.node_id_width : 4;
+    if (out_edge_index_width) *out_edge_index_width = rel.edge_index_width ? rel.edge_index_width : 4;
     return IMPULSE_OK;
 }
 
@@ -1633,3 +1717,6 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
 }
 
 } // extern "C"
+
+
+

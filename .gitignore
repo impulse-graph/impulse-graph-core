@@ -25,11 +25,14 @@ target/
 
 # C / C++ / CMake
 build/
+build-*/
 Testing/
 CMakeFiles/
 CMakeCache.txt
 *.cmake
 cmake-build-*/
+*.profraw
+*.profdata
 *.o
 *.obj
 *.so

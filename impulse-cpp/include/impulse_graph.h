@@ -98,10 +98,24 @@ typedef struct impulse_snapshot impulse_snapshot_t;
 typedef struct impulse_graph impulse_graph_t;
 /** Opaque handle to query pipeline */
 typedef struct impulse_query impulse_query_t;
+/** Struct for compiled CEL queries */
+typedef struct impulse_compiled_query {
+    size_t instruction_count;
+    size_t bytecode_length;
+    uint8_t* bytecode;
+} impulse_compiled_query_t;
 /** Opaque handle to streaming snapshot writer */
 typedef struct impulse_writer impulse_writer_t;
 /** Opaque handle to live mutation delta layer */
 typedef struct impulse_delta_layer impulse_delta_layer_t;
+
+struct impulse_vm_state;
+
+IMPULSE_API int impulse_compile_cel(const char* cel_expr, int is_projection, impulse_compiled_query_t** out_query);
+IMPULSE_API void impulse_compiled_query_destroy(impulse_compiled_query_t* query);
+IMPULSE_API int impulse_fluent_project(impulse_query_t* query, const char* cel_expr);
+IMPULSE_API int impulse_execute_compiled_query(const impulse_snapshot_t* snapshot, impulse_compiled_query_t* query, void* state, uint64_t input_seed);
+
 
 /**
  * @brief Open a binary snapshot file via zero-copy OS memory-mapping (`mmap`).
@@ -336,6 +350,16 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_relation_buffers(
     uint64_t* out_node_count,
     uint64_t* out_edge_count
 );
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_offsets,
+    const void** out_targets,
+    uint64_t* out_node_count,
+    uint64_t* out_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
+);
 IMPULSE_API impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
@@ -343,6 +367,16 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     const uint32_t** out_csc_targets,
     uint64_t* out_csc_row_count,
     uint64_t* out_csc_edge_count
+);
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_csc_raw_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    const void** out_csc_offsets,
+    const void** out_csc_targets,
+    uint64_t* out_csc_row_count,
+    uint64_t* out_csc_edge_count,
+    uint8_t* out_node_id_width,
+    uint8_t* out_edge_index_width
 );
 IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_buffers(
     const impulse_snapshot_t* snapshot,

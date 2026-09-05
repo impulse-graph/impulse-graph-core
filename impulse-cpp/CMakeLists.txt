@@ -19,6 +19,13 @@ if(IMPULSE_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+# --- MC/DC Coverage Option ----------------------------------------------
+option(IMPULSE_ENABLE_MCDC_COVERAGE "Enable LLVM source-based MC/DC code coverage" OFF)
+if(IMPULSE_ENABLE_MCDC_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc)
+    add_link_options(-fprofile-instr-generate)
+endif()
+
 # --- Dependencies: Google Highway --------------------------------------
 include(FetchContent)
 FetchContent_Declare(
@@ -32,7 +39,7 @@ set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(highway)
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
-add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
+add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -42,7 +49,7 @@ target_include_directories(impulse_graph PUBLIC
 target_link_libraries(impulse_graph PUBLIC hwy)
 
 # --- Static Library (.a / .lib) ------------------------------------------
-add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
+add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -117,6 +124,17 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_cel_parser PRIVATE impulse_graph_static)
     add_test(NAME test_cel_parser COMMAND test_cel_parser)
 
+    add_executable(test_vm_mcdc_boundaries tests/test_vm_mcdc_boundaries.cpp)
+    target_link_libraries(test_vm_mcdc_boundaries PRIVATE impulse_graph_static)
+    add_test(NAME test_vm_mcdc_boundaries COMMAND test_vm_mcdc_boundaries)
+
+    add_executable(test_snapshot_mcdc_boundaries tests/test_snapshot_mcdc_boundaries.cpp)
+
+    target_link_libraries(test_snapshot_mcdc_boundaries PRIVATE impulse_graph_static)
+
+    add_test(NAME test_snapshot_mcdc_boundaries COMMAND test_snapshot_mcdc_boundaries)
+
+
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)
 
@@ -154,6 +172,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_cpp_compiler_parity tests/test_cpp_compiler_parity.cpp)
     target_link_libraries(test_cpp_compiler_parity PRIVATE impulse_graph_static)
     add_test(NAME test_cpp_compiler_parity COMMAND test_cpp_compiler_parity)
+
+    add_executable(test_variable_node_id_widths tests/test_variable_node_id_widths.cpp)
+    target_link_libraries(test_variable_node_id_widths PRIVATE impulse_graph_static)
+    add_test(NAME test_variable_node_id_widths COMMAND test_variable_node_id_widths)
 
     add_executable(bench_cpp_compiler_ablation tests/bench_cpp_compiler_ablation.cpp)
     target_link_libraries(bench_cpp_compiler_ablation PRIVATE impulse_graph_static)
@@ -197,3 +219,6 @@ if(IMPULSE_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
+target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
+add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
