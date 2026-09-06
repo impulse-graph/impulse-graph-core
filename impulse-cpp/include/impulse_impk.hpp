@@ -95,7 +95,7 @@ public:
         };
         auto expect = [&](Token::Type t) {
             if (pos < tokens.size() && tokens[pos].type == t) { pos++; return true; }
-            return false;
+            throw std::runtime_error("ImpK parse error: unexpected token");
         };
 
         while (pos < tokens.size() && tokens[pos].type != Token::END) {
@@ -157,6 +157,7 @@ public:
                 pos++;
             }
         }
+        IMPULSE_AUDIT_ASSERT(!tokens.empty());
         return statements;
     }
 
@@ -167,6 +168,7 @@ public:
         std::ostringstream oss;
         oss << "(impk-pipeline";
         for (const auto& s : stmts) {
+            IMPULSE_ASSERT(!s.target_var.empty() || s.op_type == ImpKOpType::ConnectedComponents);
             switch (s.op_type) {
                 case ImpKOpType::MatrixVectorMul:
                     oss << " (mxv " << s.matrix_var << " " << s.vector_var1 << ")";

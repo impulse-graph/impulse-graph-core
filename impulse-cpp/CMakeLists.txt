@@ -15,11 +15,15 @@ endif()
 # --- Assertion Options --------------------------------------------------
 option(IMPULSE_ENABLE_ASSERTIONS "Enable internal debug invariant assertions" OFF)
 option(IMPULSE_ENABLE_AUDIT_ASSERTIONS "Enable expensive structural audit assertions" OFF)
+option(IMPULSE_DISABLE_COMPUTED_GOTO "Disable computed goto and use switched opcode dispatch" OFF)
 if(IMPULSE_ENABLE_ASSERTIONS)
     add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1)
 endif()
 if(IMPULSE_ENABLE_AUDIT_ASSERTIONS)
     add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1 IMPULSE_ENABLE_AUDIT_ASSERTIONS=1)
+endif()
+if(IMPULSE_DISABLE_COMPUTED_GOTO)
+    add_compile_definitions(IMPULSE_DISABLE_COMPUTED_GOTO=1)
 endif()
 
 # --- Sanitizer Option ---------------------------------------------------

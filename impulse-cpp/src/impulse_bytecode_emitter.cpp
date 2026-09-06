@@ -1,5 +1,6 @@
 #include "impulse_bytecode_emitter.hpp"
 #include "impulse_graph.h"
+#include "impulse_assert.h"
 #include <cstring>
 #include <algorithm>
 
@@ -404,6 +405,10 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
     impulse_instruction_t halt{};
     halt.opcode = OP_HALT;
     instr_list.push_back(halt);
+
+    IMPULSE_ASSERT(!instr_list.empty());
+    IMPULSE_ASSERT(instr_list.back().opcode == OP_HALT);
+    IMPULSE_AUDIT_ASSERT(instr_list.size() >= 1);
 
     prog_out.instruction_list = std::move(instr_list);
     prog_out.instruction_count = prog_out.instruction_list.size();

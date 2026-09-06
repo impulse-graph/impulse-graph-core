@@ -709,6 +709,9 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     }
 
     if (out_status) *out_status = IMPULSE_OK;
+    IMPULSE_ASSERT(snap != nullptr);
+    IMPULSE_AUDIT_ASSERT(snap->mmap_ptr != nullptr);
+    IMPULSE_AUDIT_ASSERT(snap->file_size >= 64);
     return snap.release();
 }
 

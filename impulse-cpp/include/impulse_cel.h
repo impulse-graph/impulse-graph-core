@@ -361,7 +361,6 @@ enum Precedence {
     PREC_ADD_SUB,     // + -
     PREC_MUL_DIV,     // * / %
     PREC_UNARY,       // ! - +
-    PREC_COLON,
     PREC_CALL_MEMBER  // . () []
 };
 
@@ -402,7 +401,6 @@ private:
     Precedence get_precedence(TokenType type) const {
         switch (type) {
             case TokenType::EQ: return PREC_ASSIGN;
-            case TokenType::COLON: return PREC_COLON;
             case TokenType::QUESTION: return PREC_CONDITIONAL;
             case TokenType::PIPE_PIPE: return PREC_OR;
             case TokenType::AMP_AMP: return PREC_AND;
@@ -473,8 +471,8 @@ private:
     }
 
     std::shared_ptr<AstNode> parse_precedence(Precedence prec) {
-        std::cout << "parse_precedence(" << prec << ") called. curr_=" << curr_.text << std::endl; auto left = parse_prefix();
-        if (!left) { std::cout << "prefix failed on " << curr_.text << std::endl; return nullptr; }
+        auto left = parse_prefix();
+        if (!left) return nullptr;
 
         while (prec <= get_precedence(curr_.type)) {
             Token op = curr_;
@@ -522,9 +520,9 @@ private:
                 }
             } else {
                 // Binary operator
-                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ || op.type == TokenType::COLON ? 0 : 1)); // Right associative for = and : maybe? Or just 1 for left.
+                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ ? 0 : 1));
                 auto right = parse_precedence(next_prec);
-                if (!right) { std::cout << "right failed on " << op.text << std::endl; return nullptr; }
+                if (!right) return nullptr;
                 left = AstNode::make_binary(op.text, left, right);
             }
         }

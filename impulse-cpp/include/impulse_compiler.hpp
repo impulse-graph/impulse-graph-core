@@ -13,6 +13,7 @@
 #include "impulse_vm.h"
 #include "impulse_graph.h"
 #include "impulse_cel.h"
+#include "impulse_assert.h"
 
 #include <string>
 #include <vector>
@@ -648,38 +649,50 @@ public:
         if (!program || program->steps.empty()) {
             throw std::invalid_argument("Empty ImpScheme program");
         }
+        IMPULSE_ASSERT(program != nullptr);
+        IMPULSE_ASSERT(!program->steps.empty());
 
         // Pass 1: Pre-bind validation
         validate_ast(program);
 
         // Pass 2: Parameter binding & Constant folding
         AstPtr ast = pass_parameter_binding(program, params, options);
+        IMPULSE_ASSERT(ast != nullptr);
 
         // Pass 3: Multi-hop Kernel Fusion (2-Hop Walk)
         if (options.enable_kernel_fusion) {
             ast = pass_kernel_fusion(ast, catalog, options);
+            IMPULSE_ASSERT(ast != nullptr);
         }
 
         // Pass 4: Physical Binding (Map relation names to catalog IDs)
         ast = pass_physical_binding(ast, catalog);
+        IMPULSE_ASSERT(ast != nullptr);
 
         // Pass 5: Direction Selection & CSC Inversion Check
         if (options.enable_direction_selection) {
             ast = pass_direction_selection(ast, catalog);
+            IMPULSE_ASSERT(ast != nullptr);
         }
 
         // Pass 6: Register Allocation & L1 Cache Ping-Ponging (R0 <-> R1)
         ast = pass_register_allocation(ast, options);
+        IMPULSE_ASSERT(ast != nullptr);
 
         // Pass 7: Bytecode Emission with Seed Inlining & Early Exit Flags
-        return emit_bytecode(ast, options);
+        CompiledImpulseProgram result = emit_bytecode(ast, options);
+        IMPULSE_AUDIT_ASSERT(result.instruction_count() > 0);
+        IMPULSE_AUDIT_ASSERT(result.instructions.back().opcode == OP_HALT);
+        return result;
     }
 
 private:
     static void validate_ast(const std::shared_ptr<ScmProgram>& prog) {
+        IMPULSE_ASSERT(prog != nullptr);
         if (prog->steps.empty()) {
             throw std::invalid_argument("ScmProgram must contain at least one step");
         }
+        IMPULSE_AUDIT_ASSERT(!prog->steps.empty());
     }
 
     
@@ -892,6 +905,23 @@ private:
             uint16_t rel_id = static_cast<uint16_t>(std::max(0, w->physical_rel_id));
             inst.payload = (static_cast<uint32_t>(rel_id) << 16) | static_cast<uint32_t>(w->src_reg);
             inst.flags = 0;
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::WALK_2HOP) {
+            auto w2 = std::static_pointer_cast<ScmWalk2Hop>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_CSR_WALK_2HOP;
+            inst.dst_reg = w2->dst_reg;
+            uint16_t r1 = static_cast<uint16_t>(std::max(0, w2->rel1_id));
+            uint16_t r2 = static_cast<uint16_t>(std::max(0, w2->rel2_id));
+            inst.payload = static_cast<uint32_t>(r1) | (static_cast<uint32_t>(r2) << 16);
+            inst.flags = 0;
+            if (options.enable_seed_inlining && w2->src_reg == 0) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_INPUT_SEED;
+            }
+            if (options.enable_early_exit) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
+            }
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::COLLECT) {

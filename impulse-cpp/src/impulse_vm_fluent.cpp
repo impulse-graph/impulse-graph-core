@@ -1,4 +1,5 @@
 #include "impulse_vm_fluent.hpp"
+#include "impulse_assert.h"
 #include "impulse_compiler.hpp"
 #include "impulse_cypher.hpp"
 #include "impulse_datalog.hpp"
@@ -23,6 +24,8 @@ QueryResult CompiledQuery::executeWithContext(
     if (!state) {
         return QueryResult{IMPULSE_VM_ERR_NULL_SNAPSHOT, 0, TYPE_NULL, 0};
     }
+    IMPULSE_ASSERT(state != nullptr);
+    IMPULSE_ASSERT(result_register_ < 64);
     state->query_context = ctx;
 
     impulse_vm_status_t status = impulse_vm_execute(
@@ -70,6 +73,7 @@ QueryBuilder::QueryBuilder(uint16_t start_register)
 
 uint16_t QueryBuilder::allocateRegister() {
     uint16_t reg = next_alloc_reg_++;
+    IMPULSE_ASSERT(reg < 64);
     if (reg >= 64) {
         throw std::length_error("QueryBuilder exceeded maximum available VM registers (64)");
     }
@@ -77,6 +81,7 @@ uint16_t QueryBuilder::allocateRegister() {
 }
 
 void QueryBuilder::emit(uint8_t opcode, uint8_t flags, uint16_t dst_reg, uint32_t payload) {
+    IMPULSE_ASSERT(dst_reg < 64);
     impulse_instruction_t inst{};
     inst.opcode = opcode;
     inst.flags = flags;
@@ -513,8 +518,10 @@ QueryBuilder& QueryBuilder::collectValueMap() {
 // --- Compilation ---
 
 CompiledQuery QueryBuilder::compile() {
+    IMPULSE_ASSERT(current_reg_ < 64);
     std::vector<impulse_instruction_t> compiled = instructions_;
     compiled.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
+    IMPULSE_ASSERT(!compiled.empty());
     return CompiledQuery(std::move(compiled), current_reg_);
 }
 
