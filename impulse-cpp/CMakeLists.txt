@@ -12,6 +12,16 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# --- Assertion Options --------------------------------------------------
+option(IMPULSE_ENABLE_ASSERTIONS "Enable internal debug invariant assertions" OFF)
+option(IMPULSE_ENABLE_AUDIT_ASSERTIONS "Enable expensive structural audit assertions" OFF)
+if(IMPULSE_ENABLE_ASSERTIONS)
+    add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1)
+endif()
+if(IMPULSE_ENABLE_AUDIT_ASSERTIONS)
+    add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1 IMPULSE_ENABLE_AUDIT_ASSERTIONS=1)
+endif()
+
 # --- Sanitizer Option ---------------------------------------------------
 option(IMPULSE_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(IMPULSE_SANITIZE)
@@ -67,6 +77,7 @@ install(TARGETS impulse_graph impulse_graph_static
 install(FILES
     include/impulse_format_v0_9.h
     include/impulse_graph.h
+    include/impulse_assert.h
     include/impulse_simd.h
     include/impulse_sha256.h
     include/impulse_math_ops.h
@@ -92,6 +103,10 @@ install(EXPORT ImpulseGraphTargets
 option(IMPULSE_BUILD_TESTS "Build impulse-graph tests" ON)
 if(IMPULSE_BUILD_TESTS)
     enable_testing()
+    add_executable(test_assert tests/test_assert.cpp)
+    target_link_libraries(test_assert PRIVATE impulse_graph_static)
+    add_test(NAME test_assert COMMAND test_assert)
+
     add_executable(impulse_graph_test tests/impulse_graph_test.cpp)
     target_link_libraries(impulse_graph_test PRIVATE impulse_graph_static)
     add_test(NAME impulse_graph_test COMMAND impulse_graph_test)

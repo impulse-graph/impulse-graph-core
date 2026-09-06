@@ -1,4 +1,5 @@
 #include "impulse_vm.h"
+#include "impulse_assert.h"
 #include "impulse_graph.h"
 #include "impulse_simd.h"
 #include <array>
@@ -342,6 +343,7 @@ extern "C" {
 
 impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot) {
     auto* ctx = new impulse_vm_context();
+    IMPULSE_ASSERT(ctx != nullptr);
     ctx->snapshot = snapshot;
     ctx->stack_pointer = 0;
     ctx->call_stack.fill(0);
@@ -356,9 +358,11 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     ctx->max_nodes = max_nodes;
     uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);
     ctx->words_per_bitset = (bitset_capacity + 63) / 64;
+    IMPULSE_ASSERT(ctx->words_per_bitset > 0);
 
     // Pre-allocate off-heap bitsets in a contiguous memory block
     ctx->arena_memory = new uint64_t[VM_MAX_BITSET_HANDLES * ctx->words_per_bitset]();
+    IMPULSE_ASSERT(ctx->arena_memory != nullptr);
     for (size_t i = 0; i < VM_MAX_BITSET_HANDLES; ++i) {
         ctx->bitsets[i].words = ctx->arena_memory + (i * ctx->words_per_bitset);
         ctx->bitsets[i].word_count = ctx->words_per_bitset;

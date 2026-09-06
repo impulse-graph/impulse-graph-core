@@ -2,6 +2,7 @@
 #include <string>
 
 #include "impulse_graph.h"
+#include "impulse_assert.h"
 #include "impulse_format_v0_9.h"
 #include "impulse_sha256.h"
 
