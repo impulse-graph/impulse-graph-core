@@ -7,6 +7,7 @@
 #include "impulse_graph.h"
 #include "impulse_vm.h"
 #include "impulse_vm_fluent.hpp"
+#include "impulse_assert.h"
 
 #include <cstring>
 #include <string>
@@ -68,6 +69,7 @@ public:
             Napi::Error::New(env, "Failed to open snapshot: " + err).ThrowAsJavaScriptException();
             return;
         }
+        IMPULSE_ASSERT(snapshot_ != nullptr);
     }
 
     ~NodeSnapshot() {
@@ -115,6 +117,7 @@ private:
             tgt_id = GetUint64(info[3]);
         }
 
+        IMPULSE_ASSERT(snapshot_ != nullptr);
         bool reachable = impulse_snapshot_is_reachable(snapshot_, relation_index, src_id, tgt_id);
         return Napi::Boolean::New(env, reachable);
     }
@@ -155,7 +158,9 @@ public:
         if (!writer_) {
             std::string err = impulse_get_last_error();
             Napi::Error::New(env, "Failed to create writer: " + err).ThrowAsJavaScriptException();
+            return;
         }
+        IMPULSE_ASSERT(writer_ != nullptr);
     }
 
     ~NodeWriter() {
@@ -182,6 +187,7 @@ private:
         uint8_t key_type = static_cast<uint8_t>(info[1].As<Napi::Number>().Uint32Value());
         std::string name = info[2].As<Napi::String>().Utf8Value();
 
+        IMPULSE_ASSERT(writer_ != nullptr);
         impulse_status_t status = impulse_writer_add_domain(writer_, domain_id, key_type, name.c_str());
         if (status != IMPULSE_OK) {
             std::string err = impulse_get_last_error();
@@ -232,6 +238,7 @@ private:
             return env.Undefined();
         }
 
+        IMPULSE_ASSERT(writer_ != nullptr);
         impulse_status_t status = impulse_writer_add_relation(
             writer_, src_domain, tgt_domain, encoding_type,
             node_count, edge_count, section_features,
@@ -254,6 +261,7 @@ private:
             return env.Undefined();
         }
 
+        IMPULSE_ASSERT(writer_ != nullptr);
         impulse_status_t status = impulse_writer_finalize(writer_);
         writer_ = nullptr;
 
@@ -325,7 +333,9 @@ public:
         ctx_ = impulse_vm_context_create(snap_ptr);
         if (!ctx_) {
             Napi::Error::New(env, "Failed to create impulse_vm_context").ThrowAsJavaScriptException();
+            return;
         }
+        IMPULSE_ASSERT(ctx_ != nullptr);
     }
 
     ~NodeVmContext() {
@@ -767,6 +777,7 @@ private:
             input_param = GetUint64(info[1]);
         }
 
+        IMPULSE_ASSERT(compiled_ != nullptr);
         impulse::vm::QueryResult res = compiled_->execute(snap_obj->RawSnapshot(), input_param);
         return NodeQueryResult::CreateInstance(env, res);
     }
@@ -1248,11 +1259,13 @@ Napi::Value ExecuteBytecode(const Napi::CallbackInfo& info) {
         Napi::Error::New(env, "Failed to create VM context").ThrowAsJavaScriptException();
         return env.Null();
     }
+    IMPULSE_ASSERT(ctx != nullptr);
 
     alignas(64) impulse_vm_state_t state;
     std::memset(&state, 0, sizeof(impulse_vm_state_t));
     state.query_context = ctx;
 
+    IMPULSE_ASSERT(instructions != nullptr);
     impulse_vm_status_t status = impulse_vm_execute(instructions, inst_count, &state, input_param);
 
     impulse::vm::QueryResult res;

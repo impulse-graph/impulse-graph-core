@@ -12,6 +12,7 @@
 
 #include "impulse_vm.h"
 #include "impulse_math_ops.h"
+#include "impulse_assert.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -536,6 +537,7 @@ class CelCompiler {
 public:
     static std::string to_impscheme(const std::shared_ptr<AstNode>& node) {
         if (!node) return "()";
+        IMPULSE_ASSERT(node != nullptr);
 
         switch (node->kind) {
             case AstKind::LITERAL_INT:

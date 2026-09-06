@@ -6,6 +6,7 @@
 #include "impulse_vm.h"
 #include "impulse_vm_fluent.hpp"
 #include "impulse_cel.h"
+#include "impulse_assert.h"
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -21,6 +22,7 @@ public:
         if (!snapshot_ || status != IMPULSE_OK) {
             throw std::runtime_error("Failed to open snapshot '" + path + "': " + std::string(impulse_get_last_error()));
         }
+        IMPULSE_ASSERT(snapshot_ != nullptr);
     }
 
     ~PyImpulseSnapshot() {
@@ -221,6 +223,7 @@ public:
         if (!writer_) {
             throw std::runtime_error("Failed to create snapshot writer: " + std::string(impulse_get_last_error()));
         }
+        IMPULSE_ASSERT(writer_ != nullptr);
     }
 
     ~PyImpulseWriter() {
