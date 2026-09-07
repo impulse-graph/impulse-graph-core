@@ -348,6 +348,7 @@ typedef struct IMPULSE_ALIGN(64) {
 
 // Public Context lifecycle APIs
 IMPULSE_API impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
+IMPULSE_API void impulse_vm_context_reset(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
 IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
 IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);

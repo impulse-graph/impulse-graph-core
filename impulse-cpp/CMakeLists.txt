@@ -40,6 +40,12 @@ if(IMPULSE_ENABLE_MCDC_COVERAGE)
     add_link_options(-fprofile-instr-generate)
 endif()
 
+# --- LibFuzzer Option ---------------------------------------------------
+option(IMPULSE_ENABLE_LIBFUZZER "Build fuzz targets with LLVM libFuzzer (-fsanitize=fuzzer)" OFF)
+if(IMPULSE_ENABLE_LIBFUZZER)
+    add_compile_definitions(IMPULSE_LIBFUZZER_ENABLED=1)
+endif()
+
 # --- Dependencies: Google Highway --------------------------------------
 include(FetchContent)
 FetchContent_Declare(
@@ -230,6 +236,42 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_c_statement_api tests/test_c_statement_api.cpp)
     target_link_libraries(test_c_statement_api PRIVATE impulse_graph_static)
     add_test(NAME test_c_statement_api COMMAND test_c_statement_api)
+
+    # --- Property-Based & Fuzzing Targets ---
+    add_executable(test_property_snapshot tests/test_property_snapshot.cpp)
+    target_link_libraries(test_property_snapshot PRIVATE impulse_graph_static)
+    add_test(NAME test_property_snapshot COMMAND test_property_snapshot)
+
+    add_executable(test_property_vm tests/test_property_vm.cpp)
+    target_link_libraries(test_property_vm PRIVATE impulse_graph_static)
+    add_test(NAME test_property_vm COMMAND test_property_vm)
+
+    add_executable(fuzz_snapshot tests/fuzz_snapshot.cpp)
+    target_link_libraries(fuzz_snapshot PRIVATE impulse_graph_static)
+    if(IMPULSE_ENABLE_LIBFUZZER)
+        target_compile_options(fuzz_snapshot PRIVATE -fsanitize=fuzzer)
+        target_link_options(fuzz_snapshot PRIVATE -fsanitize=fuzzer)
+    else()
+        add_test(NAME fuzz_snapshot COMMAND fuzz_snapshot --iterations 20000)
+    endif()
+
+    add_executable(fuzz_vm_bytecode tests/fuzz_vm_bytecode.cpp)
+    target_link_libraries(fuzz_vm_bytecode PRIVATE impulse_graph_static)
+    if(IMPULSE_ENABLE_LIBFUZZER)
+        target_compile_options(fuzz_vm_bytecode PRIVATE -fsanitize=fuzzer)
+        target_link_options(fuzz_vm_bytecode PRIVATE -fsanitize=fuzzer)
+    else()
+        add_test(NAME fuzz_vm_bytecode COMMAND fuzz_vm_bytecode --iterations 20000)
+    endif()
+
+    add_executable(fuzz_cel_parser tests/fuzz_cel_parser.cpp)
+    target_link_libraries(fuzz_cel_parser PRIVATE impulse_graph_static)
+    if(IMPULSE_ENABLE_LIBFUZZER)
+        target_compile_options(fuzz_cel_parser PRIVATE -fsanitize=fuzzer)
+        target_link_options(fuzz_cel_parser PRIVATE -fsanitize=fuzzer)
+    else()
+        add_test(NAME fuzz_cel_parser COMMAND fuzz_cel_parser --iterations 20000)
+    endif()
 endif()
 
 # --- Examples ------------------------------------------------------------
@@ -241,3 +283,7 @@ endif()
 add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
 target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
 add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
+
+add_executable(test_mutation_cpp tests/test_mutation_cpp.cpp)
+target_link_libraries(test_mutation_cpp PRIVATE impulse_graph_static)
+add_test(NAME test_mutation_cpp COMMAND test_mutation_cpp)

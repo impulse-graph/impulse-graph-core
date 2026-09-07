@@ -132,6 +132,7 @@ struct impulse_writer_index {
 struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t file_size = 0;
+    bool is_mmap_owned = true;
     impulse_snapshot_header_t header;
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
@@ -252,6 +253,8 @@ static std::string resolve_snapshot_path(const char* file_path) {
     return path_str;
 }
 
+static impulse_snapshot_t* impulse_snapshot_parse_internal(void* mmap_ptr, size_t file_size, bool is_mmap_owned, impulse_status_t* out_status);
+
 impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status) {
     if (!file_path) {
         if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
@@ -316,11 +319,30 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 #endif
 #endif
 
+    impulse_snapshot_t* snap = impulse_snapshot_parse_internal(mmap_ptr, file_size, true, out_status);
+    if (!snap) {
+#ifdef _WIN32
+        UnmapViewOfFile(mmap_ptr);
+#else
+        ::munmap(mmap_ptr, file_size);
+#endif
+    }
+    return snap;
+}
+
+static impulse_snapshot_t* impulse_snapshot_parse_internal(void* mmap_ptr, size_t file_size, bool is_mmap_owned, impulse_status_t* out_status) {
+    if (!mmap_ptr || file_size < 4096) {
+        g_last_error = "File size smaller than 4KB Page 0 header";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
+
     const uint8_t* raw = static_cast<const uint8_t*>(mmap_ptr);
 
     auto snap = std::make_unique<impulse_snapshot_t>();
     snap->mmap_ptr = mmap_ptr;
     snap->file_size = file_size;
+    snap->is_mmap_owned = is_mmap_owned;
 
     std::memcpy(&snap->header, raw, sizeof(impulse_snapshot_header_t));
 
@@ -513,20 +535,41 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             cur += sizeof(rel_entry);
 
             uint16_t attr_count = rel_entry.attr_count;
+            if (cur + static_cast<size_t>(attr_count) * sizeof(impulse_attribute_descriptor_t) > file_size) {
+                g_last_error = "Buffer overflow parsing relation attributes";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
             snap->relation_attributes[j].resize(attr_count);
             for (uint16_t a = 0; a < attr_count; ++a) {
-                if (cur + sizeof(impulse_attribute_descriptor_t) > file_size) {
+                std::memcpy(&snap->relation_attributes[j][a], raw + cur, sizeof(impulse_attribute_descriptor_t));
+                cur += sizeof(impulse_attribute_descriptor_t);
+                const auto& attr = snap->relation_attributes[j][a];
+                if (attr.data_offset > file_size || attr.data_offset + attr.data_bytes > file_size ||
+                    attr.offsets_offset > file_size || attr.offsets_offset + attr.offsets_bytes > file_size) {
+                    g_last_error = "Attribute data offset or length exceeds file size";
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
                 }
-                std::memcpy(&snap->relation_attributes[j][a], raw + cur, sizeof(impulse_attribute_descriptor_t));
-                cur += sizeof(impulse_attribute_descriptor_t);
             }
 
             if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
                 (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
                 g_last_error = "Unaligned section offset (must be 128B aligned)";
                 if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
+
+            if (rel_entry.csr_row_off_offset > file_size ||
+                rel_entry.csr_row_off_offset + rel_entry.csr_row_off_bytes > file_size ||
+                rel_entry.csr_col_idx_offset > file_size ||
+                rel_entry.csr_col_idx_offset + rel_entry.csr_col_idx_bytes > file_size ||
+                rel_entry.csc_row_off_offset > file_size ||
+                rel_entry.csc_row_off_offset + rel_entry.csc_row_off_bytes > file_size ||
+                rel_entry.csc_col_idx_offset > file_size ||
+                rel_entry.csc_col_idx_offset + rel_entry.csc_col_idx_bytes > file_size) {
+                g_last_error = "Relation section offset or length exceeds file size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                 return nullptr;
             }
 
@@ -559,6 +602,12 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             if (idx_entry.data_offset > 0 && idx_entry.data_offset % 128 != 0) {
                 g_last_error = "Unaligned index data offset (must be 128B aligned)";
                 if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                return nullptr;
+            }
+
+            if (idx_entry.data_offset > file_size || idx_entry.data_offset + idx_entry.data_bytes > file_size) {
+                g_last_error = "Index data offset or length exceeds file size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                 return nullptr;
             }
 
@@ -715,9 +764,23 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     return snap.release();
 }
 
+impulse_snapshot_t* impulse_snapshot_open_buffer(const void* buffer, size_t size, impulse_status_t* out_status) {
+    return impulse_snapshot_parse_internal(const_cast<void*>(buffer), size, false, out_status);
+}
+
+impulse_status_t impulse_snapshot_validate_buffer(const void* buffer, size_t size) {
+    impulse_status_t status = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open_buffer(buffer, size, &status);
+    if (snap) {
+        impulse_snapshot_close(snap);
+        return IMPULSE_OK;
+    }
+    return status != IMPULSE_OK ? status : IMPULSE_ERR_INVALID_ARGUMENT;
+}
+
 void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
     if (!snapshot) return;
-    if (snapshot->mmap_ptr && snapshot->file_size > 0) {
+    if (snapshot->mmap_ptr && snapshot->file_size > 0 && snapshot->is_mmap_owned) {
 #ifdef _WIN32
         UnmapViewOfFile(snapshot->mmap_ptr);
 #else
@@ -882,7 +945,7 @@ impulse_status_t impulse_writer_add_relation(
     const void* row_offsets_data, uint64_t row_offsets_bytes,
     const void* col_indices_data, uint64_t col_indices_bytes
 ) {
-    if (!writer || !row_offsets_data || !col_indices_data) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (!writer || !row_offsets_data || (col_indices_bytes > 0 && !col_indices_data)) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     impulse_writer_relation rel;
     rel.relation_id = static_cast<uint16_t>(writer->relations.size());
@@ -898,8 +961,10 @@ impulse_status_t impulse_writer_add_relation(
     rel.row_offsets.resize(row_offsets_bytes);
     std::memcpy(rel.row_offsets.data(), row_offsets_data, row_offsets_bytes);
 
-    rel.col_indices.resize(col_indices_bytes);
-    std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+    if (col_indices_bytes > 0 && col_indices_data) {
+        rel.col_indices.resize(col_indices_bytes);
+        std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+    }
 
     writer->relations.push_back(std::move(rel));
     return IMPULSE_OK;

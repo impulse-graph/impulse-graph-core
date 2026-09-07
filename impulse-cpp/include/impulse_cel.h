@@ -469,9 +469,20 @@ private:
             default:
                 return nullptr;
         }
+        return nullptr;
     }
 
+    size_t depth_ = 0;
+    static constexpr size_t kMaxDepth = 128;
+
     std::shared_ptr<AstNode> parse_precedence(Precedence prec) {
+        if (depth_ >= kMaxDepth) return nullptr;
+        depth_++;
+        struct DepthGuard {
+            size_t& d;
+            ~DepthGuard() { d--; }
+        } guard{depth_};
+
         auto left = parse_prefix();
         if (!left) return nullptr;
 
@@ -662,6 +673,7 @@ public:
 
 private:
     static std::shared_ptr<AstNode> fold_unary(const std::shared_ptr<AstNode>& node) {
+        if (node->children.empty() || !node->children[0]) return node;
         auto child = node->children[0];
         if (node->text == "!") {
             if (child->kind == AstKind::LITERAL_BOOL) {
@@ -683,6 +695,7 @@ private:
     }
 
     static std::shared_ptr<AstNode> fold_binary(const std::shared_ptr<AstNode>& node) {
+        if (node->children.size() < 2 || !node->children[0] || !node->children[1]) return node;
         auto left = node->children[0];
         auto right = node->children[1];
         const std::string& op = node->text;
@@ -690,7 +703,7 @@ private:
         // Monotonic Inverse Pushdown
         if (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
             auto check_pushdown = [&](const std::shared_ptr<AstNode>& lhs, const std::shared_ptr<AstNode>& rhs, bool reverse_op) -> std::shared_ptr<AstNode> {
-                if (lhs->kind == AstKind::FUNCTION_CALL && lhs->children.size() == 1 &&
+                if (lhs->kind == AstKind::FUNCTION_CALL && lhs->children.size() == 1 && lhs->children[0] &&
                     (rhs->kind == AstKind::LITERAL_FLOAT || rhs->kind == AstKind::LITERAL_INT)) {
                     double c = (rhs->kind == AstKind::LITERAL_FLOAT) ? rhs->float_val : static_cast<double>(rhs->int_val);
                     std::string new_op = op;
@@ -702,12 +715,23 @@ private:
                     }
                     if (lhs->text == "sqrt") {
                         if (c >= 0) return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c));
+                        if (op == "<" || op == "<=" || op == "==") return AstNode::make_bool(false);
+                        if (op == ">" || op == ">=" || op == "!=") return AstNode::make_bool(true);
+                    } else if (lhs->text == "log") {
+                        return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(std::exp(c)));
+                    } else if (lhs->text == "exp") {
+                        if (c > 0) return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(std::log(c)));
+                        if (op == "<" || op == "<=" || op == "==") return AstNode::make_bool(false);
+                        if (op == ">" || op == ">=" || op == "!=") return AstNode::make_bool(true);
                     }
                 }
                 return nullptr;
             };
-            if (auto res = check_pushdown(left, right, false)) return res;
-            if (auto res = check_pushdown(right, left, true)) return res;
+
+            auto pushed = check_pushdown(left, right, false);
+            if (pushed) return pushed;
+            pushed = check_pushdown(right, left, true);
+            if (pushed) return pushed;
         }
 
         // 1. Integer Constant Folding
@@ -786,6 +810,7 @@ private:
     }
 
     static std::shared_ptr<AstNode> fold_ternary(const std::shared_ptr<AstNode>& node) {
+        if (node->children.size() < 3 || !node->children[0] || !node->children[1] || !node->children[2]) return node;
         auto cond = node->children[0];
         auto then_branch = node->children[1];
         auto else_branch = node->children[2];
@@ -801,7 +826,7 @@ private:
         if (func_id <= 0) return node;
 
         // Unary constant folding
-        if (node->children.size() == 1) {
+        if (node->children.size() == 1 && node->children[0]) {
             auto arg = node->children[0];
             if (arg->kind == AstKind::LITERAL_FLOAT || arg->kind == AstKind::LITERAL_INT) {
                 double val = (arg->kind == AstKind::LITERAL_FLOAT) ? arg->float_val : static_cast<double>(arg->int_val);
@@ -811,7 +836,7 @@ private:
         }
 
         // Binary constant folding
-        if (node->children.size() == 2) {
+        if (node->children.size() == 2 && node->children[0] && node->children[1]) {
             auto arg1 = node->children[0];
             auto arg2 = node->children[1];
             if ((arg1->kind == AstKind::LITERAL_FLOAT || arg1->kind == AstKind::LITERAL_INT) &&
@@ -824,7 +849,7 @@ private:
         }
 
         // Ternary constant folding
-        if (node->children.size() == 3) {
+        if (node->children.size() == 3 && node->children[0] && node->children[1] && node->children[2]) {
             auto arg1 = node->children[0];
             auto arg2 = node->children[1];
             auto arg3 = node->children[2];

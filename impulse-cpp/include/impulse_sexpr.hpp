@@ -42,7 +42,8 @@ class SExprParser {
 public:
     explicit SExprParser(std::string s) : src(std::move(s)) {}
 
-    SExpr parse() {
+    SExpr parse(size_t depth = 0) {
+        if (depth > 128) return {};
         skip_whitespace();
         if (pos >= src.size()) return {};
 
@@ -58,7 +59,7 @@ public:
                     pos++;
                     break;
                 }
-                expr.list.push_back(parse());
+                expr.list.push_back(parse(depth + 1));
             }
             return expr;
         } else if (src[pos] == '"') {

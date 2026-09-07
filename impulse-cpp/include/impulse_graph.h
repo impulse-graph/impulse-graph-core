@@ -126,6 +126,23 @@ IMPULSE_API int impulse_execute_compiled_query(const impulse_snapshot_t* snapsho
 IMPULSE_API impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_t* out_status);
 
 /**
+ * @brief Open a binary snapshot directly from an in-memory buffer without disk I/O.
+ * @param buffer Pointer to contiguous memory buffer.
+ * @param size Buffer size in bytes.
+ * @param out_status Pointer to status return code (`IMPULSE_OK` on success).
+ * @return Handle to opened snapshot, or NULL on failure.
+ */
+IMPULSE_API impulse_snapshot_t* impulse_snapshot_open_buffer(const void* buffer, size_t size, impulse_status_t* out_status);
+
+/**
+ * @brief Validate snapshot binary buffer layout, checksums, and structural boundaries.
+ * @param buffer Pointer to contiguous memory buffer.
+ * @param size Buffer size in bytes.
+ * @return IMPULSE_OK on success, or error status on violation.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_validate_buffer(const void* buffer, size_t size);
+
+/**
  * @brief Close an open snapshot handle and unmap physical memory.
  * @param snapshot Pointer to snapshot handle.
  */

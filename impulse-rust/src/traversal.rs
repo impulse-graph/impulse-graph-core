@@ -156,9 +156,6 @@ impl<'a> Traversal<'a> {
                 return Ok(i);
             }
         }
-        if self.reader.relation_count() > 0 {
-            return Ok(0);
-        }
         Err(ImpulseError::NotFound)
     }
 }

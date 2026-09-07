@@ -187,7 +187,15 @@ struct impulse_vm_context {
         std::vector<float> float_data;
         std::vector<uint64_t> int_data;
         bool has_mask = false;
-        VmBitSet mask;
+        std::vector<uint64_t> mask_words;
+
+        inline bool mask_test(size_t bit_idx) const {
+            size_t w = bit_idx >> 6;
+            if (w < mask_words.size()) {
+                return (mask_words[w] & (1ULL << (bit_idx & 63))) != 0;
+            }
+            return false;
+        }
     };
     std::unordered_map<uint32_t, MockAttribute> mock_node_attrs;
     std::unordered_map<uint32_t, MockAttribute> mock_edge_attrs;
@@ -470,6 +478,37 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     return ctx;
 }
 
+void impulse_vm_context_reset(impulse_vm_context_t* ctx) {
+    if (!ctx) return;
+    ctx->stack_pointer = 0;
+    ctx->call_stack.fill(0);
+    ctx->fuel = 0;
+    ctx->fuel_enabled = false;
+    ctx->inline_data_ptr = nullptr;
+    ctx->inline_data_bytes = 0;
+    ctx->node_buffer.clear();
+    ctx->mock_node_attrs.clear();
+    ctx->mock_edge_attrs.clear();
+
+    for (size_t i = 0; i < VM_MAX_BITSET_HANDLES; ++i) {
+        if (ctx->bitset_allocated[i]) {
+            ctx->bitsets[i].clear();
+            ctx->bitset_allocated[i] = false;
+        }
+    }
+
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
+        ctx->float_vectors_allocated[i] = false;
+        ctx->double_vectors_allocated[i] = false;
+        ctx->node_vectors_allocated[i] = false;
+        ctx->string_vectors_allocated[i] = false;
+        ctx->string_vectors[i].clear();
+        ctx->value_maps_allocated[i] = false;
+        ctx->value_maps[i].keys.clear();
+        ctx->value_maps[i].values.clear();
+    }
+}
+
 void impulse_vm_context_destroy(impulse_vm_context_t* ctx) {
     if (ctx) {
         delete[] ctx->private_arena_memory;
@@ -723,9 +762,63 @@ impulse_vm_status_t impulse_vm_execute(
 ) {
     if (!bytecode || !vm_state) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
+    // Ensure query_context is non-null so opcodes accessing bitsets, slots, or vectors
+    // operate safely on empty structures rather than dereferencing null pointers.
+    bool owned_context = false;
+    if (!vm_state->query_context) {
+        vm_state->query_context = impulse_vm_context_create(nullptr);
+        owned_context = true;
+    }
+
+    struct ContextGuard {
+        impulse_vm_state_t* state;
+        bool owned;
+        ~ContextGuard() {
+            if (owned && state && state->query_context) {
+                impulse_vm_context_destroy(state->query_context);
+                state->query_context = nullptr;
+            }
+        }
+    } context_guard{vm_state, owned_context};
+
 #define VALIDATE_REG(r) \
     do { \
         if ((r) >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER; \
+    } while(0)
+
+#define VALIDATE_BITSET_HANDLE(h) \
+    do { \
+        if ((h) < 0 || static_cast<size_t>(h) >= VM_MAX_BITSET_HANDLES || !vm_state->query_context->bitset_allocated[(h)]) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
+    } while(0)
+
+#define VALIDATE_FLOAT_VECTOR_HANDLE(h) \
+    do { \
+        if ((h) < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->float_vectors_allocated[(h)]) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
+    } while(0)
+
+#define VALIDATE_DOUBLE_VECTOR_HANDLE(h) \
+    do { \
+        if ((h) < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->double_vectors_allocated[(h)]) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
+    } while(0)
+
+#define VALIDATE_STRING_VECTOR_HANDLE(h) \
+    do { \
+        if ((h) < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->string_vectors_allocated[(h)]) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
+    } while(0)
+
+#define VALIDATE_NODE_VECTOR_HANDLE(h) \
+    do { \
+        if ((h) < 0 || static_cast<size_t>(h) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->node_vectors_allocated[(h)]) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
     } while(0)
 
 #if HAS_COMPUTED_GOTO
@@ -1247,14 +1340,14 @@ op_VECTOR_TIME_VALID_AT: {
 
         bool active = true;
         if (col_start) {
-            if (col_start->has_mask && !col_start->mask.test(u)) {
+            if (col_start->has_mask && !col_start->mask_test(u)) {
                 // null start bound -> -infinity (active)
             } else if (u < col_start->int_data.size()) {
                 if (ts < col_start->int_data[u]) active = false;
             }
         }
         if (active && col_end) {
-            if (col_end->has_mask && !col_end->mask.test(u)) {
+            if (col_end->has_mask && !col_end->mask_test(u)) {
                 // null end bound -> +infinity (active)
             } else if (u < col_end->int_data.size()) {
                 if (ts >= col_end->int_data[u]) active = false;
@@ -1310,13 +1403,14 @@ op_MOV: {
 
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src);
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_BITSET_HANDLE(h_dst);
         } else {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -1329,7 +1423,10 @@ op_MOV: {
         }
     } else {
         if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
-            release_bitset(vm_state->query_context, static_cast<int>(vm_state->registers[dst]));
+            int h_old = static_cast<int>(vm_state->registers[dst]);
+            if (h_old >= 0 && static_cast<size_t>(h_old) < VM_MAX_BITSET_HANDLES) {
+                release_bitset(vm_state->query_context, h_old);
+            }
         }
         vm_state->registers[dst] = vm_state->registers[src];
         vm_state->register_types[dst] = vm_state->register_types[src];
@@ -1343,7 +1440,10 @@ op_CLEAR_REG: {
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
-        release_bitset(vm_state->query_context, static_cast<int>(vm_state->registers[dst]));
+        int h_old = static_cast<int>(vm_state->registers[dst]);
+        if (h_old >= 0 && static_cast<size_t>(h_old) < VM_MAX_BITSET_HANDLES) {
+            release_bitset(vm_state->query_context, h_old);
+        }
     }
     vm_state->registers[dst] = 0;
     vm_state->register_types[dst] = TYPE_NULL;
@@ -1363,10 +1463,12 @@ op_COALESCE: {
     VALIDATE_REG(src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
-        int hDst = acquire_float_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h2);
+        int hDst = acquire_float_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         auto& v2 = vm_state->query_context->float_vectors[h2];
@@ -1400,6 +1502,7 @@ op_EXTRACT_VALIDITY: {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     int h1 = static_cast<int>(vm_state->registers[src]);
+    VALIDATE_FLOAT_VECTOR_HANDLE(h1);
     auto& v1 = vm_state->query_context->float_vectors[h1];
     
     int hDst = acquire_bitset(vm_state->query_context);
@@ -1433,6 +1536,7 @@ op_SET_UNION: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -1445,6 +1549,7 @@ op_SET_UNION: {
         // dst already has src1; union src2
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] |= bs_src2.words[i];
@@ -1456,6 +1561,7 @@ op_SET_UNION: {
         // dst already has src2; union src1
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] |= bs_src1.words[i];
@@ -1468,6 +1574,7 @@ op_SET_UNION: {
         bs_dst.clear();
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] = bs_src1.words[i];
@@ -1478,6 +1585,7 @@ op_SET_UNION: {
 
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] |= bs_src2.words[i];
@@ -1514,6 +1622,7 @@ op_SET_INTERSECT: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -1526,6 +1635,7 @@ op_SET_INTERSECT: {
         // dst already has src1; intersect src2
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] &= bs_src2.words[i];
@@ -1544,6 +1654,7 @@ op_SET_INTERSECT: {
         // dst already has src2; intersect src1
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] &= bs_src1.words[i];
@@ -1563,6 +1674,7 @@ op_SET_INTERSECT: {
         bs_dst.clear();
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] = bs_src1.words[i];
@@ -1573,6 +1685,7 @@ op_SET_INTERSECT: {
 
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] &= bs_src2.words[i];
@@ -1616,6 +1729,7 @@ op_SET_DIFFERENCE: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -1628,6 +1742,7 @@ op_SET_DIFFERENCE: {
         // dst already has src1; subtract src2
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] &= ~bs_src2.words[i];
@@ -1644,6 +1759,7 @@ op_SET_DIFFERENCE: {
         // dst has src2; compute src1 \ dst
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] = bs_src1.words[i] & ~bs_dst.words[i];
@@ -1663,6 +1779,7 @@ op_SET_DIFFERENCE: {
         bs_dst.clear();
         if (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) {
             int h_src1 = static_cast<int>(vm_state->registers[src1]);
+            VALIDATE_BITSET_HANDLE(h_src1);
             const auto& bs_src1 = vm_state->query_context->bitsets[h_src1];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] = bs_src1.words[i];
@@ -1673,6 +1790,7 @@ op_SET_DIFFERENCE: {
 
         if (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) {
             int h_src2 = static_cast<int>(vm_state->registers[src2]);
+            VALIDATE_BITSET_HANDLE(h_src2);
             const auto& bs_src2 = vm_state->query_context->bitsets[h_src2];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs_dst.words[i] &= ~bs_src2.words[i];
@@ -1712,6 +1830,7 @@ op_SET_CARDINALITY: {
     uint64_t count = 0;
     if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int handle = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(handle);
         const auto& bs = vm_state->query_context->bitsets[handle];
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             count += std::popcount(bs.words[i]);
@@ -1766,17 +1885,20 @@ op_CSR_WALK_2HOP: {
     } else {
         src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
         h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+        if (src_is_bitset) {
+            VALIDATE_BITSET_HANDLE(h_src);
+        }
         scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
     }
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
         vm_state->query_context->bitsets[h_dst].clear();
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         vm_state->query_context->bitsets[h_dst].clear();
@@ -1866,6 +1988,8 @@ op_PROJECT_STATE: {
     uint16_t src = inst.payload & 0xFFFF;
     if (src == 0 && inst.payload != 0) src = (inst.payload >> 16) & 0xFFFF;
     uint16_t dst = inst.dst_reg;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src);
     if (vm_state->register_types[src] != TYPE_FRONTIER_STATE) {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
@@ -1890,6 +2014,7 @@ op_ADAPTIVE_WALK: {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.csc_offsets_ptr && slot.csc_targets_ptr && vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
             int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_BITSET_HANDLE(h_src);
             const auto& bs = vm_state->query_context->bitsets[h_src];
             uint64_t frontier_size = 0;
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -1929,6 +2054,7 @@ op_COO_WALK_STREAM: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
         vm_state->query_context->bitsets[h_dst].clear();
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
@@ -1949,6 +2075,7 @@ op_COO_WALK_STREAM: {
         }
     } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src_bs = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src_bs);
         const auto& bs_src = vm_state->query_context->bitsets[h_src_bs];
         for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
             uint64_t word = bs_src.words[w];
@@ -2230,7 +2357,6 @@ op_CSR_WALK: {
     VALIDATE_REG(src);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2244,6 +2370,8 @@ op_CSR_WALK: {
         scalar_src = input_param;
         src_is_bitset = false;
         h_src = -1;
+    } else if (src_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_src);
     }
 
     int h_dst = -1;
@@ -2251,13 +2379,13 @@ op_CSR_WALK: {
 
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         int h_existing = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_existing);
         if (accum) {
             h_dst = h_existing;
         } else {
             if (dst == src) {
                 h_dst = acquire_bitset(vm_state->query_context);
                 if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
                 vm_state->query_context->bitsets[h_dst].clear();
@@ -2269,7 +2397,6 @@ op_CSR_WALK: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -2439,6 +2566,7 @@ op_CSR_WALK_FILTERED: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -2449,11 +2577,15 @@ op_CSR_WALK_FILTERED: {
     bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED));
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    if (src_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_src);
+    }
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
     
     const uint64_t* filter_words = nullptr;
     if (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE) {
         int h_filt = static_cast<int>(vm_state->registers[filter_reg]);
+        VALIDATE_BITSET_HANDLE(h_filt);
         filter_words = vm_state->query_context->bitsets[h_filt].words;
     }
     uint64_t max_nodes = vm_state->query_context->max_nodes;
@@ -2534,6 +2666,7 @@ op_CSR_WALK_PREDICATE: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -2543,6 +2676,9 @@ op_CSR_WALK_PREDICATE: {
     
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    if (src_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_src);
+    }
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
     uint64_t max_nodes = vm_state->query_context->max_nodes;
 
@@ -2607,7 +2743,6 @@ op_CSC_WALK: {
     }
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2624,18 +2759,24 @@ op_CSC_WALK: {
         scalar_src = input_param;
         src_is_bitset = false;
         h_src = -1;
+    } else if (src_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_src);
     }
 
-    const uint64_t* unv_words = (unv > 0 && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)
-        ? vm_state->query_context->bitsets[vm_state->registers[unv]].words : nullptr;
+    const uint64_t* unv_words = nullptr;
+    if (unv > 0 && vm_state->register_types[unv] == TYPE_BITSET_HANDLE) {
+        int h_unv = static_cast<int>(vm_state->registers[unv]);
+        VALIDATE_BITSET_HANDLE(h_unv);
+        unv_words = vm_state->query_context->bitsets[h_unv].words;
+    }
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_BITSET_HANDLE(h_dst);
         if (dst == src || dst == unv) {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         }
@@ -2643,7 +2784,6 @@ op_CSC_WALK: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         vm_state->query_context->bitsets[h_dst].clear();
@@ -2763,6 +2903,9 @@ op_CSC_WALK: {
         }
     }
 
+    if (dst == src && src_is_bitset && h_dst != h_src) {
+        release_bitset(vm_state->query_context, h_src);
+    }
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
 
@@ -2889,7 +3032,6 @@ op_CSR_DEGREE: {
     VALIDATE_REG(src);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2921,13 +3063,18 @@ op_STABLE_CHECK: {
     VALIDATE_REG(src);
 
     bool is_subset = true;
-    printf("DEBUG STABLE_CHECK: dst=%d, src=%d\n", dst, src);
     bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
     int h_dst = dst_is_bitset ? static_cast<int>(vm_state->registers[dst]) : -1;
+    if (dst_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_dst);
+    }
     uint64_t scalar_dst = !dst_is_bitset ? vm_state->registers[dst] : 0;
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    if (src_is_bitset) {
+        VALIDATE_BITSET_HANDLE(h_src);
+    }
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
 
     if (src_is_bitset && dst_is_bitset) {
@@ -2972,7 +3119,6 @@ op_NODE_FILTER: {
     VALIDATE_REG(val_reg);
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -2989,7 +3135,7 @@ op_NODE_FILTER: {
         if (vm_state->query_context->mock_node_attrs.count(attr_id)) {
             const auto& mock = vm_state->query_context->mock_node_attrs.at(attr_id);
             if (mock.has_mask) {
-                if (!mock.mask.test(u)) return false;
+                if (!mock.mask_test(u)) return false;
             }
             if (!mock.int_data.empty()) {
                 if (u >= mock.int_data.size()) return false;
@@ -3017,6 +3163,7 @@ op_NODE_FILTER: {
 
     if (src_is_bitset) {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
 #if defined(_OPENMP)
         #pragma omp parallel for schedule(dynamic, 1024)
@@ -3067,7 +3214,6 @@ op_NODE_FILTER_STR_PREFIX: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -3152,23 +3298,27 @@ op_VECTOR_DIV: {
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
         } else {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
         }
         double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
 
         const double* num_vec = nullptr;
         std::vector<double> temp_num;
         if (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR) {
-            num_vec = vm_state->query_context->double_vectors[vm_state->registers[num]].data();
+            int h_num = static_cast<int>(vm_state->registers[num]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_num);
+            num_vec = vm_state->query_context->double_vectors[h_num].data();
         } else {
             temp_num.resize(size);
             if (vm_state->register_types[num] == TYPE_FLOAT_VECTOR) {
-                const float* fvec = vm_state->query_context->float_vectors[vm_state->registers[num]].data();
+                int h_num = static_cast<int>(vm_state->registers[num]);
+                VALIDATE_FLOAT_VECTOR_HANDLE(h_num);
+                const float* fvec = vm_state->query_context->float_vectors[h_num].data();
                 for (size_t i = 0; i < size; ++i) temp_num[i] = fvec[i];
             } else {
                 double val = 0.0;
@@ -3183,11 +3333,15 @@ op_VECTOR_DIV: {
         const double* denom_vec = nullptr;
         std::vector<double> temp_denom;
         if (vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR) {
-            denom_vec = vm_state->query_context->double_vectors[vm_state->registers[denom]].data();
+            int h_denom = static_cast<int>(vm_state->registers[denom]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_denom);
+            denom_vec = vm_state->query_context->double_vectors[h_denom].data();
         } else {
             temp_denom.resize(size);
             if (vm_state->register_types[denom] == TYPE_FLOAT_VECTOR) {
-                const float* fvec = vm_state->query_context->float_vectors[vm_state->registers[denom]].data();
+                int h_denom = static_cast<int>(vm_state->registers[denom]);
+                VALIDATE_FLOAT_VECTOR_HANDLE(h_denom);
+                const float* fvec = vm_state->query_context->float_vectors[h_denom].data();
                 for (size_t i = 0; i < size; ++i) temp_denom[i] = fvec[i];
             } else {
                 double val = 0.0;
@@ -3212,19 +3366,21 @@ op_VECTOR_DIV: {
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
         } else {
             h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
         }
         float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
 
         const float* num_vec = nullptr;
         std::vector<float> temp_num;
         if (vm_state->register_types[num] == TYPE_FLOAT_VECTOR) {
-            num_vec = vm_state->query_context->float_vectors[vm_state->registers[num]].data();
+            int h_num = static_cast<int>(vm_state->registers[num]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_num);
+            num_vec = vm_state->query_context->float_vectors[h_num].data();
         } else {
             temp_num.resize(size);
             float val = 0.0f;
@@ -3237,7 +3393,9 @@ op_VECTOR_DIV: {
         const float* denom_vec = nullptr;
         std::vector<float> temp_denom;
         if (vm_state->register_types[denom] == TYPE_FLOAT_VECTOR) {
-            denom_vec = vm_state->query_context->float_vectors[vm_state->registers[denom]].data();
+            int h_denom = static_cast<int>(vm_state->registers[denom]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_denom);
+            denom_vec = vm_state->query_context->float_vectors[h_denom].data();
         } else {
             temp_denom.resize(size);
             float val = 0.0f;
@@ -3280,8 +3438,9 @@ op_FLOAT_VECTOR_SCALE: {
         }
     }
 
-    int handle = static_cast<int>(vm_state->registers[dst]);
-    if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 && handle < static_cast<int>(vm_state->query_context->float_vectors.size())) {
+    if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR) {
+        int handle = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(handle);
         float* vec = vm_state->query_context->float_vectors[handle].data();
         size_t size = vm_state->query_context->max_nodes;
         impulse_simd_vector_scale_f32(vec, factor, size);
@@ -3306,15 +3465,14 @@ op_L1_NORM_DIFF: {
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
-        if (h1 >= 0 && h1 < static_cast<int>(vm_state->query_context->float_vectors.size()) &&
-            h2 >= 0 && h2 < static_cast<int>(vm_state->query_context->float_vectors.size())) {
-            const float* vec1 = vm_state->query_context->float_vectors[h1].data();
-            const float* vec2 = vm_state->query_context->float_vectors[h2].data();
+        VALIDATE_FLOAT_VECTOR_HANDLE(h1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h2);
+        const float* vec1 = vm_state->query_context->float_vectors[h1].data();
+        const float* vec2 = vm_state->query_context->float_vectors[h2].data();
 
-            #pragma omp parallel for reduction(+:l1_diff) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                l1_diff += std::abs(vec1[i] - vec2[i]);
-            }
+        #pragma omp parallel for reduction(+:l1_diff) schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            l1_diff += std::abs(vec1[i] - vec2[i]);
         }
     } else if ((vm_state->register_types[src1] == TYPE_FLOAT || vm_state->register_types[src1] == TYPE_INT64) &&
                (vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
@@ -3347,7 +3505,6 @@ op_VECTOR_STR_CONCAT: {
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& svec_dst = vm_state->query_context->string_vectors[h_dst];
@@ -3355,11 +3512,13 @@ op_VECTOR_STR_CONCAT: {
 
     if (vm_state->register_types[src1] == TYPE_STRING_VECTOR) {
         int h_src1 = static_cast<int>(vm_state->registers[src1]);
+        VALIDATE_STRING_VECTOR_HANDLE(h_src1);
         const auto& svec1 = vm_state->query_context->string_vectors[h_src1];
         for (const char* str : svec1) svec_dst.push_back(str);
     }
     if (vm_state->register_types[src2] == TYPE_STRING_VECTOR) {
         int h_src2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_STRING_VECTOR_HANDLE(h_src2);
         const auto& svec2 = vm_state->query_context->string_vectors[h_src2];
         for (const char* str : svec2) svec_dst.push_back(str);
     }
@@ -3382,7 +3541,6 @@ op_MXV: {
     VALIDATE_REG(src_vec);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -3394,17 +3552,22 @@ op_MXV: {
     bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
 
     if (is_double) {
+        int h_src = static_cast<int>(vm_state->registers[src_vec]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
-            int h_dst = acquire_double_vector(vm_state->query_context);
+            h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
         }
-        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
-        const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+        double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
+        const double* src_data = vm_state->query_context->double_vectors[h_src].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
@@ -3441,20 +3604,28 @@ op_MXV: {
             }
         }
     } else {
+        if (vm_state->register_types[src_vec] != TYPE_FLOAT_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_src = static_cast<int>(vm_state->registers[src_vec]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
-            int h_dst = acquire_float_vector(vm_state->query_context);
+            h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
         }
-        if (vm_state->query_context->float_vectors[vm_state->registers[dst]].size() < N) {
-            vm_state->query_context->float_vectors[vm_state->registers[dst]].resize(N);
+        if (vm_state->query_context->float_vectors[h_dst].size() < N) {
+            vm_state->query_context->float_vectors[h_dst].resize(N);
         }
-        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-        const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+        float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
+        const float* src_data = vm_state->query_context->float_vectors[h_src].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
@@ -3507,7 +3678,6 @@ op_VXM: {
     VALIDATE_REG(src_vec);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -3519,17 +3689,22 @@ op_VXM: {
     bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
 
     if (is_double) {
+        int h_src = static_cast<int>(vm_state->registers[src_vec]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
-            int h_dst = acquire_double_vector(vm_state->query_context);
+            h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
         }
-        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
-        const double* src_data = vm_state->query_context->double_vectors[vm_state->registers[src_vec]].data();
+        double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
+        const double* src_data = vm_state->query_context->double_vectors[h_src].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
@@ -3566,17 +3741,25 @@ op_VXM: {
             }
         }
     } else {
+        if (vm_state->register_types[src_vec] != TYPE_FLOAT_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_src = static_cast<int>(vm_state->registers[src_vec]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
-            int h_dst = acquire_float_vector(vm_state->query_context);
+            h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
         }
-        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-        const float* src_data = vm_state->query_context->float_vectors[vm_state->registers[src_vec]].data();
+        float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
+        const float* src_data = vm_state->query_context->float_vectors[h_src].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
@@ -3632,18 +3815,28 @@ op_EWISE_ADD: {
     bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
 
     if (is_double) {
+        if (vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s1);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s2);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
-            int h_dst = acquire_double_vector(vm_state->query_context);
+            h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
         }
-        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
-        const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
-        const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+        double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
+        const double* s1_data = vm_state->query_context->double_vectors[h_s1].data();
+        const double* s2_data = vm_state->query_context->double_vectors[h_s2].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < N; ++i) {
@@ -3653,18 +3846,28 @@ op_EWISE_ADD: {
             else dst_data[i] = s1_data[i] + s2_data[i];
         }
     } else {
+        if (vm_state->register_types[src1] != TYPE_FLOAT_VECTOR || vm_state->register_types[src2] != TYPE_FLOAT_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s2);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
-            int h_dst = acquire_float_vector(vm_state->query_context);
+            h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
         }
-        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-        const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
-        const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+        float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
+        const float* s1_data = vm_state->query_context->float_vectors[h_s1].data();
+        const float* s2_data = vm_state->query_context->float_vectors[h_s2].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < N; ++i) {
@@ -3694,18 +3897,28 @@ op_EWISE_MULT: {
     bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
 
     if (is_double) {
+        if (vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s1);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s2);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
-            int h_dst = acquire_double_vector(vm_state->query_context);
+            h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
         }
-        double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
-        const double* s1_data = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
-        const double* s2_data = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
+        double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
+        const double* s1_data = vm_state->query_context->double_vectors[h_s1].data();
+        const double* s2_data = vm_state->query_context->double_vectors[h_s2].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < N; ++i) {
@@ -3715,18 +3928,28 @@ op_EWISE_MULT: {
             else dst_data[i] = s1_data[i] * s2_data[i];
         }
     } else {
+        if (vm_state->register_types[src1] != TYPE_FLOAT_VECTOR || vm_state->register_types[src2] != TYPE_FLOAT_VECTOR) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s2);
+        int h_dst = -1;
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
-            int h_dst = acquire_float_vector(vm_state->query_context);
+            h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        } else {
+            h_dst = static_cast<int>(vm_state->registers[dst]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
         }
-        float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-        const float* s1_data = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
-        const float* s2_data = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
+        float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
+        const float* s1_data = vm_state->query_context->float_vectors[h_s1].data();
+        const float* s2_data = vm_state->query_context->float_vectors[h_s2].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < N; ++i) {
@@ -3752,9 +3975,7 @@ op_REDUCE: {
     size_t N = vm_state->query_context->max_nodes;
     if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle]) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
+        VALIDATE_DOUBLE_VECTOR_HANDLE(handle);
         const double* vec = vm_state->query_context->double_vectors[handle].data();
         double res = 0.0;
         if (op_id == BINARY_OP_ADD) {
@@ -3779,9 +4000,7 @@ op_REDUCE: {
         vm_state->register_types[dst] = TYPE_DOUBLE;
     } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle]) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
+        VALIDATE_FLOAT_VECTOR_HANDLE(handle);
         const float* vec = vm_state->query_context->float_vectors[handle].data();
         float res = 0.0f;
         if (op_id == BINARY_OP_ADD) {
@@ -3821,7 +4040,6 @@ op_CC_AFFOREST: {
     VALIDATE_REG(dst);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -4082,7 +4300,6 @@ op_ROARING_BITMAP_AND: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4117,7 +4334,6 @@ op_ROARING_BITMAP_OR: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4158,7 +4374,6 @@ op_ROARING_BITMAP_AND_NOT: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4189,10 +4404,17 @@ op_VECTOR_MUL_ATTR: {
 
     size_t size = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR);
-    int h_dst = vm_state->registers[dst];
+    int h_dst = -1;
 
-    if (!is_double && vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
+    if (is_double) {
+        h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_dst);
+    } else if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR) {
+        h_dst = static_cast<int>(vm_state->registers[dst]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_dst);
+    } else {
         h_dst = impulse_vm_context_acquire_float_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
     }
@@ -4200,10 +4422,10 @@ op_VECTOR_MUL_ATTR: {
     if (inst.flags == 0) {
         float scalar = reinterpret_cast<const float&>(inst.payload);
         if (is_double) {
-            double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+            double* vec = vm_state->query_context->double_vectors[h_dst].data();
             for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
         } else {
-            float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+            float* vec = vm_state->query_context->float_vectors[h_dst].data();
             impulse_simd_vector_scale_f32(vec, scalar, size);
         }
     } else {
@@ -4220,7 +4442,7 @@ op_VECTOR_MUL_ATTR: {
         uint8_t base_type = attr.type_code & 0x7F;
 
         if (is_double) {
-            double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
+            double* vec = vm_state->query_context->double_vectors[h_dst].data();
 #if defined(_OPENMP)
             #pragma omp parallel for schedule(static)
 #endif
@@ -4233,7 +4455,7 @@ op_VECTOR_MUL_ATTR: {
                 vec[i] *= val;
             }
         } else {
-            float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
+            float* vec = vm_state->query_context->float_vectors[h_dst].data();
             if (base_type == 0x08) {
                 impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
             } else {
@@ -4266,7 +4488,9 @@ op_VECTOR_REDUCE_SUM: {
     double sum = 0.0;
 
     if (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
-        const double* vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
+        const double* vec = vm_state->query_context->double_vectors[h_src].data();
 #if defined(_OPENMP)
         #pragma omp parallel for reduction(+:sum) schedule(static)
 #endif
@@ -4274,7 +4498,9 @@ op_VECTOR_REDUCE_SUM: {
         vm_state->registers[dst] = reinterpret_cast<uint64_t&>(sum);
         vm_state->register_types[dst] = TYPE_DOUBLE;
     } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
-        const float* vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
+        const float* vec = vm_state->query_context->float_vectors[h_src].data();
         float fsum = impulse_simd_reduce_sum_f32(vec, size);
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
@@ -4345,7 +4571,7 @@ op_CSR_WALK_REDUCE_SUM: {
             for (uint64_t idx = start; idx < end; ++idx) {
                 uint64_t target_node = slot.get_csr_target(idx);
                 if (mock_node_attr) {
-                    if (mock_node_attr->has_mask && !mock_node_attr->mask.test(target_node)) {
+                    if (mock_node_attr->has_mask && !mock_node_attr->mask_test(target_node)) {
                         // masked
                     } else if (target_node < mock_node_attr->int_data.size()) {
                         sum += static_cast<int64_t>(mock_node_attr->int_data[target_node]);
@@ -4373,7 +4599,6 @@ op_CSR_WALK_REDUCE_SUM: {
     }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
@@ -4381,7 +4606,9 @@ op_CSR_WALK_REDUCE_SUM: {
 
     if (slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_double) {
-            const double* src_vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
+            int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
+            const double* src_vec = vm_state->query_context->double_vectors[h_src].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 double src_val = src_vec[u];
                 if (src_val == 0.0) continue;
@@ -4401,7 +4628,9 @@ op_CSR_WALK_REDUCE_SUM: {
                 }
             }
         } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
-            const float* src_vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
+            int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
+            const float* src_vec = vm_state->query_context->float_vectors[h_src].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 float src_val = src_vec[u];
                 if (src_val == 0.0f) continue;
@@ -4463,7 +4692,6 @@ op_CSR_WALK_REDUCE: {
     }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
@@ -4471,7 +4699,9 @@ op_CSR_WALK_REDUCE: {
 
     if (slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_double) {
-            const double* src_vec = vm_state->query_context->double_vectors[vm_state->registers[src]].data();
+            int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
+            const double* src_vec = vm_state->query_context->double_vectors[h_src].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 double src_val = src_vec[u];
                 uint64_t start = slot.get_csr_offset(u);
@@ -4491,7 +4721,9 @@ op_CSR_WALK_REDUCE: {
                 }
             }
         } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
-            const float* src_vec = vm_state->query_context->float_vectors[vm_state->registers[src]].data();
+            int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
+            const float* src_vec = vm_state->query_context->float_vectors[h_src].data();
             for (uint64_t u = 0; u < slot.node_count; ++u) {
                 float src_val = src_vec[u];
                 uint64_t start = slot.get_csr_offset(u);
@@ -4616,7 +4848,6 @@ op_MAP_KEYS_TO_DENSE: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4701,7 +4932,6 @@ op_MAP_DENSE_TO_KEYS: {
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& svec = vm_state->query_context->string_vectors[h_dst];
@@ -4770,7 +5000,6 @@ op_COLLECT_VALUE_MAP: {
 
     int h_dst = acquire_value_map(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& vmap = vm_state->query_context->value_maps[h_dst];
@@ -5643,6 +5872,7 @@ op_VEC_MATH_UNARY: {
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_src);
         double* d = vm_state->query_context->double_vectors[h_dst].data();
         const double* s = vm_state->query_context->double_vectors[h_src].data();
         impulse_vector_math_unary_f64(func_id, d, s, N);
@@ -5655,6 +5885,7 @@ op_VEC_MATH_UNARY: {
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_src);
         float* d = vm_state->query_context->float_vectors[h_dst].data();
         const float* s = vm_state->query_context->float_vectors[h_src].data();
         impulse_vector_math_unary_f32(func_id, d, s, N);
@@ -5710,6 +5941,8 @@ op_VEC_MATH_BINARY: {
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         int h_s1 = static_cast<int>(vm_state->registers[src1]);
         int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s1);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s2);
         double* d = vm_state->query_context->double_vectors[h_dst].data();
         const double* s1 = vm_state->query_context->double_vectors[h_s1].data();
         const double* s2 = vm_state->query_context->double_vectors[h_s2].data();
@@ -5724,6 +5957,8 @@ op_VEC_MATH_BINARY: {
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         int h_s1 = static_cast<int>(vm_state->registers[src1]);
         int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s2);
         float* d = vm_state->query_context->float_vectors[h_dst].data();
         const float* s1 = vm_state->query_context->float_vectors[h_s1].data();
         const float* s2 = vm_state->query_context->float_vectors[h_s2].data();
@@ -5784,10 +6019,16 @@ op_VEC_MATH_TERNARY: {
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        int h_s3 = static_cast<int>(vm_state->registers[src3]);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s1);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s2);
+        VALIDATE_DOUBLE_VECTOR_HANDLE(h_s3);
         double* d = vm_state->query_context->double_vectors[h_dst].data();
-        const double* s1 = vm_state->query_context->double_vectors[vm_state->registers[src1]].data();
-        const double* s2 = vm_state->query_context->double_vectors[vm_state->registers[src2]].data();
-        const double* s3 = vm_state->query_context->double_vectors[vm_state->registers[src3]].data();
+        const double* s1 = vm_state->query_context->double_vectors[h_s1].data();
+        const double* s2 = vm_state->query_context->double_vectors[h_s2].data();
+        const double* s3 = vm_state->query_context->double_vectors[h_s3].data();
         impulse_vector_math_ternary_f64(func_id, d, s1, s2, s3, N);
     } else {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
@@ -5797,10 +6038,16 @@ op_VEC_MATH_TERNARY: {
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
+        int h_s1 = static_cast<int>(vm_state->registers[src1]);
+        int h_s2 = static_cast<int>(vm_state->registers[src2]);
+        int h_s3 = static_cast<int>(vm_state->registers[src3]);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s1);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s2);
+        VALIDATE_FLOAT_VECTOR_HANDLE(h_s3);
         float* d = vm_state->query_context->float_vectors[h_dst].data();
-        const float* s1 = vm_state->query_context->float_vectors[vm_state->registers[src1]].data();
-        const float* s2 = vm_state->query_context->float_vectors[vm_state->registers[src2]].data();
-        const float* s3 = vm_state->query_context->float_vectors[vm_state->registers[src3]].data();
+        const float* s1 = vm_state->query_context->float_vectors[h_s1].data();
+        const float* s2 = vm_state->query_context->float_vectors[h_s2].data();
+        const float* s3 = vm_state->query_context->float_vectors[h_s3].data();
         impulse_vector_math_ternary_f32(func_id, d, s1, s2, s3, N);
     }
     vm_state->pc++;
@@ -5845,6 +6092,8 @@ op_GATHER_NODE_ATTR: {
     uint16_t domain = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(frontier_reg);
+    int h_front = static_cast<int>(vm_state->registers[frontier_reg]);
+    VALIDATE_BITSET_HANDLE(h_front);
 
     size_t N = vm_state->query_context->max_nodes;
     if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
@@ -5855,7 +6104,6 @@ op_GATHER_NODE_ATTR: {
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
-    int h_front = static_cast<int>(vm_state->registers[frontier_reg]);
     const auto& bs = vm_state->query_context->bitsets[h_front];
 
     uint32_t mock_key = (domain != 0) ? domain : attr_idx;
@@ -5864,7 +6112,7 @@ op_GATHER_NODE_ATTR: {
         const auto& ma = it_mock->second;
         for (size_t i = 0; i < N; ++i) {
             if (bs.test(i)) {
-                if (ma.has_mask && !ma.mask.test(i)) {
+                if (ma.has_mask && !ma.mask_test(i)) {
                     dst_vec[i] = std::numeric_limits<float>::quiet_NaN();
                 } else if (i < ma.float_data.size()) {
                     dst_vec[i] = ma.float_data[i];
@@ -5956,6 +6204,7 @@ op_CSR_WALK_DIRECT_STORE: {
         }
     } else {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
         #pragma omp parallel for schedule(static)
@@ -6008,6 +6257,7 @@ op_CSR_WALK_DENSE_STREAM: {
         }
     } else {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
         #pragma omp parallel for schedule(static)
@@ -6065,6 +6315,7 @@ op_CSC_WALK_DIRECT_STORE: {
         }
     } else {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        VALIDATE_BITSET_HANDLE(h_src);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         #pragma omp parallel for schedule(static)
         for (size_t v = 0; v < N; ++v) {
@@ -6116,6 +6367,7 @@ op_COO_WALK_DIRECT_STORE: {
                 }
             } else {
                 int h_src = static_cast<int>(vm_state->registers[src]);
+                VALIDATE_BITSET_HANDLE(h_src);
                 const auto& bs_src = vm_state->query_context->bitsets[h_src];
                 size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
                 #pragma omp parallel for schedule(static)
@@ -6164,11 +6416,21 @@ op_COO_WALK_FILTERED: {
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     uint64_t scalar_src = vm_state->registers[src];
-    const uint64_t* src_words = src_is_bitset ? vm_state->query_context->bitsets[static_cast<int>(scalar_src)].words : nullptr;
+    const uint64_t* src_words = nullptr;
+    if (src_is_bitset) {
+        int h_src = static_cast<int>(scalar_src);
+        VALIDATE_BITSET_HANDLE(h_src);
+        src_words = vm_state->query_context->bitsets[h_src].words;
+    }
 
     bool flt_is_bitset = (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE);
     uint64_t scalar_flt = vm_state->registers[filter_reg];
-    const uint64_t* flt_words = flt_is_bitset ? vm_state->query_context->bitsets[static_cast<int>(scalar_flt)].words : nullptr;
+    const uint64_t* flt_words = nullptr;
+    if (flt_is_bitset) {
+        int h_flt = static_cast<int>(scalar_flt);
+        VALIDATE_BITSET_HANDLE(h_flt);
+        flt_words = vm_state->query_context->bitsets[h_flt].words;
+    }
 
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
@@ -6234,6 +6496,7 @@ op_COO_WALK_REDUCE: {
     int h_dst = static_cast<int>(vm_state->registers[dst]);
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
     int h_src = static_cast<int>(vm_state->registers[src]);
+    VALIDATE_BITSET_HANDLE(h_src);
     const auto& bs_src = vm_state->query_context->bitsets[h_src];
 
     if (rel < vm_state->query_context->slots.size()) {
@@ -6292,6 +6555,7 @@ op_DENSE_WALK_DIRECT_STORE: {
                 }
             } else {
                 int h_src = static_cast<int>(vm_state->registers[src]);
+                VALIDATE_BITSET_HANDLE(h_src);
                 const auto& bs_src = vm_state->query_context->bitsets[h_src];
                 size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
                 #pragma omp parallel for schedule(static)
@@ -6364,6 +6628,7 @@ op_FIXPOINT_KLEENE_STAR: {
             frontier.set(start_node);
         } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
             int h_src = static_cast<int>(vm_state->registers[src]);
+            VALIDATE_BITSET_HANDLE(h_src);
             const auto& initial = vm_state->query_context->bitsets[h_src];
             for (size_t w = 0; w < words; ++w) {
                 reached.words[w] = initial.words[w];
@@ -6442,6 +6707,9 @@ op_FRONTIER_DIFF: {
     int h_dst = static_cast<int>(vm_state->registers[dst]);
     int h_curr = static_cast<int>(vm_state->registers[r_curr]);
     int h_prev = static_cast<int>(vm_state->registers[r_prev]);
+    VALIDATE_BITSET_HANDLE(h_dst);
+    VALIDATE_BITSET_HANDLE(h_curr);
+    VALIDATE_BITSET_HANDLE(h_prev);
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     const auto& bs_curr = vm_state->query_context->bitsets[h_curr];
     const auto& bs_prev = vm_state->query_context->bitsets[h_prev];
@@ -6491,8 +6759,11 @@ op_INIT_MOCK_EDGE_ATTR: {
         if (mask_reg < 64 && vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE) {
             int h_mask = static_cast<int>(vm_state->registers[mask_reg]);
             if (h_mask >= 0 && static_cast<size_t>(h_mask) < VM_MAX_BITSET_HANDLES && vm_state->query_context->bitset_allocated[h_mask]) {
-                mock_attr.has_mask = true;
-                mock_attr.mask = vm_state->query_context->bitsets[h_mask];
+                const auto& bs_mask = vm_state->query_context->bitsets[h_mask];
+                if (bs_mask.words && bs_mask.word_count > 0) {
+                    mock_attr.has_mask = true;
+                    mock_attr.mask_words.assign(bs_mask.words, bs_mask.words + bs_mask.word_count);
+                }
             }
         }
         if (inst.opcode == OP_INIT_MOCK_NODE_ATTR) {

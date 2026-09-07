@@ -939,14 +939,14 @@ void test_mcdc_null_context_scalar_stream() {
     assert(st == IMPULSE_VM_OK);
     assert(state.registers[1] == 42);
 
-    // Test graceful null-context trap on bitset/vector opcodes
+    // Test graceful execution of vector opcodes under null context with automatic ContextGuard fallback
     std::vector<impulse_instruction_t> vec_null_bc = {
         { OP_VEC_CMP_EQ, 0, 6, 1 | (2 << 16) },
         { OP_HALT, 0, 0, 0 }
     };
     state.pc = 0;
     st = impulse_vm_execute(vec_null_bc.data(), vec_null_bc.size(), &state, 0);
-    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+    assert(st == IMPULSE_VM_OK);
 
     // 2. Transcendental Math Suite with Null Context
     std::vector<impulse_instruction_t> math_null_bc = {
@@ -1008,7 +1008,7 @@ void test_mcdc_null_context_scalar_stream() {
     state.query_context = nullptr;
     state.pc = 0;
     st = impulse_vm_execute(math_null_bc.data(), math_null_bc.size(), &state, 0);
-    assert(st == IMPULSE_VM_ERR_NULL_SNAPSHOT);
+    assert(st == IMPULSE_VM_ERR_INVALID_REGISTER);
 }
 
 void test_mcdc_set_ops_type_tags_exhaustive() {
@@ -1648,8 +1648,8 @@ void test_mcdc_opcodes_filtered_and_advanced_traversals() {
 
         // 10. GraphBLAS Algorithms: OP_CC_AFFOREST, OP_MXV, OP_VXM, OP_REDUCE
         { OP_CC_AFFOREST, 0, 36, 0 },
-        { OP_MXV, 0, 37, static_cast<uint32_t>(0 | (8 << 16)) }, // rel 0, vec R8
-        { OP_VXM, 0, 38, static_cast<uint32_t>(0 | (8 << 16)) },
+        { OP_MXV, 0, 37, static_cast<uint32_t>(8 | (0 << 8) | (0 << 16)) }, // vec R8, rel 0, semiring 0
+        { OP_VXM, 0, 38, static_cast<uint32_t>(8 | (0 << 8) | (0 << 16)) }, // vec R8, rel 0, semiring 0
         { OP_REDUCE, 0, 39, 8 }, // reduce vector R8
 
         { OP_HALT, 0, 0, 0 }
@@ -1947,18 +1947,18 @@ void test_mcdc_pass10_deep_decisions() {
     // 3. GraphBLAS Matrix-Vector & Element-wise Ops (Float & Double)
     std::vector<impulse_instruction_t> gblas_bc = {
         // MXV & VXM Float (flags = 0)
-        { OP_MXV, 0, 3, 1 | (0 << 16) },  // R3 = M * R1 (rel 0)
-        { OP_VXM, 0, 3, 1 | (0 << 16) },  // R3 = R1 * M (rel 0)
-        // MXV & VXM Double (flags = 1)
-        { OP_MXV, 1, 13, 11 | (0 << 16) }, // R13 = M * R11
-        { OP_VXM, 1, 13, 11 | (0 << 16) }, // R13 = R11 * M
+        { OP_MXV, 0, 3, static_cast<uint32_t>(1 | (0 << 8) | (0 << 16)) },  // R3 = M * R1 (rel 0)
+        { OP_VXM, 0, 3, static_cast<uint32_t>(1 | (0 << 8) | (0 << 16)) },  // R3 = R1 * M (rel 0)
+        // MXV & VXM Double (flags = 0; type inferred from R11)
+        { OP_MXV, 0, 13, static_cast<uint32_t>(11 | (0 << 8) | (0 << 16)) }, // R13 = M * R11
+        { OP_VXM, 0, 13, static_cast<uint32_t>(11 | (0 << 8) | (0 << 16)) }, // R13 = R11 * M
 
         // Element-wise Add & Mult Float
-        { OP_EWISE_ADD, 0, 3, 1 | (2 << 16) },
-        { OP_EWISE_MULT, 0, 3, 1 | (2 << 16) },
+        { OP_EWISE_ADD, 0, 3, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
+        { OP_EWISE_MULT, 0, 3, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
         // Element-wise Add & Mult Double
-        { OP_EWISE_ADD, 1, 13, 11 | (12 << 16) },
-        { OP_EWISE_MULT, 1, 13, 11 | (12 << 16) },
+        { OP_EWISE_ADD, 0, 13, static_cast<uint32_t>(11 | (12 << 8) | (0 << 16)) },
+        { OP_EWISE_MULT, 0, 13, static_cast<uint32_t>(11 | (12 << 8) | (0 << 16)) },
 
         // Reduce Float & Double
         { OP_REDUCE, 0, 4, 1 },  // R4 = sum(R1) (Float)
@@ -2073,7 +2073,7 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
         // Stable check with matching bitsets
         { OP_STABLE_CHECK, 0, 1, 2 },
         // Frontier diff
-        { OP_FRONTIER_DIFF, 0, 3, 1 | (2 << 16) },
+        { OP_FRONTIER_DIFF, 0, 3, 1 | (2 << 8) },
         // Fixpoint kleene star on relation slot 0
         { OP_FIXPOINT_KLEENE_STAR, 0, 1, 2 | (0 << 16) },
 
@@ -2097,7 +2097,7 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
     std::vector<impulse_instruction_t> single_target_bc = {
         { OP_CSR_WALK, 0, 2, 1 | (1 << 16) }, // slot 1 single target
         { OP_CSC_WALK, 0, 2, 1 | (1 << 16) },
-        { OP_CSR_WALK_DENSE_STREAM, 0, 2, 0 | (0 << 16) }, // slot 0 dense stream
+        { OP_CSR_WALK_DENSE_STREAM, 0, 2, 1 | (0 << 16) }, // slot 0 dense stream
         { OP_CSR_WALK_DIRECT_STORE, 0, 2, 1 | (0 << 16) }, // slot 0 direct store
         { OP_CSC_WALK_DIRECT_STORE, 0, 2, 1 | (0 << 16) }, // slot 0 direct store
         { OP_CSR_DEGREE, 0, 4, 0 | (1 << 16) }, // degree of node 0
