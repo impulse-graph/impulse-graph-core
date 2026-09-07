@@ -17,7 +17,6 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #define ASSERT_TRUE(cond) do { \
     if (!(cond)) { \
