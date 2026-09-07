@@ -18,6 +18,31 @@
 #include <vector>
 #include <sys/stat.h>
 
+#if defined(_WIN32)
+#include <direct.h>
+inline int portable_setenv(const char* name, const char* value, int overwrite) {
+    if (!overwrite && std::getenv(name) != nullptr) return 0;
+    return _putenv_s(name, value);
+}
+inline int portable_unsetenv(const char* name) {
+    return _putenv_s(name, "");
+}
+inline int portable_rmdir(const char* path) {
+    return _rmdir(path);
+}
+#else
+#include <unistd.h>
+inline int portable_setenv(const char* name, const char* value, int overwrite) {
+    return ::setenv(name, value, overwrite);
+}
+inline int portable_unsetenv(const char* name) {
+    return ::unsetenv(name);
+}
+inline int portable_rmdir(const char* path) {
+    return ::rmdir(path);
+}
+#endif
+
 #define ASSERT_TRUE(cond) do { \
     if (!(cond)) { \
         std::cerr << "ASSERTION FAILED: " #cond " at " << __FILE__ << ":" << __LINE__ << std::endl; \
@@ -839,7 +864,7 @@ void test_mcdc_snapshot_edge_cases_and_decisions() {
     }
 
     // Set IMPULSE_DATASETS_DIR
-    ::setenv("IMPULSE_DATASETS_DIR", env_dir_path, 1);
+    portable_setenv("IMPULSE_DATASETS_DIR", env_dir_path, 1);
     impulse_status_t st = IMPULSE_OK;
     impulse_snapshot_t* snap = impulse_snapshot_open("env_snap.bin", &st);
     ASSERT_EQ(st, IMPULSE_OK);
@@ -847,24 +872,24 @@ void test_mcdc_snapshot_edge_cases_and_decisions() {
     impulse_snapshot_close(snap);
 
     // Set IMPULSEGRAPH_DATA_DIR
-    ::unsetenv("IMPULSE_DATASETS_DIR");
-    ::setenv("IMPULSEGRAPH_DATA_DIR", "/tmp/__impulse_env_test_dir/", 1); // with trailing slash
+    portable_unsetenv("IMPULSE_DATASETS_DIR");
+    portable_setenv("IMPULSEGRAPH_DATA_DIR", "/tmp/__impulse_env_test_dir/", 1); // with trailing slash
     snap = impulse_snapshot_open("env_snap.bin", &st);
     ASSERT_EQ(st, IMPULSE_OK);
     ASSERT_TRUE(snap != nullptr);
     impulse_snapshot_close(snap);
 
     // Set IMPULSE_DATA_DIR
-    ::unsetenv("IMPULSEGRAPH_DATA_DIR");
-    ::setenv("IMPULSE_DATA_DIR", env_dir_path, 1);
+    portable_unsetenv("IMPULSEGRAPH_DATA_DIR");
+    portable_setenv("IMPULSE_DATA_DIR", env_dir_path, 1);
     snap = impulse_snapshot_open("env_snap.bin", &st);
     ASSERT_EQ(st, IMPULSE_OK);
     ASSERT_TRUE(snap != nullptr);
     impulse_snapshot_close(snap);
-    ::unsetenv("IMPULSE_DATA_DIR");
+    portable_unsetenv("IMPULSE_DATA_DIR");
 
     std::remove(env_file);
-    ::rmdir(env_dir_path);
+    portable_rmdir(env_dir_path);
 
     // 2. UTF-8 multi-byte valid & invalid sequences in String Table
     const char* utf8_tmp = "__test_mcdc_utf8_all.bin";
@@ -1008,17 +1033,17 @@ void test_mcdc_snapshot_pass8_deep_decisions() {
     std::cout << "[MC/DC Snapshot] Testing Snapshot Pass 8 Deep Decisions & Boundary Permutations..." << std::endl;
 
     // 1. resolve_snapshot_path variations
-    setenv("IMPULSE_DATASETS_DIR", "", 1);
-    setenv("IMPULSEGRAPH_DATA_DIR", "/tmp/impulse_test_dir", 1);
-    setenv("IMPULSE_DATA_DIR", "/tmp/impulse_data_dir", 1);
+    portable_setenv("IMPULSE_DATASETS_DIR", "", 1);
+    portable_setenv("IMPULSEGRAPH_DATA_DIR", "/tmp/impulse_test_dir", 1);
+    portable_setenv("IMPULSE_DATA_DIR", "/tmp/impulse_data_dir", 1);
     impulse_status_t st;
     impulse_snapshot_t* snap_env = impulse_snapshot_open("nonexistent_test.imps", &st);
     ASSERT_EQ(snap_env, nullptr);
 
-    unsetenv("IMPULSEGRAPH_DATA_DIR");
+    portable_unsetenv("IMPULSEGRAPH_DATA_DIR");
     snap_env = impulse_snapshot_open("nonexistent_test.imps", &st);
     ASSERT_EQ(snap_env, nullptr);
-    unsetenv("IMPULSE_DATA_DIR");
+    portable_unsetenv("IMPULSE_DATA_DIR");
 
     // 2. String Table Multi-byte UTF-8 boundary permutations
     std::string test_utf8_file = "/tmp/test_mcdc_utf8_perm.imps";
