@@ -287,3 +287,7 @@ add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
 add_executable(test_mutation_cpp tests/test_mutation_cpp.cpp)
 target_link_libraries(test_mutation_cpp PRIVATE impulse_graph_static)
 add_test(NAME test_mutation_cpp COMMAND test_mutation_cpp)
+
+add_executable(test_pairwise_cpp tests/test_pairwise_cpp.cpp)
+target_link_libraries(test_pairwise_cpp PRIVATE impulse_graph_static)
+add_test(NAME test_pairwise_cpp COMMAND test_pairwise_cpp)

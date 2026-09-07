@@ -7,6 +7,8 @@
 #include "impulse_math_ops.h"
 #include "impulse_graph.h"
 #include "impulse_cel.h"
+#include "impulse_cypher.hpp"
+#include "impulse_datalog.hpp"
 #include <iostream>
 #include <vector>
 #include <cassert>
@@ -34,7 +36,6 @@ int main() {
     // --- Category 1: Math Function Operator Mutants ---
     {
         float abs_val = impulse_math_unary_f32(MATH_FUNC_ABS, -5.5f);
-        float mutant_abs = -(-5.5f);
         bool killed = (abs_val == 5.5f && impulse_math_unary_f32(MATH_FUNC_ABS, 5.5f) != -5.5f);
         register_mutant(killed, "1.1: ABS sign inversion");
     }
@@ -378,6 +379,86 @@ int main() {
         auto ast5 = p5.parse_expression();
         std::string ir5 = impulse::cel::CelCompiler::to_impscheme(ast5);
         register_mutant(ir5 == "(vec-blend cond 1 2)", "7.5: Lowering ? : to vec-blend");
+    }
+    {
+        impulse::cel::Parser p6("timestamp(\"2026-08-13T00:00:00Z\")");
+        std::string ir6 = impulse::cel::CelCompiler::to_impscheme(p6.parse_expression());
+        register_mutant(ir6 == "(timestamp \"2026-08-13T00:00:00Z\")", "7.6: Lowering timestamp() to timestamp macro");
+    }
+    {
+        impulse::cel::Parser p7("duration(\"24h\")");
+        std::string ir7 = impulse::cel::CelCompiler::to_impscheme(p7.parse_expression());
+        register_mutant(ir7 == "(duration \"24h\")", "7.7: Lowering duration() to duration macro");
+    }
+    {
+        impulse::cel::Parser p8("[1, 2, 3]");
+        std::string ir8 = impulse::cel::CelCompiler::to_impscheme(p8.parse_expression());
+        register_mutant(ir8 == "(list 1 2 3)", "7.8: Lowering list literal to (list ...) macro");
+    }
+    {
+        impulse::cel::Parser p9("dest.region.startsWith(\"us-\")");
+        std::string ir9 = impulse::cel::CelCompiler::to_impscheme(p9.parse_expression());
+        register_mutant(ir9 == "(startsWith (get-attr dest \"region\") \"us-\")", "7.9: Lowering method call and chained attribute");
+    }
+    {
+        impulse::cel::Parser p10("node.age");
+        std::string ir10 = impulse::cel::CelCompiler::to_impscheme(p10.parse_expression());
+        register_mutant(ir10 == "(get-attr node \"age\")", "7.10: Lowering dot notation to get-attr");
+    }
+    {
+        impulse::cel::Parser p11("node.address.city");
+        std::string ir11 = impulse::cel::CelCompiler::to_impscheme(p11.parse_expression());
+        register_mutant(ir11 == "(get-attr (get-attr node \"address\") \"city\")", "7.11: Lowering nested dot notation");
+    }
+    {
+        impulse::cel::Parser p12("-42");
+        std::string ir12 = impulse::cel::CelCompiler::to_impscheme(p12.parse_expression());
+        register_mutant(ir12 == "(- 0 42)", "7.12: Lowering unary minus to zero-subtraction");
+    }
+    {
+        impulse::cel::Parser p13("true != false");
+        std::string ir13 = impulse::cel::CelCompiler::to_impscheme(p13.parse_expression());
+        register_mutant(ir13 == "(mask-not (vec-cmp-eq #t #f))", "7.13: Lowering boolean literals and inequality");
+    }
+
+    // --- Category 8: Cypher Compiler Mutants ---
+    {
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)-[:Rel]->(b) RETURN b");
+        std::string ir = res.ast->to_scm_string();
+        register_mutant(ir.find("(csr-walk \"Rel\")") != std::string::npos && ir.find("(csc-walk") == std::string::npos, "8.1: Cypher Forward Walk direction mutant");
+    }
+    {
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)<-[:Rel]-(b) RETURN b");
+        std::string ir = res.ast->to_scm_string();
+        register_mutant(ir.find("(csc-walk \"Rel\")") != std::string::npos && ir.find("(csr-walk") == std::string::npos, "8.2: Cypher Backward Walk direction mutant");
+    }
+    {
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)-[:Rel*1..3]->(b) RETURN count(b)");
+        std::string ir = res.ast->to_scm_string();
+        register_mutant(ir.find("(collect-count)") != std::string::npos, "8.3: Cypher RETURN count aggregation mutant");
+    }
+    {
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)-[:Rel]->(b) WHERE a.id = 21 RETURN b");
+        register_mutant(res.seed_param_or_value == "21", "8.4: Cypher WHERE clause seed extraction mutant");
+    }
+
+    // --- Category 9: Datalog (ImpLog) Compiler Mutants ---
+    {
+        std::string bad_datalog = R"(
+            p(X) :- not q(X).
+            q(X) :- not p(X).
+        )";
+        bool caught = false;
+        try {
+            impulse::datalog::DatalogParser::parse(bad_datalog);
+        } catch (const std::exception&) {
+            caught = true;
+        }
+        register_mutant(caught, "9.1: Datalog Non-Stratified Negation guard mutant");
+    }
+    {
+        auto [magic_name, magic_ast] = impulse::datalog::MagicSetsTransformation::transform_query("path", "node_123");
+        register_mutant(magic_name == "m_path_b" && magic_ast.find("node_123") != std::string::npos, "9.2: Datalog Magic Sets Transformation binding mutant");
     }
 
     impulse_vm_context_destroy(ctx);
