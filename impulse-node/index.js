@@ -84,11 +84,11 @@ class Traversal {
   }
 }
 
-native.Snapshot.prototype.traverse = function(startNode) {
+native.Snapshot.prototype.traverse = function (startNode) {
   return new Traversal(this, startNode);
 };
 
 module.exports = {
   ...native,
-  Traversal
+  Traversal,
 };

@@ -293,6 +293,283 @@ static void test_cel_parameter_normalization() {
     std::cout << "  -> PASSED: Parameter normalization and literal string preservation verified: " << ir1 << std::endl;
 }
 
+static void test_cel_exhaustive_mcdc_truth_tables() {
+    std::cout << "[Test] Exhaustive CEL Lexer, Parser, Compiler & Optimizer MC/DC Truth Tables..." << std::endl;
+
+    // 1. Direct Lexer MC/DC condition independence testing
+    {
+        // Line 109: $, @ combinations
+        Lexer l_dollar_a("$var");
+        assert(l_dollar_a.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_dollar_u("$_var");
+        assert(l_dollar_u.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_dollar_1("$1");
+        assert(l_dollar_1.next_token().type == TokenType::END_OF_FILE);
+
+        Lexer l_at_a("@var");
+        assert(l_at_a.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_at_u("@_var");
+        assert(l_at_u.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_at_1("@1");
+        assert(l_at_1.next_token().type == TokenType::END_OF_FILE);
+
+        // Line 122: _ident vs ident vs unrecognized character (~, ;, #)
+        Lexer l_u("_abc");
+        assert(l_u.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_id("abc");
+        assert(l_id.next_token().type == TokenType::IDENTIFIER);
+
+        Lexer l_tilde("~");
+        assert(l_tilde.next_token().type == TokenType::END_OF_FILE);
+
+        Lexer l_semi(";");
+        assert(l_semi.next_token().type == TokenType::END_OF_FILE);
+
+        // Line 144: slash permutations
+        Lexer l_slash_eof("/");
+        assert(l_slash_eof.next_token().type == TokenType::SLASH);
+
+        Lexer l_slash_other("/+");
+        assert(l_slash_other.next_token().type == TokenType::SLASH);
+
+        Lexer l_slash_comment("// test");
+        assert(l_slash_comment.next_token().type == TokenType::END_OF_FILE);
+
+        Lexer l_slash_nl("// test\n42");
+        assert(l_slash_nl.next_token().type == TokenType::INT_LITERAL);
+
+        // Line 158: string escapes with actual backslashes (using raw string literals)
+        Lexer l_esc_n(R"("test\nline")");
+        Token t_esc_n = l_esc_n.next_token();
+        assert(t_esc_n.type == TokenType::STRING_LITERAL && t_esc_n.text == "test\nline");
+
+        Lexer l_esc_t(R"("test\ttab")");
+        Token t_esc_t = l_esc_t.next_token();
+        assert(t_esc_t.type == TokenType::STRING_LITERAL && t_esc_t.text == "test\ttab");
+
+        Lexer l_esc_r(R"("test\rreturn")");
+        Token t_esc_r = l_esc_r.next_token();
+        assert(t_esc_r.type == TokenType::STRING_LITERAL && t_esc_r.text == "test\rreturn");
+
+        Lexer l_esc_quote(R"("test\"quote")");
+        Token t_esc_quote = l_esc_quote.next_token();
+        assert(t_esc_quote.type == TokenType::STRING_LITERAL && t_esc_quote.text == "test\"quote");
+
+        Lexer l_esc_other(R"("test\xother")");
+        Token t_esc_other = l_esc_other.next_token();
+        assert(t_esc_other.type == TokenType::STRING_LITERAL && t_esc_other.text == "testxother");
+
+        Lexer l_str_esc("\"\\");
+        assert(l_str_esc.next_token().type == TokenType::STRING_LITERAL);
+
+        // Line 180: dot permutations in number
+        Lexer l_num_dot_eof("123.");
+        assert(l_num_dot_eof.next_token().type == TokenType::INT_LITERAL);
+
+        Lexer l_num_dot_non_digit("123.foo");
+        assert(l_num_dot_non_digit.next_token().type == TokenType::INT_LITERAL);
+
+        Lexer l_num_double_dot("123.45.67");
+        assert(l_num_double_dot.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_num_dot_digit("123.456");
+        assert(l_num_dot_digit.next_token().type == TokenType::FLOAT_LITERAL);
+
+        // Line 184 & 188: scientific notation e, E, +, -, none, and EOF
+        Lexer l_sci_e("1e5");
+        assert(l_sci_e.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_E("1E5");
+        assert(l_sci_E.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_plus("1e+5");
+        assert(l_sci_plus.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_minus("1e-5");
+        assert(l_sci_minus.next_token().type == TokenType::FLOAT_LITERAL);
+
+        Lexer l_sci_eof("1e");
+        assert(l_sci_eof.next_token().type == TokenType::FLOAT_LITERAL);
+    }
+
+    // 2. Parser::parse() vs parse_expression()
+    Parser p_full("1 + 2");
+    assert(p_full.parse() != nullptr);
+
+    Parser p_trailing("1 + 2 extra_token");
+    assert(p_trailing.parse() == nullptr);
+
+    Parser p_empty("");
+    assert(p_empty.parse() == nullptr);
+
+    // 3. Prefix unary operators (+, -, !) and nested unaries
+    Parser p_unary("+x - (-y) + (!z) + !(-w)");
+    auto ast_u = p_unary.parse_expression();
+    assert(ast_u != nullptr);
+    std::string ir_u = CelCompiler::to_impscheme(ast_u);
+    assert(!ir_u.empty());
+
+    // 4. Member method calls with 0, 1, and 2 args
+    Parser p_mem("x.foo() + y.bar(1) + z.baz(1, 2)");
+    auto ast_mem = p_mem.parse_expression();
+    assert(ast_mem != nullptr);
+
+    // 5. CelCompiler to_impscheme for all AST kinds & float formats
+    assert(CelCompiler::to_impscheme(nullptr) == "()");
+    assert(CelCompiler::to_impscheme(AstNode::make_bool(true)) == "#t");
+    assert(CelCompiler::to_impscheme(AstNode::make_bool(false)) == "#f");
+    assert(CelCompiler::to_impscheme(AstNode::make_list({AstNode::make_int(1), AstNode::make_int(2)})) == "(list 1 2)");
+    assert(CelCompiler::to_impscheme(AstNode::make_float(10.0)) == "10.0");
+    assert(CelCompiler::to_impscheme(AstNode::make_float(1e20)) == "1e+20");
+    assert(CelCompiler::resolve_math_func("non_existent_func") == -1);
+
+    // 6. AstOptimizer exhaustive condition coverage
+    assert(AstOptimizer::optimize(nullptr) == nullptr);
+
+    // Fold unary: !true, !false, !(!x), !(-x), -int, -float
+    auto opt_u1 = AstOptimizer::optimize(Parser("!true").parse_expression());
+    assert(opt_u1->kind == AstKind::LITERAL_BOOL && opt_u1->bool_val == false);
+
+    auto opt_u2 = AstOptimizer::optimize(Parser("!false").parse_expression());
+    assert(opt_u2->kind == AstKind::LITERAL_BOOL && opt_u2->bool_val == true);
+
+    auto opt_u3 = AstOptimizer::optimize(Parser("!(!x)").parse_expression());
+    assert(opt_u3->kind == AstKind::IDENTIFIER && opt_u3->text == "x");
+
+    auto opt_u3b = AstOptimizer::optimize(Parser("!(-x)").parse_expression());
+    assert(opt_u3b->kind == AstKind::UNARY_OP);
+
+    auto opt_u4 = AstOptimizer::optimize(Parser("-5").parse_expression());
+    assert(opt_u4->kind == AstKind::LITERAL_INT && opt_u4->int_val == -5);
+
+    auto opt_u5 = AstOptimizer::optimize(Parser("-3.14").parse_expression());
+    assert(opt_u5->kind == AstKind::LITERAL_FLOAT && std::fabs(opt_u5->float_val - -3.14) < 1e-5);
+
+    // Fold binary int ops
+    assert(AstOptimizer::optimize(Parser("10 + 5").parse_expression())->int_val == 15);
+    assert(AstOptimizer::optimize(Parser("10 - 5").parse_expression())->int_val == 5);
+    assert(AstOptimizer::optimize(Parser("10 * 5").parse_expression())->int_val == 50);
+    assert(AstOptimizer::optimize(Parser("10 / 5").parse_expression())->int_val == 2);
+    assert(AstOptimizer::optimize(Parser("10 / 0").parse_expression())->kind == AstKind::BINARY_OP); // div by 0
+    assert(AstOptimizer::optimize(Parser("10 % 3").parse_expression())->int_val == 1);
+    assert(AstOptimizer::optimize(Parser("10 % 0").parse_expression())->kind == AstKind::BINARY_OP); // mod by 0
+    assert(AstOptimizer::optimize(Parser("10 == 10").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10 == 5").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("10 != 5").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10 != 10").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5 < 10").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10 < 5").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5 <= 5").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10 <= 5").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("10 > 5").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("5 > 10").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5 >= 5").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("4 >= 5").parse_expression())->bool_val == false);
+
+    // Fold binary float ops (and mixed int/float)
+    assert(std::fabs(AstOptimizer::optimize(Parser("10.0 + 5.0").parse_expression())->float_val - 15.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("10.0 - 5.0").parse_expression())->float_val - 5.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("10.0 * 5.0").parse_expression())->float_val - 50.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("10.0 / 5.0").parse_expression())->float_val - 2.0) < 1e-5);
+    assert(AstOptimizer::optimize(Parser("10.0 / 0.0").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("10.0 == 10.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10.0 == 5.0").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("10.0 != 5.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10.0 != 10.0").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5.0 < 10.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10.0 < 5.0").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5.0 <= 5.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("10.0 <= 5.0").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("10.0 > 5.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("5.0 > 10.0").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("5.0 >= 5.0").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("4.0 >= 5.0").parse_expression())->bool_val == false);
+
+    // Fold boolean ops - all 4 truth combinations for && and ||
+    assert(AstOptimizer::optimize(Parser("false && false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("false && true").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("true && false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("true && true").parse_expression())->bool_val == true);
+
+    assert(AstOptimizer::optimize(Parser("false || false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("false || true").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("true || false").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("true || true").parse_expression())->bool_val == true);
+
+    assert(AstOptimizer::optimize(Parser("true == false").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("true != false").parse_expression())->bool_val == true);
+
+    // Algebraic identities with zeros and non-zeros
+    assert(AstOptimizer::optimize(Parser("x + 0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("0 + x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x + 5").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x + 0.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("0.0 + x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x + 5.0").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x - 0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x - 0.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x - 5").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x * 1").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("1 * x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x * 5").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x * 1.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("1.0 * x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x * 5.0").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x * 0").parse_expression())->float_val == 0.0);
+    assert(AstOptimizer::optimize(Parser("0 * x").parse_expression())->float_val == 0.0);
+    assert(AstOptimizer::optimize(Parser("x * 0.0").parse_expression())->float_val == 0.0);
+    assert(AstOptimizer::optimize(Parser("0.0 * x").parse_expression())->float_val == 0.0);
+    assert(AstOptimizer::optimize(Parser("x / 1").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x / 1.0").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x / 5").parse_expression())->kind == AstKind::BINARY_OP);
+
+    assert(AstOptimizer::optimize(Parser("true && x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("false && x").parse_expression())->bool_val == false);
+    assert(AstOptimizer::optimize(Parser("x && true").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x && false").parse_expression())->bool_val == false);
+
+    assert(AstOptimizer::optimize(Parser("true || x").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("false || x").parse_expression())->text == "x");
+    assert(AstOptimizer::optimize(Parser("x || true").parse_expression())->bool_val == true);
+    assert(AstOptimizer::optimize(Parser("x || false").parse_expression())->text == "x");
+
+    // Ternary optimizations
+    assert(AstOptimizer::optimize(Parser("true ? 10 : 20").parse_expression())->int_val == 10);
+    assert(AstOptimizer::optimize(Parser("false ? 10 : 20").parse_expression())->int_val == 20);
+    assert(AstOptimizer::optimize(Parser("x ? 10 : 20").parse_expression())->kind == AstKind::TERNARY_OP);
+
+    // Math functions folding (unary int/float, binary all 4 permutations, ternary all permutations)
+    assert(std::fabs(AstOptimizer::optimize(Parser("abs(-5.0)").parse_expression())->float_val - 5.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("abs(-5)").parse_expression())->float_val - 5.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2.0, 3.0)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2, 3.0)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2.0, 3)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("pow(2, 3)").parse_expression())->float_val - 8.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15, 0.0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0, 10.0)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
+    assert(std::fabs(AstOptimizer::optimize(Parser("clamp(15, 0, 10)").parse_expression())->float_val - 10.0) < 1e-5);
+
+    // Non-constant arguments for function calls (covering false branch of every argument condition)
+    assert(AstOptimizer::optimize(Parser("abs(x)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("pow(x, 2.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("pow(2.0, y)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("pow(2, y)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(x, 0.0, 10.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15.0, y, 10.0)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15, y, 10)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+    assert(AstOptimizer::optimize(Parser("clamp(15, 0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+
+    std::cout << "  -> PASSED: All exhaustive CEL MC/DC truth tables and decision paths verified." << std::endl;
+}
+
 int main() {
     std::cout << "=== Google CEL Zero-Dependency Parser & IR Compiler Suite ===" << std::endl;
     test_cel_arithmetic_and_precedence();
@@ -303,6 +580,7 @@ int main() {
     test_cel_pathological_40_term_expression();
     test_cel_ast_optimizer_and_constant_folding();
     test_cel_parameter_normalization();
+    test_cel_exhaustive_mcdc_truth_tables();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;
 }

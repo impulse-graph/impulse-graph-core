@@ -2,35 +2,66 @@
 Impulse Graph Engine Bytecode Virtual Machine & Fluent Query Pipeline Python SDK
 """
 
-from typing import List, Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional
+
 import numpy as np
 
 try:
-    from . import _impulse_native
     from ._impulse_native import (
-        QueryBuilder as _NativeQueryBuilder,
         CompiledQuery as _NativeCompiledQuery,
-        QueryResult as _NativeQueryResult,
-        VmContext as _NativeVmContext,
-        VmState as _NativeVmState,
+    )
+    from ._impulse_native import (
+        Instruction,
         RegisterType,
         VmStatus,
-        Instruction,
         opcodes,
+    )
+    from ._impulse_native import (
+        QueryBuilder as _NativeQueryBuilder,
+    )
+    from ._impulse_native import (
+        QueryResult as _NativeQueryResult,
+    )
+    from ._impulse_native import (
+        VmContext as _NativeVmContext,
+    )
+    from ._impulse_native import (
+        VmState as _NativeVmState,
+    )
+    from ._impulse_native import (
+        optimize_cel as _native_optimize_cel,
+    )
+    from ._impulse_native import (
+        parse_cel as _native_parse_cel,
     )
 except ImportError:
     try:
-        import _impulse_native
         from _impulse_native import (
-            QueryBuilder as _NativeQueryBuilder,
             CompiledQuery as _NativeCompiledQuery,
-            QueryResult as _NativeQueryResult,
-            VmContext as _NativeVmContext,
-            VmState as _NativeVmState,
+        )
+        from _impulse_native import (
+            Instruction,
             RegisterType,
             VmStatus,
-            Instruction,
             opcodes,
+        )
+        from _impulse_native import (
+            QueryBuilder as _NativeQueryBuilder,
+        )
+        from _impulse_native import (
+            QueryResult as _NativeQueryResult,
+        )
+        from _impulse_native import (
+            VmContext as _NativeVmContext,
+        )
+        from _impulse_native import (
+            VmState as _NativeVmState,
+        )
+        from _impulse_native import (
+            optimize_cel as _native_optimize_cel,
+        )
+        from _impulse_native import (
+            parse_cel as _native_parse_cel,
         )
     except ImportError:
         _NativeQueryBuilder = None
@@ -38,6 +69,8 @@ except ImportError:
         _NativeQueryResult = None
         _NativeVmContext = None
         _NativeVmState = None
+        _native_parse_cel = None
+        _native_optimize_cel = None
         opcodes = None
     RegisterType = None
     VmStatus = None
@@ -257,8 +290,12 @@ class CompiledQuery:
         native_snap = getattr(snapshot, "_native", None) if snapshot else None
         return QueryResult(self._native.execute(native_snap, input_param))
 
-    def execute_with_context(self, ctx: VmContext, state: VmState, input_param: int = 0) -> QueryResult:
-        return QueryResult(self._native.execute_with_context(ctx._native, state._native, input_param))
+    def execute_with_context(
+        self, ctx: VmContext, state: VmState, input_param: int = 0
+    ) -> QueryResult:
+        return QueryResult(
+            self._native.execute_with_context(ctx._native, state._native, input_param)
+        )
 
 
 class QueryBuilder:
@@ -325,6 +362,11 @@ class QueryBuilder:
 
     def filter_node_str_prefix(self, prefix: str) -> "QueryBuilder":
         self._native.filter_node_str_prefix(prefix)
+        return self
+
+    def filter_cel(self, expression: str) -> "QueryBuilder":
+        """Delegate Google CEL expression parsing and SIMD filter lowering to C++ Pratt compiler."""
+        self._native.filter_cel(expression)
         return self
 
     def union_with(self, src_reg: int) -> "QueryBuilder":
@@ -520,6 +562,20 @@ class QueryBuilder:
         return CompiledQuery(self._native.compile())
 
 
+def parse_cel(expression: str) -> str:
+    """Parse a Google CEL expression and compile into ImpScheme S-Expression IR via C++ Pratt compiler."""
+    if _native_parse_cel is None:
+        raise RuntimeError("_impulse_native extension is not compiled.")
+    return _native_parse_cel(expression)
+
+
+def optimize_cel(expression: str) -> str:
+    """Parse, optimize, and constant-fold a Google CEL expression into ImpScheme S-Expression IR via C++ optimizer."""
+    if _native_optimize_cel is None:
+        raise RuntimeError("_impulse_native extension is not compiled.")
+    return _native_optimize_cel(expression)
+
+
 __all__ = [
     "VmContext",
     "VmState",
@@ -530,4 +586,6 @@ __all__ = [
     "VmStatus",
     "Instruction",
     "opcodes",
+    "parse_cel",
+    "optimize_cel",
 ]

@@ -535,6 +535,9 @@ public:
             steps.push_back(ScmCollect::bitset());
         }
 
+        IMPULSE_ASSERT(!steps.empty());
+        IMPULSE_AUDIT_ASSERT(steps.back()->kind() == NodeKind::COLLECT);
+
         return {std::make_shared<ScmProgram>(steps), seed_var, seed_val_or_param};
     }
 };

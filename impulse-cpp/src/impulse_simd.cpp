@@ -1,4 +1,5 @@
 #include "impulse_simd.h"
+#include "impulse_assert.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -17,6 +18,7 @@ namespace hn = hwy::HWY_NAMESPACE;
 
 // Kernel 1: Float32 Dot Product
 float DotProductF32(const float* HWY_RESTRICT a, const float* HWY_RESTRICT b, size_t len) {
+    IMPULSE_ASSERT(len == 0 || (a != nullptr && b != nullptr));
     const hn::ScalableTag<float> d;
     auto sum = hn::Zero(d);
     const size_t N = hn::Lanes(d);
@@ -35,6 +37,7 @@ float DotProductF32(const float* HWY_RESTRICT a, const float* HWY_RESTRICT b, si
 
 // Kernel 2: Float32 Vector Sum
 void VectorSumF32(const float* HWY_RESTRICT a, const float* HWY_RESTRICT b, float* HWY_RESTRICT out, size_t len) {
+    IMPULSE_ASSERT(len == 0 || (a != nullptr && b != nullptr && out != nullptr));
     const hn::ScalableTag<float> d;
     const size_t N = hn::Lanes(d);
     size_t i = 0;

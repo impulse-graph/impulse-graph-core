@@ -6,10 +6,17 @@
   "types": "index.d.ts",
   "scripts": {
     "build": "node-gyp rebuild",
-    "test": "node test.js"
+    "test": "node test.js",
+    "fmt": "prettier --write \"**/*.{js,ts,json,md}\"",
+    "fmt:check": "prettier --check \"**/*.{js,ts,json,md}\"",
+    "lint": "eslint \"**/*.js\""
   },
   "dependencies": {
     "node-addon-api": "^7.0.0"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6"
+  }
 }

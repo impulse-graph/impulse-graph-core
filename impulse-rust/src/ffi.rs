@@ -79,7 +79,9 @@ pub unsafe extern "C" fn impulse_snapshot_is_adjacent_rs(
         return false;
     }
     let reader_ref = &*reader;
-    reader_ref.is_adjacent(relation_index as u16, src_id, tgt_id).unwrap_or(false)
+    reader_ref
+        .is_adjacent(relation_index as u16, src_id, tgt_id)
+        .unwrap_or(false)
 }
 
 #[repr(C)]
@@ -231,25 +233,73 @@ extern "C" {
     pub fn impulse_stmt_buffer_size(stmt: *const impulse_stmt_t) -> usize;
     pub fn impulse_stmt_finalize(stmt: *mut impulse_stmt_t);
 
-    pub fn impulse_stmt_bind_node(stmt: *mut impulse_stmt_t, param: *const c_char, node_id: u64) -> i32;
-    pub fn impulse_stmt_bind_nodes(stmt: *mut impulse_stmt_t, param: *const c_char, node_ids: *const u64, count: usize) -> i32;
-    pub fn impulse_stmt_bind_bitset(stmt: *mut impulse_stmt_t, param: *const c_char, words: *const u64, word_count: usize) -> i32;
-    pub fn impulse_stmt_bind_roaring(stmt: *mut impulse_stmt_t, param: *const c_char, bytes: *const u8, len: usize) -> i32;
+    pub fn impulse_stmt_bind_node(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        node_id: u64,
+    ) -> i32;
+    pub fn impulse_stmt_bind_nodes(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        node_ids: *const u64,
+        count: usize,
+    ) -> i32;
+    pub fn impulse_stmt_bind_bitset(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        words: *const u64,
+        word_count: usize,
+    ) -> i32;
+    pub fn impulse_stmt_bind_roaring(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        bytes: *const u8,
+        len: usize,
+    ) -> i32;
     pub fn impulse_stmt_bind_int(stmt: *mut impulse_stmt_t, param: *const c_char, val: i64) -> i32;
-    pub fn impulse_stmt_bind_uint(stmt: *mut impulse_stmt_t, param: *const c_char, val: u64) -> i32;
-    pub fn impulse_stmt_bind_float(stmt: *mut impulse_stmt_t, param: *const c_char, val: f64) -> i32;
-    pub fn impulse_stmt_bind_str(stmt: *mut impulse_stmt_t, param: *const c_char, str: *const c_char) -> i32;
-    pub fn impulse_stmt_bind_uuid(stmt: *mut impulse_stmt_t, param: *const c_char, uuid_bytes: *const u8) -> i32;
-    pub fn impulse_stmt_bind_vector(stmt: *mut impulse_stmt_t, param: *const c_char, data: *const f32, dim: usize) -> i32;
+    pub fn impulse_stmt_bind_uint(stmt: *mut impulse_stmt_t, param: *const c_char, val: u64)
+        -> i32;
+    pub fn impulse_stmt_bind_float(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        val: f64,
+    ) -> i32;
+    pub fn impulse_stmt_bind_str(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        str: *const c_char,
+    ) -> i32;
+    pub fn impulse_stmt_bind_uuid(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        uuid_bytes: *const u8,
+    ) -> i32;
+    pub fn impulse_stmt_bind_vector(
+        stmt: *mut impulse_stmt_t,
+        param: *const c_char,
+        data: *const f32,
+        dim: usize,
+    ) -> i32;
 
-    pub fn impulse_stmt_execute(stmt: *mut impulse_stmt_t, buffer: *mut std::ffi::c_void, buffer_size: usize) -> i32;
+    pub fn impulse_stmt_execute(
+        stmt: *mut impulse_stmt_t,
+        buffer: *mut std::ffi::c_void,
+        buffer_size: usize,
+    ) -> i32;
     pub fn impulse_stmt_row_count(stmt: *const impulse_stmt_t) -> usize;
     pub fn impulse_stmt_column_count(stmt: *const impulse_stmt_t) -> u32;
     pub fn impulse_stmt_column_name(stmt: *const impulse_stmt_t, col_idx: u32) -> *const c_char;
     pub fn impulse_stmt_column_type(stmt: *const impulse_stmt_t, col_idx: u32) -> u8;
     pub fn impulse_stmt_column_dim(stmt: *const impulse_stmt_t, col_idx: u32) -> u32;
-    pub fn impulse_stmt_column_data(stmt: *const impulse_stmt_t, col_idx: u32) -> *const std::ffi::c_void;
-    pub fn impulse_stmt_column_is_null(stmt: *const impulse_stmt_t, col_idx: u32, row_idx: usize) -> bool;
+    pub fn impulse_stmt_column_data(
+        stmt: *const impulse_stmt_t,
+        col_idx: u32,
+    ) -> *const std::ffi::c_void;
+    pub fn impulse_stmt_column_is_null(
+        stmt: *const impulse_stmt_t,
+        col_idx: u32,
+        row_idx: usize,
+    ) -> bool;
 
     pub fn impulse_exec(
         snapshot: *const impulse_snapshot_t,

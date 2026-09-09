@@ -67,7 +67,8 @@ static void test_all_30_spec_v0_9_test_vectors() {
 
         bool is_rejection = manifest_content.find("\"REJECT_") != std::string::npos ||
                            manifest_content.find("\"corrupt_") != std::string::npos ||
-                           manifest_content.find("\"SUCCESS\"") == std::string::npos;
+                           (manifest_content.find("\"SUCCESS\"") == std::string::npos &&
+                            manifest_content.find("\"IMPULSE_VM_OK\"") == std::string::npos);
 
         impulse_status_t status = IMPULSE_OK;
         impulse_snapshot_t* snap = impulse_snapshot_open(imps_file.string().c_str(), &status);

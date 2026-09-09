@@ -9,8 +9,9 @@ Demonstrates:
 """
 
 import os
-import numpy as np
-from impulse_graph import Writer, Snapshot
+
+from impulse_graph import Snapshot, Writer
+
 
 def main():
     print("=" * 65)
@@ -23,9 +24,9 @@ def main():
     # Step 1: Create a Snapshot using Writer
     # -------------------------------------------------------------------------
     print(f"1. Creating binary snapshot: {snapshot_path}...")
-    
+
     with Writer(snapshot_path) as writer:
-        writer.add_domain(domain_id=0, key_type=4, name="User") # Key Type: INT64
+        writer.add_domain(domain_id=0, key_type=4, name="User")  # Key Type: INT64
 
         # Topology (CSR): 4 Users (0, 1, 2, 3)
         # Node 0 -> [1, 2]
@@ -38,7 +39,7 @@ def main():
         writer.add_relation(
             src_domain_id=0,
             tgt_domain_id=0,
-            encoding_type=0, # RAW CSR
+            encoding_type=0,  # RAW CSR
             node_count=4,
             edge_count=5,
             section_features=0,
@@ -71,7 +72,9 @@ def main():
             start = row_arr[node_id]
             end = row_arr[node_id + 1]
             neighbors = col_arr[start:end]
-            print(f"   -> Node {node_id} out-degree: {len(neighbors)} edges (neighbors: {neighbors.tolist()})")
+            print(
+                f"   -> Node {node_id} out-degree: {len(neighbors)} edges (neighbors: {neighbors.tolist()})"
+            )
 
         print("\n4. Direct Point Reachability Queries:")
         print(f"   -> Node 0 -> Node 1 reachable? {snap.is_reachable(0, 0, 1)}")
@@ -82,6 +85,7 @@ def main():
         os.remove(snapshot_path)
 
     print("\n[SUCCESS] Example 01 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

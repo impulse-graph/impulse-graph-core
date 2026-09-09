@@ -1,3 +1,4 @@
+#include <iostream>
 /**
  * @file impulse_cel.h
  * @brief Google CEL (Common Expression Language) Zero-Dependency Pratt Parser & Compiler for Impulse Graph.
@@ -11,6 +12,7 @@
 
 #include "impulse_vm.h"
 #include "impulse_math_ops.h"
+#include "impulse_assert.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -35,7 +37,7 @@ enum class TokenType {
     EQ_EQ, BANG_EQ, LT, LT_EQ, GT, GT_EQ,
     AMP_AMP, PIPE_PIPE, BANG,
     QUESTION, COLON,
-    DOT, COMMA,
+    DOT, COMMA, EQ,
     
     // Delimiters
     LPAREN, RPAREN,
@@ -87,7 +89,7 @@ public:
 
             case '=':
                 if (peek() == '=') { cursor_++; return Token{TokenType::EQ_EQ, "==", 0, 0.0, false, start}; }
-                break;
+                return Token{TokenType::EQ, "=", 0, 0.0, false, start};
             case '!':
                 if (peek() == '=') { cursor_++; return Token{TokenType::BANG_EQ, "!=", 0, 0.0, false, start}; }
                 return Token{TokenType::BANG, "!", 0, 0.0, false, start};
@@ -352,6 +354,7 @@ struct AstNode {
 // Operator Precedence levels for Pratt parser
 enum Precedence {
     PREC_NONE = 0,
+    PREC_ASSIGN,
     PREC_CONDITIONAL, // ? :
     PREC_OR,          // ||
     PREC_AND,         // &&
@@ -369,7 +372,15 @@ public:
     }
 
     std::shared_ptr<AstNode> parse_expression() {
-        return parse_precedence(PREC_CONDITIONAL);
+        return parse_precedence(PREC_ASSIGN);
+    }
+
+    std::shared_ptr<AstNode> parse() {
+        auto expr = parse_expression();
+        if (!expr || curr_.type != TokenType::END_OF_FILE) {
+            return nullptr;
+        }
+        return expr;
     }
 
 private:
@@ -390,6 +401,7 @@ private:
 
     Precedence get_precedence(TokenType type) const {
         switch (type) {
+            case TokenType::EQ: return PREC_ASSIGN;
             case TokenType::QUESTION: return PREC_CONDITIONAL;
             case TokenType::PIPE_PIPE: return PREC_OR;
             case TokenType::AMP_AMP: return PREC_AND;
@@ -509,8 +521,9 @@ private:
                 }
             } else {
                 // Binary operator
-                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + 1);
+                auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ ? 0 : 1));
                 auto right = parse_precedence(next_prec);
+                if (!right) return nullptr;
                 left = AstNode::make_binary(op.text, left, right);
             }
         }
@@ -524,6 +537,7 @@ class CelCompiler {
 public:
     static std::string to_impscheme(const std::shared_ptr<AstNode>& node) {
         if (!node) return "()";
+        IMPULSE_ASSERT(node != nullptr);
 
         switch (node->kind) {
             case AstKind::LITERAL_INT:
@@ -672,6 +686,29 @@ private:
         auto left = node->children[0];
         auto right = node->children[1];
         const std::string& op = node->text;
+
+        // Monotonic Inverse Pushdown
+        if (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
+            auto check_pushdown = [&](const std::shared_ptr<AstNode>& lhs, const std::shared_ptr<AstNode>& rhs, bool reverse_op) -> std::shared_ptr<AstNode> {
+                if (lhs->kind == AstKind::FUNCTION_CALL && lhs->children.size() == 1 &&
+                    (rhs->kind == AstKind::LITERAL_FLOAT || rhs->kind == AstKind::LITERAL_INT)) {
+                    double c = (rhs->kind == AstKind::LITERAL_FLOAT) ? rhs->float_val : static_cast<double>(rhs->int_val);
+                    std::string new_op = op;
+                    if (reverse_op) {
+                        if (op == "<") new_op = ">";
+                        else if (op == "<=") new_op = ">=";
+                        else if (op == ">") new_op = "<";
+                        else if (op == ">=") new_op = "<=";
+                    }
+                    if (lhs->text == "sqrt") {
+                        if (c >= 0) return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c));
+                    }
+                }
+                return nullptr;
+            };
+            if (auto res = check_pushdown(left, right, false)) return res;
+            if (auto res = check_pushdown(right, left, true)) return res;
+        }
 
         // 1. Integer Constant Folding
         if (left->kind == AstKind::LITERAL_INT && right->kind == AstKind::LITERAL_INT) {

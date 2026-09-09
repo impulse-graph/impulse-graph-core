@@ -8,7 +8,6 @@
  */
 
 const fs = require('fs');
-const path = require('path');
 const { Writer, Snapshot } = require('../index.js');
 
 function main() {
@@ -60,7 +59,9 @@ function main() {
   // --------------------------------------------------------------------------
   console.log('\n3. Direct Point Reachability Queries:');
   console.log(`   -> Node 0 -> Node 1 reachable? ${snap.isReachable(0, 0, 0, 1) ? 'YES' : 'NO'}`);
-  console.log(`   -> Node 0 -> Node 3 reachable? ${snap.isReachable(0, 0, 0, 3) ? 'YES (direct)' : 'NO (multi-hop path)'}`);
+  console.log(
+    `   -> Node 0 -> Node 3 reachable? ${snap.isReachable(0, 0, 0, 3) ? 'YES (direct)' : 'NO (multi-hop path)'}`
+  );
 
   // Cleanup
   snap.close();

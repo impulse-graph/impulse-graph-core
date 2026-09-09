@@ -6,10 +6,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --- Compiler Warnings -------------------------------------------------
 if(MSVC)
-    add_compile_options(/W4 /wd4189 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS /utf-8 /permissive-)
+    add_compile_options(/W4 /wd4189 /we4474 /we4477 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS /utf-8 /permissive-)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wformat=2 -Werror=format)
+endif()
+
+# --- Assertion Options --------------------------------------------------
+option(IMPULSE_ENABLE_ASSERTIONS "Enable internal debug invariant assertions" OFF)
+option(IMPULSE_ENABLE_AUDIT_ASSERTIONS "Enable expensive structural audit assertions" OFF)
+option(IMPULSE_DISABLE_COMPUTED_GOTO "Disable computed goto and use switched opcode dispatch" OFF)
+if(IMPULSE_ENABLE_ASSERTIONS)
+    add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1)
+endif()
+if(IMPULSE_ENABLE_AUDIT_ASSERTIONS)
+    add_compile_definitions(IMPULSE_ENABLE_ASSERTIONS=1 IMPULSE_ENABLE_AUDIT_ASSERTIONS=1)
+endif()
+if(IMPULSE_DISABLE_COMPUTED_GOTO)
+    add_compile_definitions(IMPULSE_DISABLE_COMPUTED_GOTO=1)
 endif()
 
 # --- Sanitizer Option ---------------------------------------------------
@@ -17,6 +31,13 @@ option(IMPULSE_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer"
 if(IMPULSE_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
+endif()
+
+# --- MC/DC Coverage Option ----------------------------------------------
+option(IMPULSE_ENABLE_MCDC_COVERAGE "Enable LLVM source-based MC/DC code coverage" OFF)
+if(IMPULSE_ENABLE_MCDC_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc)
+    add_link_options(-fprofile-instr-generate)
 endif()
 
 # --- Dependencies: Google Highway --------------------------------------
@@ -32,7 +53,7 @@ set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(highway)
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
-add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
+add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -42,7 +63,7 @@ target_include_directories(impulse_graph PUBLIC
 target_link_libraries(impulse_graph PUBLIC hwy)
 
 # --- Static Library (.a / .lib) ------------------------------------------
-add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp)
+add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -60,6 +81,7 @@ install(TARGETS impulse_graph impulse_graph_static
 install(FILES
     include/impulse_format_v0_9.h
     include/impulse_graph.h
+    include/impulse_assert.h
     include/impulse_simd.h
     include/impulse_sha256.h
     include/impulse_math_ops.h
@@ -85,6 +107,10 @@ install(EXPORT ImpulseGraphTargets
 option(IMPULSE_BUILD_TESTS "Build impulse-graph tests" ON)
 if(IMPULSE_BUILD_TESTS)
     enable_testing()
+    add_executable(test_assert tests/test_assert.cpp)
+    target_link_libraries(test_assert PRIVATE impulse_graph_static)
+    add_test(NAME test_assert COMMAND test_assert)
+
     add_executable(impulse_graph_test tests/impulse_graph_test.cpp)
     target_link_libraries(impulse_graph_test PRIVATE impulse_graph_static)
     add_test(NAME impulse_graph_test COMMAND impulse_graph_test)
@@ -116,6 +142,17 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_cel_parser tests/test_cel_parser.cpp)
     target_link_libraries(test_cel_parser PRIVATE impulse_graph_static)
     add_test(NAME test_cel_parser COMMAND test_cel_parser)
+
+    add_executable(test_vm_mcdc_boundaries tests/test_vm_mcdc_boundaries.cpp)
+    target_link_libraries(test_vm_mcdc_boundaries PRIVATE impulse_graph_static)
+    add_test(NAME test_vm_mcdc_boundaries COMMAND test_vm_mcdc_boundaries)
+
+    add_executable(test_snapshot_mcdc_boundaries tests/test_snapshot_mcdc_boundaries.cpp)
+
+    target_link_libraries(test_snapshot_mcdc_boundaries PRIVATE impulse_graph_static)
+
+    add_test(NAME test_snapshot_mcdc_boundaries COMMAND test_snapshot_mcdc_boundaries)
+
 
     add_executable(bench_secondary_indexes tests/bench_secondary_indexes.cpp)
     target_link_libraries(bench_secondary_indexes PRIVATE impulse_graph_static)
@@ -154,6 +191,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_cpp_compiler_parity tests/test_cpp_compiler_parity.cpp)
     target_link_libraries(test_cpp_compiler_parity PRIVATE impulse_graph_static)
     add_test(NAME test_cpp_compiler_parity COMMAND test_cpp_compiler_parity)
+
+    add_executable(test_variable_node_id_widths tests/test_variable_node_id_widths.cpp)
+    target_link_libraries(test_variable_node_id_widths PRIVATE impulse_graph_static)
+    add_test(NAME test_variable_node_id_widths COMMAND test_variable_node_id_widths)
 
     add_executable(bench_cpp_compiler_ablation tests/bench_cpp_compiler_ablation.cpp)
     target_link_libraries(bench_cpp_compiler_ablation PRIVATE impulse_graph_static)
@@ -197,3 +238,6 @@ if(IMPULSE_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
+target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
+add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)

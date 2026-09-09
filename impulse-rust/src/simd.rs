@@ -1,17 +1,19 @@
 //! Architecture-Independent SIMD module for Rust (Google Highway Integration & Fallbacks)
 
-use std::os::raw::c_char;
 use std::ffi::CStr;
+use std::os::raw::c_char;
 
 extern "C" {
     fn impulse_simd_get_target_name() -> *const c_char;
     fn impulse_simd_dot_product_f32(a: *const f32, b: *const f32, len: usize) -> f32;
     fn impulse_simd_vector_sum_f32(a: *const f32, b: *const f32, out: *mut f32, len: usize) -> i32;
     fn impulse_simd_intersect_sorted_u32(
-        a: *const u32, len_a: usize,
-        b: *const u32, len_b: usize,
+        a: *const u32,
+        len_a: usize,
+        b: *const u32,
+        len_b: usize,
         out_intersection: *mut u32,
-        out_count: *mut usize
+        out_count: *mut usize,
     ) -> i32;
 }
 
@@ -32,9 +34,7 @@ pub fn dot_product_f32(a: &[f32], b: &[f32]) -> f32 {
     if len == 0 {
         return 0.0;
     }
-    unsafe {
-        impulse_simd_dot_product_f32(a.as_ptr(), b.as_ptr(), len)
-    }
+    unsafe { impulse_simd_dot_product_f32(a.as_ptr(), b.as_ptr(), len) }
 }
 
 /// Computes dynamic architecture-independent SIMD elementwise vector addition.
@@ -64,9 +64,12 @@ pub fn intersect_sorted_u32(a: &[u32], b: &[u32]) -> Vec<u32> {
 
     unsafe {
         let status = impulse_simd_intersect_sorted_u32(
-            a.as_ptr(), a.len(),
-            b.as_ptr(), b.len(),
-            out.as_mut_ptr(), &mut out_count
+            a.as_ptr(),
+            a.len(),
+            b.as_ptr(),
+            b.len(),
+            out.as_mut_ptr(),
+            &mut out_count,
         );
         if status == 0 {
             out.truncate(out_count);

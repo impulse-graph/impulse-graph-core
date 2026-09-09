@@ -129,7 +129,10 @@ impl BaseDataType {
             BaseDataType::Int8 => 1,
             BaseDataType::Int16 | BaseDataType::Float16 => 2,
             BaseDataType::Int32 | BaseDataType::Float32 => 4,
-            BaseDataType::Int64 | BaseDataType::Float64 | BaseDataType::TimestampMs | BaseDataType::TimestampNs => 8,
+            BaseDataType::Int64
+            | BaseDataType::Float64
+            | BaseDataType::TimestampMs
+            | BaseDataType::TimestampNs => 8,
             BaseDataType::FixedBytes => 1,
             BaseDataType::VarString | BaseDataType::VarBytes => 0,
         }
@@ -177,19 +180,19 @@ impl std::error::Error for ImpulseError {}
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct SnapshotHeader {
-    pub magic: u32,                     // 0x00..0x03 ("IMPS" = 0x494D5053)
-    pub version: u16,                   // 0x04..0x05 (0x0009)
-    pub data_offset: u32,               // 0x06..0x09 (4096)
-    pub domain_count: u16,              // 0x0A..0x0B
-    pub relation_count: u16,            // 0x0C..0x0D
-    pub timestamp_ms: u64,              // 0x0E..0x15
-    pub required_features: u64,         // 0x16..0x1D
-    pub footer_directory_offset: u64,   // 0x1E..0x25
-    pub footer_directory_bytes: u64,    // 0x26..0x2D
-    pub snapshot_uuid: [u8; 16],        // 0x2E..0x3D
-    pub header_checksum: u16,           // 0x3E..0x3F (CRC-16-CCITT)
-    pub index_count: u16,               // 0x40..0x41
-    pub header_padding: [u8; 4030],     // 0x42..0xFFF (Pads to 4096)
+    pub magic: u32,                   // 0x00..0x03 ("IMPS" = 0x494D5053)
+    pub version: u16,                 // 0x04..0x05 (0x0009)
+    pub data_offset: u32,             // 0x06..0x09 (4096)
+    pub domain_count: u16,            // 0x0A..0x0B
+    pub relation_count: u16,          // 0x0C..0x0D
+    pub timestamp_ms: u64,            // 0x0E..0x15
+    pub required_features: u64,       // 0x16..0x1D
+    pub footer_directory_offset: u64, // 0x1E..0x25
+    pub footer_directory_bytes: u64,  // 0x26..0x2D
+    pub snapshot_uuid: [u8; 16],      // 0x2E..0x3D
+    pub header_checksum: u16,         // 0x3E..0x3F (CRC-16-CCITT)
+    pub index_count: u16,             // 0x40..0x41
+    pub header_padding: [u8; 4030],   // 0x42..0xFFF (Pads to 4096)
 }
 
 impl SnapshotHeader {
@@ -249,11 +252,11 @@ const_assert_eq!(std::mem::size_of::<FooterTrailer>(), 16);
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct DomainCatalogEntry {
-    pub domain_id: u16,     // 0x00..0x01
-    pub key_type: u8,       // 0x02
-    pub reserved: u8,       // 0x03
-    pub name_offset: u32,   // 0x04..0x07 (Offset into Shared String Table)
-    pub node_count: u64,    // 0x08..0x0F
+    pub domain_id: u16,   // 0x00..0x01
+    pub key_type: u8,     // 0x02
+    pub reserved: u8,     // 0x03
+    pub name_offset: u32, // 0x04..0x07 (Offset into Shared String Table)
+    pub node_count: u64,  // 0x08..0x0F
 }
 
 impl DomainCatalogEntry {
@@ -298,27 +301,27 @@ const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 16);
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct RelationDirectoryEntry {
-    pub relation_id: u16,       // 0x00..0x01
-    pub src_domain_id: u16,     // 0x02..0x03
-    pub tgt_domain_id: u16,     // 0x04..0x05
-    pub encoding_id: u8,        // 0x06
-    pub node_id_width: u8,      // 0x07 (2 = u16, 4 = u32, 8 = u64)
-    pub edge_index_width: u8,   // 0x08 (4 = u32, 8 = u64)
-    pub reserved1: [u8; 3],     // 0x09..0x0B
-    pub name_offset: u32,       // 0x0C..0x0F (Offset into Shared String Table)
-    pub node_count: u64,        // 0x10..0x17
-    pub edge_count: u64,        // 0x18..0x1F
-    pub section_features: u64,  // 0x20..0x27
-    pub csr_row_off_offset: u64,// 0x28..0x2F
-    pub csr_row_off_bytes: u64, // 0x30..0x37
-    pub csr_col_idx_offset: u64,// 0x38..0x3F
-    pub csr_col_idx_bytes: u64, // 0x40..0x47
-    pub csc_row_off_offset: u64,// 0x48..0x4F
-    pub csc_row_off_bytes: u64, // 0x50..0x57
-    pub csc_col_idx_offset: u64,// 0x58..0x5F
-    pub csc_col_idx_bytes: u64, // 0x60..0x67
-    pub attr_count: u16,        // 0x68..0x69
-    pub reserved2: [u8; 22],    // 0x6A..0x7F (Pads struct to exactly 128 Bytes)
+    pub relation_id: u16,        // 0x00..0x01
+    pub src_domain_id: u16,      // 0x02..0x03
+    pub tgt_domain_id: u16,      // 0x04..0x05
+    pub encoding_id: u8,         // 0x06
+    pub node_id_width: u8,       // 0x07 (2 = u16, 4 = u32, 8 = u64)
+    pub edge_index_width: u8,    // 0x08 (4 = u32, 8 = u64)
+    pub reserved1: [u8; 3],      // 0x09..0x0B
+    pub name_offset: u32,        // 0x0C..0x0F (Offset into Shared String Table)
+    pub node_count: u64,         // 0x10..0x17
+    pub edge_count: u64,         // 0x18..0x1F
+    pub section_features: u64,   // 0x20..0x27
+    pub csr_row_off_offset: u64, // 0x28..0x2F
+    pub csr_row_off_bytes: u64,  // 0x30..0x37
+    pub csr_col_idx_offset: u64, // 0x38..0x3F
+    pub csr_col_idx_bytes: u64,  // 0x40..0x47
+    pub csc_row_off_offset: u64, // 0x48..0x4F
+    pub csc_row_off_bytes: u64,  // 0x50..0x57
+    pub csc_col_idx_offset: u64, // 0x58..0x5F
+    pub csc_col_idx_bytes: u64,  // 0x60..0x67
+    pub attr_count: u16,         // 0x68..0x69
+    pub reserved2: [u8; 22],     // 0x6A..0x7F (Pads struct to exactly 128 Bytes)
 }
 
 impl RelationDirectoryEntry {
@@ -368,15 +371,15 @@ const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 128);
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct AttributeDescriptor {
-    pub name_offset: u32,       // 0x00..0x03 (Offset into Shared String Table)
-    pub type_code: u8,          // 0x04 (Base type + 0x80 Nullable flag)
-    pub reserved1: u8,          // 0x05
-    pub reserved2: u16,         // 0x06..0x07
-    pub dimension: u32,         // 0x08..0x0B (1 for scalar, D for vector)
-    pub data_offset: u64,       // 0x0C..0x13
-    pub data_bytes: u64,        // 0x14..0x1B
-    pub offsets_offset: u64,    // 0x1C..0x23 (For VAR_STRING / VAR_BYTES)
-    pub offsets_bytes: u64,     // 0x24..0x2B (For VAR_STRING / VAR_BYTES)
+    pub name_offset: u32,    // 0x00..0x03 (Offset into Shared String Table)
+    pub type_code: u8,       // 0x04 (Base type + 0x80 Nullable flag)
+    pub reserved1: u8,       // 0x05
+    pub reserved2: u16,      // 0x06..0x07
+    pub dimension: u32,      // 0x08..0x0B (1 for scalar, D for vector)
+    pub data_offset: u64,    // 0x0C..0x13
+    pub data_bytes: u64,     // 0x14..0x1B
+    pub offsets_offset: u64, // 0x1C..0x23 (For VAR_STRING / VAR_BYTES)
+    pub offsets_bytes: u64,  // 0x24..0x2B (For VAR_STRING / VAR_BYTES)
 }
 
 impl AttributeDescriptor {
@@ -400,18 +403,20 @@ const_assert_eq!(std::mem::size_of::<AttributeDescriptor>(), 44);
 
 pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
     ];
     let k: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
 
     let bit_len = (data.len() as u64) * 8;
@@ -430,7 +435,10 @@ pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
 
         let mut a = h[0];
@@ -445,7 +453,11 @@ pub fn compute_sha256(data: &[u8]) -> [u8; 32] {
         for i in 0..64 {
             let s1_var = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h_var.wrapping_add(s1_var).wrapping_add(ch).wrapping_add(k[i]).wrapping_add(w[i]);
+            let temp1 = h_var
+                .wrapping_add(s1_var)
+                .wrapping_add(ch)
+                .wrapping_add(k[i])
+                .wrapping_add(w[i]);
             let s0_var = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = s0_var.wrapping_add(maj);

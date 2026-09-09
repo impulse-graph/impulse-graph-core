@@ -51,19 +51,44 @@ static void test_all_42_math_functions_scalar_and_simd() {
     assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ACOSH, 1.0f) - 0.0f) < 1e-5f);
     assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_ATANH, 0.0f) - 0.0f) < 1e-5f);
 
-    // 5. Rounding & Clamping
+    // 5. Rounding & Clamping & Safe Div
     assert(impulse_math_unary_f32(MATH_FUNC_FLOOR, 3.7f) == 3.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_CEIL, 3.2f) == 4.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_TRUNC, -3.7f) == -3.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_ROUND, 3.5f) == 4.0f);
-    assert(impulse_math_ternary_f32(MATH_FUNC_CLAMP, 15.0f, 0.0f, 10.0f) == 10.0f);
+    assert(impulse_math_ternary_f32(MATH_FUNC_CLAMP, 15.0f, 0.0f, 10.0f) == 10.0f); // x > z
+    assert(impulse_math_ternary_f32(MATH_FUNC_CLAMP, -5.0f, 0.0f, 10.0f) == 0.0f);  // x < y
+    assert(impulse_math_ternary_f32(MATH_FUNC_CLAMP, 5.0f, 0.0f, 10.0f) == 5.0f);   // y <= x <= z
     assert(impulse_math_binary_f32(MATH_FUNC_COPYSIGN, 5.0f, -1.0f) == -5.0f);
     assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_FMOD, 5.5f, 2.0f) - 1.5f) < 1e-5f);
+
+    // MC/DC condition tests for MATH_FUNC_SAFE_DIV (Binary F32)
+    assert(impulse_math_binary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 0.0f) == 0.0f); // C1: T, C2: -
+    assert(impulse_math_binary_f32(MATH_FUNC_SAFE_DIV, 10.0f, NAN) == 0.0f);  // C1: F, C2: T
+    assert(impulse_math_binary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 2.0f) == 5.0f); // C1: F, C2: F
+
+    // MC/DC condition tests for MATH_FUNC_SAFE_DIV (Binary F64)
+    assert(impulse_math_binary_f64(MATH_FUNC_SAFE_DIV, 10.0, 0.0) == 0.0);   // C1: T, C2: -
+    assert(impulse_math_binary_f64(MATH_FUNC_SAFE_DIV, 10.0, NAN) == 0.0);   // C1: F, C2: T
+    assert(impulse_math_binary_f64(MATH_FUNC_SAFE_DIV, 10.0, 2.0) == 5.0);   // C1: F, C2: F
+
+    // MC/DC condition tests for MATH_FUNC_SAFE_DIV (Ternary F32)
+    assert(impulse_math_ternary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 0.0f, -1.0f) == -1.0f); // C1: T, C2: -
+    assert(impulse_math_ternary_f32(MATH_FUNC_SAFE_DIV, 10.0f, NAN, -1.0f) == -1.0f);  // C1: F, C2: T
+    assert(impulse_math_ternary_f32(MATH_FUNC_SAFE_DIV, 10.0f, 2.0f, -1.0f) == 5.0f);  // C1: F, C2: F
+
+    // MC/DC condition tests for MATH_FUNC_SAFE_DIV (Ternary F64)
+    assert(impulse_math_ternary_f64(MATH_FUNC_SAFE_DIV, 10.0, 0.0, -1.0) == -1.0);     // C1: T, C2: -
+    assert(impulse_math_ternary_f64(MATH_FUNC_SAFE_DIV, 10.0, NAN, -1.0) == -1.0);     // C1: F, C2: T
+    assert(impulse_math_ternary_f64(MATH_FUNC_SAFE_DIV, 10.0, 2.0, -1.0) == 5.0);     // C1: F, C2: F
 
     // 6. GNN & Neural Activations
     assert(impulse_math_unary_f32(MATH_FUNC_RELU, -2.5f) == 0.0f);
     assert(impulse_math_unary_f32(MATH_FUNC_RELU, 3.5f) == 3.5f);
     assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_LEAKY_RELU, -2.0f, 0.01f) - (-0.02f)) < 1e-5f);
+    assert(std::fabs(impulse_math_binary_f32(MATH_FUNC_LEAKY_RELU, 2.0f, 0.01f) - 2.0f) < 1e-5f);
+    assert(std::fabs(impulse_math_binary_f64(MATH_FUNC_LEAKY_RELU, -2.0, 0.01) - (-0.02)) < 1e-5);
+    assert(std::fabs(impulse_math_binary_f64(MATH_FUNC_LEAKY_RELU, 2.0, 0.01) - 2.0) < 1e-5);
     assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SIGMOID, 0.0f) - 0.5f) < 1e-5f);
     assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_GELU, 0.0f) - 0.0f) < 1e-5f);
     assert(std::fabs(impulse_math_unary_f32(MATH_FUNC_SILU, 0.0f) - 0.0f) < 1e-5f);
@@ -80,17 +105,60 @@ static void test_all_42_math_functions_scalar_and_simd() {
     assert(impulse_math_unary_f32(MATH_FUNC_CTZ, 8.0f) == 3.0f);
     assert(impulse_math_binary_f32(MATH_FUNC_ROTL, 1.0f, 3.0f) == 8.0f);
     assert(impulse_math_binary_f32(MATH_FUNC_ROTR, 8.0f, 3.0f) == 1.0f);
+    assert(impulse_math_binary_f64(MATH_FUNC_ROTL, 1.0, 3.0) == 8.0);
+    assert(impulse_math_binary_f64(MATH_FUNC_ROTR, 8.0, 3.0) == 1.0);
 
-    // Vectorized SIMD OpenMP Kernel Tests
+    // 9. Full F64 Unary, Binary, Ternary Coverage
+    for (uint8_t f = 1; f <= 0x32; ++f) {
+        impulse_math_unary_f64(f, 2.0);
+        impulse_math_binary_f64(f, 2.0, 3.0);
+        impulse_math_ternary_f64(f, 2.0, 3.0, 4.0);
+        impulse_math_unary_f32(f, 2.0f);
+        impulse_math_binary_f32(f, 2.0f, 3.0f);
+        impulse_math_ternary_f32(f, 2.0f, 3.0f, 4.0f);
+    }
+    // Default fallback branches
+    assert(impulse_math_unary_f32(0xFF, 42.0f) == 42.0f);
+    assert(impulse_math_unary_f64(0xFF, 42.0) == 42.0);
+    assert(impulse_math_binary_f32(0xFF, 42.0f, 10.0f) == 42.0f);
+    assert(impulse_math_binary_f64(0xFF, 42.0, 10.0) == 42.0);
+    assert(impulse_math_ternary_f32(0xFF, 42.0f, 10.0f, 20.0f) == 42.0f);
+    assert(impulse_math_ternary_f64(0xFF, 42.0, 10.0, 20.0) == 42.0);
+
+    // F64 Clamp checks
+    assert(impulse_math_ternary_f64(MATH_FUNC_CLAMP, 15.0, 0.0, 10.0) == 10.0);
+    assert(impulse_math_ternary_f64(MATH_FUNC_CLAMP, -5.0, 0.0, 10.0) == 0.0);
+    assert(impulse_math_ternary_f64(MATH_FUNC_CLAMP, 5.0, 0.0, 10.0) == 5.0);
+
+    // Vectorized SIMD OpenMP Kernel Tests (Small count <= 2048 and Large count > 2048)
     std::vector<float> src1 = { -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
     std::vector<float> src2 = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
+    std::vector<float> src3 = { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f };
     std::vector<float> dst(8, 0.0f);
 
     impulse_vector_math_unary_f32(MATH_FUNC_EXP, dst.data(), src1.data(), 8);
     assert(std::fabs(dst[2] - 1.0f) < 1e-4f);
-
     impulse_vector_math_binary_f32(MATH_FUNC_HYPOT, dst.data(), src1.data(), src2.data(), 8);
     assert(std::fabs(dst[2] - 3.0f) < 1e-4f);
+    impulse_vector_math_ternary_f32(MATH_FUNC_LERP, dst.data(), src1.data(), src2.data(), src3.data(), 8);
+
+    std::vector<double> dsrc1(8, 2.0), dsrc2(8, 3.0), dsrc3(8, 0.5), ddst(8, 0.0);
+    impulse_vector_math_unary_f64(MATH_FUNC_EXP, ddst.data(), dsrc1.data(), 8);
+    impulse_vector_math_binary_f64(MATH_FUNC_HYPOT, ddst.data(), dsrc1.data(), dsrc2.data(), 8);
+    impulse_vector_math_ternary_f64(MATH_FUNC_LERP, ddst.data(), dsrc1.data(), dsrc2.data(), dsrc3.data(), 8);
+
+    // Large vectors (> 2048) to exercise OpenMP parallel branches
+    const size_t LARGE_N = 4096;
+    std::vector<float> l_src1(LARGE_N, 1.0f), l_src2(LARGE_N, 2.0f), l_src3(LARGE_N, 0.5f), l_dst(LARGE_N, 0.0f);
+    std::vector<double> l_dsrc1(LARGE_N, 1.0), l_dsrc2(LARGE_N, 2.0), l_dsrc3(LARGE_N, 0.5), l_ddst(LARGE_N, 0.0);
+
+    impulse_vector_math_unary_f32(MATH_FUNC_EXP, l_dst.data(), l_src1.data(), LARGE_N);
+    impulse_vector_math_binary_f32(MATH_FUNC_HYPOT, l_dst.data(), l_src1.data(), l_src2.data(), LARGE_N);
+    impulse_vector_math_ternary_f32(MATH_FUNC_LERP, l_dst.data(), l_src1.data(), l_src2.data(), l_src3.data(), LARGE_N);
+
+    impulse_vector_math_unary_f64(MATH_FUNC_EXP, l_ddst.data(), l_dsrc1.data(), LARGE_N);
+    impulse_vector_math_binary_f64(MATH_FUNC_HYPOT, l_ddst.data(), l_dsrc1.data(), l_dsrc2.data(), LARGE_N);
+    impulse_vector_math_ternary_f64(MATH_FUNC_LERP, l_ddst.data(), l_dsrc1.data(), l_dsrc2.data(), l_dsrc3.data(), LARGE_N);
 
     std::cout << "  -> PASSED: All 42/42 math functions verified across scalar & SIMD pipelines." << std::endl;
 }
@@ -99,7 +167,6 @@ static void test_vm_vector_math_opcodes() {
     std::cout << "[Test] ImpulseVM Bytecode Execution for OP_VEC_MATH_UNARY, BINARY, TERNARY..." << std::endl;
 
     std::vector<impulse_instruction_t> program = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 8 | (8 << 16) },
         // Load inline float array into R1
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (8 << 16) },
         // R2 = exp(R1)
@@ -149,7 +216,6 @@ static void test_vector_predicates_and_masks() {
     std::cout << "[Test] Vector Predicates (CMP_GT, CMP_BETWEEN) & BitMask Logic (AND, OR, BLEND)..." << std::endl;
 
     std::vector<impulse_instruction_t> program = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 8 | (8 << 16) },
         // Load inline float array into R1
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (8 << 16) },
         // R2 = LOAD_CONST_FLOAT 2.0f
@@ -314,7 +380,6 @@ static void test_fp_assertions_and_safe_math() {
 
     // 3. OP_ASSERT_FINITE on clean vector -> PASSED
     std::vector<impulse_instruction_t> clean_prog = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
         { OP_ASSERT_FINITE, 0, 1, 0 },
         { OP_HALT, 0, 0, 0 }
@@ -331,7 +396,6 @@ static void test_fp_assertions_and_safe_math() {
 
     // 4. OP_ASSERT_FINITE on NaN vector -> TRAPPED with IMPULSE_VM_ERR_FLOATING_POINT
     std::vector<impulse_instruction_t> nan_prog = {
-        { OP_INIT_MOCK_GRAPH, 0, 0, 4 | (4 << 16) },
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (4 << 16) },
         { OP_ASSERT_FINITE, 0, 1, 0 },
         { OP_HALT, 0, 0, 0 }

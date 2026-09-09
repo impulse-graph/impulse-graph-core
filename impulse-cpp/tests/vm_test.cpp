@@ -279,10 +279,10 @@ void test_bitset_operations() {
         { OP_INIT_INPUT_SET, 0, 4, 0 },
         { OP_CLEAR_REG, 0, 5, 0 },
         { OP_LOAD_CONST_INT, 0, 10, 500 },
-        { OP_SET_UNION, 0, 5, 10 },
+        { OP_SET_UNION, 0, 5, 5 | (10 << 16) },
         { OP_LOAD_CONST_INT, 0, 11, 10 },
-        { OP_SET_UNION, 0, 5, 11 },
-        { OP_SET_INTERSECT, 0, 4, 5 },
+        { OP_SET_UNION, 0, 5, 5 | (11 << 16) },
+        { OP_SET_INTERSECT, 0, 4, 4 | (5 << 16) },
         { OP_SET_CARDINALITY, 0, 7, 4 },
         { OP_COLLECT_ARRAY, 0, 63, 4 },
         { OP_HALT, 0, 0, 0 }
@@ -856,9 +856,9 @@ void test_csc_walk() {
         { OP_LOAD_CONST_INT, 0, 4, 1 }, // R4 = 1
         { OP_LOAD_CONST_INT, 0, 5, 2 }, // R5 = 2
         { OP_LOAD_CONST_INT, 0, 6, 0 }, // R6 = 0
-        { OP_SET_UNION, 0, 1, 4 },       // R1 = {1}
-        { OP_SET_UNION, 0, 1, 5 },       // R1 = {1, 2} (frontier)
-        { OP_SET_UNION, 0, 2, 6 },       // R2 = {0} (unvisited)
+        { OP_SET_UNION, 0, 1, 1 | (4 << 16) },       // R1 = {1}
+        { OP_SET_UNION, 0, 1, 1 | (5 << 16) },       // R1 = {1, 2} (frontier)
+        { OP_SET_UNION, 0, 2, 2 | (6 << 16) },       // R2 = {0} (unvisited)
         { OP_CSC_WALK, 0, 3, 1 | (2 << 16) | (0 << 24) }, // R3 = CSC walk from R1 on R2 (relation 0)
         { OP_HALT, 0, 0, 0 }
     };

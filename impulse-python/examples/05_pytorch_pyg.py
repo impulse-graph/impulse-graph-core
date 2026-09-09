@@ -5,11 +5,12 @@ Demonstrates using .imps snapshots as a high-performance off-heap storage format
 alongside side-by-side ImpulseVM equivalence snippets.
 """
 
-import sys
 import time
+
 import torch
-import numpy as np
+
 from impulse_graph import Snapshot, Writer
+
 
 def main():
     print("===============================================================")
@@ -23,13 +24,12 @@ def main():
     except Exception:
         print(f"[INFO] '{snapshot_path}' not found in $IMPULSE_DATASETS_DIR.")
         print("[INFO] Generating sample social graph via Writer.from_torch()...")
-        
+
         # Create a sample PyTorch COO edge_index
-        sample_edge_index = torch.tensor([
-            [0, 0, 1, 1, 2, 2, 3, 4, 5, 6],
-            [1, 2, 2, 3, 3, 4, 4, 5, 6, 7]
-        ], dtype=torch.int64)
-        
+        sample_edge_index = torch.tensor(
+            [[0, 0, 1, 1, 2, 2, 3, 4, 5, 6], [1, 2, 2, 3, 3, 4, 4, 5, 6, 7]], dtype=torch.int64
+        )
+
         snapshot_path = "temp_torch_social.imps"
         Writer.from_torch(snapshot_path, sample_edge_index, num_nodes=8)
         snap = Snapshot(snapshot_path)
@@ -66,7 +66,9 @@ def main():
     seed_nodes = [0, 1]
     k_samples = 3
     t0 = time.perf_counter()
-    src_nodes, tgt_nodes = snap.sample_neighbors(relation_index=0, nodes=seed_nodes, k_samples=k_samples)
+    src_nodes, tgt_nodes = snap.sample_neighbors(
+        relation_index=0, nodes=seed_nodes, k_samples=k_samples
+    )
     t_sample = (time.perf_counter() - t0) * 1e6
 
     print(f"   -> Sampling Latency:   {t_sample:.2f} µs")
@@ -89,6 +91,7 @@ def main():
 
     snap.close()
     print("\n[SUCCESS] Example 05 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

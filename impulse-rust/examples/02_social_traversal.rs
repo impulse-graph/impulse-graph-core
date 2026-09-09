@@ -21,12 +21,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let reader = match SnapshotReader::open(snapshot_path) {
         Ok(r) => {
-            println!("[INFO] Successfully resolved and opened '{}'.", snapshot_path);
+            println!(
+                "[INFO] Successfully resolved and opened '{}'.",
+                snapshot_path
+            );
             is_temp = false;
             r
         }
         Err(_) => {
-            println!("[INFO] '{}' not found in $IMPULSE_DATASETS_DIR or local paths.", snapshot_path);
+            println!(
+                "[INFO] '{}' not found in $IMPULSE_DATASETS_DIR or local paths.",
+                snapshot_path
+            );
             println!("[INFO] Generating fallback in-memory sample social graph...");
             is_temp = true;
 
@@ -35,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // 8 Users with follow relations
             let row_offsets = vec![0u32, 2, 4, 6, 8, 9, 10, 11, 11];
-            let col_indices = vec![1u32, 2,  2, 3,  3, 4,  4, 5,  6, 7, 0];
+            let col_indices = vec![1u32, 2, 2, 3, 3, 4, 4, 5, 6, 7, 0];
             writer.add_relation(0, 0, 8, 11, row_offsets, col_indices);
             writer.finalize()?;
 
@@ -50,15 +56,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Query: Seed(User 0) -> out(0) -> out(0)");
 
     let t0 = Instant::now();
-    let hop2_friends = reader
-        .traverse(0)
-        .out("0")
-        .out("0")
-        .to_vec()?;
+    let hop2_friends = reader.traverse(0).out("0").out("0").to_vec()?;
     let elapsed = t0.elapsed();
 
     println!("   -> Traversal Latency: {:.2?}", elapsed);
-    println!("   -> 2-Hop Friends-of-Friends from User 0: {:?}", hop2_friends);
+    println!(
+        "   -> 2-Hop Friends-of-Friends from User 0: {:?}",
+        hop2_friends
+    );
 
     // ------------------------------------------------------------------------
     // Step 2: Immediate Neighbors Inspection

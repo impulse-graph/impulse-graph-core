@@ -51,6 +51,51 @@ int main() {
         std::cout << "  ✓ Caught expected unbounded walk rejection: " << e.what() << std::endl;
     }
 
+    // 5. Test RETURN count, WHERE with AND, comparisons, and variable-length hops
+    std::string q3 = "// Leading comment\nMATCH (a:Person)-[:KNOWS*1..3]->(b:Person) WHERE a.age >= 21 AND b.active != 0 AND b.flagged == 0 RETURN count(b)";
+    auto res3 = CypherCompiler::compile(q3);
+    assert(res3.ast != nullptr);
+    std::string s_expr3 = res3.ast->to_scm_string();
+    assert(s_expr3.find("(collect-count)") != std::string::npos);
+    std::cout << "  ✓ Q3 count & complex WHERE: PASSED\n" << std::endl;
+
+    // 6. Test float literals, single-quoted strings, and == / <> operators
+    std::string q4 = "MATCH (x:Item)-[:IN_CATEGORY*..2]->(c:Cat) WHERE x.price <= 19.99 AND c.name == 'Electronics' AND x.tag <> 'old' RETURN c";
+    auto res4 = CypherCompiler::compile(q4);
+    assert(res4.ast != nullptr);
+    std::cout << "  ✓ Q4 float literals & equality: PASSED\n" << std::endl;
+
+    // 6b. Fixed hop test: [:Rel*2]
+    std::string q5 = "MATCH (a:A)-[:Rel*2]->(b:B) WHERE a.id = $id RETURN b";
+    auto res5 = CypherCompiler::compile(q5);
+    assert(res5.ast != nullptr);
+    std::cout << "  ✓ Q5 fixed multi-hop: PASSED\n" << std::endl;
+
+    // 7. Error handling paths
+    // Missing MATCH
+    try {
+        CypherParser::parse("WHERE a.id = 1 RETURN a");
+        assert(false);
+    } catch (const std::exception&) {}
+
+    // Missing RETURN
+    try {
+        CypherParser::parse("MATCH (a:Node)-[:Rel]->(b:Node)");
+        assert(false);
+    } catch (const std::exception&) {}
+
+    // Missing closing paren
+    try {
+        CypherParser::parse("MATCH (a:Node-[:Rel]->(b:Node) RETURN b");
+        assert(false);
+    } catch (const std::exception&) {}
+
+    // Unexpected character
+    try {
+        CypherLexer lexer("@invalid");
+        lexer.next_token();
+    } catch (const std::exception&) {}
+
     std::cout << "\n=========================================================================\n";
     std::cout << "                   ALL C++ CYPHER PARSER TESTS PASSED!                   \n";
     std::cout << "=========================================================================\n";

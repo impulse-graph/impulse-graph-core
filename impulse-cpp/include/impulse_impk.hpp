@@ -41,49 +41,134 @@ struct ImpKStatement {
     uint32_t top_k{10};
 };
 
+
 class ImpKCompiler {
+    struct Token {
+        enum Type { IDENT, NUMBER, EQUALS, PLUS, STAR, LPAREN, RPAREN, COMMA, END } type;
+        std::string text;
+        double value = 0.0;
+    };
+
+    static std::vector<Token> tokenize(const std::string& script) {
+        std::vector<Token> tokens;
+        size_t i = 0;
+        while (i < script.size()) {
+            char c = script[i];
+            if (std::isspace(c)) { i++; continue; }
+            if (c == '#' || c == '/') {
+                while (i < script.size() && script[i] != '\n') i++;
+                continue;
+            }
+            if (std::isalpha(c) || c == '_') {
+                std::string ident;
+                while (i < script.size() && (std::isalnum(script[i]) || script[i] == '_' || script[i] == '.')) {
+                    ident += script[i++];
+                }
+                tokens.push_back({Token::IDENT, ident, 0.0});
+            } else if (std::isdigit(c) || c == '.') {
+                std::string num;
+                while (i < script.size() && (std::isdigit(script[i]) || script[i] == '.')) {
+                    num += script[i++];
+                }
+                tokens.push_back({Token::NUMBER, num, std::stod(num)});
+            } else if (c == '=' || c == ':') { tokens.push_back({Token::EQUALS, "=", 0.0}); i++; }
+            else if (c == '+') { tokens.push_back({Token::PLUS, "+", 0.0}); i++; }
+            else if (c == '*' || c == '@') { tokens.push_back({Token::STAR, "*", 0.0}); i++; }
+            else if (c == '(') { tokens.push_back({Token::LPAREN, "(", 0.0}); i++; }
+            else if (c == ')') { tokens.push_back({Token::RPAREN, ")", 0.0}); i++; }
+            else if (c == ',') { tokens.push_back({Token::COMMA, ",", 0.0}); i++; }
+            else { i++; } // Ignore unknown for now
+        }
+        tokens.push_back({Token::END, "", 0.0});
+        return tokens;
+    }
+
 public:
     static std::vector<ImpKStatement> parse(const std::string& script) {
         std::vector<ImpKStatement> statements;
-        std::istringstream stream(script);
-        std::string line;
+        auto tokens = tokenize(script);
+        size_t pos = 0;
 
-        while (std::getline(stream, line)) {
-            // Strip comments and whitespace
-            size_t comment_pos = line.find("#");
-            if (comment_pos == std::string::npos) comment_pos = line.find("//");
-            if (comment_pos != std::string::npos) line = line.substr(0, comment_pos);
+        auto match = [&](Token::Type t) {
+            if (pos < tokens.size() && tokens[pos].type == t) { pos++; return true; }
+            return false;
+        };
+        auto expect = [&](Token::Type t) {
+            if (pos < tokens.size() && tokens[pos].type == t) { pos++; return true; }
+            throw std::runtime_error("ImpK parse error: unexpected token");
+        };
 
-            line.erase(0, line.find_first_not_of(" \t\r\n"));
-            if (line.empty()) continue;
-
-            ImpKStatement stmt;
-            if (line.find("pagerank(") != std::string::npos) {
-                stmt.target_var = "pr";
-                stmt.op_type = ImpKOpType::PageRankStep;
-                stmt.scalar_param = 0.85;
-                statements.push_back(stmt);
-            } else if (line.find("afforest(") != std::string::npos || line.find("connected_components(") != std::string::npos) {
-                stmt.target_var = "cc";
-                stmt.op_type = ImpKOpType::ConnectedComponents;
-                statements.push_back(stmt);
-            } else if (line.find("*") != std::string::npos) {
-                stmt.target_var = "y";
-                stmt.op_type = ImpKOpType::MatrixVectorMul;
-                statements.push_back(stmt);
-            } else if (line.find("+") != std::string::npos) {
-                stmt.target_var = "z";
-                stmt.op_type = ImpKOpType::VectorAdd;
-                statements.push_back(stmt);
+        while (pos < tokens.size() && tokens[pos].type != Token::END) {
+            if (tokens[pos].type == Token::IDENT) {
+                std::string target = tokens[pos].text;
+                pos++;
+                if (match(Token::EQUALS)) {
+                    if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
+                        std::string t1 = tokens[pos].text;
+                        pos++;
+                        if (match(Token::STAR)) {
+                            if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
+                                std::string t2 = tokens[pos].text; pos++;
+                                ImpKStatement stmt{target, ImpKOpType::MatrixVectorMul, t1, t2, "", 0.0, 10};
+                                statements.push_back(stmt);
+                            }
+                        } else if (match(Token::PLUS)) {
+                            if (pos < tokens.size() && tokens[pos].type == Token::IDENT) {
+                                std::string t2 = tokens[pos].text; pos++;
+                                ImpKStatement stmt{target, ImpKOpType::VectorAdd, "", t1, t2, 0.0, 10};
+                                statements.push_back(stmt);
+                            }
+                        } else if (match(Token::LPAREN)) {
+                            if (t1 == "pagerank") {
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
+                                expect(Token::COMMA);
+                                std::string vec = (pos < tokens.size()) ? tokens[pos].text : "x"; if (pos < tokens.size()) pos++;
+                                expect(Token::COMMA);
+                                double damp = (pos < tokens.size()) ? tokens[pos].value : 0.85; if (pos < tokens.size()) pos++;
+                                expect(Token::RPAREN);
+                                ImpKStatement stmt{target, ImpKOpType::PageRankStep, mat, vec, "", damp, 10};
+                                statements.push_back(stmt);
+                            } else if (t1 == "afforest" || t1 == "connected_components") {
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
+                                expect(Token::RPAREN);
+                                ImpKStatement stmt{target, ImpKOpType::ConnectedComponents, mat, "", "", 0.0, 10};
+                                statements.push_back(stmt);
+                            } else if (t1 == "degree") {
+                                std::string mat = (pos < tokens.size()) ? tokens[pos].text : "edge"; if (pos < tokens.size()) pos++;
+                                expect(Token::RPAREN);
+                                ImpKStatement stmt{target, ImpKOpType::DegreeNorm, mat, "", "", 0.0, 10};
+                                statements.push_back(stmt);
+                            } else if (t1 == "topk") {
+                                std::string vec = (pos < tokens.size()) ? tokens[pos].text : "v"; if (pos < tokens.size()) pos++;
+                                expect(Token::COMMA);
+                                uint32_t k = (pos < tokens.size()) ? (uint32_t)tokens[pos].value : 10; if (pos < tokens.size()) pos++;
+                                expect(Token::RPAREN);
+                                ImpKStatement stmt{target, ImpKOpType::TopK, "", vec, "", 0.0, k};
+                                statements.push_back(stmt);
+                            }
+                        } else {
+                            // Just an assignment or unary
+                        }
+                    } else if (pos < tokens.size() && tokens[pos].type == Token::NUMBER) {
+                        pos++;
+                    }
+                }
+            } else {
+                pos++;
             }
         }
+        IMPULSE_AUDIT_ASSERT(!tokens.empty());
         return statements;
     }
 
     static std::string to_impscheme(const std::vector<ImpKStatement>& stmts) {
+        if (stmts.empty()) {
+            return "(impk-pipeline (csr-walk \"edge\") (collect-bitset))";
+        }
         std::ostringstream oss;
         oss << "(impk-pipeline";
         for (const auto& s : stmts) {
+            IMPULSE_ASSERT(!s.target_var.empty() || s.op_type == ImpKOpType::ConnectedComponents);
             switch (s.op_type) {
                 case ImpKOpType::MatrixVectorMul:
                     oss << " (mxv " << s.matrix_var << " " << s.vector_var1 << ")";
@@ -101,7 +186,7 @@ public:
                     break;
             }
         }
-        oss << ")";
+        oss << " (collect-bitset))";
         return oss.str();
     }
 };

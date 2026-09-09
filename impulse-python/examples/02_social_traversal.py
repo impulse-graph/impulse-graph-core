@@ -10,8 +10,9 @@ Demonstrates:
 
 import os
 import time
-import numpy as np
+
 from impulse_graph import Snapshot, Writer, vm
+
 
 def main():
     print("=" * 65)
@@ -32,11 +33,11 @@ def main():
 
         with Writer(temp_path) as writer:
             writer.add_domain(domain_id=0, key_type=4, name="User")
-            
+
             # 8 Users with follow relations
             row_offsets = [0, 2, 4, 6, 8, 9, 10, 11, 11]
-            col_indices = [1, 2,  2, 3,  3, 4,  4, 5,  6, 7, 0]
-            
+            col_indices = [1, 2, 2, 3, 3, 4, 4, 5, 6, 7, 0]
+
             writer.add_relation(
                 src_domain_id=0,
                 tgt_domain_id=0,
@@ -59,11 +60,10 @@ def main():
 
         builder = vm.QueryBuilder()
         query = (
-            builder
-            .input_node(0)            # Seed User 0
-            .walk_edge(relation_id=0) # 1-hop friends
-            .walk_edge(relation_id=0) # 2-hop friends-of-friends
-            .collect_bitset()         # Collect destination bitset
+            builder.input_node(0)  # Seed User 0
+            .walk_edge(relation_id=0)  # 1-hop friends
+            .walk_edge(relation_id=0)  # 2-hop friends-of-friends
+            .collect_bitset()  # Collect destination bitset
             .compile()
         )
 
@@ -97,6 +97,7 @@ def main():
         os.remove(temp_path)
 
     print("\n[SUCCESS] Example 02 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()

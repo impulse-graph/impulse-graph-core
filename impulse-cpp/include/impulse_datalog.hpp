@@ -164,6 +164,8 @@ public:
             steps.push_back(impulse::compiler::ScmWalk::forward("default"));
         }
         steps.push_back(impulse::compiler::ScmCollect::bitset());
+        IMPULSE_ASSERT(!steps.empty());
+        IMPULSE_AUDIT_ASSERT(steps.back()->kind() == impulse::compiler::NodeKind::COLLECT);
         return std::make_shared<impulse::compiler::ScmProgram>(steps);
     }
 };

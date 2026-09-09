@@ -4,9 +4,12 @@ Translates declarative openCypher statements directly into optimized ImpulseVM p
 """
 
 import re
-from typing import Dict, Any, Optional, Union, List, Set
-import numpy as np
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+
 from .traversal import Traversal
+
+if TYPE_CHECKING:
+    from . import Snapshot
 
 
 class CypherQuery:
@@ -27,7 +30,9 @@ class CypherQuery:
 
     def _parse(self):
         # 1. Parse MATCH clause
-        match_m = re.search(r"MATCH\s+(.+?)(?:\s+WHERE|\s+RETURN|$)", self.raw_query, re.IGNORECASE | re.DOTALL)
+        match_m = re.search(
+            r"MATCH\s+(.+?)(?:\s+WHERE|\s+RETURN|$)", self.raw_query, re.IGNORECASE | re.DOTALL
+        )
         if not match_m:
             raise ValueError(f"Invalid Cypher: missing MATCH clause in '{self.raw_query}'")
         pattern = match_m.group(1).strip()
@@ -38,6 +43,10 @@ class CypherQuery:
             raise ValueError(f"Invalid Cypher path start node: '{pattern}'")
         self.seed_var = start_node_m.group(1)
 
+        # Check for untyped edges like --> or <-- or -[]->
+        if re.search(r"-(?:\[\s*\])?->|<-(?:\[\s*\])?-", pattern):
+            raise ValueError("Impulse Graph requires typed relationship patterns (e.g. -[:Rel]->)")
+
         # Parse edge steps: (<-|-)->[:Rel]->(node)
         step_regex = re.compile(
             r"(\<-|-\>|-)\s*\[(?::(?:`([^`]+)`|([\w:]+)))?(?:\*(\d+))?\]\s*(-\>|\<-|-)\s*\((?:(\w+)(?::\w+)?)?\)"
@@ -47,7 +56,9 @@ class CypherQuery:
             left_arrow, rel_quoted, rel_unquoted, hops, right_arrow, target_var = m.groups()
             rel_name = rel_quoted or rel_unquoted
             if not rel_name:
-                raise ValueError("Impulse Graph requires typed relationship patterns (e.g. -[:Rel]->)")
+                raise ValueError(
+                    "Impulse Graph requires typed relationship patterns (e.g. -[:Rel]->)"
+                )
 
             if left_arrow == "<-" and right_arrow == "-":
                 direction = "in"
@@ -61,7 +72,9 @@ class CypherQuery:
                 self.steps.append((direction, rel_name))
 
         # 2. Parse WHERE clause
-        where_m = re.search(r"WHERE\s+(.+?)(?:\s+RETURN|$)", self.raw_query, re.IGNORECASE | re.DOTALL)
+        where_m = re.search(
+            r"WHERE\s+(.+?)(?:\s+RETURN|$)", self.raw_query, re.IGNORECASE | re.DOTALL
+        )
         if where_m:
             where_str = where_m.group(1).strip()
             pred_m = re.search(

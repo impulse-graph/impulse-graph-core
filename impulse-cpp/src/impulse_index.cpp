@@ -4,6 +4,7 @@
  */
 
 #include "impulse_index.h"
+#include "impulse_assert.h"
 
 #include <vector>
 #include <numeric>
@@ -144,6 +145,23 @@ impulse_status_t impulse_index_build_permutation(
 
     std::memcpy(buf, &hdr, header_size);
     std::memcpy(buf + header_size, perm.data(), perm_size);
+
+    IMPULSE_ASSERT(buf != nullptr);
+    IMPULSE_ASSERT(perm.size() == element_count);
+
+#if defined(IMPULSE_ENABLE_AUDIT_ASSERTIONS)
+    if (base_type == 0x03) {
+        const int32_t* data = static_cast<const int32_t*>(attr_data);
+        for (size_t i = 1; i < element_count; ++i) {
+            IMPULSE_AUDIT_ASSERT(data[perm[i - 1]] <= data[perm[i]]);
+        }
+    } else if (base_type == 0x04) {
+        const int64_t* data = static_cast<const int64_t*>(attr_data);
+        for (size_t i = 1; i < element_count; ++i) {
+            IMPULSE_AUDIT_ASSERT(data[perm[i - 1]] <= data[perm[i]]);
+        }
+    }
+#endif
 
     *out_bytes = buf;
     *out_size = total_size;

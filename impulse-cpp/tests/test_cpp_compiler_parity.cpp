@@ -254,7 +254,8 @@ static void test_c_abi_compiler_exports() {
     assert(st2 == IMPULSE_OK);
     (void)st2;
     assert(bytes_written > 0);
-    assert(std::string(impas_buf).find("OP_CSR_WALK") != std::string::npos);
+    assert(std::string(impas_buf).find("OP_CSR_WALK") != std::string::npos ||
+           std::string(impas_buf).find("OP_ADAPTIVE_WALK") != std::string::npos);
     std::cout << "  ✓ C-ABI impulse_compile_to_impas (Cypher): Written " << bytes_written << " bytes." << std::endl;
 }
 

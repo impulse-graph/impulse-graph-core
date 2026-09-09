@@ -63,9 +63,9 @@ UserWarning: The given NumPy array is not writable, and PyTorch does not support
    ```python
    # 1. Zero-copy load from disk into CPU memoryview
    feat_np = snap.get_attribute_array(relation_index=0, attribute_index=0, shape=(num_nodes, 128))
-   
+
    # 2. Transfer to GPU or clone for trainable gradient updates
-   x = torch.from_numpy(feat_np).clone().to("cuda") # or "mps"
+   x = torch.from_numpy(feat_np).clone().to("cuda")  # or "mps"
    x.requires_grad = True
    ```
 
@@ -95,10 +95,7 @@ import torch
 from impulse_graph import Writer
 
 # PyTorch Geometric COO edge_index (2, num_edges)
-edge_index = torch.tensor([
-    [0, 0, 1, 2, 2],
-    [1, 2, 3, 0, 3]
-], dtype=torch.int64)
+edge_index = torch.tensor([[0, 0, 1, 2, 2], [1, 2, 3, 0, 3]], dtype=torch.int64)
 
 # Compile into .imps snapshot
 Writer.from_torch("torch_graph.imps", edge_index, num_nodes=4)
@@ -110,10 +107,9 @@ Writer.from_torch("torch_graph.imps", edge_index, num_nodes=4)
 import polars as pl
 from impulse_graph import Writer
 
-df = pl.DataFrame({
-    "src": ["alice", "alice", "bob", "carol"],
-    "dst": ["bob", "carol", "dan", "dan"]
-})
+df = pl.DataFrame(
+    {"src": ["alice", "alice", "bob", "carol"], "dst": ["bob", "carol", "dan", "dan"]}
+)
 
 # Ingests DataFrame, deduplicates keys, and creates string catalog
 Writer.from_dataframe("social.imps", df, src_col="src", tgt_col="dst", domain_name="User")
@@ -128,23 +124,23 @@ from impulse_graph import Writer
 
 with Writer("custom.imps") as writer:
     # 1. Define Domains
-    writer.add_domain(domain_id=0, key_type=4, name="Account") # KeyType: INT64
-    
+    writer.add_domain(domain_id=0, key_type=4, name="Account")  # KeyType: INT64
+
     # 2. Define CSR Topology
     row_offsets = [0, 2, 3, 4]
     col_indices = [1, 2, 2, 0]
-    
+
     writer.add_relation(
         src_domain_id=0,
         tgt_domain_id=0,
-        encoding_type=0, # RAW CSR
+        encoding_type=0,  # RAW CSR
         node_count=3,
         edge_count=4,
         section_features=0,
         row_offsets=row_offsets,
-        col_indices=col_indices
+        col_indices=col_indices,
     )
-    
+
     # 3. Finalize header and checksums
     writer.finalize()
 ```
@@ -206,9 +202,11 @@ reachable_nodes = snap.traverse(start_node=0).out(0).to_list()
 
 # 2. GraphBLAS Power-Iteration PageRank via ImpK (20 SIMD matrix-vector iterations):
 # ImpK DSL: (repeat 20 (assign p (+ (* 0.85 (mxv A p)) (/ 0.15 N))))
-pr_query = (vm.QueryBuilder()
-            .repeat(20, lambda q: q.sparse_mat_vec(matrix_reg=0, vec_reg=1, out_reg=1))
-            .compile())
+pr_query = (
+    vm.QueryBuilder()
+    .repeat(20, lambda q: q.sparse_mat_vec(matrix_reg=0, vec_reg=1, out_reg=1))
+    .compile()
+)
 pr_result = snap.execute_query(pr_query)
 ```
 
@@ -236,7 +234,9 @@ with Snapshot("financial_transactions.imps") as snap:
 #### ImpulseVM Equivalence (1-Liner):
 ```python
 # Run declarative openCypher query directly over the memory-mapped file off-heap:
-top_recipients = snap.cypher("MATCH (a:Account)-[r:TRANSFERS_TO]->(b:Account) WHERE id(a) = 0 RETURN b")
+top_recipients = snap.cypher(
+    "MATCH (a:Account)-[r:TRANSFERS_TO]->(b:Account) WHERE id(a) = 0 RETURN b"
+)
 ```
 
 ---
@@ -295,18 +295,15 @@ with Snapshot("financial_graph.imps") as snap:
 with Snapshot("hetionet.v09.imps") as graph:
     # 1. Forward Lookup: String Key -> Dense Node ID via O(1) MPHF lookup
     disease_id = graph.resolve_dense_id(domain_id=4, key="Disease::DOID:10652")
-    
+
     # 2. Execute PyTorch / SciPy / ImpulseVM graph traversal
     target_node_ids = graph.traverse(start_node=disease_id).out("DaG").to_list()
-    
+
     # 3. Batch Reverse Lookup: Dense Node IDs -> Human-Readable String Keys
     target_names = graph.resolve_keys_batch(domain_id=5, node_ids=target_node_ids)
-    
+
     # 4. Assemble Tabular Results in Polars DataFrame
-    results_df = pl.DataFrame({
-        "dense_id": target_node_ids,
-        "gene_key": target_names
-    })
+    results_df = pl.DataFrame({"dense_id": target_node_ids, "gene_key": target_names})
 ```
 
 ---

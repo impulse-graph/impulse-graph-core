@@ -6,8 +6,11 @@ alongside side-by-side Fluent Traversal query equivalence.
 """
 
 import time
+
 import networkx as nx
+
 from impulse_graph import Snapshot, Writer
+
 
 def main():
     print("===============================================================")
@@ -25,7 +28,9 @@ def main():
 
     snapshot_path = "temp_nx_graph.imps"
     Writer.from_networkx(snapshot_path, G_orig, domain_name="Node")
-    print(f"   -> Successfully compiled NetworkX graph ({G_orig.number_of_nodes()} nodes, {G_orig.number_of_edges()} edges).")
+    print(
+        f"   -> Successfully compiled NetworkX graph ({G_orig.number_of_nodes()} nodes, {G_orig.number_of_edges()} edges)."
+    )
 
     # ------------------------------------------------------------------------
     # Step 2: Zero-Copy Loading into NetworkX DiGraph
@@ -69,6 +74,7 @@ def main():
         print(f"   -> 2-Hop Reachable:    {hop2}")
 
     print("\n[SUCCESS] Example 08 completed cleanly.")
+
 
 if __name__ == "__main__":
     main()
