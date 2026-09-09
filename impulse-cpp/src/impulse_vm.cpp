@@ -1316,7 +1316,6 @@ op_MOV: {
         } else {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -1776,7 +1775,6 @@ op_CSR_WALK_2HOP: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         vm_state->query_context->bitsets[h_dst].clear();
@@ -2230,7 +2228,6 @@ op_CSR_WALK: {
     VALIDATE_REG(src);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2257,7 +2254,6 @@ op_CSR_WALK: {
             if (dst == src) {
                 h_dst = acquire_bitset(vm_state->query_context);
                 if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
                 vm_state->query_context->bitsets[h_dst].clear();
@@ -2269,7 +2265,6 @@ op_CSR_WALK: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -2607,7 +2602,6 @@ op_CSC_WALK: {
     }
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2635,7 +2629,6 @@ op_CSC_WALK: {
         if (dst == src || dst == unv) {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         }
@@ -2643,7 +2636,6 @@ op_CSC_WALK: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         vm_state->query_context->bitsets[h_dst].clear();
@@ -2889,7 +2881,6 @@ op_CSR_DEGREE: {
     VALIDATE_REG(src);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -2921,7 +2912,6 @@ op_STABLE_CHECK: {
     VALIDATE_REG(src);
 
     bool is_subset = true;
-    printf("DEBUG STABLE_CHECK: dst=%d, src=%d\n", dst, src);
     bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
     int h_dst = dst_is_bitset ? static_cast<int>(vm_state->registers[dst]) : -1;
     uint64_t scalar_dst = !dst_is_bitset ? vm_state->registers[dst] : 0;
@@ -2972,7 +2962,6 @@ op_NODE_FILTER: {
     VALIDATE_REG(val_reg);
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -3067,7 +3056,6 @@ op_NODE_FILTER_STR_PREFIX: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -3155,7 +3143,6 @@ op_VECTOR_DIV: {
         } else {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         }
@@ -3215,7 +3202,6 @@ op_VECTOR_DIV: {
         } else {
             h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
         }
@@ -3347,7 +3333,6 @@ op_VECTOR_STR_CONCAT: {
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& svec_dst = vm_state->query_context->string_vectors[h_dst];
@@ -3382,7 +3367,6 @@ op_MXV: {
     VALIDATE_REG(src_vec);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -3397,7 +3381,6 @@ op_MXV: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3444,7 +3427,6 @@ op_MXV: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3507,7 +3489,6 @@ op_VXM: {
     VALIDATE_REG(src_vec);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -3522,7 +3503,6 @@ op_VXM: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3569,7 +3549,6 @@ op_VXM: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3635,7 +3614,6 @@ op_EWISE_ADD: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3656,7 +3634,6 @@ op_EWISE_ADD: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3697,7 +3674,6 @@ op_EWISE_MULT: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3718,7 +3694,6 @@ op_EWISE_MULT: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
             vm_state->registers[dst] = h_dst;
@@ -3821,7 +3796,6 @@ op_CC_AFFOREST: {
     VALIDATE_REG(dst);
 
     if (rel >= vm_state->query_context->slots.size()) {
-        printf("OUT_OF_BOUNDS: CSR_WALK rel=%d, slots.size()=%zu, pc=%zu\n", rel, vm_state->query_context->slots.size(), vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
@@ -4082,7 +4056,6 @@ op_ROARING_BITMAP_AND: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4117,7 +4090,6 @@ op_ROARING_BITMAP_OR: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4158,7 +4130,6 @@ op_ROARING_BITMAP_AND_NOT: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4373,7 +4344,6 @@ op_CSR_WALK_REDUCE_SUM: {
     }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
@@ -4463,7 +4433,6 @@ op_CSR_WALK_REDUCE: {
     }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
@@ -4616,7 +4585,6 @@ op_MAP_KEYS_TO_DENSE: {
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -4701,7 +4669,6 @@ op_MAP_DENSE_TO_KEYS: {
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& svec = vm_state->query_context->string_vectors[h_dst];
@@ -4770,7 +4737,6 @@ op_COLLECT_VALUE_MAP: {
 
     int h_dst = acquire_value_map(vm_state->query_context);
     if (h_dst < 0) {
-        printf("OUT_OF_BOUNDS: acquire_bitset failed, pc=%zu\n", vm_state->pc);
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& vmap = vm_state->query_context->value_maps[h_dst];

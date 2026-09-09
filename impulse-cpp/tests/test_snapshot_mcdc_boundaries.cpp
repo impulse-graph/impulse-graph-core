@@ -30,6 +30,10 @@ inline int portable_unsetenv(const char* name) {
 inline int portable_rmdir(const char* path) {
     return _rmdir(path);
 }
+inline int portable_mkdir(const char* path, int mode = 0777) {
+    (void)mode;
+    return _mkdir(path);
+}
 #else
 #include <unistd.h>
 inline int portable_setenv(const char* name, const char* value, int overwrite) {
@@ -40,6 +44,9 @@ inline int portable_unsetenv(const char* name) {
 }
 inline int portable_rmdir(const char* path) {
     return ::rmdir(path);
+}
+inline int portable_mkdir(const char* path, int mode = 0777) {
+    return ::mkdir(path, mode);
 }
 #endif
 
@@ -842,7 +849,7 @@ void test_mcdc_snapshot_edge_cases_and_decisions() {
 
     // 1. Path Resolution with Env Vars
     const char* env_dir_path = "/tmp/__impulse_env_test_dir";
-    ::mkdir(env_dir_path, 0777);
+    portable_mkdir(env_dir_path, 0777);
     const char* env_file = "/tmp/__impulse_env_test_dir/env_snap.bin";
 
     // Write a valid snapshot in env_dir_path
