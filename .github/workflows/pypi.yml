@@ -1,0 +1,131 @@
+name: Publish to PyPI (On-Demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target registry (pypi or testpypi)'
+        required: true
+        type: choice
+        options:
+          - pypi
+          - testpypi
+        default: pypi
+      release_tag:
+        description: 'Existing GitHub Release tag to publish (e.g. v0.9.0). Leave empty to build fresh packages.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Perform dry-run build and validation without publishing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # Mandatory for PyPI Trusted Publishing (OIDC)
+  attestations: write # Mandatory for SLSA Level 3 Artifact Attestation (Rule 3.8 / PEP 740)
+
+jobs:
+  build-packages:
+    name: Prepare Package Artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      has_packages: ${{ steps.check_dist.outputs.has_packages }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Build Tools
+        run: pip install build twine
+
+      - name: Download from Release Tag
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          echo "Downloading Python assets from release tag ${{ inputs.release_tag }}..."
+          gh release download "${{ inputs.release_tag }}" --pattern "*.whl" --pattern "*.tar.gz" --dir dist/
+
+      - name: Build SDist (if building fresh)
+        if: inputs.release_tag == ''
+        run: |
+          mkdir -p dist
+          cd impulse-python
+          python -m build --sdist --outdir ../dist
+
+      - name: Verify Package Metadata Integrity with Twine
+        run: |
+          echo "Validating distributions in dist/:"
+          ls -la dist/
+          twine check --strict dist/*
+
+      - name: Check Artifact Presence
+        id: check_dist
+        run: |
+          COUNT=$(find dist -maxdepth 1 -name "*.whl" -o -name "*.tar.gz" | wc -l)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_packages=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ No packages found in dist/"
+            exit 1
+          fi
+
+      - name: Upload Prepared Distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist-packages
+          path: dist/*
+          retention-days: 1
+
+  publish-pypi:
+    name: Publish to ${{ inputs.target }}
+    needs: build-packages
+    runs-on: ubuntu-latest
+    if: inputs.dry_run == false && needs.build-packages.outputs.has_packages == 'true'
+    environment:
+      name: ${{ inputs.target }}
+      url: ${{ inputs.target == 'testpypi' && 'https://test.pypi.org/p/impulse-graph' || 'https://pypi.org/p/impulse-graph' }}
+    permissions:
+      id-token: write # Mandatory for PyPI Trusted Publishing (OIDC)
+      attestations: write # Mandatory for SLSA Level 3 Artifact Attestation (Rule 3.8 / PEP 740)
+      contents: read
+    steps:
+      - name: Download Prepared Distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist-packages
+          path: dist
+
+      - name: Generate SLSA Level 3 Build Provenance Attestation (PEP 740)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*'
+
+      - name: Publish to PyPI (Token Auth Fallback)
+        if: env.PYPI_TOKEN != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          repository-url: ${{ inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          print-hash: true
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish to PyPI (Trusted Publishing OIDC)
+        if: env.PYPI_TOKEN == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          repository-url: ${{ inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+          print-hash: true
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

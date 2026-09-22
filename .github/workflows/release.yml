@@ -16,10 +16,15 @@ on:
         description: 'Mark as pre-release'
         type: boolean
         default: true
+      publish_pypi:
+        description: 'Publish Python packages to PyPI'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
-  id-token: write # Required for Cosign keyless signing
+  id-token: write # Required for Cosign keyless signing & PyPI Trusted Publishing OIDC
+  attestations: write # Required for SLSA Level 3 Artifact Attestations (Rule 3.8 / PEP 740)
 
 jobs:
   build-cpp-kernel:
@@ -206,6 +211,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Compute Package Version
+        id: version_info
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            RAW_TAG="${{ inputs.version }}"
+          fi
+          VER="${RAW_TAG#v}"
+          if [ -z "$VER" ] || [ "$VER" = "main" ]; then
+            VER="0.9.0"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -216,6 +235,8 @@ jobs:
 
       - name: Build SDist (on Linux x86_64 only)
         if: matrix.os == 'ubuntu-22.04'
+        env:
+          IMPULSE_VERSION: ${{ steps.version_info.outputs.version }}
         run: |
           cd impulse-python
           python -m build --sdist --outdir ../wheelhouse
@@ -228,6 +249,7 @@ jobs:
           CIBW_ARCHS_LINUX: "auto"
           CIBW_ARCHS_MACOS: "auto"
           CIBW_ARCHS_WINDOWS: "AMD64"
+          CIBW_ENVIRONMENT: 'IMPULSE_VERSION="${{ steps.version_info.outputs.version }}"'
 
       - name: Upload Python Artifacts
         uses: actions/upload-artifact@v4
@@ -385,3 +407,63 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
+
+  publish-pypi:
+    name: Publish Python Packages to PyPI & Attest Provenance
+    needs: [build-python-wheels, publish-release]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.build-python-wheels.result == 'success' &&
+      (github.event_name == 'push' || inputs.publish_pypi == true)
+    environment:
+      name: pypi
+      url: https://pypi.org/p/impulse-graph
+    permissions:
+      id-token: write # Mandatory for PyPI Trusted Publishing (OIDC)
+      attestations: write # Mandatory for SLSA Level 3 Artifact Attestations (Rule 3.8 / PEP 740)
+      contents: read
+    steps:
+      - name: Download Python Wheels & SDist
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Package Metadata Integrity with Twine
+        run: |
+          pip install twine
+          twine check --strict dist/*
+
+      - name: Generate SLSA Level 3 Build Provenance Attestation (PEP 740)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*'
+
+      - name: Publish to PyPI (Token Auth Fallback)
+        if: env.PYPI_TOKEN != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          print-hash: true
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish to PyPI (Trusted Publishing OIDC)
+        if: env.PYPI_TOKEN == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          print-hash: true
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
