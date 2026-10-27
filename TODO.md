@@ -129,3 +129,42 @@ Adopt **Google CEL (Common Expression Language)** as the official, unified decla
   - `impulse-graph-core/impulse-rust` FFI updated with statement and compiler bindings.
   - Redundant standalone `impulse-compiler` crate successfully retired and deleted.
 
+---
+
+## 5. Multi-Hop Loop, Sparse Frontier Watermark & Context Pooling Optimizations (Port from `impulse-graph-java`)
+
+### Applicability Matrix (`impulse-graph-java` $\to$ `impulse-graph-core`)
+
+| Optimization | `impulse-graph-java` Status | `impulse-cpp` / `impulse-rust` Status | Applicability & Impact in `impulse-graph-core` |
+| :--- | :---: | :---: | :--- |
+| **1. `O(1)` Array-Indexed Relation Slot Lookup** | Implemented (`GraphSnapshot.getRelationSnapshot(int)`) | **Already Present** (`ctx->slots[rel]`) | `impulse_vm.cpp` already pre-indexes `std::vector<BoundRelationSlot> slots`; however, slot construction is repeated per `impulse_vm_context_create()` instead of cached per `impulse_snapshot_t*`. |
+| **2. In-Place Destination BitSet Handle Reuse (`dst != src`)** | Implemented (`executeCsrWalk`, `handleCscWalk`, `handleMov`) | **Already Present** (`impulse_vm.cpp:946,1297,1581`) | Already implemented in C++ `OP_MOV`, `OP_CSR_WALK`, and `OP_CSC_WALK`. |
+| **3. Direct Instruction Dispatch (No `MethodHandle` Boxing)** | Implemented (`JitDriver` pre-decoded array) | **Already Present** (`HAS_COMPUTED_GOTO`) | `impulse_vm.cpp` already uses direct computed-goto (`goto *dispatch_table[op]`) over flat `impulse_instruction_t*`. |
+| **4. Active Word-Range Watermarks (`[min_word .. max_word]`) & 2-Level Summary Words in `VmBitSet`** | Implemented (`OffHeapBitSet`) | **TODO (`impulse_vm.cpp`)** | **High Impact**: `VmBitSet` currently scans/zeroes all `words_per_bitset` ($\ge 1,024$ words) on every `clear()`, `OP_CSR_WALK`, `OP_SET_UNION`, `OP_SET_INTERSECT`, `OP_SET_DIFFERENCE`, `OP_SET_CARDINALITY`, and `OP_STABLE_CHECK`. |
+| **5. Thread-Local `impulse_vm_context_t` Pooling & Lazy Vector Allocation** | Implemented (`VmQueryContext.acquire`, `TL_STATE_POOL`, `TL_BITSET_POOL`) | **TODO (`impulse_vm.cpp`, `impulse_vm_fluent.cpp`)** | **Critical Impact**: `impulse_vm_context_create()` eagerly allocates `32` float/double/node vectors of length `max_nodes` ($\sim 32\ \text{MiB}$ at $50\text{k}$ nodes) on every `CompiledQuery::execute()`. |
+| **6. Delta-Frontier `repeatUntilStable` & Reflexive Bounded `repeat(k)`** | Implemented (`ImpOpsBytecodeEmitter`) | **TODO (`impulse_vm_fluent.cpp`, `impulse_compiler.hpp`)** | **High Impact**: Eliminates $O(k \cdot |\text{interior}|)$ redundant CSR row re-expansions on undirected/corridor/H3 $k$-ring traversals ($30\times$ fewer CSR expansions in `62`-hop isochrones). |
+| **7. Rust BitSet Frontier & Native CSC Pull Traversal** | N/A | **TODO (`impulse-rust/src/traversal.rs`)** | **High Impact**: `Traversal::to_vec()` currently allocates a `HashSet<u64>` per hop and scans all CSR rows in $O(V + E)$ for `StepDirection::In` instead of walking Section 6 CSC arrays. |
+
+### 5.1 Active Word-Range Watermarks (`[min_word .. max_word]`) in `VmBitSet` (`impulse-cpp/src/impulse_vm.cpp`)
+- [ ] Extend `struct VmBitSet` (`impulse_vm.cpp:34-62`) with `size_t min_word = word_count;` and `int64_t max_word = -1;` watermarks plus `max_possible_cardinality()` and `tighten_bounds()`.
+- [ ] Bound `VmBitSet::clear()` to `std::memset(words + min_word, 0, (max_word - min_word + 1) * sizeof(uint64_t))` and reset `min_word = word_count; max_word = -1`.
+- [ ] Update `bitset_add()` and `VmBitSet::set()` / `reset()` to maintain `[min_word .. max_word]`.
+- [ ] In `op_CSR_WALK` (`impulse_vm.cpp:1325-1445`):
+  - Skip the `std::popcount` frontier cardinality pass when `bs_src.max_possible_cardinality() <= 15000`.
+  - Restrict serial word iteration (`for (size_t w = bs_src.min_word; w <= bs_src.max_word; ++w)`) and `ZF` emptiness checks to `[min_word .. max_word]`.
+- [ ] Restrict `op_SET_UNION`, `op_SET_INTERSECT`, `op_SET_DIFFERENCE`, `op_SET_CARDINALITY`, `op_STABLE_CHECK`, and `op_COLLECT_ARRAY` loops to the active `[min_word .. max_word]` intervals.
+
+### 5.2 Lazy Vector Allocation & Thread-Local Context Pooling (`impulse-cpp/src/impulse_vm.cpp`, `impulse_vm_fluent.cpp`)
+- [ ] Make `float_vectors[i]`, `double_vectors[i]`, and `node_vectors[i]` lazy in `impulse_vm_context_create()` (`impulse_vm.cpp:326-339`): allocate `.resize(ctx->max_nodes)` on demand inside `acquire_float_vector()`, `acquire_double_vector()`, and `acquire_node_vector()` so pure bitset/CSR traversal queries allocate `0` bytes of numeric vector buffers.
+- [ ] Cache `std::vector<BoundRelationSlot>` and `std::vector<std::vector<BoundAttributeSlot>>` per `impulse_snapshot_t*` so context initialization shares the immutable slot metadata table across queries.
+- [ ] Add a `thread_local` context pool (or reuse handle in `CompiledQuery::execute()` in `impulse_vm_fluent.cpp:41-63`) so single-shot `CompiledQuery::execute(snapshot, input_param)` calls do not `new[]` / `delete[]` the 64-bitset arena on every invocation.
+
+### 5.3 Delta-Frontier Loops in `QueryBuilder` & `ImpulseCompiler` (`impulse-cpp/src/impulse_vm_fluent.cpp`, `include/impulse_compiler.hpp`)
+- [ ] Update `QueryBuilder::repeatUntilStable` (`impulse_vm_fluent.cpp:423-431`) and `ImpulseCompiler` to emit the delta-frontier fixed-point sequence (`OP_MOV acc, start`, `body`, `OP_STABLE_CHECK acc, sub_out`, `OP_JZ exit`, `OP_SET_DIFFERENCE start, sub_out, acc`, `OP_SET_UNION acc, acc, start`, `OP_JMP loop_start`, `OP_MOV start, acc`).
+- [ ] Add reflexive relation detection ($u \in N(u)$) to `QueryBuilder::repeat(int count, ...)` and `ImpulseCompiler` so bounded $k$-hop walks over reflexive relations emit bounded delta-frontier propagation (`OP_SET_DIFFERENCE` + `OP_JZ` early exit + `OP_SET_UNION` + `OP_LOOP_DECR` + `OP_SWAP_REG`).
+
+### 5.4 Word-Bounded BitSet Frontier & CSC Pull Traversal in Rust (`impulse-rust/src/traversal.rs`)
+- [ ] Replace per-hop `std::collections::HashSet<u64>` allocations and `.sort_unstable()` in `Traversal::to_vec()` (`impulse-rust/src/traversal.rs:89-134`) with a reusable `u64` word bitset tracking `[min_word .. max_word]`.
+- [ ] Update `StepDirection::In` (`impulse-rust/src/traversal.rs:115-127`) to walk Section 6 CSC (`get_csc_col_offsets` / `get_csc_row_indices`) directly in $O(\sum_{v \in F} \text{deg}_{\text{in}}(v))$ instead of scanning all CSR rows in $O(V + E)$.
+
+
