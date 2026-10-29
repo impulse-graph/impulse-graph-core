@@ -4,27 +4,53 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "impulse-graph"
-version = "0.9.0"
+dynamic = ["version"]
 description = "Impulse Graph Engine Python SDK & C++ Bytecode VM Binding"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.8"
 authors = [
     { name = "Impulse Graph Team", email = "engineering@impulsegraph.io" }
 ]
-readme = "README.md"
-requires-python = ">=3.8"
-dependencies = [
-    "numpy>=1.20.0"
+keywords = [
+    "graph",
+    "graph-analytics",
+    "graphblas",
+    "zero-copy",
+    "pytorch",
+    "gnn",
+    "simd",
+    "vector-vm",
+    "rebac",
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: C++",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "numpy>=1.20.0"
 ]
 
 [project.urls]
 Homepage = "https://docs.impulsegraph.io"
 Repository = "https://github.com/impulse-graph/impulse-graph-core"
 Documentation = "https://docs.impulsegraph.io"
+"Issue Tracker" = "https://github.com/impulse-graph/impulse-graph-core/issues"
+Changelog = "https://github.com/impulse-graph/impulse-graph-core/releases"
 
 [tool.ruff]
 line-length = 100
@@ -33,4 +59,3 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
-

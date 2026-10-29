@@ -8,21 +8,33 @@ from setuptools import find_packages, setup
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 cpp_dir = os.path.abspath(os.path.join(this_dir, "..", "impulse-cpp"))
-
 local_cpp_dir = os.path.join(this_dir, "impulse-cpp")
-if os.path.exists(cpp_dir):
-    if os.path.exists(local_cpp_dir):
-        shutil.rmtree(local_cpp_dir)
-    inc_dir = os.path.abspath(os.path.join(cpp_dir, "include"))
-    src_dir = os.path.abspath(os.path.join(cpp_dir, "src"))
-    rel_src_prefix = "../impulse-cpp/src"
-elif os.path.exists(local_cpp_dir):
+
+# Synchronize required C++ engine headers and core translation units into local_cpp_dir
+# when building from monorepo repository so sdist and wheel builds are 100% self-contained.
+if os.path.exists(cpp_dir) and os.path.exists(os.path.join(cpp_dir, "include")):
+    os.makedirs(os.path.join(local_cpp_dir, "include"), exist_ok=True)
+    os.makedirs(os.path.join(local_cpp_dir, "src"), exist_ok=True)
+    shutil.copytree(os.path.join(cpp_dir, "include"), os.path.join(local_cpp_dir, "include"), dirs_exist_ok=True)
+    for cpp_file in [
+        "impulse_bytecode_emitter.cpp",
+        "impulse_graph.cpp",
+        "impulse_index.cpp",
+        "impulse_simd.cpp",
+        "impulse_vm.cpp",
+        "impulse_vm_fluent.cpp",
+    ]:
+        src_file = os.path.join(cpp_dir, "src", cpp_file)
+        if os.path.exists(src_file):
+            shutil.copy2(src_file, os.path.join(local_cpp_dir, "src", cpp_file))
+
+if os.path.exists(local_cpp_dir) and os.path.exists(os.path.join(local_cpp_dir, "src", "impulse_graph.cpp")):
     inc_dir = os.path.abspath(os.path.join(local_cpp_dir, "include"))
     src_dir = os.path.abspath(os.path.join(local_cpp_dir, "src"))
     rel_src_prefix = "impulse-cpp/src"
 else:
-    inc_dir = "../impulse-cpp/include"
-    src_dir = "../impulse-cpp/src"
+    inc_dir = os.path.abspath(os.path.join(cpp_dir, "include"))
+    src_dir = os.path.abspath(os.path.join(cpp_dir, "src"))
     rel_src_prefix = "../impulse-cpp/src"
 
 hwy_dir = os.path.abspath(os.path.join(cpp_dir, "build", "_deps", "highway-src"))
@@ -77,11 +89,16 @@ extra_compile_args = (
     else ["-std=c++20"]
 )
 
+version = os.environ.get("IMPULSE_VERSION", "0.9.0").strip()
+if version.startswith("v"):
+    version = version[1:]
+
 ext_modules = [
     Pybind11Extension(
         "impulse_graph._impulse_native",
         [
             "src/impulse_python.cpp",
+            f"{rel_src_prefix}/impulse_bytecode_emitter.cpp",
             f"{rel_src_prefix}/impulse_graph.cpp",
             f"{rel_src_prefix}/impulse_index.cpp",
             f"{rel_src_prefix}/impulse_simd.cpp",
@@ -102,7 +119,7 @@ ext_modules = [
 
 setup(
     name="impulse-graph",
-    version="0.9.0",
+    version=version,
     description="Impulse Graph Engine Python SDK & C++ Bytecode VM Binding",
     author="Impulse Graph Team",
     packages=find_packages(),
@@ -110,9 +127,22 @@ setup(
     cmdclass={"build_ext": build_ext},
     python_requires=">=3.8",
     classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Programming Language :: C++",
-        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
+        "Topic :: Scientific/Engineering",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Database",
+        "Topic :: Software Development :: Libraries :: Python Modules",
     ],
 )
+

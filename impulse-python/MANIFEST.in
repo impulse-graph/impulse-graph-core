@@ -1,6 +1,26 @@
 include README.md
 include pyproject.toml
 include setup.py
-recursive-include src *
-recursive-include impulse_graph *
-recursive-include impulse-cpp *
+recursive-include src *.cpp *.hpp *.h
+recursive-include impulse_graph *.py *.pyi
+recursive-include impulse-cpp/include *.h *.hpp
+recursive-include impulse-cpp/src *.cpp *.hpp *.h
+
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.dll
+global-exclude *.pyd
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.imps
+global-exclude .DS_Store
+global-exclude *.orig
+
+prune build
+prune dist
+prune **/__pycache__
+prune **/.pytest_cache
+prune **/.ruff_cache
+prune tests/__pycache__
+prune impulse_graph/__pycache__
+prune examples/__pycache__

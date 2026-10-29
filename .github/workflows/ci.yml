@@ -103,11 +103,15 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Test Python Bindings
+      - name: Test Python Bindings & Package Validation
         run: |
           if [ -f impulse-python/setup.py ] || [ -f impulse-python/pyproject.toml ]; then
-            pip install pytest
-            cd impulse-python && pip install -e . && pytest || true
+            pip install pytest build twine
+            cd impulse-python
+            python -m build --sdist --outdir dist
+            twine check --strict dist/*
+            pip install -e .
+            pytest
           fi
 
       - name: Test Go Bindings
