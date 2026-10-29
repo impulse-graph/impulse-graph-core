@@ -262,6 +262,8 @@ extern "C" {
 #define BINARY_OP_MAX               3
 #define BINARY_OP_AND               4
 #define BINARY_OP_OR                5
+#define BINARY_OP_ARGMIN            6
+#define BINARY_OP_ARGMAX            7
 
 /** @brief Register Type Tags */
 typedef enum {

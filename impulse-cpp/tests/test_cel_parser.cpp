@@ -325,7 +325,7 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
         assert(l_id.next_token().type == TokenType::IDENTIFIER);
 
         Lexer l_tilde("~");
-        assert(l_tilde.next_token().type == TokenType::END_OF_FILE);
+        assert(l_tilde.next_token().type == TokenType::TILDE);
 
         Lexer l_semi(";");
         assert(l_semi.next_token().type == TokenType::END_OF_FILE);
@@ -570,6 +570,61 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     std::cout << "  -> PASSED: All exhaustive CEL MC/DC truth tables and decision paths verified." << std::endl;
 }
 
+static void test_cel_bitwise_and_hex_binary_literals() {
+    std::cout << "[Test] CEL Bitwise Operators (&, |, ^, ~, <<, >>) and Hex/Binary Literals (0x, 0b)..." << std::endl;
+
+    // 1. Hex and binary integer literals (including _ digit separators)
+    {
+        Parser p_hex("0x7F");
+        auto ast_hex = p_hex.parse_expression();
+        assert(ast_hex != nullptr && ast_hex->kind == AstKind::LITERAL_INT && ast_hex->int_val == 127);
+
+        Parser p_hex_sep("0xFF_00");
+        auto ast_hex_sep = p_hex_sep.parse_expression();
+        assert(ast_hex_sep != nullptr && ast_hex_sep->kind == AstKind::LITERAL_INT && ast_hex_sep->int_val == 65280);
+
+        Parser p_bin("0b0111_1111");
+        auto ast_bin = p_bin.parse_expression();
+        assert(ast_bin != nullptr && ast_bin->kind == AstKind::LITERAL_INT && ast_bin->int_val == 127);
+    }
+
+    // 2. Bitwise expressions & Steiner/K-Core multi-lane filter patterns
+    {
+        Parser p1("(lane & 0x7F) == 0x7F");
+        auto ast1 = p1.parse();
+        assert(ast1 != nullptr);
+        assert(CelCompiler::to_impscheme(ast1) == "(vec-cmp-eq (& lane 127) 127)");
+
+        Parser p2("popcount(lane & 0x7F) > 3");
+        auto ast2 = p2.parse();
+        assert(ast2 != nullptr);
+        assert(CelCompiler::to_impscheme(ast2) == "(vec-cmp-gt (popcount (& lane 127)) 3)");
+
+        Parser p3("((a | b) ^ ~c) << 2 >> 1");
+        auto ast3 = p3.parse();
+        assert(ast3 != nullptr);
+        assert(CelCompiler::to_impscheme(ast3) == "(>> (<< (^ (| a b) (~ c)) 2) 1)");
+
+        // Precedence: + binds tighter than <<, << tighter than &, & tighter than ^, ^ tighter than |, | tighter than ==
+        Parser p4("a | b ^ c & d << e + 1 == 0x05");
+        auto ast4 = p4.parse();
+        assert(ast4 != nullptr);
+        assert(CelCompiler::to_impscheme(ast4) == "(vec-cmp-eq (| a (^ b (& c (<< d (+ e 1))))) 5)");
+    }
+
+    // 3. Optimizer constant folding for bitwise operations
+    {
+        assert(AstOptimizer::optimize(Parser("0xF0 & 0x3C").parse_expression())->int_val == 0x30);
+        assert(AstOptimizer::optimize(Parser("0xF0 | 0x0F").parse_expression())->int_val == 0xFF);
+        assert(AstOptimizer::optimize(Parser("0xFF ^ 0x0F").parse_expression())->int_val == 0xF0);
+        assert(AstOptimizer::optimize(Parser("1 << 4").parse_expression())->int_val == 16);
+        assert(AstOptimizer::optimize(Parser("32 >> 2").parse_expression())->int_val == 8);
+        assert(AstOptimizer::optimize(Parser("~0").parse_expression())->int_val == -1);
+    }
+
+    std::cout << "  -> PASSED: Bitwise operators and hex/binary literals verified." << std::endl;
+}
+
 int main() {
     std::cout << "=== Google CEL Zero-Dependency Parser & IR Compiler Suite ===" << std::endl;
     test_cel_arithmetic_and_precedence();
@@ -581,6 +636,7 @@ int main() {
     test_cel_ast_optimizer_and_constant_folding();
     test_cel_parameter_normalization();
     test_cel_exhaustive_mcdc_truth_tables();
+    test_cel_bitwise_and_hex_binary_literals();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;
 }

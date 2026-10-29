@@ -9,6 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <limits>
 #include <string>
 
@@ -167,8 +168,10 @@ struct impulse_vm_context {
     // Pre-allocated float and double vectors for VM operations
     std::array<std::vector<float>, VM_MAX_VECTOR_HANDLES> float_vectors;
     std::array<bool, VM_MAX_VECTOR_HANDLES> float_vectors_allocated;
+    std::array<size_t, VM_MAX_VECTOR_HANDLES> float_vector_lengths{};
     std::array<std::vector<double>, VM_MAX_VECTOR_HANDLES> double_vectors;
     std::array<bool, VM_MAX_VECTOR_HANDLES> double_vectors_allocated;
+    std::array<size_t, VM_MAX_VECTOR_HANDLES> double_vector_lengths{};
     std::array<std::vector<uint64_t>, VM_MAX_VECTOR_HANDLES> node_vectors;
     std::array<bool, VM_MAX_VECTOR_HANDLES> node_vectors_allocated;
     std::array<std::vector<const char*>, VM_MAX_VECTOR_HANDLES> string_vectors;
@@ -221,6 +224,7 @@ inline int acquire_float_vector(impulse_vm_context_t* ctx) {
     for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->float_vectors_allocated[i]) {
             ctx->float_vectors_allocated[i] = true;
+            ctx->float_vector_lengths[i] = ctx->max_nodes;
             std::memset(ctx->float_vectors[i].data(), 0, ctx->float_vectors[i].size() * sizeof(float));
             return static_cast<int>(i);
         }
@@ -231,6 +235,7 @@ inline int acquire_float_vector(impulse_vm_context_t* ctx) {
 inline void release_float_vector(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->float_vectors_allocated[handle] = false;
+        ctx->float_vector_lengths[handle] = 0;
     }
 }
 
@@ -239,6 +244,7 @@ inline int acquire_double_vector(impulse_vm_context_t* ctx) {
     for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
         if (!ctx->double_vectors_allocated[i]) {
             ctx->double_vectors_allocated[i] = true;
+            ctx->double_vector_lengths[i] = ctx->max_nodes;
             std::memset(ctx->double_vectors[i].data(), 0, ctx->double_vectors[i].size() * sizeof(double));
             return static_cast<int>(i);
         }
@@ -249,6 +255,7 @@ inline int acquire_double_vector(impulse_vm_context_t* ctx) {
 inline void release_double_vector(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->double_vectors_allocated[handle] = false;
+        ctx->double_vector_lengths[handle] = 0;
     }
 }
 
@@ -897,6 +904,8 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_STREAM_YIELD] = &&op_INVALID;
         dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_INVALID;
         dispatch_table[OP_STREAM_REDUCE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE_ARGMIN] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE_ARGMAX] = &&op_INVALID;
         dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_INVALID;
         dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_INVALID;
         dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_INVALID;
@@ -1962,6 +1971,7 @@ op_COO_WALK_STREAM: {
     }
 
     bool isCsc = (walk_op == OP_CSC_WALK_STREAM);
+    std::unordered_set<uint64_t> reduced_targets;
     for (uint32_t u : active_sources) {
         if (u >= slot.node_count) continue;
         uint64_t start = isCsc ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
@@ -1971,7 +1981,6 @@ op_COO_WALK_STREAM: {
             uint32_t neighbor = isCsc ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
             uint32_t actualSource = isCsc ? neighbor : u;
             uint32_t actualTarget = isCsc ? u : neighbor;
-            bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
 
             float s_regs[16] = {0.0f};
             bool abort = false;
@@ -2184,14 +2193,53 @@ op_COO_WALK_STREAM: {
                         if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
                             auto& vec = vm_state->query_context->float_vectors[h_vec];
                             if (actualTarget < vec.size()) {
+                                uint64_t tkey = (static_cast<uint64_t>(globalReg) << 32) | actualTarget;
+                                bool first_touch = (reduced_targets.find(tkey) == reduced_targets.end());
+                                reduced_targets.insert(tkey);
                                 float current = vec[actualTarget];
                                 float next = current;
                                 switch (monoid) {
                                     case 0: next = current + val; break;
-                                    case 1: next = std::max(current, val); break;
-                                    case 2: next = std::min(current, val); break;
+                                    case 1: next = first_touch ? val : std::max(current, val); break;
+                                    case 2: next = first_touch ? val : std::min(current, val); break;
                                 }
                                 vec[actualTarget] = next;
+                            }
+                        }
+                        break;
+                    }
+                    case OP_STREAM_REDUCE_ARGMIN:
+                    case OP_STREAM_REDUCE_ARGMAX: {
+                        float val = s_regs[sDst];
+                        uint16_t valReg = sPayloadLow;
+                        uint16_t argReg = sPayloadHigh;
+                        int h_vec = -1;
+                        if (vm_state->register_types[valReg] == TYPE_FLOAT_VECTOR) {
+                            h_vec = static_cast<int>(vm_state->registers[valReg]);
+                        } else {
+                            h_vec = acquire_float_vector(vm_state->query_context);
+                            if (h_vec >= 0) {
+                                vm_state->registers[valReg] = static_cast<uint64_t>(h_vec);
+                                vm_state->register_types[valReg] = TYPE_FLOAT_VECTOR;
+                            }
+                        }
+                        if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
+                            auto& vec = vm_state->query_context->float_vectors[h_vec];
+                            if (actualTarget < vec.size()) {
+                                uint64_t tkey = (static_cast<uint64_t>(valReg) << 32) | actualTarget;
+                                bool first_touch = (reduced_targets.find(tkey) == reduced_targets.end());
+                                float current = vec[actualTarget];
+                                bool is_better = first_touch ||
+                                    (op == OP_STREAM_REDUCE_ARGMIN && val < current) ||
+                                    (op == OP_STREAM_REDUCE_ARGMAX && val > current);
+                                if (is_better) {
+                                    reduced_targets.insert(tkey);
+                                    vec[actualTarget] = val;
+                                    if (argReg < 64) {
+                                        vm_state->registers[argReg] = static_cast<uint64_t>(actualSource);
+                                        vm_state->register_types[argReg] = TYPE_NODE_ID;
+                                    }
+                                }
                             }
                         }
                         break;
@@ -2199,6 +2247,9 @@ op_COO_WALK_STREAM: {
                 }
                 if (abort) break;
                 mutPc++;
+            }
+            if (!abort) {
+                bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
             }
         }
     }
@@ -3727,62 +3778,131 @@ op_REDUCE: {
     size_t N = vm_state->query_context->max_nodes;
     if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->double_vectors_allocated[handle]) {
+        if (handle < 0 || handle >= static_cast<int>(VM_MAX_VECTOR_HANDLES) || !vm_state->query_context->double_vectors_allocated[handle]) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        size_t active_len = vm_state->query_context->double_vector_lengths[handle];
+        if (active_len > 0 && active_len < N) N = active_len;
         const double* vec = vm_state->query_context->double_vectors[handle].data();
-        double res = 0.0;
-        if (op_id == BINARY_OP_ADD) {
-            #pragma omp parallel for reduction(+:res) schedule(static)
+        if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
+            double best_val = (op_id == BINARY_OP_ARGMIN)
+                ? std::numeric_limits<double>::infinity()
+                : -std::numeric_limits<double>::infinity();
+            int64_t best_idx = (N > 0) ? 0 : -1;
             for (size_t i = 0; i < N; ++i) {
-                res += vec[i];
+                double v = vec[i];
+                if (std::isnan(v)) continue;
+                if ((op_id == BINARY_OP_ARGMIN && v < best_val) ||
+                    (op_id == BINARY_OP_ARGMAX && v > best_val)) {
+                    best_val = v;
+                    best_idx = static_cast<int64_t>(i);
+                }
             }
-        } else if (op_id == BINARY_OP_MIN) {
-            res = std::numeric_limits<double>::infinity();
-            #pragma omp parallel for reduction(min:res) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                res = std::min(res, vec[i]);
+            vm_state->registers[dst] = static_cast<uint64_t>(best_idx);
+            vm_state->register_types[dst] = TYPE_NODE_ID;
+            if (best_idx == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        } else {
+            double res = 0.0;
+            if (op_id == BINARY_OP_ADD) {
+                #pragma omp parallel for reduction(+:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    res += vec[i];
+                }
+            } else if (op_id == BINARY_OP_MUL) {
+                res = (N > 0) ? 1.0 : 0.0;
+                for (size_t i = 0; i < N; ++i) {
+                    res *= vec[i];
+                }
+            } else if (op_id == BINARY_OP_MIN) {
+                res = std::numeric_limits<double>::infinity();
+                #pragma omp parallel for reduction(min:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    if (!std::isnan(vec[i])) res = std::min(res, vec[i]);
+                }
+            } else if (op_id == BINARY_OP_MAX) {
+                res = -std::numeric_limits<double>::infinity();
+                #pragma omp parallel for reduction(max:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    if (!std::isnan(vec[i])) res = std::max(res, vec[i]);
+                }
+            } else {
+                for (size_t i = 0; i < N; ++i) {
+                    res += vec[i];
+                }
             }
-        } else if (op_id == BINARY_OP_MAX) {
-            res = -std::numeric_limits<double>::infinity();
-            #pragma omp parallel for reduction(max:res) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                res = std::max(res, vec[i]);
-            }
+            vm_state->registers[dst] = reinterpret_cast<uint64_t&>(res);
+            vm_state->register_types[dst] = TYPE_DOUBLE;
+            if (res == 0.0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
         }
-        vm_state->registers[dst] = reinterpret_cast<uint64_t&>(res);
-        vm_state->register_types[dst] = TYPE_DOUBLE;
     } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
-        if (handle >= 4 || !vm_state->query_context->float_vectors_allocated[handle]) {
+        if (handle < 0 || handle >= static_cast<int>(VM_MAX_VECTOR_HANDLES) || !vm_state->query_context->float_vectors_allocated[handle]) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        size_t active_len = vm_state->query_context->float_vector_lengths[handle];
+        if (active_len > 0 && active_len < N) N = active_len;
         const float* vec = vm_state->query_context->float_vectors[handle].data();
-        float res = 0.0f;
-        if (op_id == BINARY_OP_ADD) {
-            #pragma omp parallel for reduction(+:res) schedule(static)
+        if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
+            float best_val = (op_id == BINARY_OP_ARGMIN)
+                ? std::numeric_limits<float>::infinity()
+                : -std::numeric_limits<float>::infinity();
+            int64_t best_idx = (N > 0) ? 0 : -1;
             for (size_t i = 0; i < N; ++i) {
-                res += vec[i];
+                float v = vec[i];
+                if (std::isnan(v)) continue;
+                if ((op_id == BINARY_OP_ARGMIN && v < best_val) ||
+                    (op_id == BINARY_OP_ARGMAX && v > best_val)) {
+                    best_val = v;
+                    best_idx = static_cast<int64_t>(i);
+                }
             }
-        } else if (op_id == BINARY_OP_MIN) {
-            res = std::numeric_limits<float>::infinity();
-            #pragma omp parallel for reduction(min:res) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                res = std::min(res, vec[i]);
+            vm_state->registers[dst] = static_cast<uint64_t>(best_idx);
+            vm_state->register_types[dst] = TYPE_NODE_ID;
+            if (best_idx == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        } else {
+            float res = 0.0f;
+            if (op_id == BINARY_OP_ADD) {
+                #pragma omp parallel for reduction(+:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    res += vec[i];
+                }
+            } else if (op_id == BINARY_OP_MUL) {
+                res = (N > 0) ? 1.0f : 0.0f;
+                for (size_t i = 0; i < N; ++i) {
+                    res *= vec[i];
+                }
+            } else if (op_id == BINARY_OP_MIN) {
+                res = std::numeric_limits<float>::infinity();
+                #pragma omp parallel for reduction(min:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    if (!std::isnan(vec[i])) res = std::min(res, vec[i]);
+                }
+            } else if (op_id == BINARY_OP_MAX) {
+                res = -std::numeric_limits<float>::infinity();
+                #pragma omp parallel for reduction(max:res) schedule(static)
+                for (size_t i = 0; i < N; ++i) {
+                    if (!std::isnan(vec[i])) res = std::max(res, vec[i]);
+                }
+            } else {
+                for (size_t i = 0; i < N; ++i) {
+                    res += vec[i];
+                }
             }
-        } else if (op_id == BINARY_OP_MAX) {
-            res = -std::numeric_limits<float>::infinity();
-            #pragma omp parallel for reduction(max:res) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                res = std::max(res, vec[i]);
-            }
+            uint32_t raw_bits = 0;
+            std::memcpy(&raw_bits, &res, sizeof(float));
+            vm_state->registers[dst] = static_cast<uint64_t>(raw_bits);
+            vm_state->register_types[dst] = TYPE_FLOAT;
+            if (res == 0.0f) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
         }
-        vm_state->registers[dst] = 0;
-        reinterpret_cast<float&>(vm_state->registers[dst]) = res;
-        vm_state->register_types[dst] = TYPE_FLOAT;
     } else {
         vm_state->registers[dst] = vm_state->registers[src_vec];
         vm_state->register_types[dst] = TYPE_INT64;
+        if (vm_state->registers[dst] == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     }
 
     vm_state->pc++;
@@ -4845,6 +4965,7 @@ op_LOAD_INLINE_ARRAY: {
         dst_vec_f[i] = src_data_f[i];
         dst_vec_n[i] = src_data_i[i];
     }
+    vm_state->query_context->float_vector_lengths[h_dst] = count;
 
     vm_state->registers[dst] = h_dst;
     vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
@@ -6650,6 +6771,9 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_DENSE_WALK:
             case OP_DENSE_WALK_BITMATRIX:
             case OP_DENSE_WALK_DIRECT_STORE:
+            case OP_CSR_WALK_STREAM:
+            case OP_CSC_WALK_STREAM:
+            case OP_COO_WALK_STREAM:
                 abstract_types[dst] = TYPE_BITSET_HANDLE;
                 break;
 
@@ -6662,8 +6786,15 @@ impulse_vm_status_t impulse_vm_validate(
 
             case OP_LOAD_CONST_FLOAT:
             case OP_VECTOR_REDUCE_SUM:
-                abstract_types[dst] = TYPE_FLOAT;
+            case OP_REDUCE: {
+                uint16_t reduce_op = (inst.payload >> 16) & 0xFFFF;
+                if (opcode == OP_REDUCE && (reduce_op == BINARY_OP_ARGMIN || reduce_op == BINARY_OP_ARGMAX)) {
+                    abstract_types[dst] = TYPE_NODE_ID;
+                } else {
+                    abstract_types[dst] = TYPE_FLOAT;
+                }
                 break;
+            }
 
             case OP_LOAD_INLINE_ARRAY:
             case OP_VEC_MATH_UNARY:
@@ -6674,6 +6805,10 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_GATHER_EDGE_ATTR:
             case OP_COO_WALK_REDUCE:
             case OP_DENSE_WALK_REDUCE:
+            case OP_EWISE_ADD:
+            case OP_EWISE_MULT:
+            case OP_MXV:
+            case OP_VXM:
                 abstract_types[dst] = TYPE_FLOAT_VECTOR;
                 break;
 
@@ -6689,8 +6824,7 @@ impulse_vm_status_t impulse_vm_validate(
                 break;
         }
     }
-    
-    return IMPULSE_VM_OK;
+
     return IMPULSE_VM_OK;
 }
 

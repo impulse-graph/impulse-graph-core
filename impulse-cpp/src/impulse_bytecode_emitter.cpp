@@ -280,11 +280,11 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                 int op_id = 0;
                 switch (red->op_val) {
                     case ScmReduce::Op::SUM:
-                    case ScmReduce::Op::COUNT: op_id = 0; break;
-                    case ScmReduce::Op::MIN: op_id = 1; break;
-                    case ScmReduce::Op::MAX: op_id = 2; break;
-                    case ScmReduce::Op::ARGMIN: op_id = 3; break;
-                    case ScmReduce::Op::ARGMAX: op_id = 4; break;
+                    case ScmReduce::Op::COUNT: op_id = BINARY_OP_ADD; break;
+                    case ScmReduce::Op::MIN: op_id = BINARY_OP_MIN; break;
+                    case ScmReduce::Op::MAX: op_id = BINARY_OP_MAX; break;
+                    case ScmReduce::Op::ARGMIN: op_id = BINARY_OP_ARGMIN; break;
+                    case ScmReduce::Op::ARGMAX: op_id = BINARY_OP_ARGMAX; break;
                     case ScmReduce::Op::FIRST: op_id = 5; break;
                 }
                 uint32_t payload = (op_id << 16) | (src_reg & 0xFFFF);
