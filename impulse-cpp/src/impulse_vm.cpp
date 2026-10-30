@@ -208,6 +208,7 @@ struct impulse_vm_context {
     std::vector<uint32_t> scratch_u32_a;
     std::vector<uint32_t> scratch_u32_b;
     std::vector<uint64_t> scratch_u64_a;
+    std::vector<float> scratch_f32_a;
     std::vector<int> scratch_int_deg;
     std::vector<int> scratch_int_vert;
     std::vector<int> scratch_int_pos;
@@ -981,6 +982,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     ctx->scratch_u32_a.reserve(lane_cap);
     ctx->scratch_u32_b.reserve(lane_cap);
     ctx->scratch_u64_a.reserve(lane_cap);
+    ctx->scratch_f32_a.reserve(lane_cap);
     ctx->scratch_int_deg.reserve(lane_cap);
     ctx->scratch_int_vert.reserve(lane_cap);
     ctx->scratch_int_pos.reserve(lane_cap);
@@ -9061,7 +9063,7 @@ op_VECTOR_ANN_SEARCH: {
         uint32_t p_u8_1 = (inst.payload >> 8) & 0xFF;
         uint16_t p_u16_high = (inst.payload >> 16) & 0xFFFF;
         uint32_t top_k = (p_u8_1 > 0) ? p_u8_1 : ((p_u16_high > 0) ? p_u16_high : 1u);
-        uint16_t attr_id = (p_u8_1 > 0) ? p_u16_high : 0u;
+        uint16_t vhdr_off = p_u16_high;
         uint8_t flags = inst.flags;
         VALIDATE_REG(dst);
         VALIDATE_REG(q_reg);
@@ -9078,99 +9080,335 @@ op_VECTOR_ANN_SEARCH: {
         size_t q_len = vm_state->query_context->float_vector_lengths[h_q];
         if (q_len == 0 || q_len > q_vec.size()) q_len = q_vec.size();
 
-        size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, -1, 16);
-        const std::vector<float>* attr_ptr = nullptr;
-        const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, attr_id);
-        if (ma_ptr && !ma_ptr->float_data.empty()) {
-            attr_ptr = &ma_ptr->float_data;
-        }
-
-        size_t dim = 1;
-        if (attr_ptr && n_nodes > 0 && attr_ptr->size() >= n_nodes && (attr_ptr->size() % n_nodes) == 0) {
-            dim = std::max<size_t>(1, attr_ptr->size() / n_nodes);
-        } else if (attr_ptr && q_len > 0 && attr_ptr->size() >= q_len) {
-            dim = q_len;
-            n_nodes = attr_ptr->size() / dim;
-        }
-
-        size_t num_queries = std::max<size_t>(1, std::min<size_t>(64, (dim > 0 && q_len >= dim) ? (q_len / dim) : 1));
-        std::array<float, 256> best_scores{};
-        std::array<uint64_t, 256> best_nodes{};
-
-        auto rank_for_query = [&](size_t q_idx) -> size_t {
-            size_t take_cap = std::min<size_t>(256, std::min<size_t>(top_k, n_nodes));
-            size_t count = 0;
-            for (size_t u = 0; u < n_nodes; ++u) {
-                float dot = 0.0f;
-                if (attr_ptr) {
-                    for (size_t d = 0; d < dim; ++d) {
-                        size_t qi = q_idx * dim + d;
-                        size_t ui = u * dim + d;
-                        float qv = (qi < q_len) ? q_vec[qi] : 0.0f;
-                        float uv = (ui < attr_ptr->size()) ? (*attr_ptr)[ui] : 0.0f;
-                        dot += qv * uv;
-                    }
-                } else {
-                    dot = -static_cast<float>(u);
-                }
-                if (take_cap == 0) continue;
-                if (count < take_cap || dot > best_scores[count - 1]) {
-                    size_t pos = count;
-                    if (count < take_cap) ++count;
-                    else pos = take_cap - 1;
-                    while (pos > 0 && dot > best_scores[pos - 1]) {
-                        best_scores[pos] = best_scores[pos - 1];
-                        best_nodes[pos] = best_nodes[pos - 1];
-                        --pos;
-                    }
-                    best_scores[pos] = dot;
-                    best_nodes[pos] = static_cast<uint64_t>(u);
-                }
+        auto decode_fp16 = [](uint16_t h) -> float {
+            uint32_t sign = (h >> 15) & 1u;
+            uint32_t exp = (h >> 10) & 0x1Fu;
+            uint32_t frac = h & 0x03FFu;
+            float mag = 0.0f;
+            if (exp == 0) {
+                mag = (frac == 0) ? 0.0f : std::ldexp(static_cast<float>(frac), -24);
+            } else if (exp == 0x1Fu) {
+                mag = (frac == 0) ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+            } else {
+                mag = std::ldexp(static_cast<float>(0x0400u | frac), static_cast<int>(exp) - 25);
             }
-            return count;
+            return sign ? -mag : mag;
         };
 
-        if ((flags & 0x02) != 0) {
-            int h_lf = acquire_lane_frontier(vm_state->query_context, n_nodes, static_cast<uint32_t>(num_queries));
+        auto compute_metric_score_dist = [](uint8_t metric_code, const float* q, const float* v, size_t dim, float* out_score, float* out_dist) {
+            if (metric_code == 0) { // MetricL2: squared L2 distance
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < dim; ++i) {
+                    float d = q[i] - v[i];
+                    sum_sq += d * d;
+                }
+                if (out_score) *out_score = -sum_sq;
+                if (out_dist) *out_dist = sum_sq;
+            } else if (metric_code == 2) { // MetricDot
+                float dot = impulse_simd_dot_product_f32(q, v, dim);
+                if (out_score) *out_score = dot;
+                if (out_dist) *out_dist = -dot;
+            } else if (metric_code == 1) { // MetricCosine
+                float dot = impulse_simd_dot_product_f32(q, v, dim);
+                float nq = impulse_simd_dot_product_f32(q, q, dim);
+                float nv = impulse_simd_dot_product_f32(v, v, dim);
+                float denom = std::sqrt(nq) * std::sqrt(nv);
+                float cos_sim = (denom <= 1e-12f) ? 0.0f : (dot / denom);
+                if (out_score) *out_score = cos_sim;
+                if (out_dist) *out_dist = 1.0f - cos_sim;
+            } else { // MetricHamming (3)
+                uint32_t ham = 0;
+                for (size_t i = 0; i < dim; ++i) {
+                    bool bq = (q[i] >= 0.0f);
+                    bool bv = (v[i] >= 0.0f);
+                    if (bq != bv) ++ham;
+                }
+                float d = static_cast<float>(ham);
+                if (out_score) *out_score = -d;
+                if (out_dist) *out_dist = d;
+            }
+        };
+
+        auto& top_nodes = vm_state->query_context->scratch_u64_a;
+        top_nodes.clear();
+
+        if (vm_state->query_context->snapshot && vhdr_off >= 4096) {
+            const impulse_snapshot_t* snap = vm_state->query_context->snapshot;
+            if ((vhdr_off % 128) != 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            const uint8_t* hdr = static_cast<const uint8_t*>(impulse_snapshot_get_buffer(snap, vhdr_off, 64));
+            if (!hdr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+            uint32_t v_magic = 0;
+            uint16_t v_version = 0;
+            uint8_t v_metric = hdr[6];
+            uint8_t v_quant_type = hdr[7];
+            uint16_t v_domain_id = 0;
+            uint16_t v_vec_attr_id = 0;
+            uint32_t v_dimension = 0;
+            uint64_t v_node_count = 0;
+            uint32_t v_max_degree_r = 0;
+            uint32_t v_medoid_node_id = 0;
+            uint32_t v_ef_construction = 0;
+            uint64_t v_adj_slab_offset = 0;
+            uint64_t v_adj_slab_bytes = 0;
+            uint64_t v_quant_code_offset = 0;
+
+            std::memcpy(&v_magic, hdr + 0, 4);
+            std::memcpy(&v_version, hdr + 4, 2);
+            std::memcpy(&v_domain_id, hdr + 8, 2);
+            std::memcpy(&v_vec_attr_id, hdr + 10, 2);
+            std::memcpy(&v_dimension, hdr + 12, 4);
+            std::memcpy(&v_node_count, hdr + 16, 8);
+            std::memcpy(&v_max_degree_r, hdr + 24, 4);
+            std::memcpy(&v_medoid_node_id, hdr + 28, 4);
+            std::memcpy(&v_ef_construction, hdr + 36, 4);
+            std::memcpy(&v_adj_slab_offset, hdr + 40, 8);
+            std::memcpy(&v_adj_slab_bytes, hdr + 48, 8);
+            std::memcpy(&v_quant_code_offset, hdr + 56, 8);
+            (void)v_domain_id;
+
+            if (v_magic != 0x56414D41u || v_version != 1u || v_metric > 3u || v_quant_type > 3u) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            if (v_dimension == 0 || v_max_degree_r == 0) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            if (v_node_count > 0 && v_medoid_node_id >= v_node_count) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            uint64_t expected_slab_bytes = v_node_count * static_cast<uint64_t>(v_max_degree_r + 1u) * 4ULL;
+            if ((v_adj_slab_offset % 128ULL) != 0ULL || v_adj_slab_bytes < expected_slab_bytes) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            const uint8_t* adj_slab = static_cast<const uint8_t*>(
+                impulse_snapshot_get_buffer(snap, v_adj_slab_offset, v_adj_slab_bytes)
+            );
+            if (!adj_slab) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+
+            uint64_t quant_row_bytes = (v_quant_type == 1) ? ((v_dimension + 7u) / 8u)
+                : ((v_quant_type == 2) ? v_dimension : ((v_quant_type == 3) ? (v_dimension * 2u) : 0u));
+            const uint8_t* quant_slab = nullptr;
+            if (v_quant_code_offset > 0ULL) {
+                if ((v_quant_code_offset % 128ULL) != 0ULL) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                if (v_quant_type != 0) {
+                    quant_slab = static_cast<const uint8_t*>(
+                        impulse_snapshot_get_buffer(snap, v_quant_code_offset, v_node_count * quant_row_bytes)
+                    );
+                    if (!quant_slab) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+            }
+
+            if (vm_state->query_context->attribute_slots.empty() ||
+                v_vec_attr_id >= vm_state->query_context->attribute_slots[0].size()) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            const auto& attr = vm_state->query_context->attribute_slots[0][v_vec_attr_id];
+            uint32_t attr_dim = std::max<uint32_t>(1u, attr.dimension);
+            if (!attr.data_ptr || attr.data_bytes < v_node_count * static_cast<uint64_t>(attr_dim) * sizeof(float)) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            const float* emb_table = static_cast<const float*>(attr.data_ptr);
+            size_t dim = std::min<size_t>(v_dimension, std::min<size_t>(attr_dim, q_len));
+
+            if (v_node_count > 0 && top_k > 0) {
+                size_t n_nodes = static_cast<size_t>(v_node_count);
+                size_t ef = std::min<size_t>(256, std::max<size_t>(top_k, std::max<size_t>(1, v_ef_construction)));
+                size_t num_words = (n_nodes + 63) / 64;
+                auto& visited_words = vm_state->query_context->bfs_visited_words[0];
+                visited_words.clear();
+                visited_words.resize(num_words, 0ULL);
+                auto& expanded_words = vm_state->query_context->scratch_lanes;
+                expanded_words.clear();
+                expanded_words.resize(num_words, 0ULL);
+
+                bool use_quant = (v_quant_type != 0 && quant_slab != nullptr);
+                auto& approx_buf = vm_state->query_context->scratch_f32_a;
+                if (approx_buf.size() < dim) approx_buf.resize(dim, 0.0f);
+
+                auto eval_beam_dist = [&](uint32_t u) -> float {
+                    if (!use_quant) {
+                        float dist = 0.0f;
+                        compute_metric_score_dist(v_metric, q_vec.data(), emb_table + static_cast<size_t>(u) * attr_dim, dim, nullptr, &dist);
+                        return dist;
+                    }
+                    const uint8_t* row_ptr = quant_slab + static_cast<size_t>(u) * static_cast<size_t>(quant_row_bytes);
+                    if (v_quant_type == 1) { // QuantBQ1
+                        IMPULSE_TESTCASE(v_quant_type == 1);
+                        uint32_t ham = 0;
+                        for (size_t d = 0; d < dim; ++d) {
+                            uint8_t byte_val = row_ptr[d >> 3];
+                            bool bv = ((byte_val >> (d & 7)) & 1u) != 0;
+                            bool bq = (q_vec[d] >= 0.0f);
+                            if (bq != bv) ++ham;
+                        }
+                        return static_cast<float>(ham);
+                    } else if (v_quant_type == 2) { // QuantSQ8
+                        IMPULSE_TESTCASE(v_quant_type == 2);
+                        for (size_t d = 0; d < dim; ++d) {
+                            approx_buf[d] = (static_cast<float>(row_ptr[d]) - 128.0f) / 127.0f;
+                        }
+                        float dist = 0.0f;
+                        compute_metric_score_dist(v_metric, q_vec.data(), approx_buf.data(), dim, nullptr, &dist);
+                        return dist;
+                    } else { // QuantFP16
+                        IMPULSE_TESTCASE(v_quant_type == 3);
+                        for (size_t d = 0; d < dim; ++d) {
+                            uint16_t h16 = 0;
+                            std::memcpy(&h16, row_ptr + d * 2, 2);
+                            approx_buf[d] = decode_fp16(h16);
+                        }
+                        float dist = 0.0f;
+                        compute_metric_score_dist(v_metric, q_vec.data(), approx_buf.data(), dim, nullptr, &dist);
+                        return dist;
+                    }
+                };
+
+                std::array<uint32_t, 256> cand_u{};
+                std::array<float, 256> cand_d{};
+                size_t cand_len = 0;
+
+                auto insert_cand = [&](uint32_t u, float d, size_t cap) {
+                    auto better = [](uint32_t u1, float d1, uint32_t u2, float d2) {
+                        return (d1 < d2) || (d1 == d2 && u1 < u2);
+                    };
+                    if (cand_len == cap && !better(u, d, cand_u[cand_len - 1], cand_d[cand_len - 1])) {
+                        return;
+                    }
+                    size_t pos = cand_len;
+                    if (cand_len < cap) ++cand_len;
+                    else pos = cap - 1;
+                    while (pos > 0 && better(u, d, cand_u[pos - 1], cand_d[pos - 1])) {
+                        cand_u[pos] = cand_u[pos - 1];
+                        cand_d[pos] = cand_d[pos - 1];
+                        --pos;
+                    }
+                    cand_u[pos] = u;
+                    cand_d[pos] = d;
+                };
+
+                visited_words[v_medoid_node_id >> 6] |= (1ULL << (v_medoid_node_id & 63));
+                insert_cand(v_medoid_node_id, eval_beam_dist(v_medoid_node_id), ef);
+
+                size_t row_stride = static_cast<size_t>(v_max_degree_r + 1u) * 4u;
+                while (true) {
+                    int next_idx = -1;
+                    for (size_t i = 0; i < cand_len; ++i) {
+                        uint32_t u = cand_u[i];
+                        if ((expanded_words[u >> 6] & (1ULL << (u & 63))) == 0ULL) {
+                            next_idx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    if (next_idx < 0) break;
+                    uint32_t u = cand_u[static_cast<size_t>(next_idx)];
+                    expanded_words[u >> 6] |= (1ULL << (u & 63));
+
+                    const uint8_t* row_ptr = adj_slab + static_cast<size_t>(u) * row_stride;
+                    uint32_t deg = 0;
+                    std::memcpy(&deg, row_ptr, 4);
+                    if (deg > v_max_degree_r) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    for (uint32_t j = 0; j < deg; ++j) {
+                        uint32_t nb = 0;
+                        std::memcpy(&nb, row_ptr + (j + 1u) * 4u, 4);
+                        if (nb < n_nodes && (visited_words[nb >> 6] & (1ULL << (nb & 63))) == 0ULL) {
+                            visited_words[nb >> 6] |= (1ULL << (nb & 63));
+                            insert_cand(nb, eval_beam_dist(nb), ef);
+                        }
+                    }
+                }
+
+                if (use_quant) {
+                    // Stage 2: Exact Full-Precision Float32 Reranking of the ef beam candidates
+                    std::array<uint32_t, 256> orig_u{};
+                    size_t orig_len = cand_len;
+                    for (size_t i = 0; i < orig_len; ++i) orig_u[i] = cand_u[i];
+                    cand_len = 0;
+                    for (size_t i = 0; i < orig_len; ++i) {
+                        uint32_t u = orig_u[i];
+                        float exact_dist = 0.0f;
+                        compute_metric_score_dist(v_metric, q_vec.data(), emb_table + static_cast<size_t>(u) * attr_dim, dim, nullptr, &exact_dist);
+                        insert_cand(u, exact_dist, orig_len);
+                    }
+                }
+
+                size_t take = std::min<size_t>(top_k, cand_len);
+                for (size_t i = 0; i < take; ++i) {
+                    top_nodes.push_back(cand_u[i]);
+                }
+            }
+        } else {
+            // Fallback: check mock_node_attrs(vhdr_off) or mock_node_attrs(0)
+            const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, vhdr_off);
+            if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, 0);
+            if (ma_ptr && !ma_ptr->float_data.empty() && q_len > 0 && ma_ptr->float_data.size() >= q_len) {
+                const auto& flat_embs = ma_ptr->float_data;
+                size_t dim = q_len;
+                size_t n_nodes = flat_embs.size() / dim;
+                size_t take_cap = std::min<size_t>(256, std::min<size_t>(top_k, n_nodes));
+                std::array<uint32_t, 256> best_u{};
+                std::array<float, 256> best_d{};
+                size_t count = 0;
+
+                for (size_t u = 0; u < n_nodes; ++u) {
+                    float dist = 0.0f;
+                    compute_metric_score_dist(0 /* MetricL2 */, q_vec.data(), flat_embs.data() + u * dim, dim, nullptr, &dist);
+                    if (take_cap == 0) continue;
+                    auto better = [](uint32_t u1, float d1, uint32_t u2, float d2) {
+                        return (d1 < d2) || (d1 == d2 && u1 < u2);
+                    };
+                    if (count < take_cap || better(static_cast<uint32_t>(u), dist, best_u[count - 1], best_d[count - 1])) {
+                        size_t pos = count;
+                        if (count < take_cap) ++count;
+                        else pos = take_cap - 1;
+                        while (pos > 0 && better(static_cast<uint32_t>(u), dist, best_u[pos - 1], best_d[pos - 1])) {
+                            best_u[pos] = best_u[pos - 1];
+                            best_d[pos] = best_d[pos - 1];
+                            --pos;
+                        }
+                        best_u[pos] = static_cast<uint32_t>(u);
+                        best_d[pos] = dist;
+                    }
+                }
+                for (size_t i = 0; i < count; ++i) {
+                    top_nodes.push_back(best_u[i]);
+                }
+            } else {
+                top_nodes.push_back(0ULL);
+            }
+        }
+
+        if ((flags & 0x01) != 0) {
+            // Fused Vector-to-Multi-Lane Handshake: directly initialize TYPE_LANE_FRONTIER
+            uint32_t k = static_cast<uint32_t>(std::min<size_t>(64, top_nodes.size()));
+            uint64_t max_n = 0;
+            for (uint64_t u : top_nodes) {
+                if (u > max_n) max_n = u;
+            }
+            size_t node_count = resolve_multilane_node_count(vm_state->query_context, 0, static_cast<size_t>(max_n + 1));
+            int h_lf = acquire_lane_frontier(vm_state->query_context, node_count, k);
             if (h_lf < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             auto& lf = vm_state->query_context->lane_frontiers[h_lf];
-            bool any_set = false;
-            for (size_t b = 0; b < num_queries; ++b) {
-                size_t take = rank_for_query(b);
-                for (size_t i = 0; i < take; ++i) {
-                    uint64_t u = best_nodes[i];
-                    if (u < n_nodes) {
-                        lf.lanes[u] |= (1ULL << b);
-                        any_set = true;
-                    }
+            for (uint32_t b = 0; b < k; ++b) {
+                uint64_t u = top_nodes[b];
+                if (u < node_count) {
+                    lf.lanes[u] |= (1ULL << b);
                 }
             }
             vm_state->registers[dst] = static_cast<uint64_t>(h_lf);
             vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
-            if (any_set) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-        } else if ((flags & 0x01) != 0) {
-            size_t take = rank_for_query(0);
-            int h_nv = acquire_node_vector(vm_state->query_context);
-            if (h_nv < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            vm_state->query_context->node_vector_lengths[h_nv] = take;
-            vm_state->query_context->node_vector_length_explicit[h_nv] = true;
-            auto& nv = vm_state->query_context->node_vectors[h_nv];
-            if (take > 0) std::memcpy(nv.data(), best_nodes.data(), take * sizeof(uint64_t));
-            vm_state->registers[dst] = static_cast<uint64_t>(h_nv);
-            vm_state->register_types[dst] = TYPE_NODE_VECTOR;
-            if (take == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            if (k == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
             else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
         } else {
-            size_t take = rank_for_query(0);
             int h_bs = acquire_bitset(vm_state->query_context);
             if (h_bs < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             auto& bs = vm_state->query_context->bitsets[h_bs];
             bs.clear();
-            for (size_t i = 0; i < take; ++i) bs.set(best_nodes[i]);
+            for (uint64_t u : top_nodes) {
+                bs.set(u);
+            }
             vm_state->registers[dst] = static_cast<uint64_t>(h_bs);
             vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
-            if (take == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            if (top_nodes.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
             else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
         }
     }
@@ -9185,6 +9423,7 @@ op_VECTOR_RERANK_DOT: {
         uint16_t cand_reg = inst.payload & 0xFF;
         uint16_t q_reg = (inst.payload >> 8) & 0xFF;
         uint16_t attr_id = (inst.payload >> 16) & 0xFFFF;
+        uint8_t metric_flag = inst.flags & 0x03;
         VALIDATE_REG(dst);
         VALIDATE_REG(cand_reg);
         VALIDATE_REG(q_reg);
@@ -9203,66 +9442,92 @@ op_VECTOR_RERANK_DOT: {
         size_t q_len = vm_state->query_context->float_vector_lengths[h_q];
         if (q_len == 0 || q_len > q_vec.size()) q_len = q_vec.size();
 
-        size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, -1, 16);
-        const VmBitSet* cand_bs = nullptr;
-        const VmLaneFrontier* cand_lf = nullptr;
+        auto& cands = vm_state->query_context->scratch_u32_a;
+        cands.clear();
         if (t_cand == TYPE_BITSET_HANDLE) {
             uint64_t h_bs = vm_state->registers[cand_reg];
             if (h_bs >= VM_MAX_BITSET_HANDLES || !vm_state->query_context->bitset_allocated[h_bs]) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            cand_bs = &vm_state->query_context->bitsets[h_bs];
+            extract_active_bits(vm_state->query_context->bitsets[h_bs], cands);
         } else {
             size_t h_lf = static_cast<size_t>(vm_state->registers[cand_reg]);
             if (h_lf >= VM_MAX_LANE_FRONTIER_HANDLES || h_lf >= vm_state->query_context->lane_frontiers_count) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            cand_lf = &vm_state->query_context->lane_frontiers[h_lf];
-            n_nodes = std::max(n_nodes, cand_lf->lanes.size());
+            const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+            for (size_t u = 0; u < lf.lanes.size(); ++u) {
+                if ((lf.lanes[u] & lf.active_mask) != 0ULL) {
+                    cands.push_back(static_cast<uint32_t>(u));
+                }
+            }
         }
 
-        const std::vector<float>* attr_ptr = nullptr;
         const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, attr_id);
-        if (ma_ptr && !ma_ptr->float_data.empty()) {
-            attr_ptr = &ma_ptr->float_data;
+        if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, 0);
+        const std::vector<float>* mock_embs = (ma_ptr && !ma_ptr->float_data.empty()) ? &ma_ptr->float_data : nullptr;
+
+        const float* snap_embs = nullptr;
+        size_t snap_emb_floats = 0;
+        size_t snap_dim = q_len;
+        if (!mock_embs && vm_state->query_context->snapshot && !vm_state->query_context->attribute_slots.empty()) {
+            const auto& attrs0 = vm_state->query_context->attribute_slots[0];
+            uint16_t a_idx = (attr_id < attrs0.size()) ? attr_id : 0u;
+            if (a_idx < attrs0.size() && attrs0[a_idx].data_ptr) {
+                snap_embs = static_cast<const float*>(attrs0[a_idx].data_ptr);
+                snap_emb_floats = attrs0[a_idx].data_bytes / sizeof(float);
+                if (attrs0[a_idx].dimension > 0) snap_dim = attrs0[a_idx].dimension;
+            }
         }
-        size_t dim = (attr_ptr && n_nodes > 0 && attr_ptr->size() >= n_nodes && (attr_ptr->size() % n_nodes) == 0)
-            ? std::max<size_t>(1, attr_ptr->size() / n_nodes)
-            : std::max<size_t>(1, q_len);
+
+        auto eval_metric_score = [&](const float* v, size_t dim) -> float {
+            size_t d_len = std::min(q_len, dim);
+            if (metric_flag == 0) { // MetricDot
+                return impulse_simd_dot_product_f32(q_vec.data(), v, d_len);
+            } else if (metric_flag == 1) { // MetricL2 (negative squared L2)
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < d_len; ++i) {
+                    float d = q_vec[i] - v[i];
+                    sum_sq += d * d;
+                }
+                return -sum_sq;
+            } else if (metric_flag == 2) { // MetricCosine
+                float dot = impulse_simd_dot_product_f32(q_vec.data(), v, d_len);
+                float nq = impulse_simd_dot_product_f32(q_vec.data(), q_vec.data(), d_len);
+                float nv = impulse_simd_dot_product_f32(v, v, d_len);
+                float denom = std::sqrt(nq) * std::sqrt(nv);
+                return (denom <= 1e-12f) ? 0.0f : (dot / denom);
+            } else { // MetricHamming (3)
+                uint32_t ham = 0;
+                for (size_t i = 0; i < d_len; ++i) {
+                    if ((q_vec[i] >= 0.0f) != (v[i] >= 0.0f)) ++ham;
+                }
+                return -static_cast<float>(ham);
+            }
+        };
 
         int h_out = acquire_float_vector(vm_state->query_context);
         if (h_out < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         auto& scores = vm_state->query_context->float_vectors[h_out];
-        n_nodes = std::min(n_nodes, scores.size());
-        vm_state->query_context->float_vector_lengths[h_out] = n_nodes;
+        size_t out_len = std::min(cands.size(), scores.size());
+        vm_state->query_context->float_vector_lengths[h_out] = out_len;
 
-        bool any_active = false;
-        for (size_t u = 0; u < n_nodes; ++u) {
-            bool is_active = cand_bs
-                ? cand_bs->test(u)
-                : (cand_lf && u < cand_lf->lanes.size() && (cand_lf->lanes[u] & cand_lf->active_mask) != 0ULL);
-            if (!is_active) {
-                scores[u] = 0.0f;
-                continue;
-            }
-            any_active = true;
-            float dot = 0.0f;
-            if (attr_ptr) {
-                for (size_t d = 0; d < dim; ++d) {
-                    float qv = (d < q_len) ? q_vec[d] : 0.0f;
-                    size_t ui = u * dim + d;
-                    float uv = (ui < attr_ptr->size()) ? (*attr_ptr)[ui] : 0.0f;
-                    dot += qv * uv;
-                }
+        for (size_t i = 0; i < out_len; ++i) {
+            size_t u = cands[i];
+            float score = 0.0f;
+            if (mock_embs && q_len > 0 && (u + 1) * q_len <= mock_embs->size()) {
+                score = eval_metric_score(mock_embs->data() + u * q_len, q_len);
+            } else if (snap_embs && snap_dim > 0 && (u + 1) * snap_dim <= snap_emb_floats) {
+                score = eval_metric_score(snap_embs + u * snap_dim, snap_dim);
             } else {
-                dot = (q_len > 0) ? q_vec[0] : 0.0f;
+                score = (q_len > 0) ? q_vec[0] : 0.0f;
             }
-            scores[u] = dot;
+            scores[i] = score;
         }
 
         vm_state->registers[dst] = static_cast<uint64_t>(h_out);
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
-        if (any_active) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        if (out_len > 0) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
         else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     }
     vm_state->pc++;
@@ -9527,9 +9792,9 @@ impulse_vm_status_t impulse_vm_validate(
                 break;
 
             case OP_VECTOR_ANN_SEARCH:
-                abstract_types[dst] = ((inst.flags & 0x02) != 0)
+                abstract_types[dst] = ((inst.flags & 0x01) != 0)
                     ? TYPE_LANE_FRONTIER
-                    : (((inst.flags & 0x01) != 0) ? TYPE_NODE_VECTOR : TYPE_BITSET_HANDLE);
+                    : TYPE_BITSET_HANDLE;
                 break;
 
             case OP_VECTOR_RERANK_DOT:

@@ -6,6 +6,7 @@
 
 #include "impulse_vm.h"
 #include "impulse_assert.h"
+#include "impulse_hexio.h"
 
 #undef NDEBUG
 #include <algorithm>
@@ -708,11 +709,350 @@ static void test_zero_heap_allocations_hot_path() {
     std::printf("  [PASS] test_zero_heap_allocations_hot_path\n");
 }
 
+// ============================================================================
+// 8. Phase 2 TDD: OP_VECTOR_ANN_SEARCH (0xCA) L2 Ranking, Fused Multi-Lane Handshake & OP_VECTOR_RERANK_DOT (0xCB) Metrics
+// ============================================================================
+static uint16_t encode_fp16(float f) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &f, sizeof(float));
+    uint32_t sign = (bits >> 31) & 1u;
+    int32_t exp32 = static_cast<int32_t>((bits >> 23) & 0xFFu);
+    uint32_t mant32 = bits & 0x7FFFFFu;
+    if (exp32 == 0xFF) {
+        uint32_t frac16 = (mant32 == 0) ? 0u : 0x0200u;
+        return static_cast<uint16_t>((sign << 15) | (0x1Fu << 10) | frac16);
+    }
+    int32_t unb_exp = exp32 - 127 + 15;
+    if (unb_exp >= 0x1F) {
+        return static_cast<uint16_t>((sign << 15) | (0x1Fu << 10));
+    }
+    if (unb_exp <= 0) {
+        if (unb_exp < -10) return static_cast<uint16_t>(sign << 15);
+        uint32_t mant_full = 0x800000u | mant32;
+        int32_t shift = 14 - unb_exp;
+        uint32_t frac16 = (mant_full >> shift) & 0x03FFu;
+        return static_cast<uint16_t>((sign << 15) | frac16);
+    }
+    uint32_t frac16 = (mant32 >> 13) & 0x03FFu;
+    return static_cast<uint16_t>((sign << 15) | (static_cast<uint32_t>(unb_exp) << 10) | frac16);
+}
+
+static void test_vector_ann_mock_l2_and_fused_multilane_handshake() {
+    std::printf("--- [Test 8] OP_VECTOR_ANN_SEARCH (0xCA) Mock L2, Fused Multi-Lane Handshake & OP_VECTOR_RERANK_DOT (0xCB) 4 Metrics ---\n");
+
+    const uint32_t offsets[5] = {0, 2, 3, 4, 5};
+    const uint32_t targets[5] = {1, 2, 2, 3, 0};
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+    impulse_vm_context_mock_csr(ctx, 0, offsets, targets, 4, 5);
+    impulse_vm_state_t st{};
+    st.query_context = ctx;
+
+    // Pack both 16-float embedding table and 4-float query vector in inline data
+    const float inline_floats[20] = {
+        // [0..15]: 4 nodes x 4D embeddings
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.8f, 0.2f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        // [16..19]: 4D query vector [0.85, 0.15, 0.0, 0.0]
+        0.85f, 0.15f, 0.0f, 0.0f
+    };
+    impulse_vm_context_bind_inline_data(ctx, inline_floats, sizeof(inline_floats));
+
+    impulse_instruction_t prog[] = {
+        {OP_LOAD_INLINE_ARRAY, 0, 10, 0u | (16u << 16)},                     // R10 <- 16-float embedding table
+        {OP_INIT_MOCK_NODE_ATTR, 0, 0, 10u | (0u << 16)},                    // Mock attr 0 <- R10 (16 floats = 4 nodes x 4D)
+        {OP_LOAD_INLINE_ARRAY, 0, 1, 64u | (4u << 16)},                      // R1 <- q_vec [0.85, 0.15, 0.0, 0.0] at byte offset 64 (len=4)
+        {OP_VECTOR_ANN_SEARCH, 0, 2, 1u | (1u << 8) | (0u << 16)},           // R2 <- top_k=1 BitSet (flags=0): MUST select Node 1 by L2!
+        {OP_VECTOR_ANN_SEARCH, 1, 3, 1u | (2u << 8) | (0u << 16)},           // R3 <- top_k=2 Fused TYPE_LANE_FRONTIER (flags=1): lane 0 = Node 1, lane 1 = Node 0!
+        {OP_LANE_CSR_WALK, 0, 4, 3u | (0u << 16)},                           // R4 <- walk R3 on rel 0: Node 2 gets both lane 0 (from 1) and lane 1 (from 0) -> 0b11 = 3!
+        {OP_VECTOR_RERANK_DOT, 0, 5, 3u | (1u << 8) | (0u << 16)},           // R5 <- rerank R3 (cands {0, 1}) with MetricDot (flags=0)
+        {OP_VECTOR_RERANK_DOT, 1, 6, 3u | (1u << 8) | (0u << 16)},           // R6 <- rerank R3 (cands {0, 1}) with MetricL2 (flags=1)
+        {OP_VECTOR_RERANK_DOT, 2, 7, 3u | (1u << 8) | (0u << 16)},           // R7 <- rerank R3 (cands {0, 1}) with MetricCosine (flags=2)
+        {OP_VECTOR_RERANK_DOT, 3, 8, 3u | (1u << 8) | (0u << 16)},           // R8 <- rerank R3 (cands {0, 1}) with MetricHamming (flags=3)
+        {OP_HALT, 0, 0, 0}
+    };
+
+    g_heap_alloc_count = 0;
+    g_track_heap_allocs = true;
+    impulse_vm_status_t status = impulse_vm_execute(prog, sizeof(prog) / sizeof(prog[0]), &st, 0);
+    g_track_heap_allocs = false;
+    assert(status == IMPULSE_VM_OK);
+    assert(g_heap_alloc_count == 0 && "Expected 0 heap allocations in mock ANN & rerank!");
+
+    // 1. Verify R2 (flags=0) is TYPE_BITSET_HANDLE with ONLY Node 1 (closest in L2, whereas Node 0 had higher dot product)
+    assert(st.register_types[2] == TYPE_BITSET_HANDLE);
+    assert(impulse_vm_context_bitset_test(ctx, st.registers[2], 1) == true);
+    assert(impulse_vm_context_bitset_test(ctx, st.registers[2], 0) == false);
+
+    // 2. Verify R3 (flags=1) is Fused TYPE_LANE_FRONTIER with num_lanes=2, lane 0 at Node 1, lane 1 at Node 0
+    assert(st.register_types[3] == TYPE_LANE_FRONTIER);
+    assert(impulse_vm_context_lane_frontier_num_lanes(ctx, st.registers[3]) == 2);
+    const uint64_t* lf_r3 = impulse_vm_context_lane_frontier_data(ctx, st.registers[3]);
+    assert(lf_r3[1] == 1ULL); // Lane 0 -> best hit Node 1
+    assert(lf_r3[0] == 2ULL); // Lane 1 -> second hit Node 0
+
+    // 3. Verify R4 after OP_LANE_CSR_WALK has both lanes (0b11 == 3ULL) converged at Node 2
+    const uint64_t* lf_r4 = impulse_vm_context_lane_frontier_data(ctx, st.registers[4]);
+    assert(lf_r4[2] == 3ULL);
+
+    // 4. Verify OP_VECTOR_RERANK_DOT (0xCB) compacted candidate scores for ascending candidates [0, 1]:
+    // R5 (MetricDot, flags=0): cands[0]=Node 0 -> 0.85, cands[1]=Node 1 -> 0.71
+    assert(impulse_vm_context_float_vector_size(ctx, st.registers[5]) == 2);
+    const float* scores_dot = impulse_vm_context_get_float_vector(ctx, st.registers[5]);
+    assert(std::fabs(scores_dot[0] - 0.85f) < 1e-5f);
+    assert(std::fabs(scores_dot[1] - 0.71f) < 1e-5f);
+
+    // R6 (MetricL2, flags=1): negative squared L2: cands[0]=Node 0 -> -0.045, cands[1]=Node 1 -> -0.005
+    assert(impulse_vm_context_float_vector_size(ctx, st.registers[6]) == 2);
+    const float* scores_l2 = impulse_vm_context_get_float_vector(ctx, st.registers[6]);
+    assert(std::fabs(scores_l2[0] - (-0.045f)) < 1e-5f);
+    assert(std::fabs(scores_l2[1] - (-0.005f)) < 1e-5f);
+
+    // R7 (MetricCosine, flags=2):
+    // ||q|| = sqrt(0.85^2 + 0.15^2) = sqrt(0.745)
+    // cos(q, Node 0) = 0.85 / sqrt(0.745)
+    // cos(q, Node 1) = 0.71 / (sqrt(0.745) * sqrt(0.68))
+    const float* scores_cos = impulse_vm_context_get_float_vector(ctx, st.registers[7]);
+    float exp_cos0 = 0.85f / std::sqrt(0.745f);
+    float exp_cos1 = 0.71f / (std::sqrt(0.745f) * std::sqrt(0.68f));
+    assert(std::fabs(scores_cos[0] - exp_cos0) < 1e-5f);
+    assert(std::fabs(scores_cos[1] - exp_cos1) < 1e-5f);
+
+    // R8 (MetricHamming, flags=3): all components >= 0.0 -> hamming distance 0 -> score -0.0f
+    const float* scores_ham = impulse_vm_context_get_float_vector(ctx, st.registers[8]);
+    assert(std::fabs(scores_ham[0] - 0.0f) < 1e-5f);
+    assert(std::fabs(scores_ham[1] - 0.0f) < 1e-5f);
+
+    impulse_vm_context_destroy(ctx);
+    std::printf("  [PASS] test_vector_ann_mock_l2_and_fused_multilane_handshake\n");
+}
+
+static void test_vamana_snapshot_ann_and_quantized_routing() {
+    std::printf("--- [Test 9] Vamana Snapshot ANN Search (0xCA), Quantized Routing (BQ1/SQ8/FP16) & Hexio Corruption ---\n");
+
+    const char* snap_path = "test_vamana_phase2.imps";
+    const char* mut_path  = "test_vamana_phase2_mut.imps";
+
+    // Build snapshot via official impulse_writer_* APIs (Rule 3.17)
+    impulse_writer_t* w = impulse_writer_create(snap_path, 0);
+    assert(w != nullptr);
+    assert(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "User") == IMPULSE_OK);
+
+    // CSR graph: 0 -> [1, 2], 1 -> [2], 2 -> [3], 3 -> [0]
+    const uint32_t row_off[5] = {0, 2, 3, 4, 5};
+    const uint32_t col_idx[5] = {1, 2, 2, 3, 0};
+    assert(impulse_writer_add_relation(w, 0, 0, IMPULSE_ENC_RAW, 4, 5, 0,
+                                       row_off, sizeof(row_off),
+                                       col_idx, sizeof(col_idx)) == IMPULSE_OK);
+
+    // Attribute 0 on Relation 0: 4 nodes x 4D Float32 embeddings
+    const float embs[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.8f, 0.2f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f
+    };
+    assert(impulse_writer_add_attribute(w, 0, "embedding", 6, 4, embs, sizeof(embs), nullptr, 0) == IMPULSE_OK);
+
+    // Reserve a 1024-byte 128B-aligned secondary index payload for IMP_INDEX_VAMANA_ANN (type 8)
+    // Layout inside index_data (which impulse_writer_finalize places at a 128-byte aligned file offset `vhdr_off`):
+    // - [0..63]:    64-byte ImpulseVamanaHeader
+    // - [128..191]: 64-byte Vamana fixed-stride adjacency slab (4 nodes * (max_r=3 + 1) * 4B)
+    // - [256..259]: QuantBQ1 slab (1 byte per 4D node)
+    // - [384..399]: QuantSQ8 slab (4 bytes per 4D node)
+    // - [512..543]: QuantFP16 slab (8 bytes per 4D node)
+    std::vector<uint8_t> idx_payload(640, 0);
+    assert(impulse_writer_add_index(w, 0, 0, 0, 8, "vamana_emb", idx_payload.data(), idx_payload.size(), 0) == IMPULSE_OK);
+    assert(impulse_writer_finalize(w) == IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    // Inspect the finalized snapshot to discover the exact 128B-aligned file offset of index 0
+    impulse_status_t st_open = IMPULSE_OK;
+    impulse_snapshot_t* snap0 = impulse_snapshot_open(snap_path, &st_open);
+    assert(snap0 != nullptr && st_open == IMPULSE_OK);
+    assert(impulse_snapshot_get_index_count(snap0) == 1);
+    const void* idx_ptr = nullptr;
+    uint64_t idx_bytes = 0;
+    assert(impulse_snapshot_get_index(snap0, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &idx_ptr, &idx_bytes) == IMPULSE_OK);
+    const void* base_ptr = impulse_snapshot_get_buffer(snap0, 0, 64);
+    uint64_t vhdr_off_u64 = static_cast<uint64_t>(
+        static_cast<const uint8_t*>(idx_ptr) - static_cast<const uint8_t*>(base_ptr)
+    );
+    assert(vhdr_off_u64 >= 4096 && (vhdr_off_u64 % 128) == 0 && vhdr_off_u64 <= 0xFFFFu);
+    uint16_t vhdr_off = static_cast<uint16_t>(vhdr_off_u64);
+    impulse_snapshot_close(snap0);
+
+    // Populate the Vamana header, adjacency slab, and quantized routing slabs at `vhdr_off`
+    uint64_t adj_slab_off = vhdr_off_u64 + 128;
+    uint64_t bq1_off      = vhdr_off_u64 + 256;
+    uint64_t sq8_off      = vhdr_off_u64 + 384;
+    uint64_t fp16_off     = vhdr_off_u64 + 512;
+
+    auto write_u8 = [&](const char* path, size_t off, uint8_t v) {
+        char hex[3];
+        std::snprintf(hex, sizeof(hex), "%02X", v);
+        assert(impulse_hexio_write_file(path, off, hex) == 1);
+    };
+    auto write_u16 = [&](const char* path, size_t off, uint16_t v) {
+        char hex[5];
+        impulse_hexio_render_u16_le(v, hex);
+        assert(impulse_hexio_write_file(path, off, hex) == 2);
+    };
+    auto write_u32 = [&](const char* path, size_t off, uint32_t v) {
+        char hex[9];
+        impulse_hexio_render_u32_le(v, hex);
+        assert(impulse_hexio_write_file(path, off, hex) == 4);
+    };
+    auto write_u64 = [&](const char* path, size_t off, uint64_t v) {
+        char hex[17];
+        impulse_hexio_render_u64_le(v, hex);
+        assert(impulse_hexio_write_file(path, off, hex) == 8);
+    };
+    auto write_f32 = [&](const char* path, size_t off, float f) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &f, sizeof(float));
+        write_u32(path, off, bits);
+    };
+
+    write_u32(snap_path, vhdr_off + 0,  0x56414D41u); // "VAMA" magic
+    write_u16(snap_path, vhdr_off + 4,  1u);          // version = 1
+    write_u8 (snap_path, vhdr_off + 6,  0u);          // metric = 0 (MetricL2)
+    write_u8 (snap_path, vhdr_off + 7,  0u);          // quant_type = 0 (QuantNone)
+    write_u16(snap_path, vhdr_off + 8,  0u);          // domain_id = 0
+    write_u16(snap_path, vhdr_off + 10, 0u);          // vec_attr_id = 0
+    write_u32(snap_path, vhdr_off + 12, 4u);          // dimension = 4
+    write_u64(snap_path, vhdr_off + 16, 4ULL);        // node_count = 4
+    write_u32(snap_path, vhdr_off + 24, 3u);          // max_degree_r = 3
+    write_u32(snap_path, vhdr_off + 28, 0u);          // medoid_node_id = 0
+    write_f32(snap_path, vhdr_off + 32, 1.2f);        // alpha = 1.2
+    write_u32(snap_path, vhdr_off + 36, 16u);         // ef_construction = 16
+    write_u64(snap_path, vhdr_off + 40, adj_slab_off);
+    write_u64(snap_path, vhdr_off + 48, 64ULL);       // 4 * (3 + 1) * 4 = 64B
+    write_u64(snap_path, vhdr_off + 56, 0ULL);        // quant_code_offset = 0
+
+    // Adjacency rows: [deg, nb0, nb1, nb2]
+    const uint32_t adj_rows[4][4] = {
+        {2, 1, 2, 0},
+        {2, 0, 2, 0},
+        {2, 1, 3, 0},
+        {1, 2, 0, 0}
+    };
+    for (size_t u = 0; u < 4; ++u) {
+        for (size_t j = 0; j < 4; ++j) {
+            write_u32(snap_path, static_cast<size_t>(adj_slab_off) + u * 16 + j * 4, adj_rows[u][j]);
+        }
+    }
+
+    // Quantized slabs: BQ1, SQ8, FP16
+    for (size_t u = 0; u < 4; ++u) {
+        uint8_t bq_byte = 0;
+        for (size_t d = 0; d < 4; ++d) {
+            float f = embs[u * 4 + d];
+            if (f >= 0.0f) bq_byte |= static_cast<uint8_t>(1u << d);
+            int sq_int = std::max(0, std::min(255, static_cast<int>(std::round(f * 127.0f + 128.0f))));
+            write_u8(snap_path, static_cast<size_t>(sq8_off) + u * 4 + d, static_cast<uint8_t>(sq_int));
+            write_u16(snap_path, static_cast<size_t>(fp16_off) + u * 8 + d * 2, encode_fp16(f));
+        }
+        write_u8(snap_path, static_cast<size_t>(bq1_off) + u, bq_byte);
+    }
+
+    // Test QuantNone (0), QuantBQ1 (1), QuantSQ8 (2), QuantFP16 (3) via Fused 0xCA -> 0xC3 -> 0xCB pipeline!
+    const uint8_t quant_types[4] = {0, 1, 2, 3};
+    const uint64_t quant_offs[4] = {0ULL, bq1_off, sq8_off, fp16_off};
+
+    for (int qi = 0; qi < 4; ++qi) {
+        write_u8(snap_path, vhdr_off + 7, quant_types[qi]);
+        write_u64(snap_path, vhdr_off + 56, quant_offs[qi]);
+
+        impulse_snapshot_t* snap = impulse_snapshot_open(snap_path, &st_open);
+        assert(snap != nullptr && st_open == IMPULSE_OK);
+
+        impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+        impulse_vm_state_t st{};
+        st.query_context = ctx;
+
+        const float q_vec[4] = {0.85f, 0.15f, 0.0f, 0.0f};
+        impulse_vm_context_bind_inline_data(ctx, q_vec, sizeof(q_vec));
+
+        impulse_instruction_t fused_prog[5] = {
+            {OP_LOAD_INLINE_ARRAY, 0, 1, 0u | (4u << 16)},
+            {OP_VECTOR_ANN_SEARCH, 1, 2, 1u | (2u << 8) | (static_cast<uint32_t>(vhdr_off) << 16)},
+            {OP_LANE_CSR_WALK, 0, 3, 2u | (0u << 16)},
+            {OP_VECTOR_RERANK_DOT, 0, 4, 3u | (1u << 8) | (0u << 16)},
+            {OP_HALT, 0, 0, 0}
+        };
+
+        g_heap_alloc_count = 0;
+        g_track_heap_allocs = true;
+        impulse_vm_status_t vm_st = impulse_vm_execute(fused_prog, 5, &st, 0);
+        g_track_heap_allocs = false;
+
+        assert(vm_st == IMPULSE_VM_OK);
+        assert(g_heap_alloc_count == 0 && "Expected 0 heap allocations during Vamana beam search + rerank!");
+        assert(st.register_types[2] == TYPE_LANE_FRONTIER);
+        const uint64_t* lf_r2 = impulse_vm_context_lane_frontier_data(ctx, st.registers[2]);
+        assert(lf_r2[1] == 1ULL); // Lane 0 seeded at closest Node 1
+        assert(lf_r2[0] == 2ULL); // Lane 1 seeded at 2nd closest Node 0
+
+        const uint64_t* lf_r3 = impulse_vm_context_lane_frontier_data(ctx, st.registers[3]);
+        assert(lf_r3[2] == 3ULL); // Node 2 reached by both Lane 0 and Lane 1
+
+        // R4 reranked active nodes in R3 ({1, 2}) against snapshot attribute 0
+        assert(st.register_types[4] == TYPE_FLOAT_VECTOR);
+        assert(impulse_vm_context_float_vector_size(ctx, st.registers[4]) == 2);
+        const float* r4_scores = impulse_vm_context_get_float_vector(ctx, st.registers[4]);
+        // Node 1 dot([0.85, 0.15, 0, 0], [0.8, 0.2, 0, 0]) = 0.71
+        // Node 2 dot([0.85, 0.15, 0, 0], [0.0, 1.0, 0, 0]) = 0.15
+        assert(std::fabs(r4_scores[0] - 0.71f) < 1e-5f);
+        assert(std::fabs(r4_scores[1] - 0.15f) < 1e-5f);
+
+        impulse_vm_context_destroy(ctx);
+        impulse_snapshot_close(snap);
+    }
+
+    // Negative test: corrupt VAMA magic -> OP_VECTOR_ANN_SEARCH must return IMPULSE_VM_ERR_OUT_OF_BOUNDS
+    {
+        FILE* src_f = std::fopen(snap_path, "rb");
+        FILE* dst_f = std::fopen(mut_path, "wb");
+        assert(src_f && dst_f);
+        char buf[4096];
+        size_t n = 0;
+        while ((n = std::fread(buf, 1, sizeof(buf), src_f)) > 0) {
+            std::fwrite(buf, 1, n, dst_f);
+        }
+        std::fclose(src_f);
+        std::fclose(dst_f);
+
+        write_u32(mut_path, vhdr_off + 0, 0x42414421u); // Corrupt magic
+        impulse_snapshot_t* bad_snap = impulse_snapshot_open(mut_path, &st_open);
+        assert(bad_snap != nullptr);
+        impulse_vm_context_t* ctx = impulse_vm_context_create(bad_snap);
+        impulse_vm_state_t st{};
+        st.query_context = ctx;
+        const float q_vec[4] = {0.85f, 0.15f, 0.0f, 0.0f};
+        impulse_vm_context_bind_inline_data(ctx, q_vec, sizeof(q_vec));
+        impulse_instruction_t bad_prog[3] = {
+            {OP_LOAD_INLINE_ARRAY, 0, 1, 0u | (4u << 16)},
+            {OP_VECTOR_ANN_SEARCH, 0, 2, 1u | (2u << 8) | (static_cast<uint32_t>(vhdr_off) << 16)},
+            {OP_HALT, 0, 0, 0}
+        };
+        assert(impulse_vm_execute(bad_prog, 3, &st, 0) == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+        impulse_vm_context_destroy(ctx);
+        impulse_snapshot_close(bad_snap);
+    }
+
+    std::remove(snap_path);
+    std::remove(mut_path);
+    std::printf("  [PASS] test_vamana_snapshot_ann_and_quantized_routing\n");
+}
+
 } // anonymous namespace
 
 int main() {
     std::printf("=========================================================================\n");
-    std::printf("     IMPULSE VM MULTI-LANE BIT-SLICED EXECUTION TEST SUITE (0xC0..0xC9)  \n");
+    std::printf("     IMPULSE VM MULTI-LANE BIT-SLICED EXECUTION TEST SUITE (0xC0..0xCB)  \n");
     std::printf("=========================================================================\n\n");
 
     test_active_mask_and_width_tier_selection();
@@ -722,6 +1062,8 @@ int main() {
     test_op_lane_reduce_attr_and_argmin_argmax_tie_breaking();
     test_differential_17_boundary_seed_counts_oracle();
     test_zero_heap_allocations_hot_path();
+    test_vector_ann_mock_l2_and_fused_multilane_handshake();
+    test_vamana_snapshot_ann_and_quantized_routing();
 
     std::printf("\n=========================================================================\n");
     std::printf("          ALL MULTI-LANE VM EXECUTION & ORACLE TESTS PASSED!             \n");
