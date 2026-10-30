@@ -625,6 +625,77 @@ static void test_cel_bitwise_and_hex_binary_literals() {
     std::cout << "  -> PASSED: Bitwise operators and hex/binary literals verified." << std::endl;
 }
 
+static void test_cel_multilane_intrinsics_and_evaluator() {
+    std::cout << "[Test] CEL Multi-Lane Intrinsics (lane, popcount, has_any/all/none/lane, first/last_lane) & Evaluator..." << std::endl;
+
+    // 1. 64-bit full saturation hex literal, unsigned right shift >>>, and shift UB guards (>= 64)
+    {
+        auto ast_u64 = Parser("0xFFFFFFFFFFFFFFFF").parse();
+        assert(ast_u64 != nullptr && ast_u64->kind == AstKind::LITERAL_INT);
+        assert(static_cast<uint64_t>(ast_u64->int_val) == ~0ULL);
+
+        auto opt_ushr = AstOptimizer::optimize(Parser("0xFFFFFFFFFFFFFFFF >>> 60").parse());
+        assert(opt_ushr != nullptr && opt_ushr->kind == AstKind::LITERAL_INT && opt_ushr->int_val == 15);
+
+        // Shift by >= 64 or < 0 must be guarded (no C++ UB) and evaluate to 0
+        auto opt_shl64 = AstOptimizer::optimize(Parser("1 << 64").parse());
+        assert(opt_shl64 != nullptr && opt_shl64->kind == AstKind::LITERAL_INT && opt_shl64->int_val == 0);
+        auto opt_shr64 = AstOptimizer::optimize(Parser("0xFF >> 64").parse());
+        assert(opt_shr64 != nullptr && opt_shr64->kind == AstKind::LITERAL_INT && opt_shr64->int_val == 0);
+    }
+
+    // 2. Multi-lane intrinsics constant folding & evaluation
+    {
+        assert(CelMultiLaneEvaluator::eval_int(Parser("popcount(0x7F)").parse(), 0) == 7);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("bit_count(0xFFFFFFFFFFFFFFFF)").parse(), 0) == 64);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("first_lane(0x18)").parse(), 0) == 3);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("first_lane(0)").parse(), 0) == -1);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("ctz(0x18)").parse(), 0) == 3);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("last_lane(0x18)").parse(), 0) == 4);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("last_lane(0)").parse(), 0) == -1);
+        assert(CelMultiLaneEvaluator::eval_int(Parser("last_lane(0x8000000000000000)").parse(), 0) == 63);
+
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_any(lane, 0x03)").parse(), 0x05ULL) == true);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_any(lane, 0x03)").parse(), 0x08ULL) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_all(lane, 0x03)").parse(), 0x07ULL) == true);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_all(lane, 0x03)").parse(), 0x05ULL) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_none(lane, 0x0300)").parse(), 0x00FFULL) == true);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_none(lane, 0x0300)").parse(), 0x0105ULL) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_lane(lane, 3)").parse(), 0x08ULL) == true);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_lane(lane, 2)").parse(), 0x08ULL) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(Parser("has_lane(lane, 64)").parse(), ~0ULL) == false);
+    }
+
+    // 3. Coupled node-attribute + lane filter & in-place lane mask projection
+    {
+        auto pred_ast = Parser("node.degree <= 500 || popcount(lane & 0x7F) > 3").parse();
+        assert(pred_ast != nullptr);
+        std::unordered_map<std::string, int64_t> attrs_low_deg = {{"degree", 120}};
+        std::unordered_map<std::string, int64_t> attrs_hub = {{"degree", 2000}};
+
+        // Low-degree protein passes even with 1 lane (0x01)
+        assert(CelMultiLaneEvaluator::eval_bool(pred_ast, 0x01ULL, &attrs_low_deg) == true);
+        // Hub protein (deg=2000) fails with 2 lanes (0x03), passes with 4 lanes (0x0F)
+        assert(CelMultiLaneEvaluator::eval_bool(pred_ast, 0x03ULL, &attrs_hub) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(pred_ast, 0x0FULL, &attrs_hub) == true);
+
+        // Selective per-lane mask mutation: strip pediatric lanes (4..7) when pediatric_safe == 0
+        auto proj_ast = Parser("lane = node.pediatric_safe ? lane : (lane & 0x0F)").parse();
+        assert(proj_ast != nullptr);
+        std::unordered_map<std::string, int64_t> adult_only = {{"pediatric_safe", 0}};
+        std::unordered_map<std::string, int64_t> ped_safe = {{"pediatric_safe", 1}};
+        assert(CelMultiLaneEvaluator::eval_project_lane(proj_ast, 0xFFULL, &adult_only) == 0x0FULL);
+        assert(CelMultiLaneEvaluator::eval_project_lane(proj_ast, 0xFFULL, &ped_safe) == 0xFFULL);
+
+        // Strip denied groups mask per node
+        auto deny_ast = Parser("lane = lane & ~node.denied_groups_mask").parse();
+        std::unordered_map<std::string, int64_t> folder_attrs = {{"denied_groups_mask", 0x30}};
+        assert(CelMultiLaneEvaluator::eval_project_lane(deny_ast, 0x3FULL, &folder_attrs) == 0x0FULL);
+    }
+
+    std::cout << "  -> PASSED: CEL multi-lane intrinsics and evaluator verified." << std::endl;
+}
+
 int main() {
     std::cout << "=== Google CEL Zero-Dependency Parser & IR Compiler Suite ===" << std::endl;
     test_cel_arithmetic_and_precedence();
@@ -637,6 +708,7 @@ int main() {
     test_cel_parameter_normalization();
     test_cel_exhaustive_mcdc_truth_tables();
     test_cel_bitwise_and_hex_binary_literals();
+    test_cel_multilane_intrinsics_and_evaluator();
     std::cout << "=== ALL CEL TESTS PASSED ===" << std::endl;
     return 0;
 }

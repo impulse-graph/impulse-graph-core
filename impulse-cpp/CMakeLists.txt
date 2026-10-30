@@ -239,6 +239,14 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_c_statement_api tests/test_c_statement_api.cpp)
     target_link_libraries(test_c_statement_api PRIVATE impulse_graph_static)
     add_test(NAME test_c_statement_api COMMAND test_c_statement_api)
+
+    add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
+    target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
+    add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
+
+    add_executable(test_multilane_vm tests/test_multilane_vm.cpp)
+    target_link_libraries(test_multilane_vm PRIVATE impulse_graph_static)
+    add_test(NAME test_multilane_vm COMMAND test_multilane_vm)
 endif()
 
 # --- Examples ------------------------------------------------------------
@@ -246,7 +254,3 @@ option(IMPULSE_BUILD_EXAMPLES "Build impulse-cpp examples" ON)
 if(IMPULSE_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
-
-add_executable(test_impscm_mcdc_boundaries tests/test_impscm_mcdc_boundaries.cpp)
-target_link_libraries(test_impscm_mcdc_boundaries PRIVATE impulse_graph_static)
-add_test(NAME test_impscm_mcdc_boundaries COMMAND test_impscm_mcdc_boundaries)
