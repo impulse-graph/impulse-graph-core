@@ -259,6 +259,86 @@ static void test_c_abi_compiler_exports() {
     std::cout << "  ✓ C-ABI impulse_compile_to_impas (Cypher): Written " << bytes_written << " bytes." << std::endl;
 }
 
+static void test_multilane_and_vector_ast_and_impscm_lowering() {
+    std::cout << "--- [Test 7] Multi-Lane (0xC0..0xC9) & Vector Search (0xCA..0xCB) AST + ImpScheme Lowering ---" << std::endl;
+
+    GraphCatalog catalog;
+    catalog.register_relation("INTERACTS_GiG", 0, 1.0);
+    catalog.register_relation("BINDS_CbG", 1, 1.0);
+
+    // 1. Programmatic AST construction for Multi-Lane + Vector Search
+    auto prog = ScmProgram::of(
+        std::make_shared<ScmVectorAnnSearch>(2, 8, 0, true),
+        std::make_shared<ScmLaneInitSeeds>(1, 0),
+        std::make_shared<ScmLaneInitGroups>(1, 4),
+        std::make_shared<ScmLaneSetEdgeMask>(1, "INTERACTS_GiG"),
+        ScmLaneWalk::forward("INTERACTS_GiG", false),
+        ScmLaneWalk::reverse("BINDS_CbG", true),
+        std::make_shared<ScmLanePruneMask>(2, 500, 2),
+        std::make_shared<ScmLaneFilterQuorum>(3, 0xFF),
+        std::make_shared<ScmLaneReduceAnd>(),
+        std::make_shared<ScmLaneReduceAttr>(0, 0),
+        std::make_shared<ScmLaneSetCover>(0xFF, 0),
+        std::make_shared<ScmVectorRerankDot>(2, 0, 1)
+    );
+
+    std::string scm_str = prog->to_scm_string();
+    assert(scm_str.find("(vector-ann-search") != std::string::npos);
+    assert(scm_str.find("(lane-init-seeds") != std::string::npos);
+    assert(scm_str.find("(lane-init-groups") != std::string::npos);
+    assert(scm_str.find("(lane-set-edge-mask") != std::string::npos);
+    assert(scm_str.find("(lane-walk-csr") != std::string::npos);
+    assert(scm_str.find("(lane-walk-csc") != std::string::npos);
+    assert(scm_str.find("(lane-prune-mask") != std::string::npos);
+    assert(scm_str.find("(lane-filter-quorum") != std::string::npos);
+    assert(scm_str.find("(lane-reduce-and") != std::string::npos);
+    assert(scm_str.find("(lane-reduce-attr") != std::string::npos);
+    assert(scm_str.find("(lane-set-cover") != std::string::npos);
+    assert(scm_str.find("(vector-rerank-dot") != std::string::npos);
+
+    auto compiled = ImpulseCompiler::compile(prog, &catalog);
+    std::string disasm = compiled.to_impas_string(&catalog);
+    assert(disasm.find("OP_VECTOR_ANN_SEARCH") != std::string::npos);
+    assert(disasm.find("OP_LANE_INIT_SEEDS") != std::string::npos);
+    assert(disasm.find("OP_LANE_INIT_GROUPS") != std::string::npos);
+    assert(disasm.find("OP_LANE_SET_EDGE_MASK") != std::string::npos);
+    assert(disasm.find("OP_LANE_CSR_WALK") != std::string::npos);
+    assert(disasm.find("OP_LANE_CSC_WALK") != std::string::npos);
+    assert(disasm.find("OP_LANE_PRUNE_MASK") != std::string::npos);
+    assert(disasm.find("OP_LANE_FILTER_QUORUM") != std::string::npos);
+    assert(disasm.find("OP_LANE_REDUCE_AND") != std::string::npos);
+    assert(disasm.find("OP_LANE_REDUCE_ATTR") != std::string::npos);
+    assert(disasm.find("OP_LANE_SET_COVER") != std::string::npos);
+    assert(disasm.find("OP_VECTOR_RERANK_DOT") != std::string::npos);
+
+    // 2. Parse from S-Expression string via ImpScmAstBuilder / C-ABI impulse_compile_to_impas
+    const char* impscm_script = R"(
+        (pipeline
+          (vector-ann-search 2 4 0 1)
+          (lane-walk-csr INTERACTS_GiG)
+          (lane-walk-csc BINDS_CbG 1)
+          (lane-prune-mask 2 500 2)
+          (lane-filter-quorum 2)
+          (vector-rerank-dot 2 0 1))
+    )";
+    char impas_out[4096];
+    size_t written = 0;
+    impulse_status_t st = impulse_compile_to_impas(
+        nullptr, impscm_script, IMPULSE_LANG_IMPSCM, impas_out, sizeof(impas_out), &written
+    );
+    assert(st == IMPULSE_OK);
+    assert(written > 0);
+    std::string impas_s(impas_out);
+    assert(impas_s.find("OP_VECTOR_ANN_SEARCH") != std::string::npos);
+    assert(impas_s.find("OP_LANE_CSR_WALK") != std::string::npos);
+    assert(impas_s.find("OP_LANE_CSC_WALK") != std::string::npos);
+    assert(impas_s.find("OP_LANE_PRUNE_MASK") != std::string::npos);
+    assert(impas_s.find("OP_LANE_FILTER_QUORUM") != std::string::npos);
+    assert(impas_s.find("OP_VECTOR_RERANK_DOT") != std::string::npos);
+
+    std::cout << "  ✓ Multi-Lane & Vector Search AST + ImpScheme Lowering: PASSED\n" << std::endl;
+}
+
 int main() {
     std::cout << "=========================================================================\n";
     std::cout << "       IMPULSE GRAPH C++ OPTIMIZING COMPILER PARITY TEST SUITE           \n";
@@ -270,6 +350,7 @@ int main() {
     test_register_cache_ping_ponging();
     test_execution_on_vm();
     test_c_abi_compiler_exports();
+    test_multilane_and_vector_ast_and_impscm_lowering();
 
     std::cout << "=========================================================================\n";
     std::cout << "                   ALL C++ COMPILER TESTS PASSED!                        \n";
