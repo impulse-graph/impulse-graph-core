@@ -39,6 +39,7 @@ struct CompilerOptions {
     bool enable_seed_inlining{true};
     bool enable_early_exit{true};
     bool enable_tracing{false};
+    uint32_t disabled_passes_mask{0};
 
     double fused_2hop_max_multiplicity_threshold{1.5};
     size_t simd_predicate_eval_min_degree_threshold{64};
@@ -55,7 +56,33 @@ struct CompilerOptions {
         opts.enable_register_ping_pong = false;
         opts.enable_seed_inlining = false;
         opts.enable_early_exit = false;
+        opts.disabled_passes_mask = IMPULSE_OPT_ALL_DISABLED;
         return opts;
+    }
+
+    static CompilerOptions from_disable_mask(uint32_t mask) {
+        CompilerOptions opts;
+        opts.disabled_passes_mask = mask;
+        if (mask & IMPULSE_OPT_CONSTANT_FOLDING)    opts.enable_constant_folding = false;
+        if (mask & IMPULSE_OPT_KERNEL_FUSION_2HOP)  opts.enable_kernel_fusion = false;
+        if (mask & IMPULSE_OPT_DIRECTION_SELECTION) opts.enable_direction_selection = false;
+        if (mask & IMPULSE_OPT_REGISTER_PING_PONG)  opts.enable_register_ping_pong = false;
+        if (mask & IMPULSE_OPT_SEED_INLINING)       opts.enable_seed_inlining = false;
+        if (mask & IMPULSE_OPT_EARLY_EXIT)          opts.enable_early_exit = false;
+        return opts;
+    }
+
+    [[nodiscard]] CompilerOptions effective() const {
+        CompilerOptions out = *this;
+        uint32_t mask = disabled_passes_mask | impulse_test_get_opt_disable_mask();
+        out.disabled_passes_mask = mask;
+        if (mask & IMPULSE_OPT_CONSTANT_FOLDING)    out.enable_constant_folding = false;
+        if (mask & IMPULSE_OPT_KERNEL_FUSION_2HOP)  out.enable_kernel_fusion = false;
+        if (mask & IMPULSE_OPT_DIRECTION_SELECTION) out.enable_direction_selection = false;
+        if (mask & IMPULSE_OPT_REGISTER_PING_PONG)  out.enable_register_ping_pong = false;
+        if (mask & IMPULSE_OPT_SEED_INLINING)       out.enable_seed_inlining = false;
+        if (mask & IMPULSE_OPT_EARLY_EXIT)          out.enable_early_exit = false;
+        return out;
     }
 };
 
@@ -644,13 +671,15 @@ public:
         const std::shared_ptr<ScmProgram>& program,
         const GraphCatalog* catalog = nullptr,
         const std::unordered_map<std::string, double>& params = {},
-        const CompilerOptions& options = CompilerOptions::default_options())
+        const CompilerOptions& raw_options = CompilerOptions::default_options())
     {
         if (!program || program->steps.empty()) {
             throw std::invalid_argument("Empty ImpScheme program");
         }
         IMPULSE_ASSERT(program != nullptr);
         IMPULSE_ASSERT(!program->steps.empty());
+
+        CompilerOptions options = raw_options.effective();
 
         // Pass 1: Pre-bind validation
         validate_ast(program);
@@ -889,6 +918,13 @@ private:
     static void emit_node(const AstPtr& step, CompileContext& ctx, const CompilerOptions& options) {
         if (step->kind() == NodeKind::WALK) {
             auto w = std::static_pointer_cast<ScmWalk>(step);
+            bool is_first_walk = (ctx.instructions.empty() && !ctx.env.count("frontier") && w->src_reg == 0);
+            if (is_first_walk && !options.enable_seed_inlining) {
+                impulse_instruction_t seed_inst{};
+                seed_inst.opcode = OP_INIT_INPUT_NODE;
+                seed_inst.dst_reg = 0;
+                ctx.instructions.push_back(seed_inst);
+            }
             impulse_instruction_t inst{};
             inst.opcode = (w->direction == WalkDirection::FORWARD_CSR) ? OP_CSR_WALK : OP_CSC_WALK;
             if (w->is_adaptive) {
@@ -905,10 +941,23 @@ private:
             uint16_t rel_id = static_cast<uint16_t>(std::max(0, w->physical_rel_id));
             inst.payload = (static_cast<uint32_t>(rel_id) << 16) | static_cast<uint32_t>(w->src_reg);
             inst.flags = 0;
+            if (is_first_walk && options.enable_seed_inlining) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_INPUT_SEED;
+            }
+            if (options.enable_early_exit && !ctx.env.count("frontier")) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
+            }
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::WALK_2HOP) {
             auto w2 = std::static_pointer_cast<ScmWalk2Hop>(step);
+            bool is_first_walk = (ctx.instructions.empty() && w2->src_reg == 0);
+            if (is_first_walk && !options.enable_seed_inlining) {
+                impulse_instruction_t seed_inst{};
+                seed_inst.opcode = OP_INIT_INPUT_NODE;
+                seed_inst.dst_reg = 0;
+                ctx.instructions.push_back(seed_inst);
+            }
             impulse_instruction_t inst{};
             inst.opcode = OP_CSR_WALK_2HOP;
             inst.dst_reg = w2->dst_reg;
