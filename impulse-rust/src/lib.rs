@@ -3,23 +3,27 @@
 //! Provides zero-copy memory-mapped reading, zero-dependency binary parsing,
 //! Structure of Arrays (SoA) attribute accessors, and binary snapshot generation.
 
+pub mod assert;
 pub mod ffi;
+pub mod hexio;
 pub mod mmap;
 pub mod reader;
 pub mod simd;
 pub mod spec;
 pub mod stats;
 pub mod traversal;
+pub mod vamana;
 pub mod writer;
 
 pub use ffi::*;
-pub use reader::{AttributeInfo, DomainInfo, RelationInfo, SnapshotReader};
+pub use reader::{AttributeInfo, DomainInfo, IndexEntryInfo, RelationInfo, SnapshotReader};
 pub use spec::{
-    BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader, IMPULSE_MAGIC,
-    IMPULSE_VERSION_PACKED,
+    BaseDataType, EncodingType, ImpulseError, KeyType, SnapshotHeader, VamanaHeader, VamanaMetric,
+    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMP_INDEX_VAMANA_ANN, VAMANA_MAGIC,
 };
 pub use stats::*;
 pub use traversal::{StepDirection, Traversal, TraversalStep};
+pub use vamana::{BuiltVamanaIndex, VamanaBuildConfig};
 pub use writer::{AttributeField, SnapshotWriter};
 
 #[cfg(test)]
@@ -307,5 +311,115 @@ mod tests {
         assert_eq!(val2, 35);
 
         let _ = fs::remove_file(DOMAIN_ATTR_TEST_FILE);
+    }
+
+    #[test]
+    fn test_vamana_ann_roundtrip_and_two_stage_quant_search() {
+        let n = 64usize;
+        let dim = 16usize;
+        let mut vectors = vec![0.0f32; n * dim];
+        for u in 0..n {
+            let cluster = (u % 4) as usize;
+            let mut norm = 0.0f32;
+            for d in 0..dim {
+                let base = if d / 4 == cluster { 1.0f32 } else { -0.1f32 };
+                let jitter = (((u * 31 + d * 17) % 19) as f32 - 9.0) * 0.02;
+                let v = base + jitter;
+                vectors[u * dim + d] = v;
+                norm += v * v;
+            }
+            norm = norm.sqrt().max(1e-6);
+            for d in 0..dim {
+                vectors[u * dim + d] /= norm;
+            }
+        }
+
+        let mut vec_bytes = Vec::with_capacity(vectors.len() * 4);
+        for &f in &vectors {
+            vec_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+
+        for quant in [
+            VamanaQuantType::None,
+            VamanaQuantType::Bq1,
+            VamanaQuantType::Sq8,
+            VamanaQuantType::Fp16,
+        ] {
+            let mut writer = SnapshotWriter::new("__unused_in_mem.imps");
+            writer.add_domain(0, KeyType::Int64, "Entity");
+            writer.set_domain_node_count(0, n as u64);
+            writer.add_attribute_to_domain(
+                0,
+                "embedding",
+                BaseDataType::Float32 as u8,
+                dim as u32,
+                vec_bytes.clone(),
+                None,
+            );
+            let cfg = VamanaBuildConfig {
+                max_degree_r: 12,
+                ef_construction: 32,
+                alpha: 1.2,
+                metric: VamanaMetric::Cosine,
+                quant_type: quant,
+                seed: 42,
+            };
+            writer
+                .add_vamana_index(0, "embedding", "Entity_embedding_vamana", &cfg)
+                .unwrap();
+
+            let bytes = writer.finalize_to_bytes().unwrap();
+            assert::set_audit_enabled(true);
+            let reader = SnapshotReader::from_bytes(bytes).unwrap();
+            assert_eq!(reader.index_entries().len(), 1);
+            let entry = &reader.index_entries()[0];
+            assert_eq!(entry.index_type, IMP_INDEX_VAMANA_ANN);
+            let hdr = reader.parse_vamana_header(entry).unwrap();
+            assert_eq!(hdr.magic, VAMANA_MAGIC);
+            assert_eq!(hdr.node_count, n as u64);
+            assert_eq!(hdr.dimension, dim as u32);
+            assert_eq!(hdr.quant_type, quant as u8);
+
+            let q = &vectors[5 * dim..6 * dim];
+            let res = reader.vamana_ann_search(entry, q, 5, 24).unwrap();
+            let exact = vamana::brute_force_ann_search(VamanaMetric::Cosine, &vectors, n, dim, q, 5);
+            let (_r1, rk, _ndcg, _mrr) = vamana::evaluate_ann_quality(&res, &exact, 5);
+            assert!(
+                rk >= 0.8,
+                "Expected Recall@5 >= 0.8 for quant={:?}, got {}",
+                quant,
+                rk
+            );
+            assert_eq!(res[0].0, 5);
+            assert::set_audit_enabled(false);
+        }
+    }
+
+    #[test]
+    fn test_hexio_corruption_and_well_formed_assertions() {
+        let mut writer = SnapshotWriter::new("__unused_hexio.imps");
+        writer.add_domain(0, KeyType::Int64, "Doc");
+        writer.set_domain_node_count(0, 4);
+        writer.add_relation(0, 0, 4, 2, vec![0, 1, 2, 2, 2], vec![1, 2]);
+        let orig = writer.finalize_to_bytes().unwrap();
+
+        // 1. Corrupt header magic via hexio_write
+        assert::set_never_corrupt(false);
+        let mut bad_magic = orig.clone();
+        hexio::hexio_write(&mut bad_magic, 0, "DEADBEEF").unwrap();
+        assert_eq!(hexio::hexio_read(&bad_magic, 0, 4).unwrap(), "DEADBEEF");
+        assert!(matches!(
+            SnapshotReader::from_bytes(bad_magic),
+            Err(ImpulseError::InvalidMagic)
+        ));
+
+        // 2. Corrupt version but recompute header CRC-16 so version check is reached
+        let mut bad_ver = orig.clone();
+        hexio::hexio_write_u16_le(&mut bad_ver, 4, 99).unwrap();
+        hexio::recompute_header_crc16(&mut bad_ver).unwrap();
+        assert!(matches!(
+            SnapshotReader::from_bytes(bad_ver),
+            Err(ImpulseError::UnsupportedVersion)
+        ));
     }
 }

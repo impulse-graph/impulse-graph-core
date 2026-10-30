@@ -146,35 +146,44 @@ impl SnapshotReader {
         let header = unsafe { std::ptr::read_unaligned(slice.as_ptr() as *const SnapshotHeader) };
 
         if header.magic() != IMPULSE_MAGIC {
+            crate::assert::check_well_formed(false, "Snapshot header magic mismatch");
             return Err(ImpulseError::InvalidMagic);
         }
 
         let ver = header.version();
-        if ver != IMPULSE_VERSION_PACKED
-            && (ver >> 8) != IMPULSE_VERSION_MAJOR
-            && ver != 2
-            && ver != 0x0204
-        {
+        if ver != IMPULSE_VERSION_PACKED && ver != 2 && ver != 0x0204 {
+            crate::assert::check_well_formed(false, "Unsupported snapshot format version");
             return Err(ImpulseError::UnsupportedVersion);
         }
 
         if ver == 9 {
             let computed_crc = compute_crc16(&slice[0..0x3E]);
             if computed_crc != header.header_checksum() {
+                crate::assert::check_well_formed(false, "Snapshot header CRC-16 checksum mismatch");
                 return Err(ImpulseError::CorruptChecksum);
             }
         }
 
-        let dir_offset = if ver == 9
-            && header.footer_directory_offset() > 0
-            && (header.footer_directory_offset() as usize) < slice.len()
-        {
+        if ver == 9 && header.footer_directory_offset() > 0 {
+            let f_off = header.footer_directory_offset() as usize;
+            let f_bytes = header.footer_directory_bytes() as usize;
+            if f_off >= slice.len() || f_off.saturating_add(f_bytes) > slice.len() {
+                crate::assert::check_well_formed(
+                    false,
+                    "Snapshot header footer_directory_offset out of bounds",
+                );
+                return Err(ImpulseError::BufferOverflow);
+            }
+        }
+
+        let dir_offset = if ver == 9 && header.footer_directory_offset() > 0 {
             header.footer_directory_offset() as usize
         } else {
             header.data_offset() as usize
         };
 
         if dir_offset >= slice.len() {
+            crate::assert::check_well_formed(false, "Snapshot header data_offset out of bounds");
             return Err(ImpulseError::BufferOverflow);
         }
 
@@ -182,8 +191,14 @@ impl SnapshotReader {
 
         let domain_count = header.domain_count() as usize;
         let relation_count = header.relation_count() as usize;
+        let index_count = if ver == 9 {
+            header.index_count as usize
+        } else {
+            0
+        };
         let mut domains = Vec::with_capacity(domain_count);
         let mut relations = Vec::with_capacity(relation_count);
+        let mut index_entries = Vec::with_capacity(index_count);
 
         if ver == 9 {
             // Parse Shared String Table
@@ -307,6 +322,52 @@ impl SnapshotReader {
                     attributes,
                 });
             }
+
+            // Align to 128 bytes before Section 2.6 Index Directory Table
+            let rem = cur % 128;
+            if rem != 0 {
+                cur += 128 - rem;
+            }
+
+            for _ in 0..index_count {
+                if cur + std::mem::size_of::<IndexDirectoryEntry>() > slice.len() {
+                    crate::assert::check_well_formed(
+                        false,
+                        "IndexDirectoryEntry exceeds snapshot buffer",
+                    );
+                    return Err(ImpulseError::BufferOverflow);
+                }
+                let idx_entry = unsafe {
+                    std::ptr::read_unaligned(slice[cur..].as_ptr() as *const IndexDirectoryEntry)
+                };
+                cur += std::mem::size_of::<IndexDirectoryEntry>();
+
+                let idx_name = validate_and_get_string(idx_entry.name_offset as usize)?;
+
+                if idx_entry.data_bytes > 0
+                    && (idx_entry.data_offset as usize)
+                        .saturating_add(idx_entry.data_bytes as usize)
+                        > slice.len()
+                {
+                    crate::assert::check_well_formed(
+                        false,
+                        "IndexDirectoryEntry payload exceeds snapshot buffer",
+                    );
+                    return Err(ImpulseError::BufferOverflow);
+                }
+
+                index_entries.push(IndexEntryInfo {
+                    index_id: idx_entry.index_id,
+                    domain_id: idx_entry.domain_id,
+                    relation_id: idx_entry.relation_id,
+                    attribute_index: idx_entry.attribute_index,
+                    index_type: idx_entry.index_type,
+                    name: idx_name,
+                    data_offset: idx_entry.data_offset,
+                    data_bytes: idx_entry.data_bytes,
+                    payload_feature_mask: idx_entry.payload_feature_mask,
+                });
+            }
         } else {
             // Legacy v2.4 parsing
             for d_idx in 0..domain_count {
@@ -416,10 +477,14 @@ impl SnapshotReader {
             header,
             domains,
             relations,
-            index_entries: Vec::new(),
+            index_entries,
             metadata_offset,
             metadata_bytes,
         })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.mmap.as_slice()
     }
 
     pub fn header(&self) -> &SnapshotHeader {
@@ -480,6 +545,287 @@ impl SnapshotReader {
         let col_indices =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(col_indices)
+    }
+
+    pub fn get_csc_row_offsets(
+        &self,
+        relation_index: usize,
+    ) -> Result<Option<&[u32]>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if rel.csc_row_off_bytes == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = rel.csc_row_off_offset as usize;
+        let bytes = rel.csc_row_off_bytes as usize;
+        if start + bytes > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let row_offsets =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
+        Ok(Some(row_offsets))
+    }
+
+    pub fn get_csc_col_indices(
+        &self,
+        relation_index: usize,
+    ) -> Result<Option<&[u32]>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if rel.csc_col_idx_bytes == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = rel.csc_col_idx_offset as usize;
+        let bytes = rel.csc_col_idx_bytes as usize;
+        if start + bytes > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        let col_indices =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
+        Ok(Some(col_indices))
+    }
+
+    /// Parses and validates a 64-byte `VamanaHeader` (`IMP_INDEX_VAMANA_ANN = 8`) at `entry.data_offset`.
+    pub fn parse_vamana_header(&self, entry: &IndexEntryInfo) -> Result<VamanaHeader, ImpulseError> {
+        if entry.index_type != IMP_INDEX_VAMANA_ANN {
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let slice = self.mmap.as_slice();
+        let hdr_off = entry.data_offset as usize;
+        if hdr_off + 64 > slice.len() {
+            crate::assert::check_well_formed(false, "Vamana header exceeds snapshot buffer");
+            return Err(ImpulseError::BufferOverflow);
+        }
+        if !hdr_off.is_multiple_of(128) {
+            crate::assert::check_well_formed(false, "Vamana header offset is not 128-byte aligned");
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let hdr = unsafe { std::ptr::read_unaligned(slice[hdr_off..].as_ptr() as *const VamanaHeader) };
+        if hdr.magic != VAMANA_MAGIC {
+            crate::assert::check_well_formed(false, "Vamana header magic mismatch");
+            return Err(ImpulseError::InvalidMagic);
+        }
+        if hdr.version != VAMANA_VERSION {
+            crate::assert::check_well_formed(false, "Unsupported Vamana header version");
+            return Err(ImpulseError::UnsupportedVersion);
+        }
+        let Some(_metric) = VamanaMetric::from_u8(hdr.metric) else {
+            crate::assert::check_well_formed(false, "Unsupported Vamana metric code");
+            return Err(ImpulseError::InvalidArgument);
+        };
+        let Some(quant_type) = VamanaQuantType::from_u8(hdr.quant_type) else {
+            crate::assert::check_well_formed(false, "Unsupported Vamana quant_type code");
+            return Err(ImpulseError::InvalidArgument);
+        };
+        if hdr.dimension == 0 || hdr.max_degree_r == 0 {
+            crate::assert::check_well_formed(false, "Vamana dimension and max_degree_r must be > 0");
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let n = hdr.node_count as usize;
+        if n > 0 && (hdr.medoid_node_id as usize) >= n {
+            crate::assert::check_well_formed(false, "Vamana medoid_node_id out of bounds");
+            return Err(ImpulseError::InvalidArgument);
+        }
+        let expected_adj_bytes = (n as u64) * ((hdr.max_degree_r as u64) + 1) * 4;
+        if !hdr.adj_slab_offset.is_multiple_of(128) {
+            crate::assert::check_well_formed(false, "Vamana adj_slab_offset not 128B aligned");
+            return Err(ImpulseError::InvalidArgument);
+        }
+        if hdr.adj_slab_bytes < expected_adj_bytes
+            || (hdr.adj_slab_offset as usize).saturating_add(hdr.adj_slab_bytes as usize)
+                > slice.len()
+        {
+            crate::assert::check_well_formed(false, "Vamana adjacency slab out of bounds");
+            return Err(ImpulseError::BufferOverflow);
+        }
+        if hdr.quant_code_offset > 0 {
+            if !hdr.quant_code_offset.is_multiple_of(128) {
+                crate::assert::check_well_formed(false, "Vamana quant_code_offset not 128B aligned");
+                return Err(ImpulseError::InvalidArgument);
+            }
+            let q_bytes = n * quant_type.row_bytes(hdr.dimension as usize);
+            if (hdr.quant_code_offset as usize).saturating_add(q_bytes) > slice.len() {
+                crate::assert::check_well_formed(false, "Vamana quantized slab out of bounds");
+                return Err(ImpulseError::BufferOverflow);
+            }
+        }
+
+        // Optional $O(N \cdot R)$ audit of neighbor IDs when AUDIT_ENABLED
+        let adj_base = hdr.adj_slab_offset as usize;
+        let row_stride = ((hdr.max_degree_r as usize) + 1) * 4;
+        let r_max = hdr.max_degree_r as usize;
+        crate::assert::audit(
+            || {
+                for u in 0..n {
+                    let row_off = adj_base + u * row_stride;
+                    let deg =
+                        u32::from_le_bytes(slice[row_off..row_off + 4].try_into().unwrap()) as usize;
+                    if deg > r_max {
+                        return false;
+                    }
+                    for j in 0..deg {
+                        let nb_off = row_off + (j + 1) * 4;
+                        let nb = u32::from_le_bytes(slice[nb_off..nb_off + 4].try_into().unwrap())
+                            as usize;
+                        if nb >= n {
+                            return false;
+                        }
+                    }
+                }
+                true
+            },
+            "Vamana adjacency slab degree or neighbor node_id bounds audit failed",
+        );
+
+        Ok(hdr)
+    }
+
+    pub fn get_vamana_adj_slab(&self, hdr: &VamanaHeader) -> Result<&[u8], ImpulseError> {
+        let slice = self.mmap.as_slice();
+        let start = hdr.adj_slab_offset as usize;
+        let bytes = hdr.adj_slab_bytes as usize;
+        if start.saturating_add(bytes) > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        Ok(&slice[start..start + bytes])
+    }
+
+    pub fn get_vamana_quant_slab(
+        &self,
+        hdr: &VamanaHeader,
+    ) -> Result<Option<&[u8]>, ImpulseError> {
+        let quant_type =
+            VamanaQuantType::from_u8(hdr.quant_type).ok_or(ImpulseError::InvalidArgument)?;
+        if quant_type == VamanaQuantType::None || hdr.quant_code_offset == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = hdr.quant_code_offset as usize;
+        let bytes = (hdr.node_count as usize) * quant_type.row_bytes(hdr.dimension as usize);
+        if start.saturating_add(bytes) > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        Ok(Some(&slice[start..start + bytes]))
+    }
+
+    /// Reads a domain's Float32 vector attribute (`[node_count, dimension]`) by `attr_index` or `attr_name`.
+    pub fn get_domain_float32_vectors(
+        &self,
+        domain_id: u16,
+        attr_index: Option<u16>,
+        attr_name: Option<&str>,
+    ) -> Result<(usize, usize, Vec<f32>), ImpulseError> {
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    let matched = if let Some(name) = attr_name {
+                        a.name == name
+                    } else if let Some(target_idx) = attr_index {
+                        a_idx == target_idx as usize
+                    } else {
+                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
+                    };
+                    if matched {
+                        let raw = self.get_attribute_data(r_idx, a_idx)?;
+                        let dim = a.dimension.max(1) as usize;
+                        if !raw.len().is_multiple_of(4) {
+                            return Err(ImpulseError::InvalidArgument);
+                        }
+                        let total_floats = raw.len() / 4;
+                        let n_nodes = total_floats / dim;
+                        let mut vecs = Vec::with_capacity(total_floats);
+                        for chunk in raw.chunks_exact(4) {
+                            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                        }
+                        return Ok((n_nodes, dim, vecs));
+                    }
+                }
+            }
+        }
+        Err(ImpulseError::NotFound)
+    }
+
+    /// Zero-copy slice view over a domain's Float32 vector attribute (`[node_count, dimension]`) when 4-byte aligned.
+    pub fn get_domain_float32_slice(
+        &self,
+        domain_id: u16,
+        attr_index: Option<u16>,
+        attr_name: Option<&str>,
+    ) -> Result<(usize, usize, &[f32]), ImpulseError> {
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    let matched = if let Some(name) = attr_name {
+                        a.name == name
+                    } else if let Some(target_idx) = attr_index {
+                        a_idx == target_idx as usize
+                    } else {
+                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
+                    };
+                    if matched {
+                        let raw = self.get_attribute_data(r_idx, a_idx)?;
+                        let dim = a.dimension.max(1) as usize;
+                        if !raw.len().is_multiple_of(4)
+                            || !(raw.as_ptr() as usize).is_multiple_of(4)
+                        {
+                            return Err(ImpulseError::InvalidAlignment);
+                        }
+                        let total_floats = raw.len() / 4;
+                        let n_nodes = total_floats / dim;
+                        let slice = unsafe {
+                            std::slice::from_raw_parts(raw.as_ptr() as *const f32, total_floats)
+                        };
+                        return Ok((n_nodes, dim, slice));
+                    }
+                }
+            }
+        }
+        Err(ImpulseError::NotFound)
+    }
+
+    /// Executes two-stage quantized Vamana ANN beam search + full-precision Float32 reranking on `entry`.
+    pub fn vamana_ann_search(
+        &self,
+        entry: &IndexEntryInfo,
+        query_vec: &[f32],
+        top_k: usize,
+        ef_search: usize,
+    ) -> Result<Vec<(u32, f32, f32)>, ImpulseError> {
+        let hdr = self.parse_vamana_header(entry)?;
+        let adj_slab = self.get_vamana_adj_slab(&hdr)?;
+        let quant_slab = self.get_vamana_quant_slab(&hdr)?;
+        if let Ok((_n, _d, vec_slice)) =
+            self.get_domain_float32_slice(hdr.domain_id, Some(hdr.vec_attr_id), None)
+        {
+            return crate::vamana::vamana_ann_search(
+                &hdr,
+                adj_slab,
+                quant_slab,
+                vec_slice,
+                query_vec,
+                top_k,
+                ef_search,
+            )
+            .map_err(|_| ImpulseError::InvalidArgument);
+        }
+        let (_n, _d, vectors) =
+            self.get_domain_float32_vectors(hdr.domain_id, Some(hdr.vec_attr_id), None)?;
+        crate::vamana::vamana_ann_search(
+            &hdr,
+            adj_slab,
+            quant_slab,
+            &vectors,
+            query_vec,
+            top_k,
+            ef_search,
+        )
+        .map_err(|_| ImpulseError::InvalidArgument)
     }
 
     pub fn is_reachable(&self, relation_index: u16, src_id: u64, tgt_id: u64) -> bool {

@@ -5,6 +5,12 @@ use crate::spec::*;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+pub const IMPULSE_TESTCTRL_NEVER_CORRUPT: i32 = 20;
+pub const IMPULSE_TESTCTRL_OPTIMIZATIONS: i32 = 15;
+pub const IMPULSE_TESTCTRL_FAULT_INSTALL: i32 = 5;
+pub const IMPULSE_TESTCTRL_FAULT_CONFIG: i32 = 6;
+pub const IMPULSE_TESTCTRL_FAULT_STATUS: i32 = 7;
+
 #[no_mangle]
 pub extern "C" fn impulse_rust_version() -> u32 {
     IMPULSE_VERSION_PACKED as u32
@@ -196,6 +202,64 @@ extern "C" {
         vm_state: *mut impulse_vm_state_t,
         input_param: u64,
     ) -> i32;
+
+    pub fn impulse_vm_validate(
+        bytecode: *const impulse_instruction_t,
+        instruction_count: usize,
+    ) -> i32;
+
+    pub fn impulse_vm_context_get_double_vector(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> *const f64;
+    pub fn impulse_vm_context_get_node_vector(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> *const u64;
+    pub fn impulse_vm_context_node_vector_size(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> usize;
+    pub fn impulse_vm_context_float_vector_size(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> usize;
+    pub fn impulse_vm_context_lane_frontier_num_lanes(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> u32;
+    pub fn impulse_vm_context_lane_frontier_width(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> u32;
+    pub fn impulse_vm_context_lane_frontier_active_mask(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> u64;
+    pub fn impulse_vm_context_lane_frontier_node_count(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> usize;
+    pub fn impulse_vm_context_lane_frontier_data(
+        ctx: *const impulse_vm_context_t,
+        handle: usize,
+    ) -> *const u64;
+    pub fn impulse_vm_context_set_fuel(ctx: *mut impulse_vm_context_t, fuel: u64);
+
+    // SQLite-Style Runtime Test Control & Branch Coverage C-ABI Hooks
+    pub fn impulse_test_control(op: i32, ...) -> i32;
+    pub fn impulse_test_is_never_corrupt() -> i32;
+    pub fn impulse_test_set_never_corrupt(flag: i32);
+    pub fn impulse_test_get_opt_disable_mask() -> u32;
+    pub fn impulse_test_set_opt_disable_mask(mask: u32);
+    pub fn impulse_vm_branch_coverage_reset();
+    pub fn impulse_vm_branch_coverage_set_enabled(enabled: i32);
+    pub fn impulse_vm_branch_coverage_is_enabled() -> i32;
+    pub fn impulse_vm_branch_coverage_summary(
+        out_total_sites: *mut u32,
+        out_fully_covered_sites: *mut u32,
+        out_missing_branches: *mut u32,
+    );
 
     // Compiler Functions
     pub fn impulse_compile_query(
