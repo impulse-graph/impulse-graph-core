@@ -56,6 +56,140 @@ struct QueryResult {
         }
         return impulse_vm_context_bitset_test(ctx, raw_value, node_id);
     }
+
+    [[nodiscard]] bool isBitsetHandle() const { return result_type == TYPE_BITSET_HANDLE; }
+    [[nodiscard]] bool isLaneFrontier() const { return result_type == TYPE_LANE_FRONTIER; }
+    [[nodiscard]] bool isNodeVector() const { return result_type == TYPE_NODE_VECTOR || result_type == TYPE_UINT64_VECTOR; }
+    [[nodiscard]] bool isFloatVector() const { return result_type == TYPE_FLOAT_VECTOR; }
+
+    /**
+     * @brief Extract dense lane-mask array (size N, masked by active_mask) when result is TYPE_LANE_FRONTIER.
+     */
+    [[nodiscard]] std::vector<uint64_t> extractLaneMasks(const impulse_vm_context_t* ctx) const {
+        if (!ctx || result_type != TYPE_LANE_FRONTIER) {
+            return {};
+        }
+        size_t n = impulse_vm_context_lane_frontier_node_count(ctx, raw_value);
+        uint64_t mask = impulse_vm_context_lane_frontier_active_mask(ctx, raw_value);
+        const uint64_t* data = impulse_vm_context_lane_frontier_data(ctx, raw_value);
+        if (!data || n == 0) {
+            return {};
+        }
+        std::vector<uint64_t> out(n);
+        for (size_t u = 0; u < n; ++u) {
+            out[u] = data[u] & mask;
+        }
+        return out;
+    }
+
+    /**
+     * @brief Extract sorted active node IDs for a specific lane index (0..63) when result is TYPE_LANE_FRONTIER.
+     */
+    [[nodiscard]] std::vector<uint64_t> extractLaneNodes(const impulse_vm_context_t* ctx, uint32_t lane_idx) const {
+        if (!ctx || result_type != TYPE_LANE_FRONTIER || lane_idx >= 64) {
+            return {};
+        }
+        size_t n = impulse_vm_context_lane_frontier_node_count(ctx, raw_value);
+        uint64_t mask = impulse_vm_context_lane_frontier_active_mask(ctx, raw_value);
+        uint64_t bit = (1ULL << lane_idx) & mask;
+        const uint64_t* data = impulse_vm_context_lane_frontier_data(ctx, raw_value);
+        if (!data || n == 0 || bit == 0ULL) {
+            return {};
+        }
+        std::vector<uint64_t> out;
+        for (size_t u = 0; u < n; ++u) {
+            if ((data[u] & bit) != 0ULL) {
+                out.push_back(static_cast<uint64_t>(u));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * @brief Extract all active node IDs (nodes with at least one active lane bit) from TYPE_LANE_FRONTIER.
+     */
+    [[nodiscard]] std::vector<uint64_t> extractActiveLaneNodes(const impulse_vm_context_t* ctx) const {
+        if (!ctx || result_type != TYPE_LANE_FRONTIER) {
+            return {};
+        }
+        size_t n = impulse_vm_context_lane_frontier_node_count(ctx, raw_value);
+        uint64_t mask = impulse_vm_context_lane_frontier_active_mask(ctx, raw_value);
+        const uint64_t* data = impulse_vm_context_lane_frontier_data(ctx, raw_value);
+        if (!data || n == 0 || mask == 0ULL) {
+            return {};
+        }
+        std::vector<uint64_t> out;
+        for (size_t u = 0; u < n; ++u) {
+            if ((data[u] & mask) != 0ULL) {
+                out.push_back(static_cast<uint64_t>(u));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * @brief Extract uint64_t elements when result is TYPE_NODE_VECTOR or TYPE_UINT64_VECTOR.
+     */
+    [[nodiscard]] std::vector<uint64_t> extractNodeVector(const impulse_vm_context_t* ctx) const {
+        if (!ctx || (result_type != TYPE_NODE_VECTOR && result_type != TYPE_UINT64_VECTOR)) {
+            return {};
+        }
+        const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx, raw_value);
+        size_t len = impulse_vm_context_node_vector_size(ctx, raw_value);
+        if (!ptr || len == 0) {
+            return {};
+        }
+        return std::vector<uint64_t>(ptr, ptr + len);
+    }
+
+    /**
+     * @brief Extract float32 elements when result is TYPE_FLOAT_VECTOR.
+     */
+    [[nodiscard]] std::vector<float> extractFloatVector(const impulse_vm_context_t* ctx) const {
+        if (!ctx || result_type != TYPE_FLOAT_VECTOR) {
+            return {};
+        }
+        const float* ptr = impulse_vm_context_get_float_vector(ctx, raw_value);
+        size_t len = impulse_vm_context_float_vector_size(ctx, raw_value);
+        if (!ptr || len == 0) {
+            return {};
+        }
+        return std::vector<float>(ptr, ptr + len);
+    }
+
+    /**
+     * @brief Polymorphic active-node extraction across TYPE_BITSET_HANDLE, TYPE_LANE_FRONTIER,
+     * TYPE_NODE_VECTOR / TYPE_UINT64_VECTOR, and scalar TYPE_NODE_ID / TYPE_INT64.
+     */
+    [[nodiscard]] std::vector<uint64_t> extractActiveNodes(const impulse_vm_context_t* ctx) const {
+        if (!ctx) return {};
+        if (result_type == TYPE_BITSET_HANDLE) {
+            std::vector<uint64_t> out;
+            size_t max_n = impulse_vm_context_get_vector_size(ctx);
+            size_t num_words = (max_n + 63) / 64;
+            for (size_t w = 0; w < num_words; ++w) {
+                uint64_t word = impulse_vm_context_bitset_get_word(ctx, raw_value, w);
+                if (word == 0ULL) continue;
+                for (uint32_t b = 0; b < 64; ++b) {
+                    if ((word & (1ULL << b)) != 0ULL) {
+                        uint64_t u = w * 64 + b;
+                        if (u < max_n) out.push_back(u);
+                    }
+                }
+            }
+            return out;
+        }
+        if (result_type == TYPE_LANE_FRONTIER) {
+            return extractActiveLaneNodes(ctx);
+        }
+        if (result_type == TYPE_NODE_VECTOR || result_type == TYPE_UINT64_VECTOR) {
+            return extractNodeVector(ctx);
+        }
+        if (result_type == TYPE_NODE_ID || result_type == TYPE_INT64) {
+            return {raw_value};
+        }
+        return {};
+    }
 };
 
 /**

@@ -94,6 +94,23 @@ static void test_statement_lifecycle_datalog() {
 
     impulse_stmt_finalize(stmt);
     std::printf("  [PASS] ImpLog Datalog statement lifecycle\n");
+
+    // ImpScheme multi-lane statement materialization (TYPE_LANE_FRONTIER and TYPE_NODE_VECTOR)
+    {
+        const char* scm_lf = "(lane-init-seeds 0 3)";
+        impulse_stmt_t* lf_stmt = nullptr;
+        TEST_ASSERT(impulse_stmt_prepare(nullptr, scm_lf, &lf_stmt) == IMPULSE_OK);
+        uint64_t s_nodes[3] = {2, 5, 9};
+        TEST_ASSERT(impulse_stmt_bind_nodes(lf_stmt, "$seeds", s_nodes, 3) == IMPULSE_OK);
+        std::vector<uint8_t> lf_buf(impulse_stmt_buffer_size(lf_stmt));
+        TEST_ASSERT(impulse_stmt_execute(lf_stmt, lf_buf.data(), lf_buf.size()) == IMPULSE_OK);
+        TEST_ASSERT(impulse_stmt_column_type(lf_stmt, 0) == TYPE_LANE_FRONTIER);
+        TEST_ASSERT(impulse_stmt_column_dim(lf_stmt, 0) == 3);
+        const uint64_t* lf_masks = static_cast<const uint64_t*>(impulse_stmt_column_data(lf_stmt, 0));
+        TEST_ASSERT(lf_masks != nullptr);
+        TEST_ASSERT(lf_masks[2] == 1ULL && lf_masks[5] == 2ULL && lf_masks[9] == 4ULL);
+        impulse_stmt_finalize(lf_stmt);
+    }
 }
 
 static void test_impulse_exec_convenience() {
