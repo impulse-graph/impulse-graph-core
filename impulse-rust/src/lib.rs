@@ -422,4 +422,90 @@ mod tests {
             Err(ImpulseError::UnsupportedVersion)
         ));
     }
+
+    #[test]
+    fn test_vamana_parallel_build_quant_kernels_and_scratchpad_mcdc() {
+        // 1. Test BQ1 word-packed POPCNT across non-multiple-of-64 dimensions (37, 64, 100)
+        for &dim in &[37usize, 64, 100] {
+            let mut vecs = vec![0.0f32; 2 * dim];
+            for d in 0..dim {
+                vecs[d] = if d % 2 == 0 { 1.0 } else { -1.0 };
+                vecs[dim + d] = if d % 3 == 0 { 1.0 } else { -1.0 };
+            }
+            let slab = vamana::encode_quant_slab(
+                &vecs,
+                2,
+                dim,
+                VamanaQuantType::Bq1,
+                VamanaMetric::Hamming,
+            );
+            let row_bytes = VamanaQuantType::Bq1.row_bytes(dim);
+            let mut q_words = Vec::new();
+            vamana::pack_bq1_query_words(&vecs[0..dim], dim, &mut q_words);
+            let (_, s0, d0) = vamana::eval_bq1_words_row(&slab[0..row_bytes], &q_words, dim, 0);
+            assert_eq!(d0, 0.0);
+            assert_eq!(s0, 0.0);
+            let (_, _s1, d1) =
+                vamana::eval_bq1_words_row(&slab[row_bytes..2 * row_bytes], &q_words, dim, 1);
+            let (_, exact_d1) =
+                vamana::compute_vector_metric(VamanaMetric::Hamming, &vecs[0..dim], &vecs[dim..2 * dim]);
+            assert_eq!(d1, exact_d1);
+        }
+
+        // 2. Test all 4 metrics x all 4 quant types + reusable VamanaSearchScratch & parallel build
+        let n = 600usize;
+        let dim = 20usize;
+        let mut vectors = vec![0.0f32; n * dim];
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+        for v in &mut vectors {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *v = (((rng >> 32) as i32) as f32) / (i32::MAX as f32);
+        }
+
+        let mut scratch = vamana::VamanaSearchScratch::with_capacity(n, 32, dim);
+        for metric in [
+            VamanaMetric::Cosine,
+            VamanaMetric::L2,
+            VamanaMetric::Dot,
+            VamanaMetric::Hamming,
+        ] {
+            for quant in [
+                VamanaQuantType::None,
+                VamanaQuantType::Bq1,
+                VamanaQuantType::Sq8,
+                VamanaQuantType::Fp16,
+            ] {
+                let cfg = VamanaBuildConfig {
+                    max_degree_r: 12,
+                    ef_construction: 24,
+                    alpha: 1.2,
+                    metric,
+                    quant_type: quant,
+                    seed: 77,
+                };
+                let built =
+                    vamana::build_vamana_index_with_threads(0, 0, &vectors, n, dim, &cfg, 2)
+                        .unwrap();
+                let q = &vectors[10 * dim..11 * dim];
+                let q_opt = if quant == VamanaQuantType::None {
+                    None
+                } else {
+                    Some(built.quant_slab.as_slice())
+                };
+                let res = vamana::vamana_ann_search_with_scratch(
+                    &built.header,
+                    &built.adj_slab,
+                    q_opt,
+                    &vectors,
+                    q,
+                    5,
+                    24,
+                    &mut scratch,
+                )
+                .unwrap();
+                assert_eq!(res.len(), 5);
+                assert_eq!(res[0].0, 10);
+            }
+        }
+    }
 }
