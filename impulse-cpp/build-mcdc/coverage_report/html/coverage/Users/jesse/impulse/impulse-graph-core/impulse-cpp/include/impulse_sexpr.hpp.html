@@ -1,0 +1,473 @@
+<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><meta charset='UTF-8'><link rel='stylesheet' type='text/css' href='../../../../../../../style.css'><script src='../../../../../../../control.js'></script></head><body><h2>Coverage Report</h2><h4>Created: 2026-09-07 16:53</h4><span class='control'><a href='javascript:next_line()'>next uncovered line (L)</a>, <a href='javascript:next_region()'>next uncovered region (R)</a>, <a href='javascript:next_branch()'>next uncovered branch (B)</a></span><div class='centered'><table><div class='source-name-title'><pre>/Users/jesse/impulse/impulse-graph-core/impulse-cpp/include/impulse_sexpr.hpp</pre></div><tr><td><pre>Line</pre></td><td><pre>Count</pre></td><td><pre>Source</pre></td></td></tr><tr><td class='line-number'><a name='L1' href='#L1'><pre>1</pre></a></td><td class='skipped-line'></td><td class='code'><pre>/**</pre></td></tr><tr><td class='line-number'><a name='L2' href='#L2'><pre>2</pre></a></td><td class='skipped-line'></td><td class='code'><pre> * @file impulse_sexpr.hpp</pre></td></tr><tr><td class='line-number'><a name='L3' href='#L3'><pre>3</pre></a></td><td class='skipped-line'></td><td class='code'><pre> * @brief Standard S-Expression parser for ImpScheme (.impscm).</pre></td></tr><tr><td class='line-number'><a name='L4' href='#L4'><pre>4</pre></a></td><td class='skipped-line'></td><td class='code'><pre> */</pre></td></tr><tr><td class='line-number'><a name='L5' href='#L5'><pre>5</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L6' href='#L6'><pre>6</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#ifndef IMPULSE_SEXPR_HPP</pre></td></tr><tr><td class='line-number'><a name='L7' href='#L7'><pre>7</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#define IMPULSE_SEXPR_HPP</pre></td></tr><tr><td class='line-number'><a name='L8' href='#L8'><pre>8</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L9' href='#L9'><pre>9</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &lt;string&gt;</pre></td></tr><tr><td class='line-number'><a name='L10' href='#L10'><pre>10</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &lt;vector&gt;</pre></td></tr><tr><td class='line-number'><a name='L11' href='#L11'><pre>11</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &lt;cctype&gt;</pre></td></tr><tr><td class='line-number'><a name='L12' href='#L12'><pre>12</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &lt;stdexcept&gt;</pre></td></tr><tr><td class='line-number'><a name='L13' href='#L13'><pre>13</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &lt;memory&gt;</pre></td></tr><tr><td class='line-number'><a name='L14' href='#L14'><pre>14</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#include &quot;impulse_compiler.hpp&quot;</pre></td></tr><tr><td class='line-number'><a name='L15' href='#L15'><pre>15</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L16' href='#L16'><pre>16</pre></a></td><td class='skipped-line'></td><td class='code'><pre>namespace impulse::impscm {</pre></td></tr><tr><td class='line-number'><a name='L17' href='#L17'><pre>17</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L18' href='#L18'><pre>18</pre></a></td><td class='skipped-line'></td><td class='code'><pre>using namespace impulse::compiler;</pre></td></tr><tr><td class='line-number'><a name='L19' href='#L19'><pre>19</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L20' href='#L20'><pre>20</pre></a></td><td class='skipped-line'></td><td class='code'><pre>struct SExpr {</pre></td></tr><tr><td class='line-number'><a name='L21' href='#L21'><pre>21</pre></a></td><td class='skipped-line'></td><td class='code'><pre>    std::string atom;</pre></td></tr><tr><td class='line-number'><a name='L22' href='#L22'><pre>22</pre></a></td><td class='skipped-line'></td><td class='code'><pre>    std::vector&lt;SExpr&gt; list;</pre></td></tr><tr><td class='line-number'><a name='L23' href='#L23'><pre>23</pre></a></td><td class='skipped-line'></td><td class='code'><pre>    bool is_list = false;</pre></td></tr><tr><td class='line-number'><a name='L24' href='#L24'><pre>24</pre></a></td><td class='skipped-line'></td><td class='code'><pre>};</pre></td></tr><tr><td class='line-number'><a name='L25' href='#L25'><pre>25</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L26' href='#L26'><pre>26</pre></a></td><td class='skipped-line'></td><td class='code'><pre>class SExprParser {</pre></td></tr><tr><td class='line-number'><a name='L27' href='#L27'><pre>27</pre></a></td><td class='skipped-line'></td><td class='code'><pre>    std::string src;</pre></td></tr><tr><td class='line-number'><a name='L28' href='#L28'><pre>28</pre></a></td><td class='skipped-line'></td><td class='code'><pre>    size_t pos = 0;</pre></td></tr><tr><td class='line-number'><a name='L29' href='#L29'><pre>29</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L30' href='#L30'><pre>30</pre></a></td><td class='covered-line'><pre>493</pre></td><td class='code'><pre>    void skip_whitespace() {</pre></td></tr><tr><td class='line-number'><a name='L31' href='#L31'><pre>31</pre></a></td><td class='covered-line'><pre>595</pre></td><td class='code'><pre>        while (pos &lt; src.size()) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L31' href='#L31'><span>31:16</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>593</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L32' href='#L32'><pre>32</pre></a></td><td class='covered-line'><pre>593</pre></td><td class='code'><pre>            if (std::isspace(src[pos])) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L32' href='#L32'><span>32:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>100</span>, <span class='None'>False</span>: <span class='covered-line'>493</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L33' href='#L33'><pre>33</pre></a></td><td class='covered-line'><pre>100</pre></td><td class='code'><pre>                pos++;</pre></td></tr><tr><td class='line-number'><a name='L34' href='#L34'><pre>34</pre></a></td><td class='covered-line'><pre>493</pre></td><td class='code'><pre>            } else if (src[pos] == &apos;;&apos;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L34' href='#L34'><span>34:24</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>491</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L35' href='#L35'><pre>35</pre></a></td><td class='covered-line'><pre>37</pre></td><td class='code'><pre>                while (pos &lt; src.size() &amp;&amp; src[pos] != &apos;\n&apos;) pos++;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L35' href='#L35'><span>35:24</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>36</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L35' href='#L35'><span>35:44</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>35</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L35'><span>35:24</span></a></span>) to (<span class='line-number'><a href='#L35'><span>35:60</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (35:24)
+     Condition C2 --> (35:44)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L36' href='#L36'><pre>36</pre></a></td><td class='covered-line'><pre>491</pre></td><td class='code'><pre>            } else {</pre></td></tr><tr><td class='line-number'><a name='L37' href='#L37'><pre>37</pre></a></td><td class='covered-line'><pre>491</pre></td><td class='code'><pre>                break;</pre></td></tr><tr><td class='line-number'><a name='L38' href='#L38'><pre>38</pre></a></td><td class='covered-line'><pre>491</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L39' href='#L39'><pre>39</pre></a></td><td class='covered-line'><pre>593</pre></td><td class='code'><pre>        }</pre></td></tr><tr><td class='line-number'><a name='L40' href='#L40'><pre>40</pre></a></td><td class='covered-line'><pre>493</pre></td><td class='code'><pre>    }</pre></td></tr><tr><td class='line-number'><a name='L41' href='#L41'><pre>41</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L42' href='#L42'><pre>42</pre></a></td><td class='skipped-line'></td><td class='code'><pre>public:</pre></td></tr><tr><td class='line-number'><a name='L43' href='#L43'><pre>43</pre></a></td><td class='covered-line'><pre>55</pre></td><td class='code'><pre>    explicit SExprParser(std::string s) : src(std::move(s)) {}</pre></td></tr><tr><td class='line-number'><a name='L44' href='#L44'><pre>44</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L45' href='#L45'><pre>45</pre></a></td><td class='covered-line'><pre>233</pre></td><td class='code'><pre>    SExpr parse(size_t depth = 0) {</pre></td></tr><tr><td class='line-number'><a name='L46' href='#L46'><pre>46</pre></a></td><td class='covered-line'><pre>233</pre></td><td class='code'><pre>        if (depth &gt; 128) <span class='region red'>return {}</span>;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L46' href='#L46'><span>46:13</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>233</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L47' href='#L47'><pre>47</pre></a></td><td class='covered-line'><pre>233</pre></td><td class='code'><pre>        skip_whitespace();</pre></td></tr><tr><td class='line-number'><a name='L48' href='#L48'><pre>48</pre></a></td><td class='covered-line'><pre>233</pre></td><td class='code'><pre>        if (pos &gt;= src.size()) return {};</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L48' href='#L48'><span>48:13</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>231</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L49' href='#L49'><pre>49</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L50' href='#L50'><pre>50</pre></a></td><td class='covered-line'><pre>231</pre></td><td class='code'><pre>        if (src[pos] == &apos;(&apos; || src[pos] == &apos;[&apos;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L50' href='#L50'><span>50:13</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>82</span>, <span class='None'>False</span>: <span class='covered-line'>149</span>]
+  Branch (<span class='line-number'><a name='L50' href='#L50'><span>50:32</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>4</span>, <span class='None'>False</span>: <span class='covered-line'>145</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L50'><span>50:13</span></a></span>) to (<span class='line-number'><a href='#L50'><span>50:47</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (50:13)
+     Condition C2 --> (50:32)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  F  = F      }
+  2 { F,  T  = T      }
+  3 { T,  -  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (1,2)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L51' href='#L51'><pre>51</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>            char close = (src[pos] == &apos;(&apos;) ? &apos;)&apos; : &apos;]&apos;;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L51' href='#L51'><span>51:26</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>82</span>, <span class='None'>False</span>: <span class='covered-line'>4</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L52' href='#L52'><pre>52</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>            pos++;</pre></td></tr><tr><td class='line-number'><a name='L53' href='#L53'><pre>53</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>            SExpr expr;</pre></td></tr><tr><td class='line-number'><a name='L54' href='#L54'><pre>54</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>            expr.is_list = true;</pre></td></tr><tr><td class='line-number'><a name='L55' href='#L55'><pre>55</pre></a></td><td class='covered-line'><pre>260</pre></td><td class='code'><pre>            while (pos &lt; src.size()) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L55' href='#L55'><span>55:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>260</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L56' href='#L56'><pre>56</pre></a></td><td class='covered-line'><pre>260</pre></td><td class='code'><pre>                skip_whitespace();</pre></td></tr><tr><td class='line-number'><a name='L57' href='#L57'><pre>57</pre></a></td><td class='covered-line'><pre>260</pre></td><td class='code'><pre>                if (pos &gt;= src.size()) <span class='region red'>break</span>;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L57' href='#L57'><span>57:21</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>260</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L58' href='#L58'><pre>58</pre></a></td><td class='covered-line'><pre>260</pre></td><td class='code'><pre>                if (src[pos] == close) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L58' href='#L58'><span>58:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>86</span>, <span class='None'>False</span>: <span class='covered-line'>174</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L59' href='#L59'><pre>59</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>                    pos++;</pre></td></tr><tr><td class='line-number'><a name='L60' href='#L60'><pre>60</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>                    break;</pre></td></tr><tr><td class='line-number'><a name='L61' href='#L61'><pre>61</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L62' href='#L62'><pre>62</pre></a></td><td class='covered-line'><pre>174</pre></td><td class='code'><pre>                expr.list.push_back(parse(depth + 1));</pre></td></tr><tr><td class='line-number'><a name='L63' href='#L63'><pre>63</pre></a></td><td class='covered-line'><pre>174</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L64' href='#L64'><pre>64</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>            return expr;</pre></td></tr><tr><td class='line-number'><a name='L65' href='#L65'><pre>65</pre></a></td><td class='covered-line'><pre>145</pre></td><td class='code'><pre>        } else if (src[pos] == &apos;&quot;&apos;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L65' href='#L65'><span>65:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>142</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L66' href='#L66'><pre>66</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            pos++;</pre></td></tr><tr><td class='line-number'><a name='L67' href='#L67'><pre>67</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            SExpr expr;</pre></td></tr><tr><td class='line-number'><a name='L68' href='#L68'><pre>68</pre></a></td><td class='covered-line'><pre>20</pre></td><td class='code'><pre>            while (pos &lt; src.size() &amp;&amp; src[pos] != &apos;&quot;&apos;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L68' href='#L68'><span>68:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>19</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L68' href='#L68'><span>68:40</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>17</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L68'><span>68:20</span></a></span>) to (<span class='line-number'><a href='#L68'><span>68:55</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (68:20)
+     Condition C2 --> (68:40)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L69' href='#L69'><pre>69</pre></a></td><td class='covered-line'><pre>17</pre></td><td class='code'><pre>                expr.atom += src[pos++];</pre></td></tr><tr><td class='line-number'><a name='L70' href='#L70'><pre>70</pre></a></td><td class='covered-line'><pre>17</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L71' href='#L71'><pre>71</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            if (pos &lt; src.size()) pos++; // skip closing quote</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L71' href='#L71'><span>71:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L72' href='#L72'><pre>72</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            return expr;</pre></td></tr><tr><td class='line-number'><a name='L73' href='#L73'><pre>73</pre></a></td><td class='covered-line'><pre>142</pre></td><td class='code'><pre>        } else {</pre></td></tr><tr><td class='line-number'><a name='L74' href='#L74'><pre>74</pre></a></td><td class='covered-line'><pre>142</pre></td><td class='code'><pre>            SExpr expr;</pre></td></tr><tr><td class='line-number'><a name='L75' href='#L75'><pre>75</pre></a></td><td class='covered-line'><pre>867</pre></td><td class='code'><pre>            while (pos &lt; src.size() &amp;&amp; !std::isspace(src[pos]) &amp;&amp; src[pos] != &apos;(&apos; &amp;&amp; src[pos] != &apos;)&apos; &amp;&amp; src[pos] != &apos;[&apos; &amp;&amp; src[pos] != &apos;]&apos;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>863</span>, <span class='None'>False</span>: <span class='covered-line'>4</span>]
+  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:40</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>784</span>, <span class='None'>False</span>: <span class='covered-line'>79</span>]
+  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:67</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>783</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:86</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>729</span>, <span class='None'>False</span>: <span class='covered-line'>54</span>]
+  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:105</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>728</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L75' href='#L75'><span>75:124</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>725</span>, <span class='None'>False</span>: <span class='covered-line'>3</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L75'><span>75:20</span></a></span>) to (<span class='line-number'><a href='#L75'><span>75:139</span></a></span>)
+
+  Number of Conditions: 6
+     Condition C1 --> (75:20)
+     Condition C2 --> (75:40)
+     Condition C3 --> (75:67)
+     Condition C4 --> (75:86)
+     Condition C5 --> (75:105)
+     Condition C6 --> (75:124)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3, C4, C5, C6    Result
+  1 { F,  -,  -,  -,  -,  -  = F      }
+  2 { T,  F,  -,  -,  -,  -  = F      }
+  3 { T,  T,  F,  -,  -,  -  = F      }
+  4 { T,  T,  T,  F,  -,  -  = F      }
+  5 { T,  T,  T,  T,  F,  -  = F      }
+  6 { T,  T,  T,  T,  T,  F  = F      }
+  7 { T,  T,  T,  T,  T,  T  = T      }
+
+  C1-Pair: covered: (1,7)
+  C2-Pair: covered: (2,7)
+  C3-Pair: covered: (3,7)
+  C4-Pair: covered: (4,7)
+  C5-Pair: covered: (5,7)
+  C6-Pair: covered: (6,7)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L76' href='#L76'><pre>76</pre></a></td><td class='covered-line'><pre>725</pre></td><td class='code'><pre>                expr.atom += src[pos++];</pre></td></tr><tr><td class='line-number'><a name='L77' href='#L77'><pre>77</pre></a></td><td class='covered-line'><pre>725</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L78' href='#L78'><pre>78</pre></a></td><td class='covered-line'><pre>142</pre></td><td class='code'><pre>            return expr;</pre></td></tr><tr><td class='line-number'><a name='L79' href='#L79'><pre>79</pre></a></td><td class='covered-line'><pre>142</pre></td><td class='code'><pre>        }</pre></td></tr><tr><td class='line-number'><a name='L80' href='#L80'><pre>80</pre></a></td><td class='covered-line'><pre>231</pre></td><td class='code'><pre>    }</pre></td></tr><tr><td class='line-number'><a name='L81' href='#L81'><pre>81</pre></a></td><td class='skipped-line'></td><td class='code'><pre>};</pre></td></tr><tr><td class='line-number'><a name='L82' href='#L82'><pre>82</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L83' href='#L83'><pre>83</pre></a></td><td class='skipped-line'></td><td class='code'><pre>class ImpScmAstBuilder {</pre></td></tr><tr><td class='line-number'><a name='L84' href='#L84'><pre>84</pre></a></td><td class='skipped-line'></td><td class='code'><pre>public:</pre></td></tr><tr><td class='line-number'><a name='L85' href='#L85'><pre>85</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>        static AstPtr build(const SExpr&amp; expr) {</pre></td></tr><tr><td class='line-number'><a name='L86' href='#L86'><pre>86</pre></a></td><td class='covered-line'><pre>86</pre></td><td class='code'><pre>        if (!expr.is_list || expr.list.empty()) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L86' href='#L86'><span>86:13</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>21</span>, <span class='None'>False</span>: <span class='covered-line'>65</span>]
+  Branch (<span class='line-number'><a name='L86' href='#L86'><span>86:30</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>62</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L86'><span>86:13</span></a></span>) to (<span class='line-number'><a href='#L86'><span>86:47</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (86:13)
+     Condition C2 --> (86:30)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  F  = F      }
+  2 { F,  T  = T      }
+  3 { T,  -  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (1,2)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L87' href='#L87'><pre>87</pre></a></td><td class='covered-line'><pre>24</pre></td><td class='code'><pre>            if (!expr.is_list &amp;&amp; !expr.atom.empty()) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L87' href='#L87'><span>87:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>21</span>, <span class='None'>False</span>: <span class='covered-line'>3</span>]
+  Branch (<span class='line-number'><a name='L87' href='#L87'><span>87:34</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>20</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L87'><span>87:17</span></a></span>) to (<span class='line-number'><a href='#L87'><span>87:52</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (87:17)
+     Condition C2 --> (87:34)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L88' href='#L88'><pre>88</pre></a></td><td class='covered-line'><pre>20</pre></td><td class='code'><pre>                if (std::isdigit(expr.atom[0])) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L88' href='#L88'><span>88:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>15</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L89' href='#L89'><pre>89</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>                    auto lit = std::make_shared&lt;ScmLiteral&gt;();</pre></td></tr><tr><td class='line-number'><a name='L90' href='#L90'><pre>90</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>                    lit-&gt;type = ScmLiteral::LitType::INT;</pre></td></tr><tr><td class='line-number'><a name='L91' href='#L91'><pre>91</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>                    lit-&gt;int_val = std::stoll(expr.atom);</pre></td></tr><tr><td class='line-number'><a name='L92' href='#L92'><pre>92</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>                    return lit;</pre></td></tr><tr><td class='line-number'><a name='L93' href='#L93'><pre>93</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L94' href='#L94'><pre>94</pre></a></td><td class='covered-line'><pre>15</pre></td><td class='code'><pre>                auto v = std::make_shared&lt;ScmVarRef&gt;();</pre></td></tr><tr><td class='line-number'><a name='L95' href='#L95'><pre>95</pre></a></td><td class='covered-line'><pre>15</pre></td><td class='code'><pre>                v-&gt;var = expr.atom;</pre></td></tr><tr><td class='line-number'><a name='L96' href='#L96'><pre>96</pre></a></td><td class='covered-line'><pre>15</pre></td><td class='code'><pre>                return v;</pre></td></tr><tr><td class='line-number'><a name='L97' href='#L97'><pre>97</pre></a></td><td class='covered-line'><pre>20</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L98' href='#L98'><pre>98</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>            return nullptr;</pre></td></tr><tr><td class='line-number'><a name='L99' href='#L99'><pre>99</pre></a></td><td class='covered-line'><pre>24</pre></td><td class='code'><pre>        }</pre></td></tr><tr><td class='line-number'><a name='L100' href='#L100'><pre>100</pre></a></td><td class='covered-line'><pre>62</pre></td><td class='code'><pre>        const auto&amp; head = expr.list[0].atom;</pre></td></tr><tr><td class='line-number'><a name='L101' href='#L101'><pre>101</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L102' href='#L102'><pre>102</pre></a></td><td class='covered-line'><pre>62</pre></td><td class='code'><pre>        if (head == &quot;impk-pipeline&quot; || head == &quot;pipeline&quot; || head == &quot;query&quot; || head == &quot;module&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L102' href='#L102'><span>102:13</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>60</span>]
+  Branch (<span class='line-number'><a name='L102' href='#L102'><span>102:40</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>6</span>, <span class='None'>False</span>: <span class='covered-line'>54</span>]
+  Branch (<span class='line-number'><a name='L102' href='#L102'><span>102:62</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>53</span>]
+  Branch (<span class='line-number'><a name='L102' href='#L102'><span>102:81</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>52</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L102'><span>102:13</span></a></span>) to (<span class='line-number'><a href='#L102'><span>102:97</span></a></span>)
+
+  Number of Conditions: 4
+     Condition C1 --> (102:13)
+     Condition C2 --> (102:40)
+     Condition C3 --> (102:62)
+     Condition C4 --> (102:81)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3, C4    Result
+  1 { F,  F,  F,  F  = F      }
+  2 { F,  F,  F,  T  = T      }
+  3 { F,  F,  T,  -  = T      }
+  4 { F,  T,  -,  -  = T      }
+  5 { T,  -,  -,  -  = T      }
+
+  C1-Pair: covered: (1,5)
+  C2-Pair: covered: (1,4)
+  C3-Pair: covered: (1,3)
+  C4-Pair: covered: (1,2)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L103' href='#L103'><pre>103</pre></a></td><td class='covered-line'><pre>10</pre></td><td class='code'><pre>            std::vector&lt;AstPtr&gt; steps;</pre></td></tr><tr><td class='line-number'><a name='L104' href='#L104'><pre>104</pre></a></td><td class='covered-line'><pre>17</pre></td><td class='code'><pre>            for (size_t i = 1; i &lt; expr.list.size(); ++i) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L104' href='#L104'><span>104:32</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>9</span>, <span class='None'>False</span>: <span class='covered-line'>8</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L105' href='#L105'><pre>105</pre></a></td><td class='covered-line'><pre>9</pre></td><td class='code'><pre>                if (expr.list[i].is_list &amp;&amp; !expr.list[i].list.empty() &amp;&amp; expr.list[i].list[0].atom == &quot;define-query&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L105' href='#L105'><span>105:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>8</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L105' href='#L105'><span>105:45</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>7</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L105' href='#L105'><span>105:75</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>5</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L105'><span>105:21</span></a></span>) to (<span class='line-number'><a href='#L105'><span>105:118</span></a></span>)
+
+  Number of Conditions: 3
+     Condition C1 --> (105:21)
+     Condition C2 --> (105:45)
+     Condition C3 --> (105:75)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3    Result
+  1 { F,  -,  -  = F      }
+  2 { T,  F,  -  = F      }
+  3 { T,  T,  F  = F      }
+  4 { T,  T,  T  = T      }
+
+  C1-Pair: covered: (1,4)
+  C2-Pair: covered: (2,4)
+  C3-Pair: covered: (3,4)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L106' href='#L106'><pre>106</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                    return build(expr.list[i]);</pre></td></tr><tr><td class='line-number'><a name='L107' href='#L107'><pre>107</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L108' href='#L108'><pre>108</pre></a></td><td class='covered-line'><pre>7</pre></td><td class='code'><pre>                if (expr.list[i].is_list &amp;&amp; !expr.list[i].list.empty() &amp;&amp; expr.list[i].list[0].atom == &quot;define-kernel&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L108' href='#L108'><span>108:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>6</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L108' href='#L108'><span>108:45</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L108' href='#L108'><span>108:75</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>4</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L108'><span>108:21</span></a></span>) to (<span class='line-number'><a href='#L108'><span>108:119</span></a></span>)
+
+  Number of Conditions: 3
+     Condition C1 --> (108:21)
+     Condition C2 --> (108:45)
+     Condition C3 --> (108:75)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3    Result
+  1 { F,  -,  -  = F      }
+  2 { T,  F,  -  = F      }
+  3 { T,  T,  F  = F      }
+  4 { T,  T,  T  = T      }
+
+  C1-Pair: covered: (1,4)
+  C2-Pair: covered: (2,4)
+  C3-Pair: covered: (3,4)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L109' href='#L109'><pre>109</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                    continue;</pre></td></tr><tr><td class='line-number'><a name='L110' href='#L110'><pre>110</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L111' href='#L111'><pre>111</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>                auto step = build(expr.list[i]);</pre></td></tr><tr><td class='line-number'><a name='L112' href='#L112'><pre>112</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>                if (step) steps.push_back(step);</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L112' href='#L112'><span>112:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L113' href='#L113'><pre>113</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L114' href='#L114'><pre>114</pre></a></td><td class='covered-line'><pre>8</pre></td><td class='code'><pre>            return std::make_shared&lt;ScmProgram&gt;(std::move(steps));</pre></td></tr><tr><td class='line-number'><a name='L115' href='#L115'><pre>115</pre></a></td><td class='covered-line'><pre>52</pre></td><td class='code'><pre>        } else if (head == &quot;define-query&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L115' href='#L115'><span>115:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>50</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L116' href='#L116'><pre>116</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            if (expr.list.size() &gt; 2) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L116' href='#L116'><span>116:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L117' href='#L117'><pre>117</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                std::vector&lt;AstPtr&gt; steps;</pre></td></tr><tr><td class='line-number'><a name='L118' href='#L118'><pre>118</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>                for (size_t i = 2; i &lt; expr.list.size(); ++i) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L118' href='#L118'><span>118:36</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L119' href='#L119'><pre>119</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                    auto step = build(expr.list[i]);</pre></td></tr><tr><td class='line-number'><a name='L120' href='#L120'><pre>120</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                    if (step) steps.push_back(step);</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L120' href='#L120'><span>120:25</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L121' href='#L121'><pre>121</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L122' href='#L122'><pre>122</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                return std::make_shared&lt;ScmProgram&gt;(std::move(steps));</pre></td></tr><tr><td class='line-number'><a name='L123' href='#L123'><pre>123</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L124' href='#L124'><pre>124</pre></a></td><td class='covered-line'><pre>50</pre></td><td class='code'><pre>        } else if (head == &quot;let&quot; &amp;&amp; expr.list.size() &gt; 1) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L124' href='#L124'><span>124:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>7</span>, <span class='None'>False</span>: <span class='covered-line'>43</span>]
+  Branch (<span class='line-number'><a name='L124' href='#L124'><span>124:37</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>6</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L124'><span>124:20</span></a></span>) to (<span class='line-number'><a href='#L124'><span>124:57</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (124:20)
+     Condition C2 --> (124:37)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L125' href='#L125'><pre>125</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            auto let_node = std::make_shared&lt;ScmLet&gt;();</pre></td></tr><tr><td class='line-number'><a name='L126' href='#L126'><pre>126</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            const auto&amp; bindings = expr.list[1];</pre></td></tr><tr><td class='line-number'><a name='L127' href='#L127'><pre>127</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            if (bindings.is_list) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L127' href='#L127'><span>127:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L128' href='#L128'><pre>128</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>                for (const auto&amp; bind : bindings.list) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L128' href='#L128'><span>128:39</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>6</span>, <span class='None'>False</span>: <span class='covered-line'>5</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L129' href='#L129'><pre>129</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>                    if (bind.is_list &amp;&amp; bind.list.size() == 2) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L129' href='#L129'><span>129:25</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L129' href='#L129'><span>129:41</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L129'><span>129:25</span></a></span>) to (<span class='line-number'><a href='#L129'><span>129:62</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (129:25)
+     Condition C2 --> (129:41)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L130' href='#L130'><pre>130</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                        let_node-&gt;vars.push_back(bind.list[0].atom);</pre></td></tr><tr><td class='line-number'><a name='L131' href='#L131'><pre>131</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                        let_node-&gt;inits.push_back(build(bind.list[1]));</pre></td></tr><tr><td class='line-number'><a name='L132' href='#L132'><pre>132</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                    }</pre></td></tr><tr><td class='line-number'><a name='L133' href='#L133'><pre>133</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L134' href='#L134'><pre>134</pre></a></td><td class='covered-line'><pre>5</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L135' href='#L135'><pre>135</pre></a></td><td class='covered-line'><pre>13</pre></td><td class='code'><pre>            for (size_t i = 2; i &lt; expr.list.size(); ++i) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L135' href='#L135'><span>135:32</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>7</span>, <span class='None'>False</span>: <span class='covered-line'>6</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L136' href='#L136'><pre>136</pre></a></td><td class='covered-line'><pre>7</pre></td><td class='code'><pre>                auto step = build(expr.list[i]);</pre></td></tr><tr><td class='line-number'><a name='L137' href='#L137'><pre>137</pre></a></td><td class='covered-line'><pre>7</pre></td><td class='code'><pre>                if (step) let_node-&gt;body.push_back(step);</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L137' href='#L137'><span>137:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>7</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L138' href='#L138'><pre>138</pre></a></td><td class='covered-line'><pre>7</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L139' href='#L139'><pre>139</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            return let_node;</pre></td></tr><tr><td class='line-number'><a name='L140' href='#L140'><pre>140</pre></a></td><td class='covered-line'><pre>44</pre></td><td class='code'><pre>        } else if (head == &quot;loop-while&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L140' href='#L140'><span>140:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>42</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L141' href='#L141'><pre>141</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            if (expr.list.size() &gt; 1) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L141' href='#L141'><span>141:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L142' href='#L142'><pre>142</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                auto loop_node = std::make_shared&lt;ScmLoopWhile&gt;();</pre></td></tr><tr><td class='line-number'><a name='L143' href='#L143'><pre>143</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                loop_node-&gt;condition = build(expr.list[1]);</pre></td></tr><tr><td class='line-number'><a name='L144' href='#L144'><pre>144</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                for (size_t i = 2; i &lt; expr.list.size(); ++i) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L144' href='#L144'><span>144:36</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L145' href='#L145'><pre>145</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                    auto step = build(expr.list[i]);</pre></td></tr><tr><td class='line-number'><a name='L146' href='#L146'><pre>146</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                    if (step) loop_node-&gt;body.push_back(step);</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L146' href='#L146'><span>146:25</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L147' href='#L147'><pre>147</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L148' href='#L148'><pre>148</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                return loop_node;</pre></td></tr><tr><td class='line-number'><a name='L149' href='#L149'><pre>149</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L150' href='#L150'><pre>150</pre></a></td><td class='covered-line'><pre>42</pre></td><td class='code'><pre>        } else if (head == &quot;set!&quot; &amp;&amp; expr.list.size() == 3) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L150' href='#L150'><span>150:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>39</span>]
+  Branch (<span class='line-number'><a name='L150' href='#L150'><span>150:38</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L150'><span>150:20</span></a></span>) to (<span class='line-number'><a href='#L150'><span>150:59</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (150:20)
+     Condition C2 --> (150:38)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L151' href='#L151'><pre>151</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            auto set_node = std::make_shared&lt;ScmSet&gt;();</pre></td></tr><tr><td class='line-number'><a name='L152' href='#L152'><pre>152</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            set_node-&gt;var = expr.list[1].atom;</pre></td></tr><tr><td class='line-number'><a name='L153' href='#L153'><pre>153</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            set_node-&gt;expr = build(expr.list[2]);</pre></td></tr><tr><td class='line-number'><a name='L154' href='#L154'><pre>154</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            return set_node;</pre></td></tr><tr><td class='line-number'><a name='L155' href='#L155'><pre>155</pre></a></td><td class='covered-line'><pre>40</pre></td><td class='code'><pre>        } else if (head == &quot;bitset:empty&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L155' href='#L155'><span>155:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>39</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L156' href='#L156'><pre>156</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            auto b = std::make_shared&lt;ScmBitsetInit&gt;();</pre></td></tr><tr><td class='line-number'><a name='L157' href='#L157'><pre>157</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            b-&gt;type = ScmBitsetInit::InitType::EMPTY;</pre></td></tr><tr><td class='line-number'><a name='L158' href='#L158'><pre>158</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            return b;</pre></td></tr><tr><td class='line-number'><a name='L159' href='#L159'><pre>159</pre></a></td><td class='covered-line'><pre>39</pre></td><td class='code'><pre>        } else if (head == &quot;bitset:all&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L159' href='#L159'><span>159:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>38</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L160' href='#L160'><pre>160</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            auto b = std::make_shared&lt;ScmBitsetInit&gt;();</pre></td></tr><tr><td class='line-number'><a name='L161' href='#L161'><pre>161</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            b-&gt;type = ScmBitsetInit::InitType::ALL;</pre></td></tr><tr><td class='line-number'><a name='L162' href='#L162'><pre>162</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            return b;</pre></td></tr><tr><td class='line-number'><a name='L163' href='#L163'><pre>163</pre></a></td><td class='covered-line'><pre>38</pre></td><td class='code'><pre>        } else if (head == &quot;bitset:from&quot; &amp;&amp; expr.list.size() == 2) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L163' href='#L163'><span>163:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>35</span>]
+  Branch (<span class='line-number'><a name='L163' href='#L163'><span>163:45</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L163'><span>163:20</span></a></span>) to (<span class='line-number'><a href='#L163'><span>163:66</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (163:20)
+     Condition C2 --> (163:45)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L164' href='#L164'><pre>164</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            auto b = std::make_shared&lt;ScmBitsetInit&gt;();</pre></td></tr><tr><td class='line-number'><a name='L165' href='#L165'><pre>165</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            b-&gt;type = ScmBitsetInit::InitType::FROM_NODE;</pre></td></tr><tr><td class='line-number'><a name='L166' href='#L166'><pre>166</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            b-&gt;param = expr.list[1].atom;</pre></td></tr><tr><td class='line-number'><a name='L167' href='#L167'><pre>167</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            return b;</pre></td></tr><tr><td class='line-number'><a name='L168' href='#L168'><pre>168</pre></a></td><td class='covered-line'><pre>37</pre></td><td class='code'><pre>        } else if (head == &quot;bitset:cardinality&quot; &amp;&amp; expr.list.size() == 2) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L168' href='#L168'><span>168:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>4</span>, <span class='None'>False</span>: <span class='covered-line'>33</span>]
+  Branch (<span class='line-number'><a name='L168' href='#L168'><span>168:52</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L168'><span>168:20</span></a></span>) to (<span class='line-number'><a href='#L168'><span>168:73</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (168:20)
+     Condition C2 --> (168:52)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L169' href='#L169'><pre>169</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            auto c = std::make_shared&lt;ScmCardinality&gt;();</pre></td></tr><tr><td class='line-number'><a name='L170' href='#L170'><pre>170</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            c-&gt;var = expr.list[1].atom;</pre></td></tr><tr><td class='line-number'><a name='L171' href='#L171'><pre>171</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            return c;</pre></td></tr><tr><td class='line-number'><a name='L172' href='#L172'><pre>172</pre></a></td><td class='covered-line'><pre>35</pre></td><td class='code'><pre>        } else if (head == &quot;&gt;&quot; &amp;&amp; expr.list.size() == 3) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L172' href='#L172'><span>172:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>5</span>, <span class='None'>False</span>: <span class='covered-line'>30</span>]
+  Branch (<span class='line-number'><a name='L172' href='#L172'><span>172:35</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>3</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L172'><span>172:20</span></a></span>) to (<span class='line-number'><a href='#L172'><span>172:56</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (172:20)
+     Condition C2 --> (172:35)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L173' href='#L173'><pre>173</pre></a></td><td class='skipped-line'></td><td class='code'><pre>            // For (&gt; (bitset:cardinality frontier) 0)</pre></td></tr><tr><td class='line-number'><a name='L174' href='#L174'><pre>174</pre></a></td><td class='skipped-line'></td><td class='code'><pre>            // Just return the LHS cardinality node since our compiler currently handles this specifically</pre></td></tr><tr><td class='line-number'><a name='L175' href='#L175'><pre>175</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            return build(expr.list[1]);</pre></td></tr><tr><td class='line-number'><a name='L176' href='#L176'><pre>176</pre></a></td><td class='covered-line'><pre>33</pre></td><td class='code'><pre>        } else if (head == &quot;csr-walk&quot; || head == &quot;g:walk-csr&quot; || head == &quot;mxv&quot; || head == &quot;pagerank-step&quot; || head == &quot;cc-afforest&quot; || head == &quot;ewise-add&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>8</span>, <span class='None'>False</span>: <span class='covered-line'>25</span>]
+  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:42</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>23</span>]
+  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:66</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:83</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:110</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+  Branch (<span class='line-number'><a name='L176' href='#L176'><span>176:135</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L176'><span>176:20</span></a></span>) to (<span class='line-number'><a href='#L176'><span>176:154</span></a></span>)
+
+  Number of Conditions: 6
+     Condition C1 --> (176:20)
+     Condition C2 --> (176:42)
+     Condition C3 --> (176:66)
+     Condition C4 --> (176:83)
+     Condition C5 --> (176:110)
+     Condition C6 --> (176:135)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3, C4, C5, C6    Result
+  1 { F,  F,  F,  F,  F,  F  = F      }
+  2 { F,  F,  T,  -,  -,  -  = T      }
+  3 { F,  T,  -,  -,  -,  -  = T      }
+  4 { T,  -,  -,  -,  -,  -  = T      }
+
+  C1-Pair: covered: (1,4)
+  C2-Pair: covered: (1,3)
+  C3-Pair: covered: (1,2)
+  C4-Pair: not covered
+  C5-Pair: not covered
+  C6-Pair: not covered
+  MC/DC Coverage for Expression: 50.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L177' href='#L177'><pre>177</pre></a></td><td class='covered-line'><pre>11</pre></td><td class='code'><pre>            std::string rel = &quot;edge&quot;;</pre></td></tr><tr><td class='line-number'><a name='L178' href='#L178'><pre>178</pre></a></td><td class='covered-line'><pre>26</pre></td><td class='code'><pre>            for (size_t i = 1; i &lt; expr.list.size(); ++i) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L178' href='#L178'><span>178:32</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>15</span>, <span class='None'>False</span>: <span class='covered-line'>11</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L179' href='#L179'><pre>179</pre></a></td><td class='covered-line'><pre>15</pre></td><td class='code'><pre>                if (!expr.list[i].is_list &amp;&amp; expr.list[i].atom != &quot;g&quot; &amp;&amp; expr.list[i].atom != &quot;frontier&quot; &amp;&amp; expr.list[i].atom != &quot;updateEdge&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L179' href='#L179'><span>179:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>14</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L179' href='#L179'><span>179:46</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>13</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L179' href='#L179'><span>179:74</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>12</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+  Branch (<span class='line-number'><a name='L179' href='#L179'><span>179:109</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>11</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L179'><span>179:21</span></a></span>) to (<span class='line-number'><a href='#L179'><span>179:142</span></a></span>)
+
+  Number of Conditions: 4
+     Condition C1 --> (179:21)
+     Condition C2 --> (179:46)
+     Condition C3 --> (179:74)
+     Condition C4 --> (179:109)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3, C4    Result
+  1 { F,  -,  -,  -  = F      }
+  2 { T,  F,  -,  -  = F      }
+  3 { T,  T,  F,  -  = F      }
+  4 { T,  T,  T,  F  = F      }
+  5 { T,  T,  T,  T  = T      }
+
+  C1-Pair: covered: (1,5)
+  C2-Pair: covered: (2,5)
+  C3-Pair: covered: (3,5)
+  C4-Pair: covered: (4,5)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L180' href='#L180'><pre>180</pre></a></td><td class='covered-line'><pre>11</pre></td><td class='code'><pre>                    rel = expr.list[i].atom;</pre></td></tr><tr><td class='line-number'><a name='L181' href='#L181'><pre>181</pre></a></td><td class='covered-line'><pre>11</pre></td><td class='code'><pre>                }</pre></td></tr><tr><td class='line-number'><a name='L182' href='#L182'><pre>182</pre></a></td><td class='covered-line'><pre>15</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L183' href='#L183'><pre>183</pre></a></td><td class='covered-line'><pre>11</pre></td><td class='code'><pre>            return ScmWalk::forward(rel);</pre></td></tr><tr><td class='line-number'><a name='L184' href='#L184'><pre>184</pre></a></td><td class='covered-line'><pre>22</pre></td><td class='code'><pre>        } else if (head == &quot;csc-walk&quot; || head == &quot;g:walk-csc&quot;) <span class='region red'>{</span></pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L184' href='#L184'><span>184:20</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+  Branch (<span class='line-number'><a name='L184' href='#L184'><span>184:42</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='None'>False</span>: <span class='covered-line'>22</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L184'><span>184:20</span></a></span>) to (<span class='line-number'><a href='#L184'><span>184:62</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (184:20)
+     Condition C2 --> (184:42)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  F  = F      }
+
+  C1-Pair: not covered
+  C2-Pair: not covered
+  MC/DC Coverage for Expression: 0.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L185' href='#L185'><pre>185</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>            std::string rel = &quot;edge&quot;;</span></pre></td></tr><tr><td class='line-number'><a name='L186' href='#L186'><pre>186</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>            for (size_t i = 1; </span><span class='region red'>i &lt; expr.list.size()</span><span class='region red'>; </span><span class='region red'>++i</span><span class='region red'>) </span><span class='region red'>{</span></pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L186' href='#L186'><span>186:32</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L187' href='#L187'><pre>187</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>                if (</span><span class='region red'>!expr.list[i].is_list</span><span class='region red'> &amp;&amp; </span><span class='region red'>expr.list[i].atom != &quot;g&quot;</span><span class='region red'> &amp;&amp; </span><span class='region red'>expr.list[i].atom != &quot;frontier&quot;</span><span class='region red'> &amp;&amp; </span><span class='region red'>expr.list[i].atom != &quot;updateEdge&quot;</span><span class='region red'>) </span><span class='region red'>{</span></pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L187' href='#L187'><span>187:21</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+  Branch (<span class='line-number'><a name='L187' href='#L187'><span>187:46</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+  Branch (<span class='line-number'><a name='L187' href='#L187'><span>187:74</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+  Branch (<span class='line-number'><a name='L187' href='#L187'><span>187:109</span></a></span>): [<span class='red branch'>True</span>: <span class='uncovered-line'>0</span>, <span class='red branch'>False</span>: <span class='uncovered-line'>0</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L187'><span>187:21</span></a></span>) to (<span class='line-number'><a href='#L187'><span>187:142</span></a></span>)
+
+  Number of Conditions: 4
+     Condition C1 --> (187:21)
+     Condition C2 --> (187:46)
+     Condition C3 --> (187:74)
+     Condition C4 --> (187:109)
+
+  Executed MC/DC Test Vectors:
+
+     None.
+
+  C1-Pair: not covered
+  C2-Pair: not covered
+  C3-Pair: not covered
+  C4-Pair: not covered
+  MC/DC Coverage for Expression: 0.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L188' href='#L188'><pre>188</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>                    rel = expr.list[i].atom;</span></pre></td></tr><tr><td class='line-number'><a name='L189' href='#L189'><pre>189</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>                }</span><span class='red'></span></pre></td></tr><tr><td class='line-number'><a name='L190' href='#L190'><pre>190</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>            }</span></pre></td></tr><tr><td class='line-number'><a name='L191' href='#L191'><pre>191</pre></a></td><td class='uncovered-line'><pre>0</pre></td><td class='code'><pre><span class='region red'>            return ScmWalk::reverse(rel);</span></pre></td></tr><tr><td class='line-number'><a name='L192' href='#L192'><pre>192</pre></a></td><td class='covered-line'><pre>22</pre></td><td class='code'><pre><span class='region red'>        }</span> else if (head == &quot;collect-bitset&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L192' href='#L192'><span>192:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>21</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L193' href='#L193'><pre>193</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            return ScmCollect::bitset();</pre></td></tr><tr><td class='line-number'><a name='L194' href='#L194'><pre>194</pre></a></td><td class='covered-line'><pre>21</pre></td><td class='code'><pre>        } else if (head == &quot;set:difference&quot; || head == &quot;set:union&quot; || head == &quot;set:intersect&quot;) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L194' href='#L194'><span>194:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>20</span>]
+  Branch (<span class='line-number'><a name='L194' href='#L194'><span>194:48</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>2</span>, <span class='None'>False</span>: <span class='covered-line'>18</span>]
+  Branch (<span class='line-number'><a name='L194' href='#L194'><span>194:71</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>17</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L194'><span>194:20</span></a></span>) to (<span class='line-number'><a href='#L194'><span>194:94</span></a></span>)
+
+  Number of Conditions: 3
+     Condition C1 --> (194:20)
+     Condition C2 --> (194:48)
+     Condition C3 --> (194:71)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2, C3    Result
+  1 { F,  F,  F  = F      }
+  2 { F,  F,  T  = T      }
+  3 { F,  T,  -  = T      }
+  4 { T,  -,  -  = T      }
+
+  C1-Pair: covered: (1,4)
+  C2-Pair: covered: (1,3)
+  C3-Pair: covered: (1,2)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L195' href='#L195'><pre>195</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>            if (expr.list.size() == 3) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L195' href='#L195'><span>195:17</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L196' href='#L196'><pre>196</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                auto op = std::make_shared&lt;ScmSetOp&gt;();</pre></td></tr><tr><td class='line-number'><a name='L197' href='#L197'><pre>197</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                if (head == &quot;set:difference&quot;) op-&gt;op = ScmSetOp::DIFFERENCE;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L197' href='#L197'><span>197:21</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L198' href='#L198'><pre>198</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>                else if (head == &quot;set:union&quot;) op-&gt;op = ScmSetOp::UNION;</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L198' href='#L198'><span>198:26</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L199' href='#L199'><pre>199</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                else op-&gt;op = ScmSetOp::INTERSECT;</pre></td></tr><tr><td class='line-number'><a name='L200' href='#L200'><pre>200</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                op-&gt;lhs = build(expr.list[1]);</pre></td></tr><tr><td class='line-number'><a name='L201' href='#L201'><pre>201</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                op-&gt;rhs = build(expr.list[2]);</pre></td></tr><tr><td class='line-number'><a name='L202' href='#L202'><pre>202</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>                return op;</pre></td></tr><tr><td class='line-number'><a name='L203' href='#L203'><pre>203</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L204' href='#L204'><pre>204</pre></a></td><td class='covered-line'><pre>17</pre></td><td class='code'><pre>        } else if (head == &quot;return&quot; &amp;&amp; expr.list.size() == 2) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L204' href='#L204'><span>204:20</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>8</span>, <span class='None'>False</span>: <span class='covered-line'>9</span>]
+  Branch (<span class='line-number'><a name='L204' href='#L204'><span>204:40</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>6</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div><div class='expansion-view'><pre>  MC/DC Decision Region (<span class='line-number'><a href='#L204'><span>204:20</span></a></span>) to (<span class='line-number'><a href='#L204'><span>204:61</span></a></span>)
+
+  Number of Conditions: 2
+     Condition C1 --> (204:20)
+     Condition C2 --> (204:40)
+
+  Executed MC/DC Test Vectors:
+
+     C1, C2    Result
+  1 { F,  -  = F      }
+  2 { T,  F  = F      }
+  3 { T,  T  = T      }
+
+  C1-Pair: covered: (1,3)
+  C2-Pair: covered: (2,3)
+  MC/DC Coverage for Expression: 100.00%
+</pre></div></td></tr><tr><td class='line-number'><a name='L205' href='#L205'><pre>205</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            auto r = std::make_shared&lt;ScmReturn&gt;();</pre></td></tr><tr><td class='line-number'><a name='L206' href='#L206'><pre>206</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            r-&gt;expr = build(expr.list[1]);</pre></td></tr><tr><td class='line-number'><a name='L207' href='#L207'><pre>207</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>            return r;</pre></td></tr><tr><td class='line-number'><a name='L208' href='#L208'><pre>208</pre></a></td><td class='covered-line'><pre>6</pre></td><td class='code'><pre>        }</pre></td></tr><tr><td class='line-number'><a name='L209' href='#L209'><pre>209</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L210' href='#L210'><pre>210</pre></a></td><td class='covered-line'><pre>13</pre></td><td class='code'><pre>        return nullptr;</pre></td></tr><tr><td class='line-number'><a name='L211' href='#L211'><pre>211</pre></a></td><td class='covered-line'><pre>62</pre></td><td class='code'><pre>    }</pre></td></tr><tr><td class='line-number'><a name='L212' href='#L212'><pre>212</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L213' href='#L213'><pre>213</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>    static std::shared_ptr&lt;ScmProgram&gt; parse(const std::string&amp; script) {</pre></td></tr><tr><td class='line-number'><a name='L214' href='#L214'><pre>214</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>        SExprParser parser(script);</pre></td></tr><tr><td class='line-number'><a name='L215' href='#L215'><pre>215</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>        SExpr root = parser.parse();</pre></td></tr><tr><td class='line-number'><a name='L216' href='#L216'><pre>216</pre></a></td><td class='skipped-line'></td><td class='code'><pre>        </pre></td></tr><tr><td class='line-number'><a name='L217' href='#L217'><pre>217</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>        auto ast = build(root);</pre></td></tr><tr><td class='line-number'><a name='L218' href='#L218'><pre>218</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>        if (ast) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L218' href='#L218'><span>218:13</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>3</span>, <span class='None'>False</span>: <span class='covered-line'>1</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L219' href='#L219'><pre>219</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>            if (auto prog = std::dynamic_pointer_cast&lt;ScmProgram&gt;(ast)) {</pre><div class='expansion-view'><pre>  Branch (<span class='line-number'><a name='L219' href='#L219'><span>219:22</span></a></span>): [<span class='None'>True</span>: <span class='covered-line'>1</span>, <span class='None'>False</span>: <span class='covered-line'>2</span>]
+</pre></div></td></tr><tr><td class='line-number'><a name='L220' href='#L220'><pre>220</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>                return prog;</pre></td></tr><tr><td class='line-number'><a name='L221' href='#L221'><pre>221</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>            }</pre></td></tr><tr><td class='line-number'><a name='L222' href='#L222'><pre>222</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            std::vector&lt;AstPtr&gt; steps;</pre></td></tr><tr><td class='line-number'><a name='L223' href='#L223'><pre>223</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            steps.push_back(ast);</pre></td></tr><tr><td class='line-number'><a name='L224' href='#L224'><pre>224</pre></a></td><td class='covered-line'><pre>2</pre></td><td class='code'><pre>            return std::make_shared&lt;ScmProgram&gt;(std::move(steps));</pre></td></tr><tr><td class='line-number'><a name='L225' href='#L225'><pre>225</pre></a></td><td class='covered-line'><pre>3</pre></td><td class='code'><pre>        }</pre></td></tr><tr><td class='line-number'><a name='L226' href='#L226'><pre>226</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L227' href='#L227'><pre>227</pre></a></td><td class='covered-line'><pre>1</pre></td><td class='code'><pre>        throw std::runtime_error(&quot;Failed to parse S-Expression AST.&quot;);</pre></td></tr><tr><td class='line-number'><a name='L228' href='#L228'><pre>228</pre></a></td><td class='covered-line'><pre>4</pre></td><td class='code'><pre>    }</pre></td></tr><tr><td class='line-number'><a name='L229' href='#L229'><pre>229</pre></a></td><td class='skipped-line'></td><td class='code'><pre>};</pre></td></tr><tr><td class='line-number'><a name='L230' href='#L230'><pre>230</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L231' href='#L231'><pre>231</pre></a></td><td class='skipped-line'></td><td class='code'><pre>} // namespace impulse::impscm</pre></td></tr><tr><td class='line-number'><a name='L232' href='#L232'><pre>232</pre></a></td><td class='skipped-line'></td><td class='code'><pre></pre></td></tr><tr><td class='line-number'><a name='L233' href='#L233'><pre>233</pre></a></td><td class='skipped-line'></td><td class='code'><pre>#endif // IMPULSE_SEXPR_HPP</pre></td></tr></table></div></body></html>

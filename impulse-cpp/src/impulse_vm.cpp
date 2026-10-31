@@ -31,6 +31,10 @@
 #endif
 
 // Off-heap BitSet slice struct
+// TODO(perf, TODO.md §5.1): Add active word-range watermarks [min_word .. max_word],
+// max_possible_cardinality(), and tighten_bounds() (matching Java OffHeapBitSet) so
+// clear(), OP_CSR_WALK, OP_SET_UNION/INTERSECT/DIFFERENCE/CARDINALITY, and OP_STABLE_CHECK
+// only touch active words instead of scanning all words_per_bitset (>= 1,024 words).
 struct VmBitSet {
     uint64_t* words = nullptr;
     size_t word_count = 0;

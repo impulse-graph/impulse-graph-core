@@ -86,6 +86,9 @@ impl<'a> Traversal<'a> {
     }
 
     /// Executes the traversal and returns the active node IDs as a sorted vector.
+    /// TODO(perf, TODO.md §5.4): Replace per-hop HashSet<u64> with a word-range-bounded
+    /// bitset [min_word .. max_word] and use Section 6 CSC buffers (get_csc_col_offsets /
+    /// get_csc_row_indices) for StepDirection::In instead of O(V + E) CSR row scanning.
     pub fn to_vec(&self) -> Result<Vec<u64>, ImpulseError> {
         let mut current_frontier = vec![self.start_node];
 

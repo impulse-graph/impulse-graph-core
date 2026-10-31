@@ -406,6 +406,11 @@ QueryBuilder& QueryBuilder::nop() {
 }
 
 // --- Control Flow ---
+// TODO(perf, TODO.md §5.2 & §5.3):
+// 1. Pool impulse_vm_context_t via thread_local in CompiledQuery::execute() and make
+//    float/double/node vector allocations in impulse_vm_context_create() lazy.
+// 2. Emit delta-frontier propagation (OP_SET_DIFFERENCE + OP_JZ + OP_SET_UNION + OP_SWAP_REG)
+//    in repeatUntilStable() and reflexive bounded repeat(k, ...) (matching Java ImpOpsBytecodeEmitter).
 
 QueryBuilder& QueryBuilder::repeat(int count, const std::function<void(QueryBuilder&)>& body) {
     uint16_t counter_reg = allocateRegister();

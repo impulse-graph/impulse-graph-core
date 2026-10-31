@@ -1,7 +1,7 @@
 # Doxyfile for Impulse Graph C++ Engine (impulse-cpp)
 
-PROJECT_NAME           = "Impulse Graph C++ Engine"
-PROJECT_NUMBER         = "2.4.0"
+PROJECT_NAME           = "Impulse Graph Engine C-ABI & C++20 Kernel"
+PROJECT_NUMBER         = "0.9.0"
 PROJECT_BRIEF          = "High-Performance Zero-Copy C-ABI Kernel and C++20 Fluent VM Engine"
 OUTPUT_DIRECTORY       = "build/docs"
 CREATE_SUBDIRS         = NO
