@@ -265,6 +265,25 @@ public:
             uint16_t aid = (expr.list.size() > 2 && !expr.list[2].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[2].atom)) : 0;
             uint8_t met = (expr.list.size() > 3 && !expr.list[3].atom.empty()) ? static_cast<uint8_t>(std::stoul(expr.list[3].atom)) : 0;
             return std::make_shared<ScmVectorRerankDot>(qreg, aid, met);
+        } else if (head == "fixpoint" && expr.list.size() >= 2) {
+            std::string rel = expr.list[1].atom;
+            int max_iter = (expr.list.size() > 2 && !expr.list[2].atom.empty() && std::isdigit(static_cast<unsigned char>(expr.list[2].atom[0])))
+                ? std::stoi(expr.list[2].atom) : 100;
+            WalkDirection dir = WalkDirection::FORWARD_CSR;
+            std::vector<AstPtr> body;
+            for (size_t i = 2; i < expr.list.size(); ++i) {
+                if (expr.list[i].atom == ":csc") dir = WalkDirection::REVERSE_CSC;
+                else if (expr.list[i].is_list) {
+                    auto b = build(expr.list[i]);
+                    if (b) body.push_back(b);
+                }
+            }
+            auto fp = std::make_shared<ScmFixpoint>(rel, dir, max_iter);
+            if (!rel.empty() && std::isdigit(static_cast<unsigned char>(rel[0]))) {
+                fp->physical_rel_id = std::stoi(rel);
+            }
+            fp->body_steps = std::move(body);
+            return fp;
         }
 
         return nullptr;
