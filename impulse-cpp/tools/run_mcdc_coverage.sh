@@ -75,9 +75,16 @@ xcrun llvm-cov report \
     "${CPP_DIR}/src/impulse_vm_context.cpp" \
     "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_snapshot_writer.cpp" \
+    "${CPP_DIR}/src/impulse_graph_internal.hpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_traversal.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_multilane.cpp" \
+    "${CPP_DIR}/src/impulse_statement_c_api.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_internal.hpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
+    "${CPP_DIR}/include/impulse_scm_ast.hpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
@@ -106,9 +113,16 @@ xcrun llvm-cov show \
     "${CPP_DIR}/src/impulse_vm_context.cpp" \
     "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_snapshot_writer.cpp" \
+    "${CPP_DIR}/src/impulse_graph_internal.hpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_traversal.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_multilane.cpp" \
+    "${CPP_DIR}/src/impulse_statement_c_api.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_internal.hpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
+    "${CPP_DIR}/include/impulse_scm_ast.hpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
@@ -136,9 +150,16 @@ xcrun llvm-cov show \
     "${CPP_DIR}/src/impulse_vm_context.cpp" \
     "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
+    "${CPP_DIR}/src/impulse_snapshot_writer.cpp" \
+    "${CPP_DIR}/src/impulse_graph_internal.hpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_traversal.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_multilane.cpp" \
+    "${CPP_DIR}/src/impulse_statement_c_api.cpp" \
+    "${CPP_DIR}/src/impulse_vm_fluent_internal.hpp" \
     "${CPP_DIR}/src/impulse_simd.cpp" \
+    "${CPP_DIR}/include/impulse_scm_ast.hpp" \
     "${CPP_DIR}/include/impulse_compiler.hpp" \
     "${CPP_DIR}/include/impulse_sexpr.hpp" \
     "${CPP_DIR}/include/impulse_math_ops.h" \
