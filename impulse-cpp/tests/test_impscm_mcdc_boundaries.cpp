@@ -548,6 +548,65 @@ void test_mcdc_impk_compiler() {
     assert(impscm_ir.find("ewise-add a b") != std::string::npos);
     assert(impscm_ir.find("pagerank-step 0.85") != std::string::npos);
     assert(impscm_ir.find("cc-afforest") != std::string::npos);
+    assert(impscm_ir.find("degree-norm A") != std::string::npos);
+    assert(impscm_ir.find("topk v 5") != std::string::npos);
+
+    // Multi-lane SpMM (0xC0..0xC9) & Hybrid Vector ANN/Rerank (0xCA..0xCB) in ImpK
+    std::string ml_vec_script =
+        "h = ann_search(edge, q, 8, 1)\n"
+        "s = rerank_dot(h, q, 0, cosine)\n"
+        "L0 = lane_seeds(10, 20, 30)\n"
+        "Lg = lane_groups([0, 0, 1, 1], 2)\n"
+        "Lm = lane_edge_mask(L0, edge, [2, 0])\n"
+        "Y1 = lane_spmm(edge, Lm, 0x04)\n"
+        "Y2 = lane_spmm_csc(edge, Y1, fixpoint)\n"
+        "Lp = lane_prune(Y2, 1, 16, 0)\n"
+        "Q = lane_quorum(Lp, 2)\n"
+        "R_and = lane_reduce_and(Lp, 7)\n"
+        "R_attr = lane_reduce_attr(Lp, 0, argmin)\n"
+        "C = lane_set_cover(Lp, 255)\n";
+
+    auto ml_stmts = ImpKCompiler::parse(ml_vec_script);
+    assert(ml_stmts.size() == 12);
+    assert(ml_stmts[0].op_type == ImpKOpType::VectorAnnSearch);
+    assert(ml_stmts[0].bool_param == true);
+    assert(ml_stmts[1].op_type == ImpKOpType::VectorRerankDot);
+    assert(ml_stmts[1].int_param2 == 2); // cosine
+    assert(ml_stmts[2].op_type == ImpKOpType::LaneInitSeeds);
+    assert(ml_stmts[2].int_list.size() == 3);
+    assert(ml_stmts[3].op_type == ImpKOpType::LaneInitGroups);
+    assert(ml_stmts[4].op_type == ImpKOpType::LaneSetEdgeMask);
+    assert(ml_stmts[5].op_type == ImpKOpType::LaneSpmmCsr);
+    assert(ml_stmts[5].bool_param == true);
+    assert(ml_stmts[6].op_type == ImpKOpType::LaneSpmmCsc);
+    assert(ml_stmts[6].bool_param == true);
+    assert(ml_stmts[7].op_type == ImpKOpType::LanePruneMask);
+    assert(ml_stmts[8].op_type == ImpKOpType::LaneFilterQuorum);
+    assert(ml_stmts[9].op_type == ImpKOpType::LaneReduceAnd);
+    assert(ml_stmts[10].op_type == ImpKOpType::LaneReduceAttr);
+    assert(ml_stmts[10].int_param2 == 4); // argmin
+    assert(ml_stmts[11].op_type == ImpKOpType::LaneSetCover);
+
+    std::string ml_ir = ImpKCompiler::to_impscheme(ml_stmts);
+    auto ml_ast = ImpScmAstBuilder::parse(ml_ir);
+    assert(ml_ast != nullptr);
+    auto ml_compiled = ImpulseCompiler::compile(ml_ast);
+    std::string ml_disasm = ml_compiled.to_impas_string();
+    assert(ml_disasm.find("OP_VECTOR_ANN_SEARCH") != std::string::npos);
+    assert(ml_disasm.find("OP_VECTOR_RERANK_DOT") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_INIT_SEEDS") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_INIT_GROUPS") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_SET_EDGE_MASK") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_CSR_WALK") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_CSC_WALK") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_PRUNE_MASK") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_FILTER_QUORUM") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_REDUCE_AND") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_REDUCE_ATTR") != std::string::npos);
+    assert(ml_disasm.find("OP_LANE_SET_COVER") != std::string::npos);
+
+    auto direct_prog = ImpKCompiler::compile(ml_vec_script);
+    assert(direct_prog != nullptr && direct_prog->steps.size() == 13);
 
     // Error case: unexpected token in expect()
     try {
