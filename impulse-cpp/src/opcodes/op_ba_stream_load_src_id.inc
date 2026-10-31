@@ -1,6 +1,15 @@
+#ifndef OP_BA_CONTRACT_DEFINED
+#define OP_BA_CONTRACT_DEFINED
 /**
  * @file op_ba_stream_load_src_id.inc
  * @brief Opcode 0xBA: OP_STREAM_LOAD_SRC_ID — Loads current edge's source node ID as float into s_regs[sDst].
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xBA (OP_STREAM_LOAD_SRC_ID)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,4 +32,5 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(actualSource); break;

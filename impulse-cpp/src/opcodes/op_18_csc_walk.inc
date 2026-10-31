@@ -1,3 +1,30 @@
+/**
+ * @file op_18_csc_walk.inc
+ * @brief Formal Contract for OP_CSC_WALK (0x18).
+ *
+ * Mnemonic: OP_CSC_WALK
+ * Opcode: 0x18
+ * Description: SIMD/parallel Compressed Sparse Column (CSC) backward/incoming traversal step.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFFFF, rel = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src: TYPE_NULL | TYPE_NODE_ID | TYPE_INT64 | TYPE_BITSET_HANDLE | TYPE_NODE_VECTOR
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if incoming frontier is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context CSC slots and bitset pool)
+ */
+#ifndef OP_18_CONTRACT_DEFINED
+#define OP_18_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x18: OP_CSC_WALK
 op_CSC_WALK: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,6 +34,8 @@ op_CSC_WALK: {
     uint16_t rel = (inst.payload >> 24) & 0xFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC));
 
     if (inst.flags & 0x80) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

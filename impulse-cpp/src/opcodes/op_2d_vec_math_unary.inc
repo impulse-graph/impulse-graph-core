@@ -1,3 +1,30 @@
+/**
+ * @file op_2d_vec_math_unary.inc
+ * @brief Formal Contract for OP_VEC_MATH_UNARY (0x2D).
+ *
+ * Mnemonic: OP_VEC_MATH_UNARY
+ * Opcode: 0x2D
+ * Description: Vectorized unary transcendental / algebraic mathematical evaluation.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, func_id = (payload >> 8) & 0xFF
+ *
+ * Inputs:
+ *  - src: FLOAT_OR_DBL | TYPE_FLOAT
+ *
+ * Outputs:
+ *  - dst: FLOAT_OR_DBL | TYPE_FLOAT
+ *
+ * Flags:
+ *  - Unmodified
+ *
+ * Context Requirement:
+ *  - Requires context (query_context vector pool)
+ */
+#ifndef OP_2D_CONTRACT_DEFINED
+#define OP_2D_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x2D: OP_VEC_MATH_UNARY
 op_VEC_MATH_UNARY: {
     const auto& inst = bytecode[vm_state->pc];
@@ -23,6 +50,7 @@ op_VEC_MATH_UNARY: {
         func_id = static_cast<uint8_t>(p1 ? p1 : p2);
     }
     VALIDATE_REG(src);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT)));
 
     uint8_t type_tag = inst.flags;
 

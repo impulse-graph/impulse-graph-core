@@ -1,3 +1,25 @@
+#ifndef OP_92_CONTRACT_DEFINED
+#define OP_92_CONTRACT_DEFINED
+/**
+ * @file op_92_map_dense_to_keys.inc
+ * @brief Opcode 0x92: OP_MAP_DENSE_TO_KEYS — Maps dense node IDs to string catalog keys.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0x92 (OP_MAP_DENSE_TO_KEYS)
+ *  - Destination: dst_reg (RegFieldLayout::DST_REG)
+ *  - Source: payload & 0xFF (RegFieldLayout::PAYLOAD_LOW8)
+ *  - Domain ID: (payload >> 8) & 0xFFFF
+ *  - Allowed Source Types: TYPE_SOURCE_SET (Node ID, Int64, BitSet, Node Vector), TYPE_LANE_FRONTIER
+ *  - Output Destination Types: TYPE_STRING_VECTOR
+ *  - Flags: Sets IMPULSE_VM_FLAG_ZF if result string vector is empty
+ *  - Requirements: Requires valid query_context
+ *  - Modifies Destination: True
+ */
+#define OP_92_DEFINED_FLAGS        0x00u
+#define OP_92_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_92_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_STRING_VECTOR))
+#endif
+
 // Opcode 0x92: OP_MAP_DENSE_TO_KEYS
 op_MAP_DENSE_TO_KEYS: {
     const auto& inst = bytecode[vm_state->pc];
@@ -6,6 +28,8 @@ op_MAP_DENSE_TO_KEYS: {
     uint16_t domain_id = (inst.payload >> 8) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_92_ALLOWED_SRC_TYPES);
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
 
@@ -90,4 +114,3 @@ op_MAP_DENSE_TO_KEYS: {
     vm_state->pc++;
     DISPATCH();
 }
-

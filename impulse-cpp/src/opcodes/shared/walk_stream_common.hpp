@@ -22,6 +22,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
     int shaderPcStart = inst.flags & 0xFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -32,13 +34,13 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
     active_sources.clear();
     if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         active_sources.push_back(static_cast<uint32_t>(vm_state->registers[src]));
-    } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR) {
-        int h_src_vec = static_cast<int>(vm_state->registers[src]);
-        const auto& vec = vm_state->query_context->node_vectors[h_src_vec];
-        size_t vlen = vm_state->query_context->node_vector_lengths[h_src_vec];
-        if (vlen == 0 || vlen > vec.size()) vlen = vec.size();
-        for (size_t i = 0; i < vlen; ++i) {
-            active_sources.push_back(static_cast<uint32_t>(vec[i]));
+    } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR || vm_state->register_types[src] == TYPE_UINT64_VECTOR) {
+        const uint64_t* ptr = nullptr;
+        size_t len = 0;
+        if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &ptr, &len) && ptr) {
+            for (size_t i = 0; i < len; ++i) {
+                active_sources.push_back(static_cast<uint32_t>(ptr[i]));
+            }
         }
     } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
         int h_src_bs = static_cast<int>(vm_state->registers[src]);

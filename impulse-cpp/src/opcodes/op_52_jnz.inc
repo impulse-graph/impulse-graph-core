@@ -1,3 +1,17 @@
+/**
+ * Formal Opcode Contract: OP_JNZ (0x52)
+ *
+ * Layout:
+ *   payload:          int32_t PC jump offset if ZF == 0
+ *   allowed_src:      none
+ *   requires_ctx:     false
+ */
+#ifndef OP_52_CONTRACT_DEFINED
+#define OP_52_CONTRACT_DEFINED
+#define OP_52_DEFINED_FLAGS        0x00u
+#define OP_52_OUTPUT_DST_TYPES     IMP_TYPES_NONE
+#endif
+
 // Opcode 0x52: OP_JNZ
 op_JNZ: {
     const auto& inst = bytecode[vm_state->pc];

@@ -1,3 +1,24 @@
+/**
+ * Formal Opcode Contract: OP_SET_DIFFERENCE (0x32)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   aux1_reg:         (inst.payload >> 16) & 0xFFFF (PAYLOAD_HIGH16)
+ *   allowed_src:      IMP_TYPES_SOURCE_SET | TYPE_LANE_FRONTIER
+ *   allowed_aux1:     IMP_TYPES_SOURCE_SET | TYPE_LANE_FRONTIER
+ *   output_dst:       TYPE_BITSET_HANDLE | TYPE_LANE_FRONTIER
+ *   flags:            ZF set if empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_32_CONTRACT_DEFINED
+#define OP_32_CONTRACT_DEFINED
+#define OP_32_DEFINED_FLAGS        0x00u
+#define OP_32_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE))
+#define OP_32_ALLOWED_AUX1_TYPES   (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE))
+#define OP_32_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#endif
+
 // Opcode 0x32: OP_SET_DIFFERENCE
 op_SET_DIFFERENCE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,6 +28,9 @@ op_SET_DIFFERENCE: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_32_ALLOWED_SRC_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_32_ALLOWED_AUX1_TYPES);
 
     uint8_t type1 = vm_state->register_types[src1];
     uint64_t val1 = vm_state->registers[src1];

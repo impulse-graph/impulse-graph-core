@@ -1,3 +1,23 @@
+/**
+ * Formal Opcode Contract: OP_VXM (0x42)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8, src_vec)
+ *   rel_id:           (inst.payload >> 8) & 0xFF
+ *   semiring_id:      (inst.payload >> 16) & 0xFFFF
+ *   flags:            optional mask register index + 1 (0 = unmasked)
+ *   allowed_src:      IMP_TYPES_FLOAT_OR_DBL
+ *   output_dst:       IMP_TYPES_FLOAT_OR_DBL
+ *   requires_ctx:     true
+ */
+#ifndef OP_42_CONTRACT_DEFINED
+#define OP_42_CONTRACT_DEFINED
+#define OP_42_DEFINED_FLAGS        0xFFu
+#define OP_42_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL)
+#define OP_42_OUTPUT_DST_TYPES     (IMP_TYPES_FLOAT_OR_DBL)
+#endif
+
 // Opcode 0x42: OP_VXM
 op_VXM: {
     const auto& inst = bytecode[vm_state->pc];
@@ -8,13 +28,45 @@ op_VXM: {
     uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_42_ALLOWED_SRC_TYPES);
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) {
-        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    if (!slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty()) {
+        if (!slot.offsets_ptr || !slot.targets_ptr) {
+            return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        }
+        auto* mut_slot = const_cast<BoundRelationSlot*>(&slot);
+        uint32_t nc = static_cast<uint32_t>(slot.node_count > 0 ? slot.node_count : vm_state->query_context->max_nodes);
+        uint32_t ec = static_cast<uint32_t>(slot.edge_count);
+        if (ec == 0 && nc > 0) {
+            ec = static_cast<uint32_t>(slot.get_csr_offset(nc));
+        }
+        mut_slot->dynamic_csc_offsets.assign(nc + 1, 0);
+        for (uint32_t e = 0; e < ec; ++e) {
+            uint64_t tgt = slot.get_csr_target(e);
+            if (tgt < nc) mut_slot->dynamic_csc_offsets[tgt + 1]++;
+        }
+        for (uint32_t i = 0; i < nc; ++i) {
+            mut_slot->dynamic_csc_offsets[i + 1] += mut_slot->dynamic_csc_offsets[i];
+        }
+        mut_slot->dynamic_csc_targets.resize(ec, 0);
+        std::vector<uint32_t> cur_pos = mut_slot->dynamic_csc_offsets;
+        for (uint32_t u = 0; u < nc; ++u) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                uint64_t v = slot.get_csr_target(e);
+                if (v < nc) {
+                    uint32_t pos = cur_pos[v]++;
+                    if (pos < ec) mut_slot->dynamic_csc_targets[pos] = u;
+                }
+            }
+        }
+        mut_slot->csc_node_count = nc;
     }
 
     size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;

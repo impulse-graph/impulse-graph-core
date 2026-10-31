@@ -1,3 +1,30 @@
+/**
+ * @file op_09_init_mock_graph.inc
+ * @brief Formal Contract for OP_INIT_MOCK_GRAPH (0x09).
+ *
+ * Mnemonic: OP_INIT_MOCK_GRAPH
+ * Opcode: 0x09
+ * Description: Initializes mock CSR/CSC graph topology from inline data buffer into internal slot.
+ *
+ * Operands:
+ *  - slot_id = inst.dst_reg, offset = payload & 0xFFFF, node_count = payload >> 16
+ *
+ * Inputs:
+ *  - query_context->inline_data_ptr
+ *
+ * Outputs:
+ *  - Internal query_context->slots[slot_id]
+ *
+ * Flags:
+ *  - Unmodified
+ *
+ * Context Requirement:
+ *  - Requires context (query_context inline data and mock slots)
+ */
+#ifndef OP_09_CONTRACT_DEFINED
+#define OP_09_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x09: OP_INIT_MOCK_GRAPH
 op_INIT_MOCK_GRAPH: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];

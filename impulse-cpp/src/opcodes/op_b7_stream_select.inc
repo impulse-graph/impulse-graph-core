@@ -1,6 +1,15 @@
+#ifndef OP_B7_CONTRACT_DEFINED
+#define OP_B7_CONTRACT_DEFINED
 /**
  * @file op_b7_stream_select.inc
  * @brief Opcode 0xB7: OP_STREAM_SELECT — Per-edge ternary select: cond != 0.0f ? true_val : existing_dst.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xB7 (OP_STREAM_SELECT)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream target reg 0..15), low (cond reg 0..15), high (val reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_SELECT: {
                         s_regs[sDst] = (s_regs[sPayloadLow] != 0.0f) ? s_regs[sPayloadHigh] : s_regs[sDst];
                         break;

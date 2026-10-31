@@ -272,6 +272,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_multilane_vm tests/test_multilane_vm.cpp)
     target_link_libraries(test_multilane_vm PRIVATE impulse_graph_static)
     add_test(NAME test_multilane_vm COMMAND test_multilane_vm)
+
+    add_executable(test_opcode_contracts tests/test_opcode_contracts.cpp)
+    target_link_libraries(test_opcode_contracts PRIVATE impulse_graph_static)
+    add_test(NAME test_opcode_contracts COMMAND test_opcode_contracts)
 endif()
 
 # --- Examples ------------------------------------------------------------

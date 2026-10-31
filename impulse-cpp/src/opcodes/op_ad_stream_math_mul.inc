@@ -1,6 +1,15 @@
+#ifndef OP_AD_CONTRACT_DEFINED
+#define OP_AD_CONTRACT_DEFINED
 /**
  * @file op_ad_stream_math_mul.inc
  * @brief Opcode 0xAD: OP_STREAM_MATH_MUL — Per-edge float multiplication: s_regs[sDst] = s_regs[low] * s_regs[high].
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xAD (OP_STREAM_MATH_MUL)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream reg 0..15), low (stream reg 0..15), high (stream reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,4 +32,5 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_MATH_MUL: s_regs[sDst] = s_regs[sPayloadLow] * s_regs[sPayloadHigh]; break;

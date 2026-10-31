@@ -1,8 +1,36 @@
+/**
+ * Formal Opcode Contract: OP_VECTOR_MUL_ATTR (0x34)
+ *
+ * Layout:
+ *   Variant 0 (flags == 0): Scale vector by scalar float immediate
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     payload:        float scalar immediate
+ *     allowed_src:    none
+ *     output_dst:     TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR
+ *     requires_ctx:   true
+ *
+ *   Variant 1 (flags == 1): Multiply vector by attribute slot
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFF (PAYLOAD_LOW8)
+ *     attr_id:        (inst.payload >> 8) & 0xFF
+ *     rel_id:         (inst.payload >> 16) & 0xFF
+ *     allowed_src:    TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR | IMP_TYPES_INT_OR_NODE
+ *     output_dst:     TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR
+ *     requires_ctx:   true
+ */
+#ifndef OP_34_CONTRACT_DEFINED
+#define OP_34_CONTRACT_DEFINED
+#define OP_34_DEFINED_FLAGS        0x01u
+#define OP_34_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_INT_OR_NODE)
+#define OP_34_OUTPUT_DST_TYPES     (IMP_TYPES_FLOAT_OR_DBL)
+#endif
+
 // Opcode 0x34: OP_VECTOR_MUL_ATTR
 op_VECTOR_MUL_ATTR: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     size_t size = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR);
@@ -29,6 +57,7 @@ op_VECTOR_MUL_ATTR: {
         uint8_t attr_id = (inst.payload >> 8) & 0xFF;
         uint8_t rel_id = (inst.payload >> 16) & 0xFF;
         VALIDATE_REG(src_reg);
+        IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_34_ALLOWED_SRC_TYPES);
 
         if (rel_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         if (attr_id >= vm_state->query_context->attribute_slots[rel_id].size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

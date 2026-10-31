@@ -1,3 +1,24 @@
+/**
+ * @file op_68_kcore_decomposition.inc
+ * @brief Formal Contract for OP_KCORE_DECOMPOSITION (0x68).
+ *
+ * Syntax: OP_KCORE_DECOMPOSITION <dst_reg>, <src_reg> (payload: [src:8])
+ * Inputs:
+ *   - dst_reg: Target register receiving per-node coreness numbers (float vector)
+ *   - src_reg (payload_low8): Register holding relation ID
+ * Preconditions:
+ *   - src_reg must be TYPE_INT64, TYPE_NODE_ID, or TYPE_RELATION_ID
+ * Outputs:
+ *   - dst_reg set to TYPE_FLOAT_VECTOR
+ *   - Flags: ZF cleared
+ */
+#ifndef OP_68_CONTRACT_DEFINED
+#define OP_68_CONTRACT_DEFINED
+#define OP_68_DEFINED_FLAGS        0x00u
+#define OP_68_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_RELATION_ID))
+#define OP_68_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#endif
+
 // Opcode 0x68: OP_KCORE_DECOMPOSITION
 op_KCORE_DECOMPOSITION: {
     const auto& inst = bytecode[vm_state->pc];
@@ -6,12 +27,16 @@ op_KCORE_DECOMPOSITION: {
     VALIDATE_REG(dst);
     VALIDATE_REG(r_src);
 
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, r_src, OP_68_ALLOWED_SRC_TYPES);
+
     uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
-    if (rel_id >= vm_state->query_context->slots.size()) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    size_t n = 0;
+    const BoundRelationSlot* slot_ptr = nullptr;
+    if (rel_id < vm_state->query_context->slots.size()) {
+        slot_ptr = &vm_state->query_context->slots[rel_id];
+        n = std::max(slot_ptr->node_count, slot_ptr->csc_node_count);
     }
-    const auto& slot = vm_state->query_context->slots[rel_id];
-    size_t n = std::max(slot.node_count, slot.csc_node_count);
     if (n == 0) n = vm_state->query_context->max_nodes;
 
     int h_dst = acquire_float_vector(vm_state->query_context);
@@ -21,7 +46,8 @@ op_KCORE_DECOMPOSITION: {
     float* core = vm_state->query_context->float_vectors[h_dst].data();
     std::fill_n(core, n, 0.0f);
 
-    if (slot.offsets_ptr && slot.targets_ptr && n > 0) {
+    if (slot_ptr && slot_ptr->offsets_ptr && slot_ptr->targets_ptr && n > 0) {
+        const auto& slot = *slot_ptr;
         auto& deg = vm_state->query_context->scratch_int_deg;
         deg.clear();
         deg.resize(n, 0);

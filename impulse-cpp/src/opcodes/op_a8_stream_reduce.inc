@@ -1,6 +1,15 @@
+#ifndef OP_A8_CONTRACT_DEFINED
+#define OP_A8_CONTRACT_DEFINED
 /**
  * @file op_a8_stream_reduce.inc
  * @brief Opcode 0xA8: OP_STREAM_REDUCE — Reduces s_regs[sDst] into a global target float vector register.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xA8 (OP_STREAM_REDUCE)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream val reg 0..15), globalReg (sPayloadLow), monoid (sPayloadHigh)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_REDUCE: {
                         float val = s_regs[sDst];
                         uint16_t globalReg = sPayloadLow;

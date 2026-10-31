@@ -1,3 +1,28 @@
+/**
+ * Formal Opcode Contract: OP_LANE_SET_COVER (0xC9)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8)
+ *   mask_reg (aux1):  (inst.payload >> 8) & 0xFF (PAYLOAD_BYTE1)
+ *   max_pick:         (inst.payload >> 16) & 0xFFFF
+ *   allowed_src:      TYPE_LANE_FRONTIER
+ *   allowed_aux1:     TYPE_INT64 | TYPE_NODE_ID (zero skip allowed)
+ *   output_dst:       TYPE_NODE_VECTOR
+ *   modes (flags & 0x01):
+ *     0x00: Greedy Set Cover
+ *     0x01: Exact 2-Node Pair Cover
+ *   flags:            ZF set if result vector is empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_C9_CONTRACT_DEFINED
+#define OP_C9_CONTRACT_DEFINED
+#define OP_C9_DEFINED_FLAGS        0x01u
+#define OP_C9_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_C9_ALLOWED_AUX1_TYPES   IMP_TYPES_INT_OR_NODE
+#define OP_C9_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_NODE_VECTOR))
+#endif
+
 // Opcode 0xC9: OP_LANE_SET_COVER
 op_LANE_SET_COVER: {
     {
@@ -9,6 +34,10 @@ op_LANE_SET_COVER: {
         uint8_t flags = inst.flags;
         VALIDATE_REG(dst);
         VALIDATE_REG(src_reg);
+        if (mask_reg > 0) {
+            VALIDATE_REG(mask_reg);
+            IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, OP_C9_ALLOWED_AUX1_TYPES);
+        }
         if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
         if (vm_state->register_types[src_reg] != TYPE_LANE_FRONTIER) {
@@ -20,8 +49,7 @@ op_LANE_SET_COVER: {
         }
         const auto& lf = vm_state->query_context->lane_frontiers[h_src];
 
-        uint64_t target_mask = (mask_reg != 0 && mask_reg < 64 &&
-            (vm_state->register_types[mask_reg] == TYPE_INT64 || vm_state->register_types[mask_reg] == TYPE_NODE_ID))
+        uint64_t target_mask = (mask_reg > 0)
             ? (vm_state->registers[mask_reg] & lf.active_mask)
             : lf.active_mask;
 

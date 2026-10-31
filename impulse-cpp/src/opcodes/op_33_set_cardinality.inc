@@ -1,3 +1,21 @@
+/**
+ * Formal Opcode Contract: OP_SET_CARDINALITY (0x33)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   allowed_src:      IMP_TYPES_SOURCE_SET
+ *   output_dst:       TYPE_INT64
+ *   flags:            ZF set if count == 0
+ *   requires_ctx:     true
+ */
+#ifndef OP_33_CONTRACT_DEFINED
+#define OP_33_CONTRACT_DEFINED
+#define OP_33_DEFINED_FLAGS        0x00u
+#define OP_33_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET)
+#define OP_33_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_INT64))
+#endif
+
 // Opcode 0x33: OP_SET_CARDINALITY
 op_SET_CARDINALITY: {
     const auto& inst = bytecode[vm_state->pc];
@@ -5,6 +23,8 @@ op_SET_CARDINALITY: {
     uint16_t src = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_33_ALLOWED_SRC_TYPES);
 
     uint64_t count = 0;
     uint8_t stype = vm_state->register_types[src];

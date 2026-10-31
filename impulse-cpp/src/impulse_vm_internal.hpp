@@ -223,6 +223,7 @@ struct impulse_vm_context {
 
     // Pre-allocated multi-lane bit-sliced frontiers
     std::array<VmLaneFrontier, VM_MAX_LANE_FRONTIER_HANDLES> lane_frontiers;
+    std::array<bool, VM_MAX_LANE_FRONTIER_HANDLES> lane_frontiers_allocated{};
     size_t lane_frontiers_count = 0;
     std::vector<uint64_t> scratch_lanes;
     std::vector<uint64_t> scratch_lanes_b;
@@ -425,33 +426,41 @@ inline impulse_vm_context_t::MockAttribute* upsert_mock_edge_attr(impulse_vm_con
 inline int acquire_lane_frontier(impulse_vm_context_t* ctx, size_t node_count, uint32_t num_lanes) {
     if (!ctx) return -1;
     if (impulse_faultsim_step() != 0) return -1;
-    size_t idx = ctx->lane_frontiers_count;
-    if (idx >= VM_MAX_LANE_FRONTIER_HANDLES) {
-        idx = (idx % (VM_MAX_LANE_FRONTIER_HANDLES / 2)) + (VM_MAX_LANE_FRONTIER_HANDLES / 2);
-        ctx->lane_frontiers_count++;
-    } else {
-        ctx->lane_frontiers_count++;
-    }
-    uint32_t clamped_k = (num_lanes > 64u) ? 64u : num_lanes;
-    auto& lf = ctx->lane_frontiers[idx];
-    lf.lanes.assign(node_count, 0ULL);
-    lf.active_words.assign((node_count + 63) / 64, 0ULL);
-    lf.num_lanes = clamped_k;
-    lf.width = select_lane_width(clamped_k);
-    lf.active_mask = impulse_make_active_mask_u64(clamped_k);
-    if (lf.edge_trip_active_mask != 0) {
-        for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
-            if (lf.edge_trip_active_mask & (1u << r)) {
-                lf.edge_trip_masks[r].clear();
+    for (size_t i = 0; i < VM_MAX_LANE_FRONTIER_HANDLES; ++i) {
+        if (!ctx->lane_frontiers_allocated[i]) {
+            ctx->lane_frontiers_allocated[i] = true;
+            if (i >= ctx->lane_frontiers_count) {
+                ctx->lane_frontiers_count = i + 1;
             }
+            uint32_t clamped_k = (num_lanes > 64u) ? 64u : num_lanes;
+            auto& lf = ctx->lane_frontiers[i];
+            lf.lanes.assign(node_count, 0ULL);
+            lf.active_words.assign((node_count + 63) / 64, 0ULL);
+            lf.num_lanes = clamped_k;
+            lf.width = select_lane_width(clamped_k);
+            lf.active_mask = impulse_make_active_mask_u64(clamped_k);
+            if (lf.edge_trip_active_mask != 0) {
+                for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
+                    if (lf.edge_trip_active_mask & (1u << r)) {
+                        lf.edge_trip_masks[r].clear();
+                    }
+                }
+                lf.edge_trip_active_mask = 0;
+            }
+            return static_cast<int>(i);
         }
-        lf.edge_trip_active_mask = 0;
     }
-    return static_cast<int>(idx);
+    return -1; // Pool exhausted
+}
+
+inline void release_lane_frontier(impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES) {
+        ctx->lane_frontiers_allocated[handle] = false;
+    }
 }
 
 inline int clone_lane_frontier(impulse_vm_context_t* ctx, size_t src_handle) {
-    if (!ctx || src_handle >= VM_MAX_LANE_FRONTIER_HANDLES || src_handle >= ctx->lane_frontiers_count) return -1;
+    if (!ctx || src_handle >= VM_MAX_LANE_FRONTIER_HANDLES || !ctx->lane_frontiers_allocated[src_handle]) return -1;
     const auto& src = ctx->lane_frontiers[src_handle];
     int dst_handle = acquire_lane_frontier(ctx, src.lanes.size(), src.num_lanes);
     if (dst_handle < 0) return -1;

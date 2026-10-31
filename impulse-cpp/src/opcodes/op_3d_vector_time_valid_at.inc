@@ -1,3 +1,24 @@
+/**
+ * Formal Opcode Contract: OP_VECTOR_TIME_VALID_AT (0x3D)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8, time_reg)
+ *   rel_id:           (inst.payload >> 8) & 0xFF
+ *   attr_start:       (inst.payload >> 16) & 0xFF
+ *   attr_end:         (inst.payload >> 24) & 0xFF
+ *   allowed_src:      IMP_TYPES_INT_OR_NODE | TYPE_FLOAT_VECTOR | TYPE_NODE_VECTOR
+ *   output_dst:       TYPE_BITSET_HANDLE
+ *   flags:            ZF set if result bitset is empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_3D_CONTRACT_DEFINED
+#define OP_3D_CONTRACT_DEFINED
+#define OP_3D_DEFINED_FLAGS        0x00u
+#define OP_3D_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_NODE_VECTOR))
+#define OP_3D_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0x3D: OP_VECTOR_TIME_VALID_AT
 op_VECTOR_TIME_VALID_AT: {
     const auto& inst = bytecode[vm_state->pc];
@@ -8,6 +29,8 @@ op_VECTOR_TIME_VALID_AT: {
     uint16_t attr_end = (inst.payload >> 24) & 0xFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(time_reg);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, time_reg, OP_3D_ALLOWED_SRC_TYPES);
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

@@ -1,3 +1,28 @@
+#ifndef OP_93_CONTRACT_DEFINED
+#define OP_93_CONTRACT_DEFINED
+/**
+ * @file op_93_collect_value_map.inc
+ * @brief Opcode 0x93: OP_COLLECT_VALUE_MAP — Pairs dense nodes with scalar values into a string key-value map.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0x93 (OP_COLLECT_VALUE_MAP)
+ *  - Destination: dst_reg (RegFieldLayout::DST_REG)
+ *  - Source (Nodes): payload & 0xFF (RegFieldLayout::PAYLOAD_LOW8)
+ *  - Aux1 (Values): (payload >> 8) & 0xFF (RegFieldLayout::PAYLOAD_BYTE1)
+ *  - Domain ID: (payload >> 16) & 0xFFFF
+ *  - Allowed Source Types: TYPE_SOURCE_SET (Node ID, Int64, BitSet, Node Vector), TYPE_LANE_FRONTIER
+ *  - Allowed Aux1 Types: TYPE_FLOAT_VECTOR, TYPE_DOUBLE_VECTOR
+ *  - Output Destination Types: TYPE_VALUE_MAP
+ *  - Flags: Sets IMPULSE_VM_FLAG_ZF if resulting value map is empty
+ *  - Requirements: Requires valid query_context
+ *  - Modifies Destination: True
+ */
+#define OP_93_DEFINED_FLAGS        0x00u
+#define OP_93_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_93_ALLOWED_AUX1_TYPES   (IMP_TYPES_FLOAT_OR_DBL)
+#define OP_93_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_VALUE_MAP))
+#endif
+
 // Opcode 0x93: OP_COLLECT_VALUE_MAP
 op_COLLECT_VALUE_MAP: {
     const auto& inst = bytecode[vm_state->pc];
@@ -8,6 +33,9 @@ op_COLLECT_VALUE_MAP: {
     VALIDATE_REG(dst);
     VALIDATE_REG(nodes_reg);
     VALIDATE_REG(vals_reg);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, nodes_reg, OP_93_ALLOWED_SRC_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, vals_reg, OP_93_ALLOWED_AUX1_TYPES);
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
 
@@ -37,9 +65,17 @@ op_COLLECT_VALUE_MAP: {
 
         float val = 0.0f;
         if (vals_is_double) {
-            val = static_cast<float>(vm_state->query_context->double_vectors[vm_state->registers[vals_reg]][u]);
+            uint64_t v_h = vm_state->registers[vals_reg];
+            if (v_h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->double_vectors_allocated[v_h]) {
+                const auto& dvec = vm_state->query_context->double_vectors[v_h];
+                if (u < dvec.size()) val = static_cast<float>(dvec[u]);
+            }
         } else if (vm_state->register_types[vals_reg] == TYPE_FLOAT_VECTOR) {
-            val = vm_state->query_context->float_vectors[vm_state->registers[vals_reg]][u];
+            uint64_t v_h = vm_state->registers[vals_reg];
+            if (v_h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[v_h]) {
+                const auto& fvec = vm_state->query_context->float_vectors[v_h];
+                if (u < fvec.size()) val = fvec[u];
+            }
         }
 
         if (str_ptr) {
@@ -101,4 +137,3 @@ op_COLLECT_VALUE_MAP: {
     vm_state->pc++;
     DISPATCH();
 }
-

@@ -1,3 +1,30 @@
+/**
+ * @file op_23_vec_cmp_between.inc
+ * @brief Formal Contract for OP_VEC_CMP_BETWEEN (0x23).
+ *
+ * Mnemonic: OP_VEC_CMP_BETWEEN
+ * Opcode: 0x23
+ * Description: Vector elementwise range check (low <= x <= high) returning BitSet mask.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src_vec = payload & 0xFF, r_min = (payload >> 8) & 0xFF, r_max = (payload >> 16) & 0xFF
+ *
+ * Inputs:
+ *  - src_vec: NUMERIC_VEC, r_min, r_max: NUMERIC_VEC | INT_OR_NODE | TYPE_FLOAT
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if range match mask is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context bitset pool)
+ */
+#ifndef OP_23_CONTRACT_DEFINED
+#define OP_23_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x23: OP_VEC_CMP_BETWEEN
 op_VEC_CMP_BETWEEN: {
     const auto& inst = bytecode[vm_state->pc];
@@ -10,6 +37,9 @@ op_VEC_CMP_BETWEEN: {
     VALIDATE_REG(r_min);
     VALIDATE_REG(r_max);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, r_min, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, r_max, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL)));
 
     uint8_t type_vec = vm_state->register_types[src_vec];
     uint64_t val_vec = vm_state->registers[src_vec];

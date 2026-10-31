@@ -1,3 +1,30 @@
+/**
+ * @file op_14_node_filter.inc
+ * @brief Formal Contract for OP_NODE_FILTER (0x14).
+ *
+ * Mnemonic: OP_NODE_FILTER
+ * Opcode: 0x14
+ * Description: Filters active frontier nodes against a scalar attribute comparison.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, val_reg = (payload >> 8) & 0xFF, attr_id = (payload >> 16) & 0xFF
+ *
+ * Inputs:
+ *  - src: TYPE_BITSET_HANDLE | TYPE_NODE_ID, val_reg: TYPE_INT64 | TYPE_FLOAT
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if filtered set is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context attribute slots and bitset pool)
+ */
+#ifndef OP_14_CONTRACT_DEFINED
+#define OP_14_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x14: OP_NODE_FILTER
 op_NODE_FILTER: {
     const auto& inst = bytecode[vm_state->pc];
@@ -9,6 +36,10 @@ op_NODE_FILTER: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(val_reg);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, val_reg, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT)));
+
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

@@ -1,3 +1,31 @@
+/**
+ * @file op_16_csr_walk_reduce_sum.inc
+ * @brief Formal Contract for OP_CSR_WALK_REDUCE_SUM (0x16).
+ *
+ * Mnemonic: OP_CSR_WALK_REDUCE_SUM
+ * Opcode: 0x16
+ * Description: Traverses CSR edges accumulating edge/node attributes via parallel reduction sum.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, attr_id = (payload >> 8) & 0xFF, rel = payload >> 16
+ *
+ * Inputs:
+ *  - src: TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR | TYPE_INT64 | TYPE_NODE_ID
+ *
+ * Outputs:
+ *  - dst: TYPE_INT64 | TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR
+ *
+ * Flags:
+ *  - ZF: Set if sum is zero
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot and vector pool)
+ */
+#ifndef OP_16_CONTRACT_DEFINED
+#define OP_16_CONTRACT_DEFINED 1
+#define OP_16_ALLOWED_SRC_TYPES (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0x16: OP_CSR_WALK_REDUCE_SUM
 op_CSR_WALK_REDUCE_SUM: {
     const auto& inst = bytecode[vm_state->pc];
@@ -14,6 +42,8 @@ op_CSR_WALK_REDUCE_SUM: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_16_ALLOWED_SRC_TYPES);
 
     if (rel_id >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel_id];

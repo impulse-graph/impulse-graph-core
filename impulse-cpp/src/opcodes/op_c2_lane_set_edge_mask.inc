@@ -1,3 +1,30 @@
+/**
+ * Formal Opcode Contract: OP_LANE_SET_EDGE_MASK (0xC2)
+ *
+ * Layout:
+ *   Variant 0 (flags & 0x01 == 0): Clear Edge Mask
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     allowed_src:    none
+ *     output_dst:     TYPE_LANE_FRONTIER
+ *     flags:          no flags modified
+ *     requires_ctx:   true
+ *
+ *   Variant 1 (flags & 0x01 == 1): Set Edge Mask from Register
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     edge_reg (src): (inst.payload >> 8) & 0xFF (PAYLOAD_BYTE1)
+ *     allowed_src:    TYPE_INT64 | TYPE_NODE_ID
+ *     output_dst:     TYPE_LANE_FRONTIER
+ *     flags:          no flags modified
+ *     requires_ctx:   true
+ */
+#ifndef OP_C2_CONTRACT_DEFINED
+#define OP_C2_CONTRACT_DEFINED
+#define OP_C2_DEFINED_FLAGS        0x01u
+#define OP_C2_FLAG0_ALLOWED_SRC    IMP_TYPES_NONE
+#define OP_C2_FLAG1_ALLOWED_SRC    (IMP_TYPE_BIT(TYPE_INT64) | IMP_TYPE_BIT(TYPE_NODE_ID) | IMP_TYPES_NODE_VEC)
+#define OP_C2_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#endif
+
 // Opcode 0xC2: OP_LANE_SET_EDGE_MASK
 op_LANE_SET_EDGE_MASK: {
     {
@@ -9,12 +36,13 @@ op_LANE_SET_EDGE_MASK: {
         uint8_t flags = inst.flags;
         VALIDATE_REG(dst);
         VALIDATE_REG(src_reg);
-        VALIDATE_REG(edge_reg);
+        if (flags & 0x01) {
+            VALIDATE_REG(edge_reg);
+            IMPULSE_CHECK_REG_TYPE(vm_state, edge_reg, OP_C2_FLAG1_ALLOWED_SRC);
+        }
         if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
-        if (vm_state->register_types[src_reg] != TYPE_LANE_FRONTIER) {
-            return IMPULSE_VM_ERR_INVALID_REGISTER;
-        }
+        IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_C2_OUTPUT_DST_TYPES);
         size_t h_src = static_cast<size_t>(vm_state->registers[src_reg]);
         if (h_src >= VM_MAX_LANE_FRONTIER_HANDLES || h_src >= vm_state->query_context->lane_frontiers_count) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

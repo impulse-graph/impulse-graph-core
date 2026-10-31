@@ -1,11 +1,42 @@
+/**
+ * @file op_65_island_detect.inc
+ * @brief Formal Contract for OP_ISLAND_DETECT (0x65).
+ *
+ * Syntax: OP_ISLAND_DETECT <dst_reg>, <src1_reg>, <src2_reg> (payload: [rel_id:16 | src2:8 | src1:8])
+ * Inputs:
+ *   - dst_reg: Target register receiving count of critical disconnected pairs
+ *   - src1_reg (payload_low8): First set of monitored candidate branch/bus lines
+ *   - src2_reg (payload_byte1): Second set of monitored candidate lines
+ * Preconditions:
+ *   - src1_reg and src2_reg must be TYPE_INT64, TYPE_NODE_ID, or TYPE_BITSET_HANDLE
+ * Outputs:
+ *   - dst_reg set to TYPE_INT64
+ *   - Flags: None
+ */
+#ifndef OP_65_CONTRACT_DEFINED
+#define OP_65_CONTRACT_DEFINED
+#define OP_65_DEFINED_FLAGS        0x80u
+#define OP_65_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_65_ALLOWED_AUX1_TYPES   (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_65_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_INT64))
+#endif
+
 // Opcode 0x65: OP_ISLAND_DETECT
 op_ISLAND_DETECT: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
-    VALIDATE_REG(dst);
-
     uint8_t src1 = inst.payload & 0xFF;
     uint8_t src2 = (inst.payload >> 8) & 0xFF;
+    VALIDATE_REG(dst);
+    VALIDATE_REG(src1);
+    VALIDATE_REG(src2);
+
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_65_ALLOWED_SRC_TYPES);
+    if (src2 > 0 || vm_state->register_types[src2] != TYPE_NULL) {
+        IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_65_ALLOWED_AUX1_TYPES);
+    }
+
     uint16_t rel;
     if (inst.flags & 0x80) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

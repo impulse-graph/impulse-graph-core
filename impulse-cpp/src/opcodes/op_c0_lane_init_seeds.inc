@@ -1,3 +1,34 @@
+/**
+ * Formal Opcode Contract: OP_LANE_INIT_SEEDS (0xC0)
+ *
+ * Layout:
+ *   Variant 0 (flags & 0x01 == 0): Init Seeds from Node Vector / BitSet / ID / Null
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *     allowed_src:    TYPE_NULL | TYPE_NODE_ID | TYPE_INT64 | TYPE_BITSET_HANDLE |
+ *                     TYPE_NODE_VECTOR | TYPE_UINT64_VECTOR
+ *     output_dst:     TYPE_LANE_FRONTIER
+ *     flags:          ZF set if active frontier mask is empty
+ *     requires_ctx:   true
+ *
+ *   Variant 1 (flags & 0x01 == 1): Init Range Seeds
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     payload_hi16:   (inst.payload >> 16) & 0xFFFF (k seeds count)
+ *     allowed_src:    none (immediate range)
+ *     output_dst:     TYPE_LANE_FRONTIER
+ *     flags:          ZF set if active frontier mask is empty
+ *     requires_ctx:   true
+ */
+#ifndef OP_C0_CONTRACT_DEFINED
+#define OP_C0_CONTRACT_DEFINED
+#define OP_C0_DEFINED_FLAGS        0x01u
+#define OP_C0_FLAG0_ALLOWED_SRC    (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_NODE_ID) | \
+                                    IMP_TYPE_BIT(TYPE_INT64) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | \
+                                    IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#define OP_C0_FLAG1_ALLOWED_SRC    IMP_TYPES_NONE
+#define OP_C0_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#endif
+
 // Opcode 0xC0: OP_LANE_INIT_SEEDS
 op_LANE_INIT_SEEDS: {
     {

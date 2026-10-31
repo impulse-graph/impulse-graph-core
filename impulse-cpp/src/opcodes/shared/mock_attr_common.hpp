@@ -17,8 +17,14 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
     uint16_t src_reg = inst.payload & 0xFF;
     uint16_t mask_reg = (inst.payload >> 8) & 0xFF;
     VALIDATE_REG(src_reg);
+    VALIDATE_REG(mask_reg);
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, IMP_TYPES_NUMERIC_VEC);
+    if (mask_reg != 0) {
+        IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
+    }
 
     {
         auto* ma_ptr = IsNodeAttr

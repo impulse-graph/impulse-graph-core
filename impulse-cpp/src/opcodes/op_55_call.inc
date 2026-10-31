@@ -1,3 +1,17 @@
+/**
+ * Formal Opcode Contract: OP_CALL (0x55)
+ *
+ * Layout:
+ *   payload:          uint32_t callee target PC
+ *   allowed_src:      none
+ *   requires_ctx:     false
+ */
+#ifndef OP_55_CONTRACT_DEFINED
+#define OP_55_CONTRACT_DEFINED
+#define OP_55_DEFINED_FLAGS        0x00u
+#define OP_55_OUTPUT_DST_TYPES     IMP_TYPES_NONE
+#endif
+
 // Opcode 0x55: OP_CALL
 op_CALL: {
     const auto& inst = bytecode[vm_state->pc];

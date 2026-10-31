@@ -1,3 +1,30 @@
+/**
+ * @file op_11_csr_walk_filtered.inc
+ * @brief Formal Contract for OP_CSR_WALK_FILTERED (0x11).
+ *
+ * Mnemonic: OP_CSR_WALK_FILTERED
+ * Opcode: 0x11
+ * Description: CSR forward traversal with target-side in-flight BitSet membership filter.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, filter = (payload >> 8) & 0xFF, rel = payload >> 16
+ *
+ * Inputs:
+ *  - src: SOURCE_SET, filter: TYPE_BITSET_HANDLE
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if filtered frontier is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot slots and bitset pool)
+ */
+#ifndef OP_11_CONTRACT_DEFINED
+#define OP_11_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x11: OP_CSR_WALK_FILTERED
 op_CSR_WALK_FILTERED: {
     const auto& inst = bytecode[vm_state->pc];
@@ -19,6 +46,9 @@ op_CSR_WALK_FILTERED: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(filter_reg);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
+    IMPULSE_CHECK_REG_TYPE(vm_state, filter_reg, IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];
