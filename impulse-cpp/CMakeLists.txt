@@ -57,7 +57,19 @@ set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(highway)
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
-add_library(impulse_graph SHARED src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_context.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
+add_library(impulse_graph SHARED
+    src/impulse_graph.cpp
+    src/impulse_snapshot_writer.cpp
+    src/impulse_index.cpp
+    src/impulse_simd.cpp
+    src/impulse_vm.cpp
+    src/impulse_vm_context.cpp
+    src/impulse_vm_fluent.cpp
+    src/impulse_vm_fluent_traversal.cpp
+    src/impulse_vm_fluent_multilane.cpp
+    src/impulse_statement_c_api.cpp
+    src/impulse_bytecode_emitter.cpp
+)
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -67,7 +79,19 @@ target_include_directories(impulse_graph PUBLIC
 target_link_libraries(impulse_graph PUBLIC hwy)
 
 # --- Static Library (.a / .lib) ------------------------------------------
-add_library(impulse_graph_static STATIC src/impulse_graph.cpp src/impulse_index.cpp src/impulse_simd.cpp src/impulse_vm.cpp src/impulse_vm_context.cpp src/impulse_vm_fluent.cpp src/impulse_bytecode_emitter.cpp)
+add_library(impulse_graph_static STATIC
+    src/impulse_graph.cpp
+    src/impulse_snapshot_writer.cpp
+    src/impulse_index.cpp
+    src/impulse_simd.cpp
+    src/impulse_vm.cpp
+    src/impulse_vm_context.cpp
+    src/impulse_vm_fluent.cpp
+    src/impulse_vm_fluent_traversal.cpp
+    src/impulse_vm_fluent_multilane.cpp
+    src/impulse_statement_c_api.cpp
+    src/impulse_bytecode_emitter.cpp
+)
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -94,6 +118,7 @@ install(FILES
     include/impulse_vm.h
     include/impulse_vm_fluent.hpp
     include/impulse_cel.h
+    include/impulse_scm_ast.hpp
     include/impulse_compiler.hpp
     include/impulse_cypher.hpp
     include/impulse_datalog.hpp

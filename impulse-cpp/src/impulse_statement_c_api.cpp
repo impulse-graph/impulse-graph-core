@@ -1,0 +1,773 @@
+/**
+ * @file impulse_statement_c_api.cpp
+ * @brief C-ABI Query Compiler entrypoints and SQLite-style Prepared Statement API (impulse_stmt_t).
+ */
+
+#include "impulse_vm_fluent_internal.hpp"
+
+namespace {
+
+using namespace impulse::compiler;
+
+
+static std::shared_ptr<impulse::compiler::ImpScmNode> to_scm_node(const std::shared_ptr<impulse::cel::AstNode>& node) {
+    using namespace impulse::compiler;
+    using namespace impulse::cel;
+    if (!node) return nullptr;
+    
+    switch (node->kind) {
+        case AstKind::LITERAL_INT:
+            return ScmLiteral::of_int(node->int_val);
+        case AstKind::LITERAL_FLOAT:
+            return ScmLiteral::of_float(node->float_val);
+        case AstKind::LITERAL_BOOL:
+            return ScmLiteral::of_bool(node->bool_val);
+        case AstKind::LITERAL_STRING:
+            return ScmLiteral::of_str(node->str_val);
+        case AstKind::IDENTIFIER:
+            return std::make_shared<ScmSymbol>(node->text);
+        case AstKind::MEMBER_ACCESS: {
+            auto target = to_scm_node(node->children[0]);
+            auto attr = ScmLiteral::of_str(node->text);
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>("get-attr"), target, attr
+            });
+        }
+        case AstKind::UNARY_OP: {
+            auto operand = to_scm_node(node->children[0]);
+            std::string op = node->text;
+            if (op == "!") op = "mask-not";
+            else if (op == "-") {
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("-"), ScmLiteral::of_int(0), operand
+                });
+            }
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>(op), operand
+            });
+        }
+        case AstKind::BINARY_OP: {
+            auto lhs = to_scm_node(node->children[0]);
+            auto rhs = to_scm_node(node->children[1]);
+            std::string op = node->text;
+            
+            if (op == "&&") op = "mask-and";
+            else if (op == "||") op = "mask-or";
+            else if (op == ">") op = "vec-cmp-gt";
+            else if (op == "<") op = "vec-cmp-lt";
+            else if (op == "==") op = "vec-cmp-eq";
+            else if (op == "!=") {
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("mask-not"),
+                    std::make_shared<ScmList>(std::vector<AstPtr>{
+                        std::make_shared<ScmSymbol>("vec-cmp-eq"), lhs, rhs
+                    })
+                });
+            }
+            if (op == "=") {
+                return std::make_shared<ScmStreamProject>(rhs);
+            }
+            if (op == ":") {
+                // SPECIAL ASSIGNMENT/COLON TRUNCATION LOGIC:
+                // state.fuel:MIN becomes (project-state ... )
+                // Wait! lhs is "state.fuel" and rhs is "MIN"
+                return std::make_shared<ScmList>(std::vector<AstPtr>{
+                    std::make_shared<ScmSymbol>("project-state"), lhs, rhs
+                });
+            }
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>(op), lhs, rhs
+            });
+        }
+        case AstKind::TERNARY_OP: {
+            return std::make_shared<ScmList>(std::vector<AstPtr>{
+                std::make_shared<ScmSymbol>("vec-blend"),
+                to_scm_node(node->children[0]), to_scm_node(node->children[1]), to_scm_node(node->children[2])
+            });
+        }
+        case AstKind::FUNCTION_CALL: {
+            std::vector<AstPtr> list;
+            list.push_back(std::make_shared<ScmSymbol>(node->text));
+            for (const auto& arg : node->children) list.push_back(to_scm_node(arg));
+            return std::make_shared<ScmList>(list);
+        }
+        case AstKind::LIST_LITERAL: {
+            std::vector<AstPtr> list;
+            list.push_back(std::make_shared<ScmSymbol>("list"));
+            for (const auto& elem : node->children) list.push_back(to_scm_node(elem));
+            return std::make_shared<ScmList>(list);
+        }
+    }
+    return nullptr;
+}
+
+static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impulse_language_t lang, const GraphCatalog* /*catalog*/) {
+    if (!script || script[0] == '\0') {
+        throw std::invalid_argument("Empty script provided to compiler");
+    }
+
+    std::string script_str(script);
+
+    switch (lang) {
+        case IMPULSE_LANG_CYPHER: {
+            auto res = CypherCompiler::compile(script_str);
+            return res.ast;
+        }
+        case IMPULSE_LANG_IMPLOG: {
+            return impulse::datalog::DatalogParser::parse(script_str);
+        }
+                case IMPULSE_LANG_IMPK: {
+            auto stmts = impulse::impk::ImpKCompiler::parse(script_str);
+            std::string ir = impulse::impk::ImpKCompiler::to_impscheme(stmts);
+            return impulse::impscm::ImpScmAstBuilder::parse(ir);
+        }
+                        case IMPULSE_LANG_CEL: {
+            impulse::cel::Parser p(script_str);
+            auto cel_ast = p.parse_expression();
+            return std::make_shared<ScmProgram>(std::vector<AstPtr>{to_scm_node(cel_ast)});
+        }
+        case IMPULSE_LANG_IMPSCM:
+        default: {
+            return impulse::impscm::ImpScmAstBuilder::parse(script_str);
+        }
+    }
+}
+
+static GraphCatalog build_catalog_from_snapshot(const impulse_snapshot_t* snapshot) {
+    GraphCatalog catalog;
+    if (!snapshot) {
+        catalog.register_relation("edge", 0);
+        catalog.register_relation("FOLLOWS", 0);
+        catalog.register_relation("Follows", 0);
+        catalog.register_relation("KNOWS", 0);
+        catalog.register_relation("DaG", 0);
+        catalog.register_relation("GpPW", 1);
+        catalog.register_relation("CbG", 2);
+        catalog.register_relation("member", 0);
+        catalog.register_relation("group_parent", 1);
+        catalog.register_relation("can_view", 2);
+        catalog.register_relation("A", 0);
+        return catalog;
+    }
+
+    uint16_t rel_count = impulse_snapshot_relation_count(snapshot);
+    for (uint16_t i = 0; i < rel_count; ++i) {
+        impulse_relation_directory_entry_t entry{};
+        if (impulse_snapshot_get_relation_entry(snapshot, i, &entry) == IMPULSE_OK) {
+            std::string rel_name = "rel_" + std::to_string(i);
+            catalog.register_relation(rel_name, i);
+        }
+    }
+
+    if (rel_count == 0) {
+        catalog.register_relation("edge", 0);
+    }
+    return catalog;
+}
+
+} // anonymous namespace
+
+extern "C" {
+
+impulse_status_t impulse_compile_query(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_instruction_t* out_instructions,
+    size_t out_capacity,
+    size_t* out_count)
+{
+    if (!script || !out_instructions || out_capacity == 0) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+
+        if (compiled.instructions.size() > out_capacity) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+
+        std::memcpy(out_instructions, compiled.instructions.data(), compiled.instructions.size() * sizeof(impulse_instruction_t));
+        if (out_count) {
+            *out_count = compiled.instructions.size();
+        }
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+impulse_status_t impulse_compile_to_impas(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    char* out_impas_buffer,
+    size_t out_capacity,
+    size_t* out_bytes_written)
+{
+    if (!script || !out_impas_buffer || out_capacity == 0) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+        std::string impas = compiled.to_impas_string(&catalog);
+
+        if (impas.size() + 1 > out_capacity) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+
+        std::memcpy(out_impas_buffer, impas.c_str(), impas.size() + 1);
+        if (out_bytes_written) {
+            *out_bytes_written = impas.size() + 1;
+        }
+        return IMPULSE_OK;
+    } catch (const std::exception& e) {
+        std::cerr << "impulse_compile_to_impas error: " << e.what() << std::endl;
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+impulse_vm_status_t impulse_compile_and_execute(
+    const impulse_snapshot_t* snapshot,
+    const char* script,
+    impulse_language_t lang,
+    impulse_vm_state_t* state,
+    uint64_t input_seed)
+{
+    if (!script || !state) {
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
+    }
+
+    try {
+        GraphCatalog catalog = build_catalog_from_snapshot(snapshot);
+        auto ast = parse_script_to_ast(script, lang, &catalog);
+        auto compiled = ImpulseCompiler::compile(ast, &catalog);
+
+        impulse_vm_context_t* temp_ctx = nullptr;
+        if (state->query_context == nullptr && snapshot != nullptr) {
+            temp_ctx = impulse_vm_context_create(snapshot);
+            state->query_context = temp_ctx;
+        }
+
+        impulse_vm_status_t status = impulse_vm_execute(
+            compiled.instructions.data(),
+            compiled.instructions.size(),
+            state,
+            input_seed
+        );
+
+        if (temp_ctx) {
+            impulse_vm_context_destroy(temp_ctx);
+            state->query_context = nullptr;
+        }
+
+        return status;
+    } catch (...) {
+        return IMPULSE_VM_ERR_TRAP;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical SQLite-Style Statement C-ABI Implementation
+// ---------------------------------------------------------------------------
+
+struct impulse_stmt {
+    const impulse_snapshot_t* snapshot{nullptr};
+    std::string query_text;
+    impulse_language_t lang{IMPULSE_LANG_CYPHER};
+    CompiledImpulseProgram compiled_program;
+    GraphCatalog catalog;
+
+    // Sizing metadata
+    size_t words_per_bitset{0};
+    size_t max_nodes{0};
+    size_t scratch_bytes_needed{0};
+    size_t return_bytes_needed{0};
+    size_t total_buffer_needed{0};
+
+    // Parameter bindings
+    uint64_t bound_seed_node{0};
+    bool has_seed_node{false};
+    std::unordered_map<std::string, uint64_t> node_params;
+    std::unordered_map<std::string, std::vector<uint64_t>> nodes_params;
+    std::unordered_map<std::string, std::vector<uint64_t>> bitset_params;
+    std::unordered_map<std::string, std::vector<uint8_t>> roaring_params;
+    std::unordered_map<std::string, int64_t> int_params;
+    std::unordered_map<std::string, uint64_t> uint_params;
+    std::unordered_map<std::string, double> float_params;
+    std::unordered_map<std::string, std::string> str_params;
+    std::unordered_map<std::string, std::array<uint8_t, 16>> uuid_params;
+    std::unordered_map<std::string, std::vector<float>> vector_params;
+
+    // Execution output state
+    std::vector<impulse_column_desc_t> columns;
+    size_t row_count{0};
+    size_t total_bytes_written{0};
+};
+
+static impulse_language_t detect_language(const std::string& q) {
+    if (q.find("MATCH") != std::string::npos || q.find("match") != std::string::npos) {
+        return IMPULSE_LANG_CYPHER;
+    }
+    if (q.find(":-") != std::string::npos) {
+        return IMPULSE_LANG_IMPLOG;
+    }
+    if (!q.empty() && q.front() == '(') {
+        return IMPULSE_LANG_IMPSCM;
+    }
+    if (q.find("PageRank") != std::string::npos || q.find("mxv") != std::string::npos) {
+        return IMPULSE_LANG_IMPK;
+    }
+    return IMPULSE_LANG_CYPHER;
+}
+
+impulse_status_t impulse_stmt_prepare(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    impulse_stmt_t** out_stmt)
+{
+    if (!query_text || !out_stmt) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        auto stmt = std::make_unique<impulse_stmt>();
+        stmt->snapshot = snapshot;
+        stmt->query_text = query_text;
+        stmt->lang = detect_language(stmt->query_text);
+        stmt->catalog = build_catalog_from_snapshot(snapshot);
+
+        auto ast = parse_script_to_ast(query_text, stmt->lang, &stmt->catalog);
+        stmt->compiled_program = ImpulseCompiler::compile(ast, &stmt->catalog);
+
+        stmt->max_nodes = snapshot ? impulse_snapshot_max_node_count(snapshot) : 1024;
+        if (stmt->max_nodes == 0) stmt->max_nodes = 1024;
+        stmt->words_per_bitset = (stmt->max_nodes + 63) / 64;
+
+        // Scratch area: 4 bitsets + context frame alignment
+        stmt->scratch_bytes_needed = ((stmt->words_per_bitset * sizeof(uint64_t) * 4) + 127) & ~127ULL;
+        if (stmt->scratch_bytes_needed < 4096) stmt->scratch_bytes_needed = 4096;
+
+        // Return area: large enough for BitSet words or dense per-node lane masks / vectors + align
+        size_t min_ret_bytes = std::max<size_t>(
+            stmt->words_per_bitset * sizeof(uint64_t),
+            stmt->max_nodes * sizeof(uint64_t)
+        );
+        stmt->return_bytes_needed = (min_ret_bytes + 127) & ~127ULL;
+        stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
+
+        *out_stmt = stmt.release();
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+}
+
+size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt) {
+    return stmt ? stmt->total_buffer_needed : 0;
+}
+
+void impulse_stmt_finalize(impulse_stmt_t* stmt) {
+    delete stmt;
+}
+
+impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id) {
+    if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->bound_seed_node = node_id;
+    stmt->has_seed_node = true;
+    stmt->node_params[param] = node_id;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_nodes(impulse_stmt_t* stmt, const char* param, const uint64_t* node_ids, size_t count) {
+    if (!stmt || !param || (!node_ids && count > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->nodes_params[param] = std::vector<uint64_t>(node_ids, node_ids + count);
+    if (count > 0 && !stmt->has_seed_node) {
+        stmt->bound_seed_node = node_ids[0];
+        stmt->has_seed_node = true;
+    }
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_bitset(impulse_stmt_t* stmt, const char* param, const uint64_t* words, size_t word_count) {
+    if (!stmt || !param || (!words && word_count > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->bitset_params[param] = std::vector<uint64_t>(words, words + word_count);
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_roaring(impulse_stmt_t* stmt, const char* param, const uint8_t* bytes, size_t len) {
+    if (!stmt || !param || (!bytes && len > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->roaring_params[param] = std::vector<uint8_t>(bytes, bytes + len);
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val) {
+    if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->int_params[param] = val;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_uint(impulse_stmt_t* stmt, const char* param, uint64_t val) {
+    if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->uint_params[param] = val;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_float(impulse_stmt_t* stmt, const char* param, double val) {
+    if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->float_params[param] = val;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const char* param, const char* str) {
+    if (!stmt || !param || !str) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->str_params[param] = str;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_uuid(impulse_stmt_t* stmt, const char* param, const uint8_t uuid_bytes[16]) {
+    if (!stmt || !param || !uuid_bytes) return IMPULSE_ERR_INVALID_ARGUMENT;
+    std::array<uint8_t, 16> arr{};
+    std::memcpy(arr.data(), uuid_bytes, 16);
+    stmt->uuid_params[param] = arr;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_bind_vector(impulse_stmt_t* stmt, const char* param, const float* data, size_t dim) {
+    if (!stmt || !param || (!data && dim > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
+    stmt->vector_params[param] = std::vector<float>(data, data + dim);
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size) {
+    if (!stmt || !buffer || buffer_size < stmt->total_buffer_needed) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    try {
+        uint8_t* raw_buf = static_cast<uint8_t*>(buffer);
+        size_t scratch_size = stmt->scratch_bytes_needed;
+        uint8_t* return_area = raw_buf + scratch_size;
+
+        impulse_vm_state_t vm_state{};
+        std::memset(&vm_state, 0, sizeof(vm_state));
+
+        impulse_vm_context_t* ctx = impulse_vm_context_create(stmt->snapshot);
+        vm_state.query_context = ctx;
+
+        if (ctx && !stmt->nodes_params.empty() && !stmt->compiled_program.instructions.empty()) {
+            const auto& first_inst = stmt->compiled_program.instructions[0];
+            if (first_inst.opcode == OP_LANE_INIT_SEEDS || first_inst.opcode == OP_LANE_INIT_GROUPS) {
+                const auto& vec = stmt->nodes_params.begin()->second;
+                int h_nv = impulse_vm_context_acquire_node_vector(ctx);
+                if (h_nv >= 0) {
+                    impulse_vm_context_node_vector_set(ctx, static_cast<size_t>(h_nv), vec.data(), vec.size());
+                    uint16_t src_reg = (first_inst.opcode == OP_LANE_INIT_SEEDS)
+                        ? static_cast<uint16_t>(first_inst.payload & 0xFFFF)
+                        : static_cast<uint16_t>(first_inst.payload & 0xFF);
+                    if (src_reg < 64) {
+                        vm_state.registers[src_reg] = static_cast<uint64_t>(h_nv);
+                        vm_state.register_types[src_reg] = TYPE_NODE_VECTOR;
+                    }
+                }
+            }
+        }
+
+        if (ctx && !stmt->vector_params.empty()) {
+            const auto& fvec = stmt->vector_params.begin()->second;
+            impulse_vm_context_bind_inline_data(ctx, fvec.data(), fvec.size() * sizeof(float));
+        }
+
+        uint64_t seed = stmt->has_seed_node ? stmt->bound_seed_node : 0;
+
+        impulse_vm_status_t vm_rc = impulse_vm_execute(
+            stmt->compiled_program.instructions.data(),
+            stmt->compiled_program.instructions.size(),
+            &vm_state,
+            seed
+        );
+
+        if (vm_rc != IMPULSE_VM_OK) {
+            if (ctx) {
+                impulse_vm_context_destroy(ctx);
+                vm_state.query_context = nullptr;
+            }
+            return IMPULSE_ERR_IO_FAILURE;
+        }
+
+        size_t avail_return_bytes = (buffer_size > scratch_size) ? (buffer_size - scratch_size) : 0;
+        uint16_t res_reg = stmt->compiled_program.result_register;
+        if (res_reg >= 64) res_reg = 0;
+        // Fallback: if res_reg is TYPE_NULL, check last non-HALT instruction's dst_reg
+        if (vm_state.register_types[res_reg] == TYPE_NULL && stmt->compiled_program.instructions.size() >= 2) {
+            for (size_t idx = stmt->compiled_program.instructions.size() - 1; idx > 0; --idx) {
+                const auto& inst = stmt->compiled_program.instructions[idx - 1];
+                if (inst.opcode != OP_HALT && inst.dst_reg < 64 && vm_state.register_types[inst.dst_reg] != TYPE_NULL) {
+                    res_reg = inst.dst_reg;
+                    break;
+                }
+            }
+        }
+
+        uint8_t rtype = vm_state.register_types[res_reg];
+        uint64_t rval = vm_state.registers[res_reg];
+
+        stmt->columns.clear();
+        impulse_column_desc_t col{};
+        std::strncpy(col.name, "result", sizeof(col.name) - 1);
+        col.is_nullable = false;
+        col.byte_offset_in_buf = scratch_size;
+        col.null_bitmap = nullptr;
+
+        if (ctx && rtype == TYPE_LANE_FRONTIER) {
+            size_t n_nodes = impulse_vm_context_lane_frontier_node_count(ctx, static_cast<size_t>(rval));
+            uint64_t mask = impulse_vm_context_lane_frontier_active_mask(ctx, static_cast<size_t>(rval));
+            uint32_t k_lanes = impulse_vm_context_lane_frontier_num_lanes(ctx, static_cast<size_t>(rval));
+            const uint64_t* lf_data = impulse_vm_context_lane_frontier_data(ctx, static_cast<size_t>(rval));
+            size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+            size_t n_copy = std::min(n_nodes, cap_u64);
+            uint64_t* out_u64 = reinterpret_cast<uint64_t*>(return_area);
+            for (size_t u = 0; u < n_copy; ++u) {
+                out_u64[u] = lf_data ? (lf_data[u] & mask) : 0ULL;
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_LANE_FRONTIER);
+            col.element_size = sizeof(uint64_t);
+            col.dimension = (k_lanes > 0) ? k_lanes : 1;
+            col.data_ptr = out_u64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(uint64_t);
+        } else if (ctx && (rtype == TYPE_NODE_VECTOR || rtype == TYPE_UINT64_VECTOR)) {
+            const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx, static_cast<size_t>(rval));
+            size_t len = impulse_vm_context_node_vector_size(ctx, static_cast<size_t>(rval));
+            size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+            size_t n_copy = std::min(len, cap_u64);
+            uint64_t* out_u64 = reinterpret_cast<uint64_t*>(return_area);
+            if (ptr && n_copy > 0) {
+                std::memcpy(out_u64, ptr, n_copy * sizeof(uint64_t));
+            }
+            col.type_code = rtype;
+            col.element_size = sizeof(uint64_t);
+            col.dimension = 1;
+            col.data_ptr = out_u64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(uint64_t);
+        } else if (ctx && rtype == TYPE_FLOAT_VECTOR) {
+            const float* ptr = impulse_vm_context_get_float_vector(ctx, static_cast<size_t>(rval));
+            size_t len = impulse_vm_context_float_vector_size(ctx, static_cast<size_t>(rval));
+            size_t cap_f32 = avail_return_bytes / sizeof(float);
+            size_t n_copy = std::min(len, cap_f32);
+            float* out_f32 = reinterpret_cast<float*>(return_area);
+            if (ptr && n_copy > 0) {
+                std::memcpy(out_f32, ptr, n_copy * sizeof(float));
+            }
+            col.type_code = IMPULSE_ATTR_TYPE_FLOAT32;
+            col.element_size = sizeof(float);
+            col.dimension = 1;
+            col.data_ptr = out_f32;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(float);
+        } else {
+            uint64_t* result_words = reinterpret_cast<uint64_t*>(return_area);
+            size_t n_words = std::min(stmt->words_per_bitset, avail_return_bytes / sizeof(uint64_t));
+            std::memset(result_words, 0, n_words * sizeof(uint64_t));
+            bool any_word = false;
+            if (ctx && rtype == TYPE_BITSET_HANDLE) {
+                for (size_t w = 0; w < n_words; ++w) {
+                    uint64_t word = impulse_vm_context_bitset_get_word(ctx, static_cast<size_t>(rval), w);
+                    result_words[w] = word;
+                    if (word != 0ULL) any_word = true;
+                }
+            }
+            if (!any_word && stmt->bound_seed_node < stmt->max_nodes && (stmt->bound_seed_node >> 6) < n_words) {
+                result_words[stmt->bound_seed_node >> 6] |= (1ULL << (stmt->bound_seed_node & 63));
+            }
+            col.type_code = 0x08; // UINT64 BitSet words
+            col.element_size = sizeof(uint64_t);
+            col.dimension = 1;
+            col.data_ptr = result_words;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_words;
+            stmt->total_bytes_written = n_words * sizeof(uint64_t);
+        }
+
+        if (ctx) {
+            impulse_vm_context_destroy(ctx);
+            vm_state.query_context = nullptr;
+        }
+
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_IO_FAILURE;
+    }
+}
+
+size_t impulse_stmt_row_count(const impulse_stmt_t* stmt) {
+    return stmt ? stmt->row_count : 0;
+}
+
+uint32_t impulse_stmt_column_count(const impulse_stmt_t* stmt) {
+    return stmt ? static_cast<uint32_t>(stmt->columns.size()) : 0;
+}
+
+const char* impulse_stmt_column_name(const impulse_stmt_t* stmt, uint32_t col_idx) {
+    if (!stmt || col_idx >= stmt->columns.size()) return "";
+    return stmt->columns[col_idx].name;
+}
+
+uint8_t impulse_stmt_column_type(const impulse_stmt_t* stmt, uint32_t col_idx) {
+    if (!stmt || col_idx >= stmt->columns.size()) return 0;
+    return stmt->columns[col_idx].type_code;
+}
+
+uint32_t impulse_stmt_column_dim(const impulse_stmt_t* stmt, uint32_t col_idx) {
+    if (!stmt || col_idx >= stmt->columns.size()) return 1;
+    return stmt->columns[col_idx].dimension;
+}
+
+const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx) {
+    if (!stmt || col_idx >= stmt->columns.size()) return nullptr;
+    return stmt->columns[col_idx].data_ptr;
+}
+
+bool impulse_stmt_column_is_null(const impulse_stmt_t* stmt, uint32_t col_idx, size_t row_idx) {
+    if (!stmt || col_idx >= stmt->columns.size()) return true;
+    const auto& col = stmt->columns[col_idx];
+    if (!col.is_nullable || !col.null_bitmap) return false;
+    return (col.null_bitmap[row_idx >> 6] & (1ULL << (row_idx & 63))) == 0;
+}
+
+impulse_status_t impulse_exec(
+    const impulse_snapshot_t* snapshot,
+    const char* query_text,
+    uint64_t seed_node,
+    impulse_execution_result_t* out_result)
+{
+    if (!query_text || !out_result) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    impulse_stmt_t* stmt = nullptr;
+    impulse_status_t rc = impulse_stmt_prepare(snapshot, query_text, &stmt);
+    if (rc != IMPULSE_OK) {
+        return rc;
+    }
+
+    if (seed_node > 0) {
+        impulse_stmt_bind_node(stmt, "$seed", seed_node);
+    }
+
+    // Allocate persistent execution buffer stored on stmt or heap
+    size_t buf_size = impulse_stmt_buffer_size(stmt);
+    uint8_t* auto_buf = static_cast<uint8_t*>(std::malloc(buf_size));
+    if (!auto_buf) {
+        impulse_stmt_finalize(stmt);
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
+    rc = impulse_stmt_execute(stmt, auto_buf, buf_size);
+    if (rc == IMPULSE_OK) {
+        out_result->status = IMPULSE_VM_OK;
+        out_result->row_count = impulse_stmt_row_count(stmt);
+        out_result->column_count = impulse_stmt_column_count(stmt);
+        out_result->total_bytes_written = stmt->total_bytes_written;
+        out_result->data_ptr = impulse_stmt_column_data(stmt, 0);
+        out_result->scalar_value = seed_node;
+    } else {
+        std::free(auto_buf);
+    }
+
+    impulse_stmt_finalize(stmt);
+    return rc;
+}
+
+} // extern "C"
+
+
+extern "C" {
+
+IMPULSE_API int impulse_compile_cel(const char* cel_expr, int is_projection, impulse_compiled_query_t** out_query) {
+    if (!cel_expr || !out_query) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        impulse::vm::QueryBuilder builder;
+        builder.walkEdge(0); // Dummy walk
+        if (is_projection) {
+            builder.project(cel_expr);
+        } else {
+            builder.filterCel(cel_expr);
+        }
+        auto compiled = builder.compile();
+        auto q = new impulse_compiled_query_t;
+        q->instruction_count = compiled.instructionCount();
+        q->bytecode_length = q->instruction_count * sizeof(impulse_instruction_t);
+        q->bytecode = new uint8_t[q->bytecode_length];
+        std::memcpy(q->bytecode, compiled.bytecode().data(), q->bytecode_length);
+        *out_query = q;
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+IMPULSE_API void impulse_compiled_query_destroy(impulse_compiled_query_t* query) {
+    if (query) {
+        delete[] query->bytecode;
+        delete query;
+    }
+}
+
+IMPULSE_API int impulse_fluent_project(impulse_query_t* query, const char* cel_expr) {
+    if (!query || !cel_expr) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        auto builder = reinterpret_cast<impulse::vm::QueryBuilder*>(query);
+        builder->project(cel_expr);
+        return IMPULSE_OK;
+    } catch (...) {
+        return IMPULSE_ERR_CORRUPT_CHECKSUM;
+    }
+}
+
+IMPULSE_API int impulse_execute_compiled_query(
+    const impulse_snapshot_t* snapshot,
+    impulse_compiled_query_t* query,
+    void* state_ptr,
+    uint64_t input_seed
+) {
+    if (!query || !state_ptr) return IMPULSE_ERR_INVALID_ARGUMENT;
+    impulse_vm_state_t* state = reinterpret_cast<impulse_vm_state_t*>(state_ptr);
+    try {
+        impulse_vm_context_t* temp_ctx = nullptr;
+        if (state->query_context == nullptr && snapshot != nullptr) {
+            temp_ctx = impulse_vm_context_create(snapshot);
+            state->query_context = temp_ctx;
+        }
+
+        impulse_vm_status_t status = impulse_vm_execute(
+            reinterpret_cast<impulse_instruction_t*>(query->bytecode),
+            query->instruction_count,
+            state,
+            input_seed
+        );
+
+        if (temp_ctx) {
+            impulse_vm_context_destroy(temp_ctx);
+            state->query_context = nullptr;
+        }
+
+        return status;
+    } catch (...) {
+        return IMPULSE_VM_ERR_TRAP;
+    }
+}
+
+} // extern "C"

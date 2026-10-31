@@ -16,17 +16,7 @@ if os.path.exists(cpp_dir) and os.path.exists(os.path.join(cpp_dir, "include")):
     os.makedirs(os.path.join(local_cpp_dir, "include"), exist_ok=True)
     os.makedirs(os.path.join(local_cpp_dir, "src"), exist_ok=True)
     shutil.copytree(os.path.join(cpp_dir, "include"), os.path.join(local_cpp_dir, "include"), dirs_exist_ok=True)
-    for cpp_file in [
-        "impulse_bytecode_emitter.cpp",
-        "impulse_graph.cpp",
-        "impulse_index.cpp",
-        "impulse_simd.cpp",
-        "impulse_vm.cpp",
-        "impulse_vm_fluent.cpp",
-    ]:
-        src_file = os.path.join(cpp_dir, "src", cpp_file)
-        if os.path.exists(src_file):
-            shutil.copy2(src_file, os.path.join(local_cpp_dir, "src", cpp_file))
+    shutil.copytree(os.path.join(cpp_dir, "src"), os.path.join(local_cpp_dir, "src"), dirs_exist_ok=True)
 
 if os.path.exists(local_cpp_dir) and os.path.exists(os.path.join(local_cpp_dir, "src", "impulse_graph.cpp")):
     inc_dir = os.path.abspath(os.path.join(local_cpp_dir, "include"))
@@ -100,10 +90,15 @@ ext_modules = [
             "src/impulse_python.cpp",
             f"{rel_src_prefix}/impulse_bytecode_emitter.cpp",
             f"{rel_src_prefix}/impulse_graph.cpp",
+            f"{rel_src_prefix}/impulse_snapshot_writer.cpp",
             f"{rel_src_prefix}/impulse_index.cpp",
             f"{rel_src_prefix}/impulse_simd.cpp",
             f"{rel_src_prefix}/impulse_vm.cpp",
+            f"{rel_src_prefix}/impulse_vm_context.cpp",
             f"{rel_src_prefix}/impulse_vm_fluent.cpp",
+            f"{rel_src_prefix}/impulse_vm_fluent_traversal.cpp",
+            f"{rel_src_prefix}/impulse_vm_fluent_multilane.cpp",
+            f"{rel_src_prefix}/impulse_statement_c_api.cpp",
         ]
         + (hwy_sources if not extra_objects else []),
         include_dirs=[

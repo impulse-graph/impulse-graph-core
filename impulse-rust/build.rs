@@ -164,11 +164,18 @@ fn main() {
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_internal.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/opcodes");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_traversal.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_multilane.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_statement_c_api.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_internal.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_snapshot_writer.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph_internal.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_simd.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_vm.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_graph.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_index.h");
+    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_scm_ast.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_compiler.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_cypher.hpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_datalog.hpp");
@@ -206,8 +213,32 @@ fn main() {
         &out_dir,
         has_omp,
     );
+    let obj_fluent_trav = compile_cpp(
+        "../impulse-cpp/src/impulse_vm_fluent_traversal.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_fluent_ml = compile_cpp(
+        "../impulse-cpp/src/impulse_vm_fluent_multilane.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_stmt_c_api = compile_cpp(
+        "../impulse-cpp/src/impulse_statement_c_api.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
     let obj_graph = compile_cpp(
         "../impulse-cpp/src/impulse_graph.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_writer = compile_cpp(
+        "../impulse-cpp/src/impulse_snapshot_writer.cpp",
         cpp_include,
         &out_dir,
         has_omp,
@@ -230,7 +261,11 @@ fn main() {
                 &obj_vm,
                 &obj_vm_ctx,
                 &obj_fluent,
+                &obj_fluent_trav,
+                &obj_fluent_ml,
+                &obj_stmt_c_api,
                 &obj_graph,
+                &obj_writer,
                 &obj_index,
             ])
             .status();
@@ -249,7 +284,11 @@ fn main() {
                 &obj_vm,
                 &obj_vm_ctx,
                 &obj_fluent,
+                &obj_fluent_trav,
+                &obj_fluent_ml,
+                &obj_stmt_c_api,
                 &obj_graph,
+                &obj_writer,
                 &obj_index,
             ])
             .status();
