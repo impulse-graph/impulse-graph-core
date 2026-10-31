@@ -50,7 +50,7 @@ jobs:
           - os: darwin
             arch: arm64
             libc: darwin
-            runner: macos-14
+            runner: macos-latest
             cmake_flags: ""
           # Windows x86_64 (MSVC /MT)
           - os: windows
@@ -114,7 +114,7 @@ jobs:
           # macOS Apple Silicon arm64
           - os: darwin
             arch: arm64
-            runner: macos-14
+            runner: macos-latest
           # Windows x86_64
           - os: windows
             arch: x86_64
@@ -206,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4

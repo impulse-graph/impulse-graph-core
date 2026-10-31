@@ -367,10 +367,20 @@ struct SteinerEdge {
     uint64_t lane_mask{0};
 };
 
+struct SteinerTripleKey {
+    std::string src_key;
+    std::string relation;
+    std::string tgt_key;
+    uint64_t lane_mask{0};
+};
+
 struct SteinerSubgraph {
     std::vector<uint32_t> bridge_nodes;
     std::vector<uint32_t> all_nodes;
     std::vector<SteinerEdge> edges;
+    std::vector<SteinerTripleKey> triples;
+
+    [[nodiscard]] const std::vector<SteinerTripleKey>& tripleKeys() const { return triples; }
 };
 
 class MultiLaneResult {
@@ -397,6 +407,17 @@ public:
 
     [[nodiscard]] std::vector<std::pair<uint32_t, uint32_t>> findSetCoverPairs(uint64_t target_mask = ~0ULL) const;
     [[nodiscard]] std::vector<uint32_t> findGreedySetCover(uint64_t target_mask = ~0ULL, uint32_t max_nodes = 8) const;
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> findKeySetCoverPairs(
+        const std::vector<std::string>& required_keys = {}) const;
+    [[nodiscard]] std::vector<std::string> findGreedyKeySetCover(
+        const std::vector<std::string>& required_keys = {}, uint32_t max_nodes = 8) const;
+
+    [[nodiscard]] std::vector<std::pair<uint64_t, float>> topKWithQuorum(
+        uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+        const std::string& attr_name = "", uint8_t metric = 0) const;
+    [[nodiscard]] std::vector<std::pair<std::string, float>> topKKeysWithQuorum(
+        uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+        const std::string& attr_name = "", uint8_t metric = 0) const;
 
 private:
     const impulse_snapshot_t* snapshot_{nullptr};
@@ -414,7 +435,14 @@ public:
 
     // --- Hop & Fixed-Point Transitions ---
     Traversal& out(const std::string& relation);
+    Traversal& out(const std::vector<std::string>& relations);
+    Traversal& out(std::initializer_list<std::string> relations) { return out(std::vector<std::string>(relations)); }
     Traversal& in(const std::string& relation);
+    Traversal& in(const std::vector<std::string>& relations);
+    Traversal& in(std::initializer_list<std::string> relations) { return in(std::vector<std::string>(relations)); }
+    Traversal& both(const std::string& relation);
+    Traversal& both(const std::vector<std::string>& relations);
+    Traversal& both(std::initializer_list<std::string> relations) { return both(std::vector<std::string>(relations)); }
     Traversal& outFiltered(const std::string& relation, uint32_t filter_id);
     Traversal& outPredicate(const std::string& relation, const std::string& edge_cel_predicate);
     Traversal& inPredicate(const std::string& relation, const std::string& edge_cel_predicate);
@@ -452,6 +480,8 @@ public:
     // --- Terminal Collectors ---
     [[nodiscard]] std::vector<uint64_t> collect() const;
     [[nodiscard]] std::vector<std::string> collectKeys() const;
+    [[nodiscard]] std::vector<std::pair<uint64_t, float>> topK(size_t k) const;
+    [[nodiscard]] std::vector<std::pair<std::string, float>> topKKeys(size_t k) const;
     [[nodiscard]] size_t count() const;
     [[nodiscard]] double reduceSum() const;
     [[nodiscard]] double walkReduceSum(const std::string& relation, const std::string& attr_name = "") const;
@@ -468,7 +498,8 @@ public:
 private:
     struct Step {
         enum class Kind {
-            OUT, IN, OUT_FILTERED, OUT_PREDICATE, IN_PREDICATE, OUT_2HOP,
+            OUT, IN, BOTH, OUT_MULTI, IN_MULTI, BOTH_MULTI,
+            OUT_FILTERED, OUT_PREDICATE, IN_PREDICATE, OUT_2HOP,
             REPEAT, REPEAT_UNTIL_STABLE,
             FILTER_CEL, PROJECT_CEL, VALID_AT,
             SET_UNION, SET_INTERSECT, SET_DIFFERENCE,
@@ -484,6 +515,7 @@ private:
         float f32_arg{0.0f};
         std::vector<uint64_t> other_nodes;
         std::vector<float> float_vec;
+        std::vector<std::string> rel_names;
     };
 
     const impulse_snapshot_t* snapshot_{nullptr};
@@ -512,8 +544,15 @@ public:
     // --- Hop & Fixed-Point Transitions ---
     MultiLaneTraversal& out(const std::string& relation);
     MultiLaneTraversal& out(const std::string& relation, const std::string& edge_cel_predicate);
+    MultiLaneTraversal& out(const std::vector<std::string>& relations);
+    MultiLaneTraversal& out(std::initializer_list<std::string> relations) { return out(std::vector<std::string>(relations)); }
     MultiLaneTraversal& in(const std::string& relation);
     MultiLaneTraversal& in(const std::string& relation, const std::string& edge_cel_predicate);
+    MultiLaneTraversal& in(const std::vector<std::string>& relations);
+    MultiLaneTraversal& in(std::initializer_list<std::string> relations) { return in(std::vector<std::string>(relations)); }
+    MultiLaneTraversal& both(const std::string& relation);
+    MultiLaneTraversal& both(const std::vector<std::string>& relations);
+    MultiLaneTraversal& both(std::initializer_list<std::string> relations) { return both(std::vector<std::string>(relations)); }
     MultiLaneTraversal& repeat(int iterations, const std::string& relation);
     MultiLaneTraversal& repeatUntilStable(const std::string& relation);
 
@@ -533,6 +572,12 @@ public:
     // --- Terminal Collectors ---
     [[nodiscard]] MultiLaneResult collect() const;
     [[nodiscard]] Traversal toQuorumTraversal(uint8_t min_lanes) const;
+    [[nodiscard]] std::vector<std::pair<uint64_t, float>> topKWithQuorum(
+        uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+        const std::string& attr_name = "", uint8_t metric = 0) const;
+    [[nodiscard]] std::vector<std::pair<std::string, float>> topKKeysWithQuorum(
+        uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+        const std::string& attr_name = "", uint8_t metric = 0) const;
     [[nodiscard]] std::vector<double> reducePerLane(const std::string& node_attribute, ReducerOp op) const;
     [[nodiscard]] std::vector<int64_t> argMinNodesPerLane(const std::string& node_attribute) const;
     [[nodiscard]] std::vector<int64_t> argMaxNodesPerLane(const std::string& node_attribute) const;
@@ -544,7 +589,8 @@ public:
 private:
     struct LaneStep {
         enum class Kind {
-            OUT, IN, REPEAT, REPEAT_UNTIL_STABLE,
+            OUT, IN, BOTH, OUT_MULTI, IN_MULTI, BOTH_MULTI,
+            REPEAT, REPEAT_UNTIL_STABLE,
             FILTER_CEL, PROJECT_CEL, PRUNE_WHERE_CEL, PRUNE_DENIED_BY, PRUNE_HUBS,
             WHERE_QUORUM, WHERE_MASK, MUST_HIT_AT_LEAST, MUST_AVOID_ALL
         } kind;
@@ -554,6 +600,7 @@ private:
         uint64_t mask_req{0};
         uint64_t mask_forbid{0};
         std::vector<uint32_t> lane_indices;
+        std::vector<std::string> rel_names;
     };
 
     const impulse_snapshot_t* snapshot_{nullptr};

@@ -473,6 +473,95 @@ static void test_domain_multilane_17_boundaries_and_fluent_pipeline() {
         impulse_vm_context_destroy(ctx);
     }
 
+    // 6. Issue #36: SteinerSubgraph triple extraction (edges & triples)
+    {
+        auto sg = snap.domain("Gene").multiLane()
+            .fromKeys({"0", "1"})
+            .out("rel_0")
+            .toSteinerSubgraph(2);
+        assert(!sg.bridge_nodes.empty());
+        assert(!sg.all_nodes.empty());
+        assert(!sg.edges.empty());
+        assert(sg.edges.size() == sg.triples.size());
+        assert(sg.tripleKeys().size() == sg.triples.size());
+        bool found_edge_0_2 = false;
+        for (size_t i = 0; i < sg.edges.size(); ++i) {
+            if (sg.edges[i].src_node == 0 && sg.edges[i].tgt_node == 2) {
+                found_edge_0_2 = true;
+                assert(sg.edges[i].lane_mask != 0ULL);
+                assert(sg.triples[i].src_key == "0");
+                assert(sg.triples[i].tgt_key == "2");
+                assert(sg.triples[i].relation == "rel_0");
+            }
+        }
+        assert(found_edge_0_2);
+    }
+
+    // 6. Issue #36: Undirected (.both) and Multi-Relation (.out/.in/.both with vector/initializer_list)
+    {
+        // Node 2 has incoming from {0, 1} and outgoing to {3, 4, 199}
+        auto u_both = snap.domain("Gene").from({2}).both("rel_0").collect();
+        bool has_0 = false, has_1 = false, has_3 = false, has_4 = false;
+        for (uint64_t u : u_both) {
+            if (u == 0) has_0 = true;
+            if (u == 1) has_1 = true;
+            if (u == 3) has_3 = true;
+            if (u == 4) has_4 = true;
+        }
+        assert(has_0 && has_1 && has_3 && has_4);
+
+        auto u_both_multi = snap.domain("Gene").from({2}).both({"rel_0", "rel_0"}).collect();
+        assert(u_both_multi == u_both);
+
+        auto ml_both = snap.domain("Gene").multiLane().fromSeeds({2, 3}).both("rel_0").collect();
+        // Seed 2 (lane 0) reaches 1 (backward) and 3 (forward); Seed 3 (lane 1) reaches 1 & 2 (backward) and 4 (forward)
+        // So node 1 is reached by both lane 0 and lane 1!
+        assert(ml_both.lanePopcountFor(1) == 2);
+
+        auto ml_both_multi = snap.domain("Gene").multiLane().fromSeeds({2, 3}).both({"rel_0", "rel_0"}).collect();
+        assert(ml_both_multi.lanePopcountFor(1) == 2);
+    }
+
+    // 7. Issue #36: Top-K Scored Extraction (.topK / .topKKeys & topKWithQuorum)
+    {
+        auto top2 = snap.domain("Gene").from({0}).out("rel_0")
+            .rerank({2.0f}, "0", 0)
+            .topK(2);
+        assert(top2.size() == 2);
+        // Seed 0 reaches {1, 2, 199}; node 199 has highest score, followed by node 2
+        assert(top2[0].first == 199);
+        assert(top2[1].first == 2);
+        assert(top2[0].second > top2[1].second);
+
+        auto top2_keys = snap.domain("Gene").from({0}).out("rel_0")
+            .rerank({2.0f}, "0", 0)
+            .topKKeys(2);
+        assert(top2_keys.size() == 2);
+        assert(top2_keys[0].first == "199");
+        assert(top2_keys[1].first == "2");
+
+        auto ml_topk = snap.domain("Gene").multiLane().fromSeeds({0, 1}).out("rel_0")
+            .topKKeysWithQuorum(2, 2, {1.0f}, "0", 0);
+        assert(ml_topk.size() == 2);
+        assert(ml_topk[0].first == "199");
+        assert(ml_topk[1].first == "2");
+    }
+
+    // 8. Issue #36: Named-Key Set Cover (findKeySetCoverPairs & findGreedyKeySetCover)
+    {
+        auto cover_res = snap.domain("Gene").multiLane()
+            .fromKeys({"0", "1", "2"})
+            .out("rel_0")
+            .collect();
+        auto greedy_keys = cover_res.findGreedyKeySetCover({"0", "1", "2"}, 2);
+        assert(!greedy_keys.empty());
+        // Node "199" covers all 3 lanes {"0", "1", "2"} in 1 node!
+        assert(greedy_keys[0] == "199");
+
+        auto pair_keys = cover_res.findKeySetCoverPairs({"0", "1"});
+        assert(!pair_keys.empty());
+    }
+
     impulse_snapshot_close(raw_snap);
     std::remove(snap_path);
 

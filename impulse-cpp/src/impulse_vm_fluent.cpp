@@ -910,6 +910,76 @@ std::vector<uint32_t> MultiLaneResult::findGreedySetCover(uint64_t target_mask, 
     return selected;
 }
 
+std::vector<std::pair<std::string, std::string>> MultiLaneResult::findKeySetCoverPairs(
+    const std::vector<std::string>& required_keys) const
+{
+    uint64_t target_mask = ~0ULL;
+    if (!required_keys.empty()) {
+        target_mask = 0ULL;
+        for (const auto& k : required_keys) {
+            for (size_t b = 0; b < lane_keys_.size() && b < 64; ++b) {
+                if (lane_keys_[b] == k) {
+                    target_mask |= (1ULL << b);
+                }
+            }
+        }
+    }
+    auto dense_pairs = findSetCoverPairs(target_mask);
+    std::vector<std::pair<std::string, std::string>> out;
+    out.reserve(dense_pairs.size());
+    for (const auto& p : dense_pairs) {
+        out.emplace_back(
+            resolve_dense_to_key(snapshot_, domain_id_, p.first),
+            resolve_dense_to_key(snapshot_, domain_id_, p.second));
+    }
+    return out;
+}
+
+std::vector<std::string> MultiLaneResult::findGreedyKeySetCover(
+    const std::vector<std::string>& required_keys, uint32_t max_nodes) const
+{
+    uint64_t target_mask = ~0ULL;
+    if (!required_keys.empty()) {
+        target_mask = 0ULL;
+        for (const auto& k : required_keys) {
+            for (size_t b = 0; b < lane_keys_.size() && b < 64; ++b) {
+                if (lane_keys_[b] == k) {
+                    target_mask |= (1ULL << b);
+                }
+            }
+        }
+    }
+    auto dense_ids = findGreedySetCover(target_mask, max_nodes);
+    std::vector<std::string> out;
+    out.reserve(dense_ids.size());
+    for (uint32_t u : dense_ids) {
+        out.push_back(resolve_dense_to_key(snapshot_, domain_id_, u));
+    }
+    return out;
+}
+
+std::vector<std::pair<uint64_t, float>> MultiLaneResult::topKWithQuorum(
+    uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+    const std::string& attr_name, uint8_t metric) const
+{
+    auto qnodes32 = nodesWithQuorum(min_lanes);
+    std::vector<uint64_t> qnodes(qnodes32.begin(), qnodes32.end());
+    return Traversal(snapshot_, domain_id_, std::move(qnodes), false)
+        .rerank(query_vector, attr_name, metric)
+        .topK(k);
+}
+
+std::vector<std::pair<std::string, float>> MultiLaneResult::topKKeysWithQuorum(
+    uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+    const std::string& attr_name, uint8_t metric) const
+{
+    auto qnodes32 = nodesWithQuorum(min_lanes);
+    std::vector<uint64_t> qnodes(qnodes32.begin(), qnodes32.end());
+    return Traversal(snapshot_, domain_id_, std::move(qnodes), false)
+        .rerank(query_vector, attr_name, metric)
+        .topKKeys(k);
+}
+
 // --- Single-Lane Traversal Implementation ---
 
 Traversal::Traversal(const impulse_snapshot_t* snapshot, uint16_t domain_id, std::vector<uint64_t> seeds, bool all_nodes)
@@ -927,10 +997,45 @@ Traversal& Traversal::out(const std::string& relation) {
     return *this;
 }
 
+Traversal& Traversal::out(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return out(relations[0]);
+    Step s{};
+    s.kind = Step::Kind::OUT_MULTI;
+    s.rel_names = relations;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
 Traversal& Traversal::in(const std::string& relation) {
     Step s{};
     s.kind = Step::Kind::IN;
     s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::in(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return in(relations[0]);
+    Step s{};
+    s.kind = Step::Kind::IN_MULTI;
+    s.rel_names = relations;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::both(const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::BOTH;
+    s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::both(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return both(relations[0]);
+    Step s{};
+    s.kind = Step::Kind::BOTH_MULTI;
+    s.rel_names = relations;
     steps_.push_back(std::move(s));
     return *this;
 }
@@ -1287,6 +1392,37 @@ std::vector<uint64_t> Traversal::collect() const {
             };
             state.pc = 0;
             impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::BOTH || step.kind == Step::Kind::OUT_MULTI ||
+                   step.kind == Step::Kind::IN_MULTI || step.kind == Step::Kind::BOTH_MULTI) {
+            std::vector<std::pair<uint16_t, bool>> branches; // (rel_id, is_csc)
+            if (step.kind == Step::Kind::BOTH) {
+                branches.emplace_back(rel_id, false);
+                branches.emplace_back(rel_id, true);
+            } else {
+                for (const auto& rname : step.rel_names) {
+                    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, rname);
+                    if (step.kind == Step::Kind::OUT_MULTI || step.kind == Step::Kind::BOTH_MULTI) {
+                        branches.emplace_back(rid, false);
+                    }
+                    if (step.kind == Step::Kind::IN_MULTI || step.kind == Step::Kind::BOTH_MULTI) {
+                        branches.emplace_back(rid, true);
+                    }
+                }
+            }
+            if (!branches.empty()) {
+                std::vector<impulse_instruction_t> b_prog;
+                b_prog.push_back({static_cast<uint8_t>(branches[0].second ? OP_CSC_WALK : OP_CSR_WALK), 0, 5,
+                                  static_cast<uint32_t>((branches[0].first << 16) | 0)});
+                for (size_t bi = 1; bi < branches.size(); ++bi) {
+                    b_prog.push_back({static_cast<uint8_t>(branches[bi].second ? OP_CSC_WALK : OP_CSR_WALK), 0, 6,
+                                      static_cast<uint32_t>((branches[bi].first << 16) | 0)});
+                    b_prog.push_back({OP_SET_UNION, 0, 5, static_cast<uint32_t>(5 | (6 << 16))});
+                }
+                b_prog.push_back({OP_MOV, 0, 0, 5});
+                b_prog.push_back({OP_HALT, 0, 0, 0});
+                state.pc = 0;
+                impulse_vm_execute(b_prog.data(), b_prog.size(), &state, 0);
+            }
         } else if (step.kind == Step::Kind::OUT_2HOP) {
             uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str2);
             impulse_instruction_t insts[2] = {
@@ -1445,9 +1581,81 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
             for (uint64_t u : active) {
                 if (u < max_n && u < attr_count && attr_f32[u] != 0.0f) state_vec[u] /= attr_f32[u];
             }
+        } else if (step.kind == Step::Kind::RERANK && snapshot_ && !step.float_vec.empty() && !active.empty()) {
+            uint16_t aid = resolve_attr_or_index_id(snapshot_, step.str1);
+            uint8_t metric_flag = static_cast<uint8_t>(step.u32_arg1 & 0x03U);
+            impulse_vm_context_t* rctx = impulse_vm_context_create(snapshot_);
+            if (rctx) {
+                impulse_vm_state_t rstate{};
+                rstate.query_context = rctx;
+                impulse_vm_context_bind_inline_data(rctx, step.float_vec.data(), step.float_vec.size() * sizeof(float));
+
+                impulse_instruction_t init0[2] = {{OP_INIT_INPUT_NODE, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
+                rstate.pc = 0;
+                impulse_vm_execute(init0, 2, &rstate, active[0]);
+                for (size_t i = 1; i < active.size(); ++i) {
+                    impulse_instruction_t add_u[3] = {
+                        {OP_INIT_INPUT_NODE, 0, 3, 0},
+                        {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
+                        {OP_HALT, 0, 0, 0}
+                    };
+                    rstate.pc = 0;
+                    impulse_vm_execute(add_u, 3, &rstate, active[i]);
+                }
+
+                impulse_instruction_t rprog[3] = {
+                    {OP_LOAD_INLINE_ARRAY, 0, 1, static_cast<uint32_t>(0 | (static_cast<uint32_t>(step.float_vec.size()) << 16))},
+                    {OP_VECTOR_RERANK_DOT, metric_flag, 2, static_cast<uint32_t>(0 | (1 << 8) | (aid << 16))},
+                    {OP_HALT, 0, 0, 0}
+                };
+                rstate.pc = 0;
+                if (impulse_vm_execute(rprog, 3, &rstate, 0) == IMPULSE_VM_OK &&
+                    rstate.register_types[2] == TYPE_FLOAT_VECTOR) {
+                    size_t h_f = static_cast<size_t>(rstate.registers[2]);
+                    const float* fdata = impulse_vm_context_get_float_vector(rctx, h_f);
+                    size_t flen = impulse_vm_context_float_vector_size(rctx, h_f);
+                    if (fdata != nullptr) {
+                        size_t lim = std::min(active.size(), flen);
+                        for (size_t i = 0; i < lim; ++i) {
+                            if (active[i] < max_n) {
+                                state_vec[active[i]] = fdata[i];
+                            }
+                        }
+                    }
+                }
+                impulse_vm_context_destroy(rctx);
+            }
         }
     }
     return state_vec;
+}
+
+std::vector<std::pair<uint64_t, float>> Traversal::topK(size_t k) const {
+    if (k == 0) return {};
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    std::vector<std::pair<uint64_t, float>> scored;
+    scored.reserve(active.size());
+    for (uint64_t u : active) {
+        float sc = (u < vec.size()) ? vec[u] : 0.0f;
+        scored.emplace_back(u, sc);
+    }
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+        if (a.second != b.second) return a.second > b.second;
+        return a.first < b.first;
+    });
+    if (scored.size() > k) scored.resize(k);
+    return scored;
+}
+
+std::vector<std::pair<std::string, float>> Traversal::topKKeys(size_t k) const {
+    auto top_dense = topK(k);
+    std::vector<std::pair<std::string, float>> out;
+    out.reserve(top_dense.size());
+    for (const auto& p : top_dense) {
+        out.emplace_back(resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(p.first)), p.second);
+    }
+    return out;
 }
 
 double Traversal::reduceSum() const {
@@ -1563,6 +1771,15 @@ MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation, const s
     return out(relation);
 }
 
+MultiLaneTraversal& MultiLaneTraversal::out(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return out(relations[0]);
+    LaneStep s{};
+    s.kind = LaneStep::Kind::OUT_MULTI;
+    s.rel_names = relations;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
 MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation) {
     LaneStep s{};
     s.kind = LaneStep::Kind::IN;
@@ -1573,6 +1790,32 @@ MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation) {
 
 MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation, const std::string& /*edge_cel_predicate*/) {
     return in(relation);
+}
+
+MultiLaneTraversal& MultiLaneTraversal::in(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return in(relations[0]);
+    LaneStep s{};
+    s.kind = LaneStep::Kind::IN_MULTI;
+    s.rel_names = relations;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::both(const std::string& relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::BOTH;
+    s.str_arg = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::both(const std::vector<std::string>& relations) {
+    if (relations.size() == 1) return both(relations[0]);
+    LaneStep s{};
+    s.kind = LaneStep::Kind::BOTH_MULTI;
+    s.rel_names = relations;
+    steps_.push_back(std::move(s));
+    return *this;
 }
 
 MultiLaneTraversal& MultiLaneTraversal::repeat(int iterations, const std::string& relation) {
@@ -1792,6 +2035,41 @@ MultiLaneResult MultiLaneTraversal::collect() const {
                     OP_LANE_CSC_WALK, 0, 0,
                     static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
                 });
+            } else if (step.kind == LaneStep::Kind::BOTH || step.kind == LaneStep::Kind::OUT_MULTI ||
+                       step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+                std::vector<std::pair<uint16_t, bool>> branches;
+                if (step.kind == LaneStep::Kind::BOTH) {
+                    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
+                    branches.emplace_back(rid, false);
+                    branches.emplace_back(rid, true);
+                } else {
+                    for (const auto& rname : step.rel_names) {
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, rname);
+                        if (step.kind == LaneStep::Kind::OUT_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+                            branches.emplace_back(rid, false);
+                        }
+                        if (step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+                            branches.emplace_back(rid, true);
+                        }
+                    }
+                }
+                if (!branches.empty()) {
+                    prog.push_back(impulse_instruction_t{
+                        static_cast<uint8_t>(branches[0].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 3,
+                        static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[0].first) << 16))
+                    });
+                    for (size_t bi = 1; bi < branches.size(); ++bi) {
+                        prog.push_back(impulse_instruction_t{
+                            static_cast<uint8_t>(branches[bi].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 4,
+                            static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[bi].first) << 16))
+                        });
+                        prog.push_back(impulse_instruction_t{
+                            OP_SET_UNION, 0, 3,
+                            static_cast<uint32_t>(3 | (4 << 16))
+                        });
+                    }
+                    prog.push_back(impulse_instruction_t{OP_MOV, 0, 0, 3});
+                }
             } else if (step.kind == LaneStep::Kind::REPEAT) {
                 uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
                 for (uint16_t it = 0; it < step.u16_arg; ++it) {
@@ -1916,6 +2194,20 @@ Traversal MultiLaneTraversal::toQuorumTraversal(uint8_t min_lanes) const {
     auto quorum_nodes32 = res.nodesWithQuorum(min_lanes);
     std::vector<uint64_t> qnodes(quorum_nodes32.begin(), quorum_nodes32.end());
     return Traversal(snapshot_, current_domain_id_, std::move(qnodes), false);
+}
+
+std::vector<std::pair<uint64_t, float>> MultiLaneTraversal::topKWithQuorum(
+    uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+    const std::string& attr_name, uint8_t metric) const
+{
+    return collect().topKWithQuorum(min_lanes, k, query_vector, attr_name, metric);
+}
+
+std::vector<std::pair<std::string, float>> MultiLaneTraversal::topKKeysWithQuorum(
+    uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
+    const std::string& attr_name, uint8_t metric) const
+{
+    return collect().topKKeysWithQuorum(min_lanes, k, query_vector, attr_name, metric);
 }
 
 std::vector<double> MultiLaneTraversal::reducePerLane(const std::string& /*node_attribute*/, ReducerOp op) const {
@@ -2091,6 +2383,88 @@ SteinerSubgraph MultiLaneTraversal::toSteinerSubgraph(uint8_t min_concept_quorum
     SteinerSubgraph sg;
     sg.bridge_nodes = res.nodesWithQuorum(min_concept_quorum);
     sg.all_nodes = res.nodesWithQuorum(1);
+
+    uint32_t N = res.domainNodeCount();
+    if (!snapshot_ || N == 0) return sg;
+
+    std::vector<uint64_t> node_mask(N, 0ULL);
+    for (uint32_t u = 0; u < N; ++u) {
+        node_mask[u] = res.laneMaskFor(u);
+    }
+    if (mode_ == InitMode::SEEDS || mode_ == InitMode::OUTAGES) {
+        for (size_t b = 0; b < seeds_.size() && b < 64; ++b) {
+            uint64_t u = seeds_[b];
+            if (u < N) node_mask[u] |= (1ULL << b);
+        }
+    } else if (mode_ == InitMode::GROUPS) {
+        for (const auto& gp : group_pairs_) {
+            if (gp.first < N && gp.second < 64) {
+                node_mask[gp.first] |= (1ULL << gp.second);
+            }
+        }
+    }
+
+    std::vector<std::pair<uint16_t, std::string>> rels_to_scan;
+    auto add_rel = [&](const std::string& rname) {
+        if (rname.empty()) return;
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, rname);
+        for (const auto& p : rels_to_scan) {
+            if (p.first == rid) return;
+        }
+        rels_to_scan.emplace_back(rid, rname);
+    };
+
+    for (const auto& step : steps_) {
+        if (step.kind == LaneStep::Kind::OUT || step.kind == LaneStep::Kind::IN ||
+            step.kind == LaneStep::Kind::BOTH || step.kind == LaneStep::Kind::REPEAT ||
+            step.kind == LaneStep::Kind::REPEAT_UNTIL_STABLE) {
+            add_rel(step.str_arg);
+        } else if (step.kind == LaneStep::Kind::OUT_MULTI || step.kind == LaneStep::Kind::IN_MULTI ||
+                   step.kind == LaneStep::Kind::BOTH_MULTI) {
+            for (const auto& rn : step.rel_names) add_rel(rn);
+        }
+    }
+    if (rels_to_scan.empty()) {
+        uint16_t rcnt = impulse_snapshot_relation_count(snapshot_);
+        for (uint16_t r = 0; r < rcnt; ++r) {
+            rels_to_scan.emplace_back(r, "rel_" + std::to_string(r));
+        }
+    }
+
+    for (const auto& rp : rels_to_scan) {
+        uint16_t rel_id = rp.first;
+        const std::string& rel_name = rp.second;
+        const uint32_t* offsets = nullptr;
+        const uint32_t* targets = nullptr;
+        uint64_t node_cnt = 0;
+        uint64_t edge_cnt = 0;
+        if (impulse_snapshot_get_relation_buffers(snapshot_, rel_id, &offsets, &targets, &node_cnt, &edge_cnt) != IMPULSE_OK ||
+            offsets == nullptr || targets == nullptr || node_cnt == 0) {
+            continue;
+        }
+        uint32_t max_u = static_cast<uint32_t>(std::min<uint64_t>(N, node_cnt));
+        for (uint32_t u = 0; u < max_u; ++u) {
+            uint64_t mu = node_mask[u];
+            if (mu == 0ULL) continue;
+            uint64_t start = offsets[u];
+            uint64_t end = offsets[u + 1];
+            for (uint64_t e = start; e < end && e < edge_cnt; ++e) {
+                uint32_t v = targets[e];
+                if (v < N && node_mask[v] != 0ULL) {
+                    uint64_t mv = node_mask[v];
+                    uint64_t emask = (mu & mv) != 0ULL ? (mu & mv) : (mu | mv);
+                    sg.edges.push_back(SteinerEdge{u, v, rel_id, emask});
+                    sg.triples.push_back(SteinerTripleKey{
+                        resolve_dense_to_key(snapshot_, current_domain_id_, u),
+                        rel_name,
+                        resolve_dense_to_key(snapshot_, current_domain_id_, v),
+                        emask
+                    });
+                }
+            }
+        }
+    }
+
     return sg;
 }
 
