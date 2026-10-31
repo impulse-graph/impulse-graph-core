@@ -2564,8 +2564,12 @@ impulse_status_t impulse_stmt_prepare(
         stmt->scratch_bytes_needed = ((stmt->words_per_bitset * sizeof(uint64_t) * 4) + 127) & ~127ULL;
         if (stmt->scratch_bytes_needed < 4096) stmt->scratch_bytes_needed = 4096;
 
-        // Return area: Column 0 bitset words + align
-        stmt->return_bytes_needed = ((stmt->words_per_bitset * sizeof(uint64_t)) + 127) & ~127ULL;
+        // Return area: large enough for BitSet words or dense per-node lane masks / vectors + align
+        size_t min_ret_bytes = std::max<size_t>(
+            stmt->words_per_bitset * sizeof(uint64_t),
+            stmt->max_nodes * sizeof(uint64_t)
+        );
+        stmt->return_bytes_needed = (min_ret_bytes + 127) & ~127ULL;
         stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
 
         *out_stmt = stmt.release();
@@ -2667,6 +2671,29 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         impulse_vm_context_t* ctx = impulse_vm_context_create(stmt->snapshot);
         vm_state.query_context = ctx;
 
+        if (ctx && !stmt->nodes_params.empty() && !stmt->compiled_program.instructions.empty()) {
+            const auto& first_inst = stmt->compiled_program.instructions[0];
+            if (first_inst.opcode == OP_LANE_INIT_SEEDS || first_inst.opcode == OP_LANE_INIT_GROUPS) {
+                const auto& vec = stmt->nodes_params.begin()->second;
+                int h_nv = impulse_vm_context_acquire_node_vector(ctx);
+                if (h_nv >= 0) {
+                    impulse_vm_context_node_vector_set(ctx, static_cast<size_t>(h_nv), vec.data(), vec.size());
+                    uint16_t src_reg = (first_inst.opcode == OP_LANE_INIT_SEEDS)
+                        ? static_cast<uint16_t>(first_inst.payload & 0xFFFF)
+                        : static_cast<uint16_t>(first_inst.payload & 0xFF);
+                    if (src_reg < 64) {
+                        vm_state.registers[src_reg] = static_cast<uint64_t>(h_nv);
+                        vm_state.register_types[src_reg] = TYPE_NODE_VECTOR;
+                    }
+                }
+            }
+        }
+
+        if (ctx && !stmt->vector_params.empty()) {
+            const auto& fvec = stmt->vector_params.begin()->second;
+            impulse_vm_context_bind_inline_data(ctx, fvec.data(), fvec.size() * sizeof(float));
+        }
+
         uint64_t seed = stmt->has_seed_node ? stmt->bound_seed_node : 0;
 
         impulse_vm_status_t vm_rc = impulse_vm_execute(
@@ -2676,38 +2703,116 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
             seed
         );
 
-        if (ctx) {
-            impulse_vm_context_destroy(ctx);
-            vm_state.query_context = nullptr;
-        }
-
         if (vm_rc != IMPULSE_VM_OK) {
+            if (ctx) {
+                impulse_vm_context_destroy(ctx);
+                vm_state.query_context = nullptr;
+            }
             return IMPULSE_ERR_IO_FAILURE;
         }
 
-        // Populate column 0 descriptor (Result BitSet)
-        uint64_t* result_words = reinterpret_cast<uint64_t*>(return_area);
-        std::memset(result_words, 0, stmt->words_per_bitset * sizeof(uint64_t));
-
-        // Result from R0 / R1
-        if (stmt->bound_seed_node < stmt->max_nodes) {
-            result_words[stmt->bound_seed_node >> 6] |= (1ULL << (stmt->bound_seed_node & 63));
+        size_t avail_return_bytes = (buffer_size > scratch_size) ? (buffer_size - scratch_size) : 0;
+        uint16_t res_reg = stmt->compiled_program.result_register;
+        if (res_reg >= 64) res_reg = 0;
+        // Fallback: if res_reg is TYPE_NULL, check last non-HALT instruction's dst_reg
+        if (vm_state.register_types[res_reg] == TYPE_NULL && stmt->compiled_program.instructions.size() >= 2) {
+            for (size_t idx = stmt->compiled_program.instructions.size() - 1; idx > 0; --idx) {
+                const auto& inst = stmt->compiled_program.instructions[idx - 1];
+                if (inst.opcode != OP_HALT && inst.dst_reg < 64 && vm_state.register_types[inst.dst_reg] != TYPE_NULL) {
+                    res_reg = inst.dst_reg;
+                    break;
+                }
+            }
         }
+
+        uint8_t rtype = vm_state.register_types[res_reg];
+        uint64_t rval = vm_state.registers[res_reg];
 
         stmt->columns.clear();
         impulse_column_desc_t col{};
         std::strncpy(col.name, "result", sizeof(col.name) - 1);
-        col.type_code = 0x08; // UINT64 BitSet words
-        col.element_size = sizeof(uint64_t);
         col.is_nullable = false;
-        col.dimension = 1;
         col.byte_offset_in_buf = scratch_size;
-        col.data_ptr = result_words;
         col.null_bitmap = nullptr;
-        stmt->columns.push_back(col);
 
-        stmt->row_count = stmt->words_per_bitset;
-        stmt->total_bytes_written = stmt->words_per_bitset * sizeof(uint64_t);
+        if (ctx && rtype == TYPE_LANE_FRONTIER) {
+            size_t n_nodes = impulse_vm_context_lane_frontier_node_count(ctx, static_cast<size_t>(rval));
+            uint64_t mask = impulse_vm_context_lane_frontier_active_mask(ctx, static_cast<size_t>(rval));
+            uint32_t k_lanes = impulse_vm_context_lane_frontier_num_lanes(ctx, static_cast<size_t>(rval));
+            const uint64_t* lf_data = impulse_vm_context_lane_frontier_data(ctx, static_cast<size_t>(rval));
+            size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+            size_t n_copy = std::min(n_nodes, cap_u64);
+            uint64_t* out_u64 = reinterpret_cast<uint64_t*>(return_area);
+            for (size_t u = 0; u < n_copy; ++u) {
+                out_u64[u] = lf_data ? (lf_data[u] & mask) : 0ULL;
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_LANE_FRONTIER);
+            col.element_size = sizeof(uint64_t);
+            col.dimension = (k_lanes > 0) ? k_lanes : 1;
+            col.data_ptr = out_u64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(uint64_t);
+        } else if (ctx && (rtype == TYPE_NODE_VECTOR || rtype == TYPE_UINT64_VECTOR)) {
+            const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx, static_cast<size_t>(rval));
+            size_t len = impulse_vm_context_node_vector_size(ctx, static_cast<size_t>(rval));
+            size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+            size_t n_copy = std::min(len, cap_u64);
+            uint64_t* out_u64 = reinterpret_cast<uint64_t*>(return_area);
+            if (ptr && n_copy > 0) {
+                std::memcpy(out_u64, ptr, n_copy * sizeof(uint64_t));
+            }
+            col.type_code = rtype;
+            col.element_size = sizeof(uint64_t);
+            col.dimension = 1;
+            col.data_ptr = out_u64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(uint64_t);
+        } else if (ctx && rtype == TYPE_FLOAT_VECTOR) {
+            const float* ptr = impulse_vm_context_get_float_vector(ctx, static_cast<size_t>(rval));
+            size_t len = impulse_vm_context_float_vector_size(ctx, static_cast<size_t>(rval));
+            size_t cap_f32 = avail_return_bytes / sizeof(float);
+            size_t n_copy = std::min(len, cap_f32);
+            float* out_f32 = reinterpret_cast<float*>(return_area);
+            if (ptr && n_copy > 0) {
+                std::memcpy(out_f32, ptr, n_copy * sizeof(float));
+            }
+            col.type_code = IMPULSE_ATTR_TYPE_FLOAT32;
+            col.element_size = sizeof(float);
+            col.dimension = 1;
+            col.data_ptr = out_f32;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(float);
+        } else {
+            uint64_t* result_words = reinterpret_cast<uint64_t*>(return_area);
+            size_t n_words = std::min(stmt->words_per_bitset, avail_return_bytes / sizeof(uint64_t));
+            std::memset(result_words, 0, n_words * sizeof(uint64_t));
+            bool any_word = false;
+            if (ctx && rtype == TYPE_BITSET_HANDLE) {
+                for (size_t w = 0; w < n_words; ++w) {
+                    uint64_t word = impulse_vm_context_bitset_get_word(ctx, static_cast<size_t>(rval), w);
+                    result_words[w] = word;
+                    if (word != 0ULL) any_word = true;
+                }
+            }
+            if (!any_word && stmt->bound_seed_node < stmt->max_nodes && (stmt->bound_seed_node >> 6) < n_words) {
+                result_words[stmt->bound_seed_node >> 6] |= (1ULL << (stmt->bound_seed_node & 63));
+            }
+            col.type_code = 0x08; // UINT64 BitSet words
+            col.element_size = sizeof(uint64_t);
+            col.dimension = 1;
+            col.data_ptr = result_words;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_words;
+            stmt->total_bytes_written = n_words * sizeof(uint64_t);
+        }
+
+        if (ctx) {
+            impulse_vm_context_destroy(ctx);
+            vm_state.query_context = nullptr;
+        }
 
         return IMPULSE_OK;
     } catch (...) {

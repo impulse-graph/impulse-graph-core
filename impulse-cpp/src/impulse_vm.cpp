@@ -1188,8 +1188,10 @@ void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t ha
 }
 
 const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
-        return ctx->node_vectors[handle].data();
+    const uint64_t* ptr = nullptr;
+    size_t len = 0;
+    if (get_node_vector_slice(ctx, static_cast<uint64_t>(handle), &ptr, &len)) {
+        return ptr;
     }
     return nullptr;
 }
@@ -1264,11 +1266,10 @@ void impulse_vm_context_node_vector_set(impulse_vm_context_t* ctx, size_t handle
 }
 
 size_t impulse_vm_context_node_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
-        if (ctx->node_vector_length_explicit[handle]) {
-            return ctx->node_vector_lengths[handle];
-        }
-        return (ctx->node_vector_lengths[handle] > 0) ? ctx->node_vector_lengths[handle] : ctx->node_vectors[handle].size();
+    const uint64_t* ptr = nullptr;
+    size_t len = 0;
+    if (get_node_vector_slice(ctx, static_cast<uint64_t>(handle), &ptr, &len)) {
+        return len;
     }
     return 0;
 }
@@ -5830,6 +5831,31 @@ op_COLLECT_ARRAY: {
                 }
             }
         }
+    } else if (vm_state->register_types[src] == TYPE_LANE_FRONTIER) {
+        size_t h_lf = static_cast<size_t>(vm_state->registers[src]);
+        if (h_lf < VM_MAX_LANE_FRONTIER_HANDLES && h_lf < vm_state->query_context->lane_frontiers_count) {
+            const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+            for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                uint64_t word = lf.active_words[w_idx];
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u >= lf.lanes.size()) break;
+                    if ((lf.lanes[u] & lf.active_mask) != 0ULL) {
+                        node_buf.push_back(static_cast<uint64_t>(u));
+                    }
+                }
+            }
+        }
+    } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR || vm_state->register_types[src] == TYPE_UINT64_VECTOR) {
+        const uint64_t* ptr = nullptr;
+        size_t len = 0;
+        if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &ptr, &len) && ptr) {
+            if (ptr != node_buf.data()) {
+                node_buf.assign(ptr, ptr + len);
+            }
+        }
     } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         node_buf.push_back(vm_state->registers[src]);
     }
@@ -6013,6 +6039,32 @@ op_MAP_DENSE_TO_KEYS: {
                 }
             }
         }
+    } else if (vm_state->register_types[src] == TYPE_LANE_FRONTIER) {
+        size_t h_lf = static_cast<size_t>(vm_state->registers[src]);
+        if (h_lf < VM_MAX_LANE_FRONTIER_HANDLES && h_lf < vm_state->query_context->lane_frontiers_count) {
+            const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+            for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                uint64_t word = lf.active_words[w_idx];
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u >= lf.lanes.size()) break;
+                    if ((lf.lanes[u] & lf.active_mask) != 0ULL && u < max_nodes) {
+                        add_key(static_cast<uint64_t>(u));
+                    }
+                }
+            }
+        }
+    } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR || vm_state->register_types[src] == TYPE_UINT64_VECTOR) {
+        const uint64_t* ptr = nullptr;
+        size_t len = 0;
+        if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &ptr, &len) && ptr) {
+            for (size_t i = 0; i < len; ++i) {
+                uint64_t u = ptr[i];
+                if (u != ~0ULL && u < max_nodes) add_key(u);
+            }
+        }
     } else {
         uint64_t u = vm_state->registers[src];
         if (u < max_nodes) add_key(u);
@@ -6088,6 +6140,32 @@ op_COLLECT_VALUE_MAP: {
                     uint64_t u = i * 64 + b;
                     if (u < max_nodes) add_entry(u);
                 }
+            }
+        }
+    } else if (vm_state->register_types[nodes_reg] == TYPE_LANE_FRONTIER) {
+        size_t h_lf = static_cast<size_t>(vm_state->registers[nodes_reg]);
+        if (h_lf < VM_MAX_LANE_FRONTIER_HANDLES && h_lf < vm_state->query_context->lane_frontiers_count) {
+            const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+            for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                uint64_t word = lf.active_words[w_idx];
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u >= lf.lanes.size()) break;
+                    if ((lf.lanes[u] & lf.active_mask) != 0ULL && u < max_nodes) {
+                        add_entry(static_cast<uint64_t>(u));
+                    }
+                }
+            }
+        }
+    } else if (vm_state->register_types[nodes_reg] == TYPE_NODE_VECTOR || vm_state->register_types[nodes_reg] == TYPE_UINT64_VECTOR) {
+        const uint64_t* ptr = nullptr;
+        size_t len = 0;
+        if (get_node_vector_slice(vm_state->query_context, vm_state->registers[nodes_reg], &ptr, &len) && ptr) {
+            for (size_t i = 0; i < len; ++i) {
+                uint64_t u = ptr[i];
+                if (u != ~0ULL && u < max_nodes) add_entry(u);
             }
         }
     } else {
@@ -10344,13 +10422,49 @@ impulse_vm_status_t impulse_vm_execute_to_buffer(
     impulse_vm_status_t st = impulse_vm_execute(bytecode, instruction_count, vm_state, input_param);
     if (st != IMPULSE_VM_OK) return st;
     
-    if (result_reg < 64 && vm_state->register_types[result_reg] == TYPE_BITSET_HANDLE) {
-        int h = static_cast<int>(vm_state->registers[result_reg]);
-        if (h >= 0 && vm_state->query_context) {
-            auto& bs = vm_state->query_context->bitsets[h];
-            size_t count = vm_state->query_context->words_per_bitset;
-            if (count > out_words_capacity) count = out_words_capacity;
-            std::memcpy(out_words, bs.words, count * sizeof(uint64_t));
+    if (result_reg < 64 && vm_state->query_context) {
+        uint8_t rtype = vm_state->register_types[result_reg];
+        if (rtype == TYPE_BITSET_HANDLE) {
+            int h = static_cast<int>(vm_state->registers[result_reg]);
+            if (h >= 0 && static_cast<size_t>(h) < VM_MAX_BITSET_HANDLES) {
+                auto& bs = vm_state->query_context->bitsets[h];
+                size_t count = std::min(vm_state->query_context->words_per_bitset, out_words_capacity);
+                std::memcpy(out_words, bs.words, count * sizeof(uint64_t));
+                if (out_words_written) *out_words_written = count;
+            }
+        } else if (rtype == TYPE_LANE_FRONTIER) {
+            size_t h_lf = static_cast<size_t>(vm_state->registers[result_reg]);
+            size_t count = std::min(vm_state->query_context->words_per_bitset, out_words_capacity);
+            std::memset(out_words, 0, count * sizeof(uint64_t));
+            if (h_lf < VM_MAX_LANE_FRONTIER_HANDLES && h_lf < vm_state->query_context->lane_frontiers_count) {
+                const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+                for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                    uint64_t word = lf.active_words[w_idx];
+                    while (word != 0ULL) {
+                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                        size_t u = (w_idx << 6) + bit;
+                        word &= (word - 1ULL);
+                        if (u >= lf.lanes.size()) break;
+                        if ((lf.lanes[u] & lf.active_mask) != 0ULL && (u >> 6) < count) {
+                            out_words[u >> 6] |= (1ULL << (u & 63));
+                        }
+                    }
+                }
+            }
+            if (out_words_written) *out_words_written = count;
+        } else if (rtype == TYPE_NODE_VECTOR || rtype == TYPE_UINT64_VECTOR) {
+            size_t count = std::min(vm_state->query_context->words_per_bitset, out_words_capacity);
+            std::memset(out_words, 0, count * sizeof(uint64_t));
+            const uint64_t* ptr = nullptr;
+            size_t len = 0;
+            if (get_node_vector_slice(vm_state->query_context, vm_state->registers[result_reg], &ptr, &len) && ptr) {
+                for (size_t i = 0; i < len; ++i) {
+                    uint64_t u = ptr[i];
+                    if (u != ~0ULL && (u >> 6) < count) {
+                        out_words[u >> 6] |= (1ULL << (u & 63));
+                    }
+                }
+            }
             if (out_words_written) *out_words_written = count;
         }
     }

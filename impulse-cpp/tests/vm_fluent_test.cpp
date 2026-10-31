@@ -412,6 +412,67 @@ static void test_domain_multilane_17_boundaries_and_fluent_pipeline() {
     // Both 0 and 1 reach node 2 and node 199
     assert(t_inter.size() == 2);
 
+    // 5. Test QueryResult materialization helpers, terminal collectors (0x91-0x93), and impulse_vm_execute_to_buffer
+    {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(raw_snap);
+        impulse_vm_state_t st{};
+        st.query_context = ctx;
+
+        int h_seeds = impulse_vm_context_acquire_node_vector(ctx);
+        const uint64_t seed_ids[2] = {0, 1};
+        impulse_vm_context_node_vector_set(ctx, static_cast<size_t>(h_seeds), seed_ids, 2);
+        st.registers[1] = static_cast<uint64_t>(h_seeds);
+        st.register_types[1] = TYPE_NODE_VECTOR;
+
+        auto query_lf = QueryBuilder()
+            .laneInitSeeds(1)
+            .laneWalkCsr(0)
+            .compile();
+        QueryResult qr_lf = query_lf.executeWithContext(ctx, &st, 0);
+        uint16_t lf_reg = qr_lf.result_register;
+        assert(qr_lf.isOk() && qr_lf.isLaneFrontier());
+        auto active_nodes = qr_lf.extractActiveLaneNodes(ctx);
+        assert(active_nodes.size() == 4); // {1, 2, 3, 199}
+        assert(qr_lf.extractActiveNodes(ctx) == active_nodes);
+        auto lane0_nodes = qr_lf.extractLaneNodes(ctx, 0);
+        assert((lane0_nodes == std::vector<uint64_t>{1, 2, 199}));
+        auto lane1_nodes = qr_lf.extractLaneNodes(ctx, 1);
+        assert((lane1_nodes == std::vector<uint64_t>{2, 3, 199}));
+        auto lane_masks = qr_lf.extractLaneMasks(ctx);
+        assert(lane_masks[2] == 3ULL && lane_masks[199] == 3ULL);
+
+        // OP_COLLECT_ARRAY (0x91) and OP_MAP_DENSE_TO_KEYS (0x92) on TYPE_LANE_FRONTIER
+        impulse_instruction_t coll_prog[4] = {
+            {OP_COLLECT_ARRAY, 0, 4, lf_reg},
+            {OP_MAP_DENSE_TO_KEYS, 0, 5, static_cast<uint32_t>(lf_reg) | (0u << 8)},
+            {OP_LANE_SET_COVER, 0, 6, static_cast<uint32_t>(lf_reg)},
+            {OP_HALT, 0, 0, 0}
+        };
+        st.pc = 0;
+        assert(impulse_vm_execute(coll_prog, 4, &st, 0) == IMPULSE_VM_OK);
+        QueryResult qr_arr{IMPULSE_VM_OK, 4, static_cast<impulse_register_type_t>(st.register_types[4]), st.registers[4]};
+        assert(qr_arr.isNodeVector());
+        assert(qr_arr.extractNodeVector(ctx) == active_nodes);
+        assert(impulse_vm_context_string_vector_size(ctx, st.registers[5]) == 4);
+
+        QueryResult qr_sc{IMPULSE_VM_OK, 6, static_cast<impulse_register_type_t>(st.register_types[6]), st.registers[6]};
+        assert(qr_sc.isNodeVector());
+        auto sc_vec = qr_sc.extractNodeVector(ctx);
+        assert(sc_vec.size() == 1 && sc_vec[0] == 2); // Node 2 covers both lanes {0, 1}
+
+        // impulse_vm_execute_to_buffer on TYPE_LANE_FRONTIER (lf_reg)
+        size_t req_words = impulse_vm_get_required_buffer_size(raw_snap, 0);
+        std::vector<uint64_t> out_words(req_words, 0ULL);
+        size_t written = 0;
+        impulse_instruction_t noop_halt[1] = {{OP_HALT, 0, 0, 0}};
+        st.pc = 0;
+        assert(impulse_vm_execute_to_buffer(noop_halt, 1, &st, 0, 0, lf_reg, out_words.data(), out_words.size(), &written) == IMPULSE_VM_OK);
+        assert(written == req_words);
+        assert((out_words[0] & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) == ((1ULL << 1) | (1ULL << 2) | (1ULL << 3)));
+
+        impulse_vm_context_destroy(ctx);
+    }
+
     impulse_snapshot_close(raw_snap);
     std::remove(snap_path);
 
