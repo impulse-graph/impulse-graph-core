@@ -227,7 +227,7 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_CSR_DEGREE, "OP_CSR_DEGREE", "CSR Node / Frontier Degree",
         0x80, 0x00, 0x80, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, true, true

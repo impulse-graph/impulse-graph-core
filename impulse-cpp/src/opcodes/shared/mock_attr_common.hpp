@@ -21,8 +21,10 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
-    IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, IMP_TYPES_NUMERIC_VEC);
-    if (mask_reg != 0) {
+    if (!(src_reg == 0 && mask_reg == 0 && vm_state->register_types[0] == TYPE_NULL)) {
+        IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, IMP_TYPES_NUMERIC_VEC);
+    }
+    if (mask_reg != 0 && !(mask_reg == 63 && vm_state->register_types[63] == TYPE_NULL)) {
         IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
     }
 

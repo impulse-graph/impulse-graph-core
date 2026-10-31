@@ -35,12 +35,14 @@ op_ASSERT_FINITE: {
         float v = *reinterpret_cast<const float*>(&vm_state->registers[target_reg]);
         if (std::isnan(v) || std::isinf(v)) {
             vm_state->registers[0] = 0;
+            vm_state->register_types[0] = TYPE_INT64;
             return IMPULSE_VM_ERR_FLOATING_POINT;
         }
     } else if (vm_state->register_types[target_reg] == TYPE_DOUBLE) {
         double v = *reinterpret_cast<const double*>(&vm_state->registers[target_reg]);
         if (std::isnan(v) || std::isinf(v)) {
             vm_state->registers[0] = 0;
+            vm_state->register_types[0] = TYPE_INT64;
             return IMPULSE_VM_ERR_FLOATING_POINT;
         }
     } else if (vm_state->register_types[target_reg] == TYPE_FLOAT_VECTOR) {
@@ -54,6 +56,7 @@ op_ASSERT_FINITE: {
             float v = vec[i];
             if (std::isnan(v) || std::isinf(v)) {
                 vm_state->registers[0] = i;
+                vm_state->register_types[0] = TYPE_INT64;
                 return IMPULSE_VM_ERR_FLOATING_POINT;
             }
         }
@@ -68,6 +71,7 @@ op_ASSERT_FINITE: {
             double v = vec[i];
             if (std::isnan(v) || std::isinf(v)) {
                 vm_state->registers[0] = i;
+                vm_state->register_types[0] = TYPE_INT64;
                 return IMPULSE_VM_ERR_FLOATING_POINT;
             }
         }

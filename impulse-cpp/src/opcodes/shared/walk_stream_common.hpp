@@ -74,9 +74,10 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
     uint64_t walk_node_bound = isCsc
         ? ((slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count)
         : slot.node_count;
+    uint64_t target_node_bound = std::max(slot.node_count, slot.csc_node_count);
     auto& reduced_reg_masks = vm_state->query_context->scratch_u64_a;
     reduced_reg_masks.clear();
-    size_t mask_cap = std::min<size_t>(static_cast<size_t>(walk_node_bound) + 1024, reduced_reg_masks.capacity());
+    size_t mask_cap = std::min<size_t>(static_cast<size_t>(target_node_bound) + 1024, reduced_reg_masks.capacity());
     reduced_reg_masks.resize(mask_cap, 0ULL);
     for (uint32_t u : active_sources) {
         if (u >= walk_node_bound) continue;

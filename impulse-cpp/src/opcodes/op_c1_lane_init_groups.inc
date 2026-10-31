@@ -16,7 +16,7 @@
 #ifndef OP_C1_CONTRACT_DEFINED
 #define OP_C1_CONTRACT_DEFINED
 #define OP_C1_DEFINED_FLAGS        0x03u
-#define OP_C1_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#define OP_C1_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
 #define OP_C1_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
 #endif
 
@@ -51,29 +51,34 @@ op_LANE_INIT_GROUPS: {
 
         const uint64_t* n_ptr = nullptr;
         size_t n_len = 0;
-        if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[nodes_reg], &n_ptr, &n_len)) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
-        if (nodes_reg != groups_reg && groups_reg > 0 && (t_groups == TYPE_NODE_VECTOR || t_groups == TYPE_UINT64_VECTOR)) {
-            const uint64_t* g_ptr = nullptr;
-            size_t g_len = 0;
-            if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[groups_reg], &g_ptr, &g_len)) {
+        if (t_nodes == TYPE_NULL) {
+            pair_nodes.push_back(0ULL);
+            pair_grps.push_back(0u);
+        } else {
+            if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[nodes_reg], &n_ptr, &n_len)) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            size_t len = std::min(n_len, g_len);
-            for (size_t i = 0; i < len; ++i) {
-                pair_nodes.push_back(n_ptr[i]);
-                pair_grps.push_back(static_cast<uint32_t>(g_ptr[i]));
-            }
-        } else {
-            bool is_packed = ((flags & 0x01) != 0);
-            for (size_t i = 0; i < n_len; ++i) {
-                uint64_t packed = n_ptr[i];
-                uint64_t u = is_packed ? (packed & 0xFFFFFFFFULL) : packed;
-                uint32_t hi = static_cast<uint32_t>((packed >> 32) & 0xFFFFFFFFULL);
-                uint32_t grp = is_packed ? hi : std::min<uint32_t>(63u, static_cast<uint32_t>(i));
-                pair_nodes.push_back(u);
-                pair_grps.push_back(grp);
+            if (nodes_reg != groups_reg && groups_reg > 0 && (t_groups == TYPE_NODE_VECTOR || t_groups == TYPE_UINT64_VECTOR)) {
+                const uint64_t* g_ptr = nullptr;
+                size_t g_len = 0;
+                if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[groups_reg], &g_ptr, &g_len)) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                size_t len = std::min(n_len, g_len);
+                for (size_t i = 0; i < len; ++i) {
+                    pair_nodes.push_back(n_ptr[i]);
+                    pair_grps.push_back(static_cast<uint32_t>(g_ptr[i]));
+                }
+            } else {
+                bool is_packed = ((flags & 0x01) != 0);
+                for (size_t i = 0; i < n_len; ++i) {
+                    uint64_t packed = n_ptr[i];
+                    uint64_t u = is_packed ? (packed & 0xFFFFFFFFULL) : packed;
+                    uint32_t hi = static_cast<uint32_t>((packed >> 32) & 0xFFFFFFFFULL);
+                    uint32_t grp = is_packed ? hi : std::min<uint32_t>(63u, static_cast<uint32_t>(i));
+                    pair_nodes.push_back(u);
+                    pair_grps.push_back(grp);
+                }
             }
         }
 
@@ -87,9 +92,11 @@ op_LANE_INIT_GROUPS: {
                 max_grp = static_cast<int>(pair_grps[i]);
             }
         }
-        uint32_t num_lanes = (p_u16_high > 0)
-            ? std::min<uint32_t>(64u, p_u16_high)
-            : std::min<uint32_t>(64u, static_cast<uint32_t>(std::max(0, max_grp + 1)));
+        uint32_t num_lanes = (t_nodes == TYPE_NULL)
+            ? std::max<uint32_t>(1u, std::min<uint32_t>(64u, (p_u16_high > 0) ? p_u16_high : 8u))
+            : ((p_u16_high > 0)
+                ? std::min<uint32_t>(64u, p_u16_high)
+                : std::min<uint32_t>(64u, static_cast<uint32_t>(std::max(0, max_grp + 1))));
         size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, -1, max_node + 1);
         int h_lf = acquire_lane_frontier(vm_state->query_context, n_nodes, num_lanes);
         if (h_lf < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

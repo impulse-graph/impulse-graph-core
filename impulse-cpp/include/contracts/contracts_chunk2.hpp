@@ -54,7 +54,7 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_SET_CARDINALITY, "OP_SET_CARDINALITY", "Set Cardinality",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -200,7 +200,7 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         0x00, 0x00, 0x00, 0x00000000u, // rel=0
         RegFieldLayout::DST_REG, RegFieldLayout::NONE, RegFieldLayout::NONE, RegFieldLayout::NONE,
         IMP_TYPES_NONE, IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
+        IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
         false, false, 0, true, true
     });
 

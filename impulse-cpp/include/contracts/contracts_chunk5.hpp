@@ -38,7 +38,7 @@ inline void append_chunk5_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_LANE_INIT_GROUPS, "OP_LANE_INIT_GROUPS", "Init Node Vector Groups (flags=0)",
         0x03, 0x00, 0x03, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
+        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -47,7 +47,7 @@ inline void append_chunk5_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_LANE_INIT_GROUPS, "OP_LANE_INIT_GROUPS", "Init Node Vector Groups Inverted (flags=1)",
         0x03, 0x01, 0x03, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
+        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
