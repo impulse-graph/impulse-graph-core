@@ -38,6 +38,15 @@
   #define HAS_COMPUTED_GOTO 0
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+  #define IMPULSE_PREFETCH_L2(ptr) __builtin_prefetch((ptr), 0, 1)
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+  #include <xmmintrin.h>
+  #define IMPULSE_PREFETCH_L2(ptr) _mm_prefetch(reinterpret_cast<const char*>(ptr), _MM_HINT_T2)
+#else
+  #define IMPULSE_PREFETCH_L2(ptr) ((void)(ptr))
+#endif
+
 // Off-heap BitSet slice struct
 struct VmBitSet {
     uint64_t* words = nullptr;
@@ -9460,18 +9469,27 @@ op_VECTOR_ANN_SEARCH: {
         if (q_len == 0 || q_len > q_vec.size()) q_len = q_vec.size();
 
         auto decode_fp16 = [](uint16_t h) -> float {
-            uint32_t sign = (h >> 15) & 1u;
+            uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
             uint32_t exp = (h >> 10) & 0x1Fu;
             uint32_t frac = h & 0x03FFu;
-            float mag = 0.0f;
-            if (exp == 0) {
-                mag = (frac == 0) ? 0.0f : std::ldexp(static_cast<float>(frac), -24);
-            } else if (exp == 0x1Fu) {
-                mag = (frac == 0) ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+            uint32_t bits = 0;
+            if (IMPULSE_LIKELY(exp != 0u && exp != 0x1Fu)) {
+                bits = sign | ((exp + 112u) << 23) | (frac << 13);
+            } else if (exp == 0u) {
+                if (frac == 0u) {
+                    bits = sign;
+                } else {
+                    uint32_t lz = static_cast<uint32_t>(std::countl_zero(frac)) - 21u;
+                    uint32_t norm_frac = (frac << lz) & 0x03FFu;
+                    uint32_t norm_exp = 113u - lz;
+                    bits = sign | (norm_exp << 23) | (norm_frac << 13);
+                }
             } else {
-                mag = std::ldexp(static_cast<float>(0x0400u | frac), static_cast<int>(exp) - 25);
+                bits = sign | 0x7F800000u | (frac << 13);
             }
-            return sign ? -mag : mag;
+            float out = 0.0f;
+            std::memcpy(&out, &bits, sizeof(float));
+            return out;
         };
 
         auto compute_metric_score_dist = [](uint8_t metric_code, const float* q, const float* v, size_t dim, float* out_score, float* out_dist) {
@@ -9601,15 +9619,17 @@ op_VECTOR_ANN_SEARCH: {
                 expanded_words.resize(num_words, 0ULL);
 
                 bool use_quant = (v_quant_type != 0 && quant_slab != nullptr);
-                auto& approx_buf = vm_state->query_context->scratch_f32_a;
-                if (approx_buf.size() < dim) approx_buf.resize(dim, 0.0f);
+                const float* q_ptr = q_vec.data();
+                const float q_norm = (v_metric == 1)
+                    ? std::sqrt(impulse_simd_dot_product_f32(q_ptr, q_ptr, dim))
+                    : 0.0f;
 
                 size_t bq1_num_words = (dim + 63) / 64;
                 auto& q_bq1_words = vm_state->query_context->scratch_lanes_b;
                 if (use_quant && v_quant_type == 1) {
                     q_bq1_words.assign(bq1_num_words, 0ULL);
                     for (size_t d = 0; d < dim; ++d) {
-                        if (q_vec[d] >= 0.0f) {
+                        if (q_ptr[d] >= 0.0f) {
                             q_bq1_words[d >> 6] |= (1ULL << (d & 63));
                         }
                     }
@@ -9618,7 +9638,7 @@ op_VECTOR_ANN_SEARCH: {
                 auto eval_beam_dist = [&](uint32_t u) -> float {
                     if (!use_quant) {
                         float dist = 0.0f;
-                        compute_metric_score_dist(v_metric, q_vec.data(), emb_table + static_cast<size_t>(u) * attr_dim, dim, nullptr, &dist);
+                        compute_metric_score_dist(v_metric, q_ptr, emb_table + static_cast<size_t>(u) * attr_dim, dim, nullptr, &dist);
                         return dist;
                     }
                     const uint8_t* row_ptr = quant_slab + static_cast<size_t>(u) * static_cast<size_t>(quant_row_bytes);
@@ -9640,24 +9660,85 @@ op_VECTOR_ANN_SEARCH: {
                             ham += static_cast<uint32_t>(std::popcount((q_bq1_words[full_words] ^ v_tail) & tail_mask));
                         }
                         return static_cast<float>(ham);
-                    } else if (v_quant_type == 2) { // QuantSQ8
+                    } else if (v_quant_type == 2) { // QuantSQ8: fused single-pass dequantization + distance
                         IMPULSE_TESTCASE(v_quant_type == 2);
-                        for (size_t d = 0; d < dim; ++d) {
-                            approx_buf[d] = (static_cast<float>(row_ptr[d]) - 128.0f) / 127.0f;
+                        constexpr float inv_127 = 1.0f / 127.0f;
+                        if (v_metric == 0) { // MetricL2
+                            float sum_sq = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                float vf = (static_cast<float>(row_ptr[d]) - 128.0f) * inv_127;
+                                float diff = q_ptr[d] - vf;
+                                sum_sq += diff * diff;
+                            }
+                            return sum_sq;
+                        } else if (v_metric == 2) { // MetricDot
+                            float dot = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                float vf = (static_cast<float>(row_ptr[d]) - 128.0f) * inv_127;
+                                dot += q_ptr[d] * vf;
+                            }
+                            return -dot;
+                        } else if (v_metric == 1) { // MetricCosine
+                            float dot = 0.0f;
+                            float nv = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                float vf = (static_cast<float>(row_ptr[d]) - 128.0f) * inv_127;
+                                dot += q_ptr[d] * vf;
+                                nv += vf * vf;
+                            }
+                            float denom = q_norm * std::sqrt(nv);
+                            return 1.0f - ((denom <= 1e-12f) ? 0.0f : (dot / denom));
+                        } else { // MetricHamming
+                            uint32_t ham = 0;
+                            for (size_t d = 0; d < dim; ++d) {
+                                float vf = (static_cast<float>(row_ptr[d]) - 128.0f) * inv_127;
+                                if ((q_ptr[d] >= 0.0f) != (vf >= 0.0f)) ++ham;
+                            }
+                            return static_cast<float>(ham);
                         }
-                        float dist = 0.0f;
-                        compute_metric_score_dist(v_metric, q_vec.data(), approx_buf.data(), dim, nullptr, &dist);
-                        return dist;
-                    } else { // QuantFP16
+                    } else { // QuantFP16: fused single-pass dequantization + distance
                         IMPULSE_TESTCASE(v_quant_type == 3);
-                        for (size_t d = 0; d < dim; ++d) {
-                            uint16_t h16 = 0;
-                            std::memcpy(&h16, row_ptr + d * 2, 2);
-                            approx_buf[d] = decode_fp16(h16);
+                        if (v_metric == 0) { // MetricL2
+                            float sum_sq = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                uint16_t h16 = 0;
+                                std::memcpy(&h16, row_ptr + (d << 1), sizeof(uint16_t));
+                                float vf = decode_fp16(h16);
+                                float diff = q_ptr[d] - vf;
+                                sum_sq += diff * diff;
+                            }
+                            return sum_sq;
+                        } else if (v_metric == 2) { // MetricDot
+                            float dot = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                uint16_t h16 = 0;
+                                std::memcpy(&h16, row_ptr + (d << 1), sizeof(uint16_t));
+                                float vf = decode_fp16(h16);
+                                dot += q_ptr[d] * vf;
+                            }
+                            return -dot;
+                        } else if (v_metric == 1) { // MetricCosine
+                            float dot = 0.0f;
+                            float nv = 0.0f;
+                            for (size_t d = 0; d < dim; ++d) {
+                                uint16_t h16 = 0;
+                                std::memcpy(&h16, row_ptr + (d << 1), sizeof(uint16_t));
+                                float vf = decode_fp16(h16);
+                                dot += q_ptr[d] * vf;
+                                nv += vf * vf;
+                            }
+                            float denom = q_norm * std::sqrt(nv);
+                            return 1.0f - ((denom <= 1e-12f) ? 0.0f : (dot / denom));
+                        } else { // MetricHamming
+                            uint32_t ham = 0;
+                            for (size_t d = 0; d < dim; ++d) {
+                                uint16_t h16 = 0;
+                                std::memcpy(&h16, row_ptr + (d << 1), sizeof(uint16_t));
+                                float vf = decode_fp16(h16);
+                                if ((q_ptr[d] >= 0.0f) != (vf >= 0.0f)) ++ham;
+                            }
+                            return static_cast<float>(ham);
                         }
-                        float dist = 0.0f;
-                        compute_metric_score_dist(v_metric, q_vec.data(), approx_buf.data(), dim, nullptr, &dist);
-                        return dist;
                     }
                 };
 
@@ -9706,6 +9787,21 @@ op_VECTOR_ANN_SEARCH: {
                     std::memcpy(&deg, row_ptr, 4);
                     if (deg > v_max_degree_r) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                     for (uint32_t j = 0; j < deg; ++j) {
+                        if (j + 2u < deg) {
+                            uint32_t pref_nb = 0;
+                            std::memcpy(&pref_nb, row_ptr + (j + 3u) * 4u, 4);
+                            if (pref_nb < n_nodes) {
+                                if (use_quant) {
+                                    IMPULSE_PREFETCH_L2(
+                                        quant_slab + static_cast<size_t>(pref_nb) * static_cast<size_t>(quant_row_bytes)
+                                    );
+                                } else {
+                                    IMPULSE_PREFETCH_L2(
+                                        emb_table + static_cast<size_t>(pref_nb) * attr_dim
+                                    );
+                                }
+                            }
+                        }
                         uint32_t nb = 0;
                         std::memcpy(&nb, row_ptr + (j + 1u) * 4u, 4);
                         if (nb < n_nodes && (visited_words[nb >> 6] & (1ULL << (nb & 63))) == 0ULL) {
