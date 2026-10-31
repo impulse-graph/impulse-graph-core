@@ -1,3 +1,30 @@
+/**
+ * @file op_10_csr_walk.inc
+ * @brief Formal Contract for OP_CSR_WALK (0x10).
+ *
+ * Mnemonic: OP_CSR_WALK
+ * Opcode: 0x10
+ * Description: Standard SIMD/parallel Compressed Sparse Row (CSR) forward traversal step.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFFFF, rel = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src: TYPE_NULL | TYPE_NODE_ID | TYPE_INT64 | TYPE_BITSET_HANDLE | TYPE_NODE_VECTOR
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if output frontier is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot slots and bitset pool)
+ */
+#ifndef OP_10_CONTRACT_DEFINED
+#define OP_10_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x10: OP_CSR_WALK
 op_CSR_WALK: {
     const auto& inst = bytecode[vm_state->pc];
@@ -13,6 +40,8 @@ op_CSR_WALK: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC));
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

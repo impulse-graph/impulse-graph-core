@@ -1,3 +1,23 @@
+/**
+ * Formal Opcode Contract: OP_COALESCE (0x3B)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   aux1_reg:         (inst.payload >> 16) & 0xFFFF (PAYLOAD_HIGH16)
+ *   allowed_src:      IMP_TYPES_ANY
+ *   allowed_aux1:     IMP_TYPES_ANY
+ *   output_dst:       IMP_TYPES_ANY
+ *   requires_ctx:     true
+ */
+#ifndef OP_3B_CONTRACT_DEFINED
+#define OP_3B_CONTRACT_DEFINED
+#define OP_3B_DEFINED_FLAGS        0x00u
+#define OP_3B_ALLOWED_SRC_TYPES    (IMP_TYPES_ANY)
+#define OP_3B_ALLOWED_AUX1_TYPES   (IMP_TYPES_ANY)
+#define OP_3B_OUTPUT_DST_TYPES     (IMP_TYPES_ANY)
+#endif
+
 // Opcode 0x3B: OP_COALESCE
 op_COALESCE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,6 +27,7 @@ op_COALESCE: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int hDst = acquire_float_vector(vm_state->query_context);

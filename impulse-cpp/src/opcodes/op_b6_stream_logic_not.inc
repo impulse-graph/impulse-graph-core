@@ -1,6 +1,15 @@
+#ifndef OP_B6_CONTRACT_DEFINED
+#define OP_B6_CONTRACT_DEFINED
 /**
  * @file op_b6_stream_logic_not.inc
- * @brief Opcode 0xB6: OP_STREAM_LOGIC_NOT — Per-edge boolean NOT over float value.
+ * @brief Opcode 0xB6: OP_STREAM_LOGIC_NOT — Per-edge logical NOT producing 1.0f or 0.0f.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xB6 (OP_STREAM_LOGIC_NOT)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream reg 0..15), low (stream input reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,4 +32,5 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_LOGIC_NOT: s_regs[sDst] = (s_regs[sPayloadLow] == 0.0f) ? 1.0f : 0.0f; break;

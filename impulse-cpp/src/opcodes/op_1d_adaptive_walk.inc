@@ -1,8 +1,39 @@
+/**
+ * @file op_1d_adaptive_walk.inc
+ * @brief Formal Contract for OP_ADAPTIVE_WALK (0x1D).
+ *
+ * Mnemonic: OP_ADAPTIVE_WALK
+ * Opcode: 0x1D
+ * Description: Direction-optimizing adaptive graph walk (switches dynamically between push and pull).
+ *
+ * Operands:
+ *  - src = payload & 0xFFFF, rel = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src: TYPE_BITSET_HANDLE | TYPE_NODE_ID
+ *
+ * Outputs:
+ *  - None (control branch / internal dispatch)
+ *
+ * Flags:
+ *  - Unmodified
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot slots)
+ */
+#ifndef OP_1D_CONTRACT_DEFINED
+#define OP_1D_CONTRACT_DEFINED 1
+#define OP_1D_ALLOWED_SRC_TYPES (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPES_NODE_VEC)
+#endif
+
 // Opcode 0x1D: OP_ADAPTIVE_WALK
 op_ADAPTIVE_WALK: {
     const auto& inst = bytecode[vm_state->pc];
     uint32_t cur_pc = static_cast<uint32_t>(vm_state->pc);
     uint16_t src = inst.payload & 0xFFFF;
+    VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_1D_ALLOWED_SRC_TYPES);
     uint16_t rel;
     if (inst.flags & 0x80) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

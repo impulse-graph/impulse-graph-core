@@ -1,3 +1,23 @@
+/**
+ * Formal Opcode Contract: OP_MXV (0x41)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8, src_vec)
+ *   rel_id:           (inst.payload >> 8) & 0xFF
+ *   semiring_id:      (inst.payload >> 16) & 0xFFFF
+ *   flags:            optional mask register index + 1 (0 = unmasked)
+ *   allowed_src:      IMP_TYPES_FLOAT_OR_DBL
+ *   output_dst:       IMP_TYPES_FLOAT_OR_DBL
+ *   requires_ctx:     true
+ */
+#ifndef OP_41_CONTRACT_DEFINED
+#define OP_41_CONTRACT_DEFINED
+#define OP_41_DEFINED_FLAGS        0xFFu
+#define OP_41_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL)
+#define OP_41_OUTPUT_DST_TYPES     (IMP_TYPES_FLOAT_OR_DBL)
+#endif
+
 // Opcode 0x41: OP_MXV
 op_MXV: {
     const auto& inst = bytecode[vm_state->pc];
@@ -8,6 +28,8 @@ op_MXV: {
     uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_41_ALLOWED_SRC_TYPES);
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

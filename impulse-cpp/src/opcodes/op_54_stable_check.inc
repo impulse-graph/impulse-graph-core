@@ -1,3 +1,20 @@
+/**
+ * Formal Opcode Contract: OP_STABLE_CHECK (0x54)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG, target/previous set)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16, candidate/delta set)
+ *   allowed_src:      TYPE_BITSET_HANDLE | IMP_TYPES_INT_OR_NODE
+ *   flags:            ST and ZF set if src is subset of dst
+ *   requires_ctx:     true
+ */
+#ifndef OP_54_CONTRACT_DEFINED
+#define OP_54_CONTRACT_DEFINED
+#define OP_54_DEFINED_FLAGS        0x00u
+#define OP_54_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE)
+#define OP_54_OUTPUT_DST_TYPES     IMP_TYPES_NONE
+#endif
+
 // Opcode 0x54: OP_STABLE_CHECK
 op_STABLE_CHECK: {
     const auto& inst = bytecode[vm_state->pc];
@@ -11,6 +28,8 @@ op_STABLE_CHECK: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_54_ALLOWED_SRC_TYPES);
 
     bool is_subset = true;
     bool dst_is_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);

@@ -1,3 +1,30 @@
+/**
+ * @file op_15_node_filter_str_prefix.inc
+ * @brief Formal Contract for OP_NODE_FILTER_STR_PREFIX (0x15).
+ *
+ * Mnemonic: OP_NODE_FILTER_STR_PREFIX
+ * Opcode: 0x15
+ * Description: Filters active frontier nodes matching a 4-byte or full string prefix attribute.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, val_reg = (payload >> 8) & 0xFF, attr_id = (payload >> 16) & 0xFF
+ *
+ * Inputs:
+ *  - src: TYPE_BITSET_HANDLE | TYPE_NODE_ID, val_reg: TYPE_INT64 (string pointer/prefix)
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if filtered set is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context attribute slots and bitset pool)
+ */
+#ifndef OP_15_CONTRACT_DEFINED
+#define OP_15_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x15: OP_NODE_FILTER_STR_PREFIX
 op_NODE_FILTER_STR_PREFIX: {
     const auto& inst = bytecode[vm_state->pc];
@@ -9,6 +36,9 @@ op_NODE_FILTER_STR_PREFIX: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     VALIDATE_REG(val_reg);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, val_reg, IMP_TYPES_INT_OR_NODE);
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
@@ -27,10 +57,13 @@ op_NODE_FILTER_STR_PREFIX: {
 
     bool has_attr = (rel_id < vm_state->query_context->attribute_slots.size() &&
                      attr_id < vm_state->query_context->attribute_slots[rel_id].size() &&
-                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr);
+                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr &&
+                     (vm_state->query_context->attribute_slots[rel_id][attr_id].type_code == 0x0B ||
+                      vm_state->query_context->attribute_slots[rel_id][attr_id].offsets_ptr != nullptr));
     const char* prefix = reinterpret_cast<const char*>(vm_state->registers[val_reg]);
+    bool valid_prefix = (prefix != nullptr && reinterpret_cast<uintptr_t>(prefix) >= 4096);
 
-    if (has_attr && prefix != nullptr) {
+    if (has_attr && valid_prefix) {
         const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
         size_t prefix_len = std::strlen(prefix);
         auto eval_match = [&](uint64_t u) -> bool {

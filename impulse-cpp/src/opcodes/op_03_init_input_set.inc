@@ -1,8 +1,36 @@
+/**
+ * @file op_03_init_input_set.inc
+ * @brief Formal Contract for OP_INIT_INPUT_SET (0x03).
+ *
+ * Mnemonic: OP_INIT_INPUT_SET
+ * Opcode: 0x03
+ * Description: Initializes destination register with a BitSet frontier populated from input pointer or empty.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg
+ *
+ * Inputs:
+ *  - input_param (uint64_t* bitmap words pointer)
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if frontier is empty, cleared otherwise
+ *
+ * Context Requirement:
+ *  - Requires context (query_context off-heap bitset pool)
+ */
+#ifndef OP_03_CONTRACT_DEFINED
+#define OP_03_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x03: OP_INIT_INPUT_SET
 op_INIT_INPUT_SET: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     VALIDATE_REG(dst);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     int handle = acquire_bitset(vm_state->query_context);
     if (handle < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

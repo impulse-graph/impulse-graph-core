@@ -18,6 +18,9 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_coo_walk_common(
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
+
     uint8_t src_type = vm_state->register_types[src];
     uint64_t src_val = vm_state->registers[src];
     bool src_is_bitset = (src_type == TYPE_BITSET_HANDLE);

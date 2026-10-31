@@ -1,3 +1,30 @@
+/**
+ * @file op_22_vec_cmp_lt.inc
+ * @brief Formal Contract for OP_VEC_CMP_LT (0x22).
+ *
+ * Mnemonic: OP_VEC_CMP_LT
+ * Opcode: 0x22
+ * Description: Vector elementwise less-than comparison returning BitSet mask.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src1 = payload & 0xFF, src2 = (payload >> 8) & 0xFF
+ *
+ * Inputs:
+ *  - src1, src2: NUMERIC_VEC | INT_OR_NODE | TYPE_FLOAT
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if comparison mask is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context bitset pool)
+ */
+#ifndef OP_22_CONTRACT_DEFINED
+#define OP_22_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x22: OP_VEC_CMP_LT
 op_VEC_CMP_LT: {
     const auto& inst = bytecode[vm_state->pc];
@@ -8,6 +35,8 @@ op_VEC_CMP_LT: {
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT)));
 
     uint8_t type1 = vm_state->register_types[src1];
     uint64_t val1 = vm_state->registers[src1];

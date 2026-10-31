@@ -1,3 +1,24 @@
+/**
+ * @file op_85_csr_walk_dense_stream.inc
+ * @brief Formal Contract for OP_CSR_WALK_DENSE_STREAM (0x85).
+ *
+ * Syntax: OP_CSR_WALK_DENSE_STREAM <dst_reg>, <src_reg> (payload: [rel_id:16 | ... | src:8])
+ * Inputs:
+ *   - dst_reg: Target register receiving uncompressed dense frontier
+ *   - src_reg (payload_low8): Source frontier bitset or scalar node ID
+ * Preconditions:
+ *   - src_reg must be TYPE_INT64, TYPE_NODE_ID, or TYPE_BITSET_HANDLE
+ * Outputs:
+ *   - dst_reg set to TYPE_BITSET_HANDLE
+ *   - Flags: ZF set if output frontier is empty
+ */
+#ifndef OP_85_CONTRACT_DEFINED
+#define OP_85_CONTRACT_DEFINED
+#define OP_85_DEFINED_FLAGS        0x00u
+#define OP_85_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_85_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0x85: OP_CSR_WALK_DENSE_STREAM
 op_CSR_WALK_DENSE_STREAM: {
     const auto& inst = bytecode[vm_state->pc];
@@ -6,6 +27,9 @@ op_CSR_WALK_DENSE_STREAM: {
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_85_ALLOWED_SRC_TYPES);
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];

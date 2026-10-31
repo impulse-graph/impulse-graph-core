@@ -1,3 +1,30 @@
+/**
+ * @file op_0e_csr_walk_2hop.inc
+ * @brief Formal Contract for OP_CSR_WALK_2HOP (0x0E).
+ *
+ * Mnemonic: OP_CSR_WALK_2HOP
+ * Opcode: 0x0E
+ * Description: Performs fused 2-hop CSR graph expansion across two relations without intermediate materialization.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, rel1 = payload & 0xFFFF, rel2 = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src (R0 / payload): TYPE_BITSET_HANDLE | TYPE_NODE_ID
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if 2-hop reached frontier is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot and bitset pool)
+ */
+#ifndef OP_0E_CONTRACT_DEFINED
+#define OP_0E_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x0E: OP_CSR_WALK_2HOP
 op_CSR_WALK_2HOP: {
     const auto& inst = bytecode[vm_state->pc];
@@ -19,6 +46,7 @@ op_CSR_WALK_2HOP: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     if (rel1 >= vm_state->query_context->slots.size() || rel2 >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

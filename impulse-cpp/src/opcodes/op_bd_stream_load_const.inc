@@ -1,6 +1,15 @@
+#ifndef OP_BD_CONTRACT_DEFINED
+#define OP_BD_CONTRACT_DEFINED
 /**
  * @file op_bd_stream_load_const.inc
  * @brief Opcode 0xBD: OP_STREAM_LOAD_CONST — Loads IEEE-754 float32 immediate bits from payload into s_regs[sDst].
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xBD (OP_STREAM_LOAD_CONST)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream reg 0..15), immediate float (payload)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_LOAD_CONST: {
                         uint32_t bits = sInst.payload;
                         float f;

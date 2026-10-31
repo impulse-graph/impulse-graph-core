@@ -1,6 +1,15 @@
+#ifndef OP_BE_CONTRACT_DEFINED
+#define OP_BE_CONTRACT_DEFINED
 /**
  * @file op_be_stream_yield.inc
  * @brief Opcode 0xBE: OP_STREAM_YIELD — Explicitly yields actualTarget into the destination frontier bitset.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xBE (OP_STREAM_YIELD)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: None
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_YIELD: {
                         bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
                         break;

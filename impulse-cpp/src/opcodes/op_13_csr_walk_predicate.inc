@@ -1,3 +1,30 @@
+/**
+ * @file op_13_csr_walk_predicate.inc
+ * @brief Formal Contract for OP_CSR_WALK_PREDICATE (0x13).
+ *
+ * Mnemonic: OP_CSR_WALK_PREDICATE
+ * Opcode: 0x13
+ * Description: CSR forward traversal guarded by target predicate evaluation.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF, rel = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src: SOURCE_SET
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if predicate frontier is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot slots and bitset pool)
+ */
+#ifndef OP_13_CONTRACT_DEFINED
+#define OP_13_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x13: OP_CSR_WALK_PREDICATE
 op_CSR_WALK_PREDICATE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -13,6 +40,8 @@ op_CSR_WALK_PREDICATE: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];

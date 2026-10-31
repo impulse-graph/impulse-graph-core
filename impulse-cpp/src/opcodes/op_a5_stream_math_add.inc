@@ -1,6 +1,15 @@
+#ifndef OP_A5_CONTRACT_DEFINED
+#define OP_A5_CONTRACT_DEFINED
 /**
  * @file op_a5_stream_math_add.inc
  * @brief Opcode 0xA5: OP_STREAM_MATH_ADD — Per-edge float addition: s_regs[sDst] = s_regs[low] + s_regs[high].
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xA5 (OP_STREAM_MATH_ADD)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream reg 0..15), low (stream reg 0..15), high (stream reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,4 +32,5 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_MATH_ADD: s_regs[sDst] = s_regs[sPayloadLow] + s_regs[sPayloadHigh]; break;

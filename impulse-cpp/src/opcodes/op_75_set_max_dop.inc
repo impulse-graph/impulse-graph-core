@@ -1,3 +1,24 @@
+/**
+ * @file op_75_set_max_dop.inc
+ * @brief Formal Contract for OP_SET_MAX_DOP (0x75).
+ *
+ * Syntax: OP_SET_MAX_DOP <dst_reg> (payload: [requested_dop:32])
+ * Inputs:
+ *   - dst_reg: Target register receiving active thread degree of parallelism
+ *   - payload: Requested worker concurrency limit
+ * Preconditions:
+ *   - dst_reg must be valid register index (0..63)
+ * Outputs:
+ *   - dst_reg set to effective thread count as TYPE_INT64
+ *   - Flags: ZF cleared
+ */
+#ifndef OP_75_CONTRACT_DEFINED
+#define OP_75_CONTRACT_DEFINED
+#define OP_75_DEFINED_FLAGS        0x00u
+#define OP_75_ALLOWED_SRC_TYPES    (IMP_TYPES_NONE)
+#define OP_75_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_INT64))
+#endif
+
 // Opcode 0x75: OP_SET_MAX_DOP
 op_SET_MAX_DOP: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];

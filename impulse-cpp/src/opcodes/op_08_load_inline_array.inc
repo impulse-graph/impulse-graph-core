@@ -1,3 +1,30 @@
+/**
+ * @file op_08_load_inline_array.inc
+ * @brief Formal Contract for OP_LOAD_INLINE_ARRAY (0x08).
+ *
+ * Mnemonic: OP_LOAD_INLINE_ARRAY
+ * Opcode: 0x08
+ * Description: Loads contiguous inline numerical/node array slice into float or node vector handle.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, offset = payload & 0xFFFF, count = payload >> 16
+ *
+ * Inputs:
+ *  - query_context->inline_data_ptr
+ *
+ * Outputs:
+ *  - dst: TYPE_FLOAT_VECTOR (flags=0) or TYPE_NODE_VECTOR (flags=1)
+ *
+ * Flags:
+ *  - ZF: Cleared (0)
+ *
+ * Context Requirement:
+ *  - Requires context (query_context inline data and vector pool)
+ */
+#ifndef OP_08_CONTRACT_DEFINED
+#define OP_08_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x08: OP_LOAD_INLINE_ARRAY
 op_LOAD_INLINE_ARRAY: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];

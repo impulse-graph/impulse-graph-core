@@ -10,7 +10,8 @@
 
 IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_dense_walk_common(
     const impulse_instruction_t* bytecode,
-    impulse_vm_state_t* vm_state
+    impulse_vm_state_t* vm_state,
+    uint32_t allowed_src_types = (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
 ) {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
@@ -18,6 +19,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_dense_walk_common(
     uint16_t rel = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, allowed_src_types);
 
     uint8_t src_type = vm_state->register_types[src];
     uint64_t src_val = vm_state->registers[src];
@@ -64,6 +67,21 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_dense_walk_common(
                     }
                 }
                 if (dst == src) release_bitset(vm_state->query_context, h_src);
+            } else if (src_type == TYPE_NODE_VECTOR || src_type == TYPE_UINT64_VECTOR) {
+                const uint64_t* vec_ptr = nullptr;
+                size_t vec_len = 0;
+                if (get_node_vector_slice(vm_state->query_context, src_val, &vec_ptr, &vec_len) && vec_ptr) {
+                    for (size_t i = 0; i < vec_len; ++i) {
+                        uint64_t u = vec_ptr[i];
+                        if (u < slot.node_count || slot.node_count == 0) {
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
+                            for (uint64_t e = start; e < end; ++e) {
+                                bs_dst.set(slot.get_csr_target(e));
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -693,7 +693,8 @@ int impulse_vm_context_acquire_lane_frontier(impulse_vm_context_t* ctx) {
 }
 
 void impulse_vm_context_release_lane_frontier(impulse_vm_context_t* ctx, size_t handle) {
-    if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES && handle < ctx->lane_frontiers_count) {
+    if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES) {
+        ctx->lane_frontiers_allocated[handle] = false;
         ctx->lane_frontiers[handle].lanes.clear();
         ctx->lane_frontiers[handle].active_words.clear();
         for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {

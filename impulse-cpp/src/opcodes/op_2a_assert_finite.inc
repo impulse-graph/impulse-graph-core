@@ -1,3 +1,30 @@
+/**
+ * @file op_2a_assert_finite.inc
+ * @brief Formal Contract for OP_ASSERT_FINITE (0x2A).
+ *
+ * Mnemonic: OP_ASSERT_FINITE
+ * Opcode: 0x2A
+ * Description: Asserts that target numerical register or vector elements are finite (non-NaN, non-Inf).
+ *
+ * Operands:
+ *  - target = inst.dst_reg
+ *
+ * Inputs:
+ *  - target: TYPE_FLOAT | TYPE_DOUBLE | NUMERIC_VEC
+ *
+ * Outputs:
+ *  - None (throws IMPULSE_VM_ERR_FLOATING_POINT on non-finite)
+ *
+ * Flags:
+ *  - Unmodified
+ *
+ * Context Requirement:
+ *  - Independent
+ */
+#ifndef OP_2A_CONTRACT_DEFINED
+#define OP_2A_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x2A: OP_ASSERT_FINITE
 op_ASSERT_FINITE: {
     const auto& inst = bytecode[vm_state->pc];

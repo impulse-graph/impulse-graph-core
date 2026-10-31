@@ -1,3 +1,40 @@
+/**
+ * Formal Opcode Contract: OP_LANE_FILTER_QUORUM (0xC6)
+ *
+ * Layout:
+ *   Variant 0 (flags & 0x01 == 0): Basic Quorum Filter
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *     min_k:          (inst.payload >> 16) & 0xFFFF
+ *     allowed_src:    TYPE_LANE_FRONTIER
+ *     allowed_aux1/2: none
+ *     output_dst:     TYPE_BITSET_HANDLE
+ *     flags:          ZF set if quorum bitset is empty
+ *     requires_ctx:   true
+ *
+ *   Variant 1 (flags & 0x01 == 1): Extended Quorum with Req/Forbid Masks
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFF (PAYLOAD_LOW8)
+ *     min_k:          (inst.payload >> 8) & 0xFF
+ *     req_reg (aux1): (inst.payload >> 16) & 0xFF (PAYLOAD_BYTE2)
+ *     forbid_reg(aux2):(inst.payload >> 24) & 0xFF (PAYLOAD_BYTE3)
+ *     allowed_src:    TYPE_LANE_FRONTIER
+ *     allowed_aux1:   TYPE_INT64 | TYPE_NODE_ID (zero skip allowed)
+ *     allowed_aux2:   TYPE_INT64 | TYPE_NODE_ID (zero skip allowed)
+ *     output_dst:     TYPE_BITSET_HANDLE
+ *     flags:          ZF set if quorum bitset is empty
+ *     requires_ctx:   true
+ */
+#ifndef OP_C6_CONTRACT_DEFINED
+#define OP_C6_CONTRACT_DEFINED
+#define OP_C6_DEFINED_FLAGS        0x01u
+#define OP_C6_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_C6_FLAG0_AUX1_TYPES     IMP_TYPES_NONE
+#define OP_C6_FLAG1_AUX1_TYPES     IMP_TYPES_INT_OR_NODE
+#define OP_C6_FLAG1_AUX2_TYPES     IMP_TYPES_INT_OR_NODE
+#define OP_C6_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0xC6: OP_LANE_FILTER_QUORUM
 op_LANE_FILTER_QUORUM: {
     {
@@ -23,12 +60,21 @@ op_LANE_FILTER_QUORUM: {
         }
         const auto& lf = vm_state->query_context->lane_frontiers[h_src];
 
-        uint64_t req_mask = ((flags & 0x01) != 0 && req_reg > 0 && req_reg < 64 &&
-            (vm_state->register_types[req_reg] == TYPE_INT64 || vm_state->register_types[req_reg] == TYPE_NODE_ID))
+        if ((flags & 0x01) != 0) {
+            if (req_reg > 0) {
+                VALIDATE_REG(req_reg);
+                IMPULSE_CHECK_REG_TYPE(vm_state, req_reg, IMP_TYPES_INT_OR_NODE);
+            }
+            if (forbid_reg > 0) {
+                VALIDATE_REG(forbid_reg);
+                IMPULSE_CHECK_REG_TYPE(vm_state, forbid_reg, IMP_TYPES_INT_OR_NODE);
+            }
+        }
+
+        uint64_t req_mask = ((flags & 0x01) != 0 && req_reg > 0)
             ? (vm_state->registers[req_reg] & lf.active_mask)
             : lf.active_mask;
-        uint64_t forbid_mask = ((flags & 0x01) != 0 && forbid_reg > 0 && forbid_reg < 64 &&
-            (vm_state->register_types[forbid_reg] == TYPE_INT64 || vm_state->register_types[forbid_reg] == TYPE_NODE_ID))
+        uint64_t forbid_mask = ((flags & 0x01) != 0 && forbid_reg > 0)
             ? (vm_state->registers[forbid_reg] & lf.active_mask)
             : 0ULL;
 

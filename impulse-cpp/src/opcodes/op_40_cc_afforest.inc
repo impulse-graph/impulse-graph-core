@@ -1,9 +1,26 @@
+/**
+ * Formal Opcode Contract: OP_CC_AFFOREST (0x40)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   rel_id:           inst.payload & 0xFFFF
+ *   allowed_src:      none
+ *   output_dst:       TYPE_UINT64_VECTOR
+ *   requires_ctx:     true
+ */
+#ifndef OP_40_CONTRACT_DEFINED
+#define OP_40_CONTRACT_DEFINED
+#define OP_40_DEFINED_FLAGS        0x00u
+#define OP_40_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#endif
+
 // Opcode 0x40: OP_CC_AFFOREST
 op_CC_AFFOREST: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t rel = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

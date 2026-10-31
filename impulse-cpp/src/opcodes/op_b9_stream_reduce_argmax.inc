@@ -1,6 +1,15 @@
+#ifndef OP_B9_CONTRACT_DEFINED
+#define OP_B9_CONTRACT_DEFINED
 /**
  * @file op_b9_stream_reduce_argmax.inc
  * @brief Opcode 0xB9: OP_STREAM_REDUCE_ARGMAX — Per-edge argmax reduction tracking maximum value and source node ID.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xB9 (OP_STREAM_REDUCE_ARGMAX)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream val reg 0..15), valReg (sPayloadLow), argReg (sPayloadHigh)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_REDUCE_ARGMAX: {
                         float val = s_regs[sDst];
                         uint16_t valReg = sPayloadLow;

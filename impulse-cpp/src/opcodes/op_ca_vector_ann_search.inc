@@ -1,3 +1,25 @@
+/**
+ * Formal Opcode Contract: OP_VECTOR_ANN_SEARCH (0xCA)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   q_reg (src):      inst.payload & 0xFF (PAYLOAD_LOW8)
+ *   top_k:            (inst.payload >> 8) & 0xFF
+ *   allowed_src:      TYPE_FLOAT_VECTOR
+ *   flags:
+ *     0x00: Vamana ANN Search emitting BitSet (output: TYPE_BITSET_HANDLE)
+ *     0x01: Vamana ANN Search emitting Fused Multi-Lane (output: TYPE_LANE_FRONTIER)
+ *     ZF set if output matches are empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_CA_CONTRACT_DEFINED
+#define OP_CA_CONTRACT_DEFINED
+#define OP_CA_DEFINED_FLAGS        0x01u
+#define OP_CA_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#define OP_CA_FLAG0_OUTPUT_DST     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_CA_FLAG1_OUTPUT_DST     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#endif
+
 // Opcode 0xCA: OP_VECTOR_ANN_SEARCH
 op_VECTOR_ANN_SEARCH: {
     {
