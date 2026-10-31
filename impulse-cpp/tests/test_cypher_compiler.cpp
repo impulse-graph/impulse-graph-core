@@ -43,13 +43,19 @@ int main() {
         std::cout << "  ✓ Caught expected untyped walk rejection: " << e.what() << std::endl;
     }
 
-    // 4. Test Unbounded Wildcard Error Check
+    // 4. Test Unbounded Range Error Check (*1.. without upper bound) & Unbounded Fixpoint (* without range)
     try {
-        CypherParser::parse("MATCH (a)-[:Rel*]->(b) RETURN b");
-        assert(false && "Should have thrown error for unbounded walk");
+        CypherParser::parse("MATCH (a)-[:Rel*1..]->(b) RETURN b");
+        assert(false && "Should have thrown error for incomplete range *1..");
     } catch (const std::exception& e) {
-        std::cout << "  ✓ Caught expected unbounded walk rejection: " << e.what() << std::endl;
+        std::cout << "  ✓ Caught expected incomplete range rejection: " << e.what() << std::endl;
     }
+
+    auto res_fp = CypherCompiler::compile("MATCH (a:Node)-[:Rel*]->(b:Node) WHERE a.id = 0 RETURN b");
+    std::string s_fp = res_fp.ast->to_scm_string();
+    assert(s_fp.find("(fixpoint") != std::string::npos);
+    assert(s_fp.find("(csr-walk \"Rel\")") != std::string::npos);
+    std::cout << "  ✓ Unbounded Kleene star [:Rel*] lowers to ScmFixpoint: PASSED\n" << std::endl;
 
     // 5. Test RETURN count, WHERE with AND, comparisons, and variable-length hops
     std::string q3 = "// Leading comment\nMATCH (a:Person)-[:KNOWS*1..3]->(b:Person) WHERE a.age >= 21 AND b.active != 0 AND b.flagged == 0 RETURN count(b)";
@@ -95,6 +101,54 @@ int main() {
         CypherLexer lexer("@invalid");
         lexer.next_token();
     } catch (const std::exception&) {}
+
+    // 8. Multi-seed IN predicate + quorum filter lowering (0xC0 -> 0xC3 -> 0xC6)
+    {
+        std::string q_ml = "MATCH (a:Entity)-[:REL]->(b:Entity) WHERE a.id IN [0, 1, 2] AND quorum >= 2 RETURN b";
+        auto res_ml = CypherCompiler::compile(q_ml);
+        std::string s_ml = res_ml.ast->to_scm_string();
+        assert(s_ml.find("(lane-init-seeds 0 0)") != std::string::npos);
+        assert(s_ml.find("(lane-walk-csr \"REL\")") != std::string::npos);
+        assert(s_ml.find("(lane-filter-quorum 2 255)") != std::string::npos);
+
+        auto seeds_node = std::dynamic_pointer_cast<ScmLaneInitSeeds>(res_ml.ast->steps[0]);
+        assert(seeds_node != nullptr && seeds_node->inline_seeds.size() == 3);
+
+        // Also test WITH b, count(a) AS c WHERE c >= 2 syntax
+        std::string q_with = "MATCH (a:Entity)-[:REL]->(b:Entity) WHERE a.id IN [0, 1] WITH b, count(a) AS c WHERE c >= 2 RETURN b";
+        auto res_with = CypherCompiler::compile(q_with);
+        std::string s_with = res_with.ast->to_scm_string();
+        assert(s_with.find("(lane-init-seeds 0 0)") != std::string::npos);
+        assert(s_with.find("(lane-walk-csr \"REL\")") != std::string::npos);
+        assert(s_with.find("(lane-filter-quorum 2 255)") != std::string::npos);
+        std::cout << "  ✓ Multi-seed IN + quorum / WITH count lowering (0xC0/0xC3/0xC6): PASSED\n" << std::endl;
+    }
+
+    // 9. Multi-seed unbounded Kleene star [:REL*] -> ScmLaneWalk with fixed_point = true (flags = 0x04)
+    {
+        std::string q_ml_fp = "MATCH (a:User)-[:KNOWS*]->(b:User) WHERE a.id IN [0, 1] AND quorum >= 2 RETURN b";
+        auto res_ml_fp = CypherCompiler::compile(q_ml_fp);
+        std::string s_ml_fp = res_ml_fp.ast->to_scm_string();
+        assert(s_ml_fp.find("(lane-init-seeds 0 0)") != std::string::npos);
+        assert(s_ml_fp.find("(lane-walk-csr \"KNOWS\" 1)") != std::string::npos);
+        assert(s_ml_fp.find("(lane-filter-quorum 2 255)") != std::string::npos);
+
+        auto walk_node = std::dynamic_pointer_cast<ScmLaneWalk>(res_ml_fp.ast->steps[1]);
+        assert(walk_node != nullptr && walk_node->fixed_point && walk_node->flags == 0x04);
+        std::cout << "  ✓ Multi-seed unbounded [:KNOWS*] fixpoint lowering: PASSED\n" << std::endl;
+    }
+
+    // 10. Hybrid vector ANN search (0xCA) + exact reranking (0xCB)
+    {
+        std::string q_vec = "MATCH (a:Doc)-[:CITES]->(b:Doc) WHERE vector_ann(a.emb, [1.0, 0.0], 4) AND quorum >= 2 RETURN b ORDER BY vector_dot(b.emb, [1.0, 0.0]) DESC LIMIT 5";
+        auto res_vec = CypherCompiler::compile(q_vec);
+        std::string s_vec = res_vec.ast->to_scm_string();
+        assert(s_vec.find("(vector-ann-search 2 4 0 1)") != std::string::npos);
+        assert(s_vec.find("(lane-walk-csr \"CITES\")") != std::string::npos);
+        assert(s_vec.find("(lane-filter-quorum 2 255)") != std::string::npos);
+        assert(s_vec.find("(vector-rerank-dot 2 0 0)") != std::string::npos);
+        std::cout << "  ✓ Hybrid vector_ann (0xCA) + ORDER BY vector_dot (0xCB) lowering: PASSED\n" << std::endl;
+    }
 
     std::cout << "\n=========================================================================\n";
     std::cout << "                   ALL C++ CYPHER PARSER TESTS PASSED!                   \n";
