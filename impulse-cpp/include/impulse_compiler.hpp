@@ -1701,6 +1701,13 @@ private:
                            (static_cast<uint32_t>(rel_id) << 16);
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::REDUCE) {
+            impulse_instruction_t inst{};
+            inst.opcode = OP_COLLECT_ARRAY;
+            inst.dst_reg = ctx.result_reg;
+            inst.payload = ctx.result_reg;
+            inst.flags = 0;
+            ctx.instructions.push_back(inst);
         } else if (step->kind() == NodeKind::LANE_PRUNE_MASK) {
             auto n = std::static_pointer_cast<ScmLanePruneMask>(step);
             impulse_instruction_t inst{};
