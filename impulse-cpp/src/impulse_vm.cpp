@@ -153,6 +153,7 @@ constexpr size_t VM_MOCK_INIT_CAP = 4096;
 
 struct VmLaneFrontier {
     std::vector<uint64_t> lanes;
+    std::vector<uint64_t> active_words;
     uint32_t num_lanes = 0;
     impulse_lane_width_t width = IMPULSE_LANE_WIDTH_8;
     uint64_t active_mask = 0;
@@ -204,6 +205,8 @@ struct impulse_vm_context {
     size_t lane_frontiers_count = 0;
     std::vector<uint64_t> scratch_lanes;
     std::vector<uint64_t> scratch_lanes_b;
+    std::vector<uint64_t> scratch_active_words;
+    std::vector<uint64_t> scratch_active_words_b;
 
     // Pre-allocated scratch buffers for zero-allocation hot-path execution
     std::vector<uint32_t> scratch_u32_a;
@@ -730,8 +733,8 @@ inline int acquire_lane_frontier(impulse_vm_context_t* ctx, size_t node_count, u
     }
     uint32_t clamped_k = (num_lanes > 64u) ? 64u : num_lanes;
     auto& lf = ctx->lane_frontiers[idx];
-    lf.lanes.clear();
-    lf.lanes.resize(node_count, 0ULL);
+    lf.lanes.assign(node_count, 0ULL);
+    lf.active_words.assign((node_count + 63) / 64, 0ULL);
     lf.num_lanes = clamped_k;
     lf.width = select_lane_width(clamped_k);
     lf.active_mask = impulse_make_active_mask_u64(clamped_k);
@@ -754,6 +757,10 @@ inline int clone_lane_frontier(impulse_vm_context_t* ctx, size_t src_handle) {
     auto& dst = ctx->lane_frontiers[dst_handle];
     if (!src.lanes.empty()) {
         std::memcpy(dst.lanes.data(), src.lanes.data(), src.lanes.size() * sizeof(uint64_t));
+    }
+    if (!src.active_words.empty()) {
+        dst.active_words.resize(src.active_words.size(), 0ULL);
+        std::memcpy(dst.active_words.data(), src.active_words.data(), src.active_words.size() * sizeof(uint64_t));
     }
     dst.width = src.width;
     dst.active_mask = src.active_mask;
@@ -971,9 +978,11 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
 
     // Pre-allocate multi-lane frontiers and hot-path scratch buffers
     size_t lane_cap = snapshot ? std::max<size_t>(ctx->max_nodes, VM_MOCK_INIT_CAP) : VM_MOCK_INIT_CAP;
+    size_t lane_word_cap = (lane_cap + 63) / 64;
     ctx->lane_frontiers_count = 0;
     for (size_t i = 0; i < VM_MAX_LANE_FRONTIER_HANDLES; ++i) {
         ctx->lane_frontiers[i].lanes.reserve(lane_cap);
+        ctx->lane_frontiers[i].active_words.reserve(lane_word_cap);
         ctx->lane_frontiers[i].edge_trip_active_mask = 0;
         for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
             ctx->lane_frontiers[i].edge_trip_masks[r].reserve(1024);
@@ -981,6 +990,8 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     }
     ctx->scratch_lanes.reserve(lane_cap);
     ctx->scratch_lanes_b.reserve(lane_cap);
+    ctx->scratch_active_words.reserve(lane_word_cap);
+    ctx->scratch_active_words_b.reserve(lane_word_cap);
     ctx->scratch_u32_a.reserve(lane_cap);
     ctx->scratch_u32_b.reserve(lane_cap);
     ctx->scratch_u64_a.reserve(lane_cap);
@@ -1267,6 +1278,7 @@ int impulse_vm_context_acquire_lane_frontier(impulse_vm_context_t* ctx) {
 void impulse_vm_context_release_lane_frontier(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES && handle < ctx->lane_frontiers_count) {
         ctx->lane_frontiers[handle].lanes.clear();
+        ctx->lane_frontiers[handle].active_words.clear();
         for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
             ctx->lane_frontiers[handle].edge_trip_masks[r].clear();
         }
@@ -8231,6 +8243,7 @@ op_LANE_INIT_SEEDS: {
             uint64_t u = seeds[b];
             if (u < n_nodes) {
                 lf.lanes[u] |= (1ULL << b);
+                lf.active_words[u >> 6] |= (1ULL << (u & 63));
                 any_set = true;
             }
         }
@@ -8334,7 +8347,9 @@ op_LANE_INIT_GROUPS: {
         bool any_set = false;
         for (size_t i = 0; i < pair_nodes.size(); ++i) {
             if (pair_nodes[i] < n_nodes && pair_grps[i] < num_lanes) {
-                lf.lanes[pair_nodes[i]] |= (1ULL << pair_grps[i]);
+                size_t u = static_cast<size_t>(pair_nodes[i]);
+                lf.lanes[u] |= (1ULL << pair_grps[i]);
+                lf.active_words[u >> 6] |= (1ULL << (u & 63));
                 any_set = true;
             }
         }
@@ -8482,9 +8497,24 @@ op_LANE_CSC_WALK: {
         bool is_csc = (inst.opcode == OP_LANE_CSC_WALK);
 
         if (accumulate || is_fixpoint) {
-            size_t copy_len = std::min(n_nodes, lf_src.lanes.size());
-            for (size_t u = 0; u < copy_len; ++u) {
-                lf_dst.lanes[u] = lf_src.lanes[u] & lf_dst.active_mask;
+            size_t copy_words = std::min(lf_dst.active_words.size(), lf_src.active_words.size());
+            for (size_t w_idx = 0; w_idx < copy_words; ++w_idx) {
+                uint64_t word = lf_src.active_words[w_idx];
+                if (word == 0ULL) continue;
+                uint64_t dst_word = 0ULL;
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u < n_nodes) {
+                        uint64_t val = lf_src.lanes[u] & lf_dst.active_mask;
+                        if (val != 0ULL) {
+                            lf_dst.lanes[u] = val;
+                            dst_word |= (1ULL << bit);
+                        }
+                    }
+                }
+                lf_dst.active_words[w_idx] = dst_word;
             }
         }
 
@@ -8493,114 +8523,87 @@ op_LANE_CSC_WALK: {
             ? &lf_dst.edge_trip_masks[rel_id]
             : nullptr;
 
-        auto step_once = [&](const std::vector<uint64_t>& cur_lanes, std::vector<uint64_t>& next_lanes) -> bool {
-            bool changed = false;
-            if (!is_csc) {
-                if (slot.offsets_ptr && slot.targets_ptr) {
-                    size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, cur_lanes.size());
-                    for (size_t u = 0; u < csr_n; ++u) {
-                        uint64_t u_mask = cur_lanes[u] & lf_dst.active_mask;
-                        if (u_mask == 0ULL) continue;
-                        uint64_t start = slot.get_csr_offset(u);
-                        uint64_t end = slot.get_csr_offset(u + 1);
-                        for (uint64_t e = start; e < end; ++e) {
-                            uint64_t v = slot.get_csr_target(e);
-                            if (v < next_lanes.size()) {
-                                uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
-                                uint64_t prop = u_mask & ~trip;
-                                uint64_t prev = next_lanes[v];
-                                uint64_t nw = prev | prop;
-                                if (nw != prev) {
-                                    next_lanes[v] = nw;
-                                    changed = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                if (slot.csc_offsets_ptr && slot.csc_targets_ptr && !trip_ptr) {
-                    size_t csc_n = std::min<size_t>(
-                        slot.csc_node_count > 0 ? slot.csc_node_count : (slot.node_count > 0 ? slot.node_count : n_nodes),
-                        cur_lanes.size()
-                    );
-                    for (size_t v = 0; v < csc_n; ++v) {
-                        uint64_t v_mask = cur_lanes[v] & lf_dst.active_mask;
-                        if (v_mask == 0ULL) continue;
-                        uint64_t start = slot.get_csc_offset(v);
-                        uint64_t end = slot.get_csc_offset(v + 1);
-                        for (uint64_t e = start; e < end; ++e) {
-                            uint64_t u = slot.get_csc_target(e);
-                            if (u < next_lanes.size()) {
-                                uint64_t prev = next_lanes[u];
-                                uint64_t nw = prev | v_mask;
-                                if (nw != prev) {
-                                    next_lanes[u] = nw;
-                                    changed = true;
-                                }
-                            }
-                        }
-                    }
-                } else if (slot.offsets_ptr && slot.targets_ptr) {
-                    size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, next_lanes.size());
-                    for (size_t u = 0; u < csr_n; ++u) {
-                        uint64_t start = slot.get_csr_offset(u);
-                        uint64_t end = slot.get_csr_offset(u + 1);
-                        for (uint64_t e = start; e < end; ++e) {
-                            uint64_t v = slot.get_csr_target(e);
-                            if (v < cur_lanes.size()) {
-                                uint64_t v_mask = cur_lanes[v] & lf_dst.active_mask;
-                                if (v_mask != 0ULL) {
-                                    uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
-                                    uint64_t prop = v_mask & ~trip;
-                                    uint64_t prev = next_lanes[u];
-                                    uint64_t nw = prev | prop;
-                                    if (nw != prev) {
-                                        next_lanes[u] = nw;
-                                        changed = true;
+        const bool csr_fast_u32 = (slot.offsets_ptr != nullptr && slot.targets_ptr != nullptr &&
+                                   slot.edge_index_width != 8 && slot.edge_index_width != 64 &&
+                                   slot.node_id_width != 2 && slot.node_id_width != 16 &&
+                                   slot.node_id_width != 8 && slot.node_id_width != 64);
+        const uint32_t* csr_offsets_u32 = csr_fast_u32 ? static_cast<const uint32_t*>(slot.offsets_ptr) : nullptr;
+        const uint32_t* csr_targets_u32 = csr_fast_u32 ? static_cast<const uint32_t*>(slot.targets_ptr) : nullptr;
+
+        const bool csc_fast_u32 = (!slot.dynamic_csc_offsets.empty() && !slot.dynamic_csc_targets.empty()) ||
+                                  (slot.dynamic_csc_offsets.empty() &&
+                                   slot.csc_offsets_ptr != nullptr && slot.csc_targets_ptr != nullptr &&
+                                   slot.csc_edge_index_width != 8 && slot.csc_edge_index_width != 64 &&
+                                   slot.csc_node_id_width != 2 && slot.csc_node_id_width != 16 &&
+                                   slot.csc_node_id_width != 8 && slot.csc_node_id_width != 64);
+        const uint32_t* csc_offsets_u32 = !slot.dynamic_csc_offsets.empty()
+            ? slot.dynamic_csc_offsets.data()
+            : (csc_fast_u32 ? static_cast<const uint32_t*>(slot.csc_offsets_ptr) : nullptr);
+        const uint32_t* csc_targets_u32 = !slot.dynamic_csc_targets.empty()
+            ? slot.dynamic_csc_targets.data()
+            : (csc_fast_u32 ? static_cast<const uint32_t*>(slot.csc_targets_ptr) : nullptr);
+
+        auto execute_walk_tiered = [&](auto width_tag) {
+            using WordT = decltype(width_tag);
+            const WordT active_mask_w = static_cast<WordT>(lf_dst.active_mask);
+
+            auto step_once = [&](const std::vector<uint64_t>& cur_lanes,
+                                 const std::vector<uint64_t>& cur_active_words,
+                                 std::vector<uint64_t>& next_lanes,
+                                 std::vector<uint64_t>& next_active_words) {
+                if (!is_csc) {
+                    if (slot.offsets_ptr && slot.targets_ptr) {
+                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, cur_lanes.size());
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csr_n + 63) / 64);
+                        if (csr_fast_u32 && !trip_ptr) {
+                            for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                uint64_t word = cur_active_words[w_idx];
+                                while (word != 0ULL) {
+                                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                    size_t u = (w_idx << 6) + bit;
+                                    word &= (word - 1ULL);
+                                    if (u >= csr_n) break;
+                                    WordT u_mask = static_cast<WordT>(cur_lanes[u]) & active_mask_w;
+                                    if (u_mask == 0) continue;
+                                    uint32_t start = csr_offsets_u32[u];
+                                    uint32_t end = csr_offsets_u32[u + 1];
+                                    for (uint32_t e = start; e < end; ++e) {
+                                        uint32_t v = csr_targets_u32[e];
+                                        if (v < next_lanes.size()) {
+                                            WordT prev = static_cast<WordT>(next_lanes[v]);
+                                            WordT nw = static_cast<WordT>(prev | u_mask);
+                                            if (nw != prev) {
+                                                next_lanes[v] = static_cast<uint64_t>(nw);
+                                                next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
-            return changed;
-        };
-
-        if (is_fixpoint) {
-            auto& delta = vm_state->query_context->scratch_lanes;
-            auto& next_delta = vm_state->query_context->scratch_lanes_b;
-            delta.assign(n_nodes, 0ULL);
-            next_delta.assign(n_nodes, 0ULL);
-            bool has_delta = false;
-            for (size_t u = 0; u < n_nodes; ++u) {
-                uint64_t m = lf_dst.lanes[u];
-                delta[u] = m;
-                if (m != 0ULL) has_delta = true;
-            }
-            int iter = 0;
-            while (has_delta && iter < 1024) {
-                std::memset(next_delta.data(), 0, n_nodes * sizeof(uint64_t));
-                has_delta = false;
-                if (!is_csc) {
-                    if (slot.offsets_ptr && slot.targets_ptr) {
-                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, delta.size());
-                        for (size_t u = 0; u < csr_n; ++u) {
-                            uint64_t u_mask = delta[u] & lf_dst.active_mask;
-                            if (u_mask == 0ULL) continue;
-                            uint64_t start = slot.get_csr_offset(u);
-                            uint64_t end = slot.get_csr_offset(u + 1);
-                            for (uint64_t e = start; e < end; ++e) {
-                                uint64_t v = slot.get_csr_target(e);
-                                if (v < n_nodes) {
-                                    uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
-                                    uint64_t prop = u_mask & ~trip;
-                                    uint64_t newly_reached = prop & ~lf_dst.lanes[v];
-                                    if (newly_reached != 0ULL) {
-                                        lf_dst.lanes[v] |= newly_reached;
-                                        next_delta[v] |= newly_reached;
-                                        has_delta = true;
+                        } else {
+                            for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                uint64_t word = cur_active_words[w_idx];
+                                while (word != 0ULL) {
+                                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                    size_t u = (w_idx << 6) + bit;
+                                    word &= (word - 1ULL);
+                                    if (u >= csr_n) break;
+                                    WordT u_mask = static_cast<WordT>(cur_lanes[u]) & active_mask_w;
+                                    if (u_mask == 0) continue;
+                                    uint64_t start = slot.get_csr_offset(u);
+                                    uint64_t end = slot.get_csr_offset(u + 1);
+                                    for (uint64_t e = start; e < end; ++e) {
+                                        uint64_t v = slot.get_csr_target(e);
+                                        if (v < next_lanes.size()) {
+                                            WordT trip = (trip_ptr && e < trip_ptr->size()) ? static_cast<WordT>((*trip_ptr)[e]) : 0;
+                                            WordT prop = static_cast<WordT>(u_mask & ~trip);
+                                            WordT prev = static_cast<WordT>(next_lanes[v]);
+                                            WordT nw = static_cast<WordT>(prev | prop);
+                                            if (nw != prev) {
+                                                next_lanes[v] = static_cast<uint64_t>(nw);
+                                                next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -8610,42 +8613,80 @@ op_LANE_CSC_WALK: {
                     if (slot.csc_offsets_ptr && slot.csc_targets_ptr && !trip_ptr) {
                         size_t csc_n = std::min<size_t>(
                             slot.csc_node_count > 0 ? slot.csc_node_count : (slot.node_count > 0 ? slot.node_count : n_nodes),
-                            delta.size()
+                            cur_lanes.size()
                         );
-                        for (size_t v = 0; v < csc_n; ++v) {
-                            uint64_t v_mask = delta[v] & lf_dst.active_mask;
-                            if (v_mask == 0ULL) continue;
-                            uint64_t start = slot.get_csc_offset(v);
-                            uint64_t end = slot.get_csc_offset(v + 1);
-                            for (uint64_t e = start; e < end; ++e) {
-                                uint64_t u = slot.get_csc_target(e);
-                                if (u < n_nodes) {
-                                    uint64_t newly_reached = v_mask & ~lf_dst.lanes[u];
-                                    if (newly_reached != 0ULL) {
-                                        lf_dst.lanes[u] |= newly_reached;
-                                        next_delta[u] |= newly_reached;
-                                        has_delta = true;
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csc_n + 63) / 64);
+                        if (csc_fast_u32) {
+                            size_t dyn_off_lim = slot.dynamic_csc_offsets.size();
+                            size_t dyn_tgt_lim = slot.dynamic_csc_targets.size();
+                            bool use_dyn = !slot.dynamic_csc_offsets.empty();
+                            for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                uint64_t word = cur_active_words[w_idx];
+                                while (word != 0ULL) {
+                                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                    size_t v = (w_idx << 6) + bit;
+                                    word &= (word - 1ULL);
+                                    if (v >= csc_n) break;
+                                    WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
+                                    if (v_mask == 0) continue;
+                                    uint32_t start = (!use_dyn || v < dyn_off_lim) ? csc_offsets_u32[v] : csc_offsets_u32[dyn_off_lim - 1];
+                                    uint32_t end = (!use_dyn || (v + 1) < dyn_off_lim) ? csc_offsets_u32[v + 1] : csc_offsets_u32[dyn_off_lim - 1];
+                                    for (uint32_t e = start; e < end; ++e) {
+                                        uint32_t u = (!use_dyn || e < dyn_tgt_lim) ? csc_targets_u32[e] : 0u;
+                                        if (u < next_lanes.size()) {
+                                            WordT prev = static_cast<WordT>(next_lanes[u]);
+                                            WordT nw = static_cast<WordT>(prev | v_mask);
+                                            if (nw != prev) {
+                                                next_lanes[u] = static_cast<uint64_t>(nw);
+                                                next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                uint64_t word = cur_active_words[w_idx];
+                                while (word != 0ULL) {
+                                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                    size_t v = (w_idx << 6) + bit;
+                                    word &= (word - 1ULL);
+                                    if (v >= csc_n) break;
+                                    WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
+                                    if (v_mask == 0) continue;
+                                    uint64_t start = slot.get_csc_offset(v);
+                                    uint64_t end = slot.get_csc_offset(v + 1);
+                                    for (uint64_t e = start; e < end; ++e) {
+                                        uint64_t u = slot.get_csc_target(e);
+                                        if (u < next_lanes.size()) {
+                                            WordT prev = static_cast<WordT>(next_lanes[u]);
+                                            WordT nw = static_cast<WordT>(prev | v_mask);
+                                            if (nw != prev) {
+                                                next_lanes[u] = static_cast<uint64_t>(nw);
+                                                next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     } else if (slot.offsets_ptr && slot.targets_ptr) {
-                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, n_nodes);
+                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, next_lanes.size());
                         for (size_t u = 0; u < csr_n; ++u) {
                             uint64_t start = slot.get_csr_offset(u);
                             uint64_t end = slot.get_csr_offset(u + 1);
                             for (uint64_t e = start; e < end; ++e) {
                                 uint64_t v = slot.get_csr_target(e);
-                                if (v < delta.size()) {
-                                    uint64_t v_mask = delta[v] & lf_dst.active_mask;
-                                    if (v_mask != 0ULL) {
-                                        uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
-                                        uint64_t prop = v_mask & ~trip;
-                                        uint64_t newly_reached = prop & ~lf_dst.lanes[u];
-                                        if (newly_reached != 0ULL) {
-                                            lf_dst.lanes[u] |= newly_reached;
-                                            next_delta[u] |= newly_reached;
-                                            has_delta = true;
+                                if (v < cur_lanes.size()) {
+                                    WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
+                                    if (v_mask != 0) {
+                                        WordT trip = (trip_ptr && e < trip_ptr->size()) ? static_cast<WordT>((*trip_ptr)[e]) : 0;
+                                        WordT prop = static_cast<WordT>(v_mask & ~trip);
+                                        WordT prev = static_cast<WordT>(next_lanes[u]);
+                                        WordT nw = static_cast<WordT>(prev | prop);
+                                        if (nw != prev) {
+                                            next_lanes[u] = static_cast<uint64_t>(nw);
+                                            next_active_words[u >> 6] |= (1ULL << (u & 63));
                                         }
                                     }
                                 }
@@ -8653,21 +8694,260 @@ op_LANE_CSC_WALK: {
                         }
                     }
                 }
-                delta.swap(next_delta);
-                iter++;
+            };
+
+            if (is_fixpoint) {
+                auto& delta = vm_state->query_context->scratch_lanes;
+                auto& next_delta = vm_state->query_context->scratch_lanes_b;
+                auto& delta_active_words = vm_state->query_context->scratch_active_words;
+                auto& next_delta_active_words = vm_state->query_context->scratch_active_words_b;
+                size_t num_words = (n_nodes + 63) / 64;
+                delta.assign(n_nodes, 0ULL);
+                next_delta.assign(n_nodes, 0ULL);
+                delta_active_words.assign(num_words, 0ULL);
+                next_delta_active_words.assign(num_words, 0ULL);
+
+                bool has_delta = false;
+                for (size_t w_idx = 0; w_idx < lf_dst.active_words.size() && w_idx < num_words; ++w_idx) {
+                    uint64_t word = lf_dst.active_words[w_idx];
+                    if (word == 0ULL) continue;
+                    delta_active_words[w_idx] = word;
+                    has_delta = true;
+                    while (word != 0ULL) {
+                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                        size_t u = (w_idx << 6) + bit;
+                        word &= (word - 1ULL);
+                        if (u < n_nodes) {
+                            delta[u] = lf_dst.lanes[u];
+                        }
+                    }
+                }
+
+                int iter = 0;
+                while (has_delta && iter < 1024) {
+                    has_delta = false;
+                    if (!is_csc) {
+                        if (slot.offsets_ptr && slot.targets_ptr) {
+                            size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, delta.size());
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csr_n + 63) / 64);
+                            if (csr_fast_u32 && !trip_ptr) {
+                                for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                    uint64_t word = delta_active_words[w_idx];
+                                    while (word != 0ULL) {
+                                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                        size_t u = (w_idx << 6) + bit;
+                                        word &= (word - 1ULL);
+                                        if (u >= csr_n) break;
+                                        WordT u_mask = static_cast<WordT>(delta[u]) & active_mask_w;
+                                        if (u_mask == 0) continue;
+                                        uint32_t start = csr_offsets_u32[u];
+                                        uint32_t end = csr_offsets_u32[u + 1];
+                                        for (uint32_t e = start; e < end; ++e) {
+                                            uint32_t v = csr_targets_u32[e];
+                                            if (v < n_nodes) {
+                                                WordT vis = static_cast<WordT>(lf_dst.lanes[v]);
+                                                WordT newly_reached = static_cast<WordT>(u_mask & ~vis);
+                                                if (newly_reached != 0) {
+                                                    lf_dst.lanes[v] = static_cast<uint64_t>(vis | newly_reached);
+                                                    lf_dst.active_words[v >> 6] |= (1ULL << (v & 63));
+                                                    next_delta[v] |= static_cast<uint64_t>(newly_reached);
+                                                    next_delta_active_words[v >> 6] |= (1ULL << (v & 63));
+                                                    has_delta = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                    uint64_t word = delta_active_words[w_idx];
+                                    while (word != 0ULL) {
+                                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                        size_t u = (w_idx << 6) + bit;
+                                        word &= (word - 1ULL);
+                                        if (u >= csr_n) break;
+                                        WordT u_mask = static_cast<WordT>(delta[u]) & active_mask_w;
+                                        if (u_mask == 0) continue;
+                                        uint64_t start = slot.get_csr_offset(u);
+                                        uint64_t end = slot.get_csr_offset(u + 1);
+                                        for (uint64_t e = start; e < end; ++e) {
+                                            uint64_t v = slot.get_csr_target(e);
+                                            if (v < n_nodes) {
+                                                WordT trip = (trip_ptr && e < trip_ptr->size()) ? static_cast<WordT>((*trip_ptr)[e]) : 0;
+                                                WordT prop = static_cast<WordT>(u_mask & ~trip);
+                                                WordT vis = static_cast<WordT>(lf_dst.lanes[v]);
+                                                WordT newly_reached = static_cast<WordT>(prop & ~vis);
+                                                if (newly_reached != 0) {
+                                                    lf_dst.lanes[v] = static_cast<uint64_t>(vis | newly_reached);
+                                                    lf_dst.active_words[v >> 6] |= (1ULL << (v & 63));
+                                                    next_delta[v] |= static_cast<uint64_t>(newly_reached);
+                                                    next_delta_active_words[v >> 6] |= (1ULL << (v & 63));
+                                                    has_delta = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if (slot.csc_offsets_ptr && slot.csc_targets_ptr && !trip_ptr) {
+                            size_t csc_n = std::min<size_t>(
+                                slot.csc_node_count > 0 ? slot.csc_node_count : (slot.node_count > 0 ? slot.node_count : n_nodes),
+                                delta.size()
+                            );
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csc_n + 63) / 64);
+                            if (csc_fast_u32) {
+                                size_t dyn_off_lim = slot.dynamic_csc_offsets.size();
+                                size_t dyn_tgt_lim = slot.dynamic_csc_targets.size();
+                                bool use_dyn = !slot.dynamic_csc_offsets.empty();
+                                for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                    uint64_t word = delta_active_words[w_idx];
+                                    while (word != 0ULL) {
+                                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                        size_t v = (w_idx << 6) + bit;
+                                        word &= (word - 1ULL);
+                                        if (v >= csc_n) break;
+                                        WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
+                                        if (v_mask == 0) continue;
+                                        uint32_t start = (!use_dyn || v < dyn_off_lim) ? csc_offsets_u32[v] : csc_offsets_u32[dyn_off_lim - 1];
+                                        uint32_t end = (!use_dyn || (v + 1) < dyn_off_lim) ? csc_offsets_u32[v + 1] : csc_offsets_u32[dyn_off_lim - 1];
+                                        for (uint32_t e = start; e < end; ++e) {
+                                            uint32_t u = (!use_dyn || e < dyn_tgt_lim) ? csc_targets_u32[e] : 0u;
+                                            if (u < n_nodes) {
+                                                WordT vis = static_cast<WordT>(lf_dst.lanes[u]);
+                                                WordT newly_reached = static_cast<WordT>(v_mask & ~vis);
+                                                if (newly_reached != 0) {
+                                                    lf_dst.lanes[u] = static_cast<uint64_t>(vis | newly_reached);
+                                                    lf_dst.active_words[u >> 6] |= (1ULL << (u & 63));
+                                                    next_delta[u] |= static_cast<uint64_t>(newly_reached);
+                                                    next_delta_active_words[u >> 6] |= (1ULL << (u & 63));
+                                                    has_delta = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
+                                    uint64_t word = delta_active_words[w_idx];
+                                    while (word != 0ULL) {
+                                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                                        size_t v = (w_idx << 6) + bit;
+                                        word &= (word - 1ULL);
+                                        if (v >= csc_n) break;
+                                        WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
+                                        if (v_mask == 0) continue;
+                                        uint64_t start = slot.get_csc_offset(v);
+                                        uint64_t end = slot.get_csc_offset(v + 1);
+                                        for (uint64_t e = start; e < end; ++e) {
+                                            uint64_t u = slot.get_csc_target(e);
+                                            if (u < n_nodes) {
+                                                WordT vis = static_cast<WordT>(lf_dst.lanes[u]);
+                                                WordT newly_reached = static_cast<WordT>(v_mask & ~vis);
+                                                if (newly_reached != 0) {
+                                                    lf_dst.lanes[u] = static_cast<uint64_t>(vis | newly_reached);
+                                                    lf_dst.active_words[u >> 6] |= (1ULL << (u & 63));
+                                                    next_delta[u] |= static_cast<uint64_t>(newly_reached);
+                                                    next_delta_active_words[u >> 6] |= (1ULL << (u & 63));
+                                                    has_delta = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (slot.offsets_ptr && slot.targets_ptr) {
+                            size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, n_nodes);
+                            for (size_t u = 0; u < csr_n; ++u) {
+                                uint64_t start = slot.get_csr_offset(u);
+                                uint64_t end = slot.get_csr_offset(u + 1);
+                                for (uint64_t e = start; e < end; ++e) {
+                                    uint64_t v = slot.get_csr_target(e);
+                                    if (v < delta.size()) {
+                                        WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
+                                        if (v_mask != 0) {
+                                            WordT trip = (trip_ptr && e < trip_ptr->size()) ? static_cast<WordT>((*trip_ptr)[e]) : 0;
+                                            WordT prop = static_cast<WordT>(v_mask & ~trip);
+                                            WordT vis = static_cast<WordT>(lf_dst.lanes[u]);
+                                            WordT newly_reached = static_cast<WordT>(prop & ~vis);
+                                            if (newly_reached != 0) {
+                                                lf_dst.lanes[u] = static_cast<uint64_t>(vis | newly_reached);
+                                                lf_dst.active_words[u >> 6] |= (1ULL << (u & 63));
+                                                next_delta[u] |= static_cast<uint64_t>(newly_reached);
+                                                next_delta_active_words[u >> 6] |= (1ULL << (u & 63));
+                                                has_delta = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    for (size_t w_idx = 0; w_idx < num_words; ++w_idx) {
+                        uint64_t word = delta_active_words[w_idx];
+                        if (word == 0ULL) continue;
+                        delta_active_words[w_idx] = 0ULL;
+                        while (word != 0ULL) {
+                            uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                            size_t u = (w_idx << 6) + bit;
+                            word &= (word - 1ULL);
+                            if (u < n_nodes) {
+                                delta[u] = 0ULL;
+                            }
+                        }
+                    }
+                    delta.swap(next_delta);
+                    delta_active_words.swap(next_delta_active_words);
+                    iter++;
+                }
+            } else {
+                step_once(lf_src.lanes, lf_src.active_words, lf_dst.lanes, lf_dst.active_words);
             }
-        } else {
-            step_once(lf_src.lanes, lf_dst.lanes);
+        };
+
+        switch (lf_dst.width) {
+            case IMPULSE_LANE_WIDTH_8:
+                IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_8);
+                execute_walk_tiered(uint8_t{0});
+                break;
+            case IMPULSE_LANE_WIDTH_16:
+                IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_16);
+                execute_walk_tiered(uint16_t{0});
+                break;
+            case IMPULSE_LANE_WIDTH_32:
+                IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_32);
+                execute_walk_tiered(uint32_t{0});
+                break;
+            case IMPULSE_LANE_WIDTH_64:
+            default:
+                IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_64);
+                execute_walk_tiered(uint64_t{0});
+                break;
         }
 
         bool any_set = false;
         bool any_changed = false;
-        for (size_t u = 0; u < n_nodes; ++u) {
-            uint64_t w = lf_dst.lanes[u] & lf_dst.active_mask;
-            lf_dst.lanes[u] = w;
-            if (w != 0ULL) any_set = true;
-            uint64_t orig = (u < lf_src.lanes.size()) ? (lf_src.lanes[u] & lf_dst.active_mask) : 0ULL;
-            if ((w & ~orig) != 0ULL) any_changed = true;
+        for (size_t w_idx = 0; w_idx < lf_dst.active_words.size(); ++w_idx) {
+            uint64_t word = lf_dst.active_words[w_idx];
+            if (word == 0ULL) continue;
+            uint64_t cleaned_word = 0ULL;
+            while (word != 0ULL) {
+                uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                size_t u = (w_idx << 6) + bit;
+                word &= (word - 1ULL);
+                if (u >= n_nodes) break;
+                uint64_t w = lf_dst.lanes[u] & lf_dst.active_mask;
+                lf_dst.lanes[u] = w;
+                if (w != 0ULL) {
+                    cleaned_word |= (1ULL << bit);
+                    any_set = true;
+                    uint64_t orig = (u < lf_src.lanes.size()) ? (lf_src.lanes[u] & lf_dst.active_mask) : 0ULL;
+                    if ((w & ~orig) != 0ULL) any_changed = true;
+                }
+            }
+            lf_dst.active_words[w_idx] = cleaned_word;
         }
 
         impulse_vm_branch_coverage_record(static_cast<uint32_t>(vm_state->pc), inst.opcode, 1u,
@@ -8783,9 +9063,13 @@ op_LANE_PRUNE_MASK: {
         }
 
         bool any_set = false;
+        lf_dst.active_words.assign((n_nodes + 63) / 64, 0ULL);
         for (size_t u = 0; u < n_nodes; ++u) {
             lf_dst.lanes[u] &= lf_dst.active_mask;
-            if (lf_dst.lanes[u] != 0ULL) any_set = true;
+            if (lf_dst.lanes[u] != 0ULL) {
+                lf_dst.active_words[u >> 6] |= (1ULL << (u & 63));
+                any_set = true;
+            }
         }
 
         vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
@@ -8836,12 +9120,30 @@ op_LANE_FILTER_QUORUM: {
         bs.clear();
 
         bool any_out = false;
-        for (size_t u = 0; u < lf.lanes.size(); ++u) {
-            uint64_t w = lf.lanes[u] & lf.active_mask;
-            uint32_t pc_bits = static_cast<uint32_t>(std::popcount(w & req_mask));
-            if (pc_bits >= min_k && (w & forbid_mask) == 0ULL) {
-                bs.set(u);
-                any_out = true;
+        if (min_k > 0) {
+            for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                uint64_t word = lf.active_words[w_idx];
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u >= lf.lanes.size()) break;
+                    uint64_t w = lf.lanes[u] & lf.active_mask;
+                    uint32_t pc_bits = static_cast<uint32_t>(std::popcount(w & req_mask));
+                    if (pc_bits >= min_k && (w & forbid_mask) == 0ULL) {
+                        bs.set(u);
+                        any_out = true;
+                    }
+                }
+            }
+        } else {
+            for (size_t u = 0; u < lf.lanes.size(); ++u) {
+                uint64_t w = lf.lanes[u] & lf.active_mask;
+                uint32_t pc_bits = static_cast<uint32_t>(std::popcount(w & req_mask));
+                if (pc_bits >= min_k && (w & forbid_mask) == 0ULL) {
+                    bs.set(u);
+                    any_out = true;
+                }
             }
         }
 
@@ -9469,6 +9771,7 @@ op_VECTOR_ANN_SEARCH: {
                 uint64_t u = top_nodes[b];
                 if (u < node_count) {
                     lf.lanes[u] |= (1ULL << b);
+                    lf.active_words[u >> 6] |= (1ULL << (u & 63));
                 }
             }
             vm_state->registers[dst] = static_cast<uint64_t>(h_lf);
@@ -9533,9 +9836,16 @@ op_VECTOR_RERANK_DOT: {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
             const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
-            for (size_t u = 0; u < lf.lanes.size(); ++u) {
-                if ((lf.lanes[u] & lf.active_mask) != 0ULL) {
-                    cands.push_back(static_cast<uint32_t>(u));
+            for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
+                uint64_t word = lf.active_words[w_idx];
+                while (word != 0ULL) {
+                    uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                    size_t u = (w_idx << 6) + bit;
+                    word &= (word - 1ULL);
+                    if (u >= lf.lanes.size()) break;
+                    if ((lf.lanes[u] & lf.active_mask) != 0ULL) {
+                        cands.push_back(static_cast<uint32_t>(u));
+                    }
                 }
             }
         }
