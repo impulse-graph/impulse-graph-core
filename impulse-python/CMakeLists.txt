@@ -8,6 +8,12 @@ find_package(pybind11 REQUIRED)
 
 include_directories(
     ../impulse-cpp/include
+    ../impulse-cpp/src
 )
 
-pybind11_add_module(_impulse_native src/impulse_python.cpp ../impulse-cpp/src/impulse_graph.cpp)
+pybind11_add_module(_impulse_native
+    src/impulse_python.cpp
+    ../impulse-cpp/src/impulse_graph.cpp
+    ../impulse-cpp/src/impulse_snapshot_writer.cpp
+    ../impulse-cpp/src/impulse_index.cpp
+)
