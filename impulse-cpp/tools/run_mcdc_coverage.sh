@@ -72,6 +72,8 @@ xcrun llvm-cov report \
     -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_vm_context.cpp" \
+    "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
@@ -101,6 +103,8 @@ xcrun llvm-cov show \
     -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_vm_context.cpp" \
+    "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \
@@ -129,6 +133,8 @@ xcrun llvm-cov show \
     -object="${BUILD_DIR}/test_cpp_compiler_parity" \
     -instr-profile="${BUILD_DIR}/impulse_vm.profdata" \
     "${CPP_DIR}/src/impulse_vm.cpp" \
+    "${CPP_DIR}/src/impulse_vm_context.cpp" \
+    "${CPP_DIR}/src/impulse_vm_internal.hpp" \
     "${CPP_DIR}/src/impulse_graph.cpp" \
     "${CPP_DIR}/src/impulse_index.cpp" \
     "${CPP_DIR}/src/impulse_vm_fluent.cpp" \

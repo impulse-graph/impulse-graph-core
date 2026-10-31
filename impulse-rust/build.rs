@@ -160,6 +160,9 @@ fn main() {
     // Track changes to C++ source and header files
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_simd.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_context.cpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_internal.hpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/opcodes");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_simd.h");
@@ -187,6 +190,12 @@ fn main() {
     );
     let obj_vm = compile_cpp(
         "../impulse-cpp/src/impulse_vm.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
+    let obj_vm_ctx = compile_cpp(
+        "../impulse-cpp/src/impulse_vm_context.cpp",
         cpp_include,
         &out_dir,
         has_omp,
@@ -219,6 +228,7 @@ fn main() {
                 &format!("/OUT:{}", lib_file),
                 &obj_simd,
                 &obj_vm,
+                &obj_vm_ctx,
                 &obj_fluent,
                 &obj_graph,
                 &obj_index,
@@ -237,6 +247,7 @@ fn main() {
                 &lib_file,
                 &obj_simd,
                 &obj_vm,
+                &obj_vm_ctx,
                 &obj_fluent,
                 &obj_graph,
                 &obj_index,
