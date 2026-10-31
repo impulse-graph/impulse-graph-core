@@ -39,7 +39,7 @@ The ecosystem is partitioned into specialized repositories located at `~/impulse
 | :--- | :--- | :--- | :--- |
 | **`impulse-graph-core`** | **Core Engine Kernel & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel, Rust core engine crate (`impulse-rust`), and multi-language FFI bindings (Python, C#, Go, Node.js). | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
 | **`impulse-graph-spec`** | **Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.9.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc36`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
-| **`impulse-graph-java`** | **Java 25 FFM Core Engine**. Standalone Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`). | Java 25 (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
+| **`impulse-graph-java`** | **Java 21 LTS & Java 22+ Core Engine**. Standalone dual-target Java 21 LTS (preview) and Java 22+ / Java 25 LTS (standard) Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`). | Java 21 LTS / Java 22+ (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
 | **`impulse-graph-tooling`** | **Developer Utilities & ImpVM Suite**. Contains `impulse assemble`, `impulse disassemble`, `impulse run`, `impulse compile`, `impulse inspect`, and `impulse opt`. | C++20, Rust, Go, CMake | `~/impulse/impulse-graph-tooling/` |
 | **`impulse-benchmarks`** | **Performance & Macro Benchmark Suite**. Reproducible benchmark harnesses comparing Impulse Graph against Neo4j, NetworkX, PyTorch Geometric, MATPOWER, and OpenFGA. | Java (JMH), C++ (Google Bench), Python | `~/impulse/impulse-benchmarks/` |
 | **`impulse-website`** | **Documentation Portal & Landing Page**. Official documentation site (`docs.impulsegraph.io`) built with Material for MkDocs. | Markdown, MkDocs Material, YAML | `~/impulse/impulse-website/` |
@@ -151,12 +151,23 @@ $$\text{Pipeline} = \text{Anchor}(D_0, F_0, S_0) \gg= T_1 \gg= T_2 \dots \gg= T_
 * **5. Terminal Materialization (`collect()`)**:
   Projects the final target domain's active nodes and state into Arrow columnar arrays, BitSets, or scalar aggregates.
 
----
-
 ### 3.16 Prohibition of Imperative Point-Lookup Workarounds & Feature Honesty Mandate
 * **Strict Engine-Native Execution Mandate**: Graph traversals, projections, attribute calculations, and filters MUST be evaluated strictly through the native Impulse Graph engine kernels (`.project(...)`, `.filter(...)`, `.out(...)`, `ImpulseStatement`, `ImpulseVM`). AI agents MUST NEVER construct client-side imperative `for` loops that treat the graph merely as an ID lookup table to perform manual point lookups or calculations in user code.
 * **Failure Classification of Imperative Substitutes**: Falling back to manual imperative client-side loops or iterative buffer lookups is considered an architectural failure.
 * **Honest Engine Capability Reporting**: If a requested traversal feature, state projection expression, or query capability is not yet implemented end-to-end in the current engine/VM runtime, AI agents MUST directly, explicitly, and honestly state that **it is not currently possible given engine functionality**, rather than fabricating imperative workarounds as a substitute.
+### 3.17 Official Tooling Mandate for Snapshot Generation
+* **Strict Usage of `impulse-graph-tooling`**: When building or regenerating `.imps` zero-copy binary snapshot files from datasets, AI agents MUST exclusively use the official `impulse-graph-tooling` CLI utilities (e.g., `impulse build`, `impulse generate`). 
+* **Prohibition of Ad-hoc Generators**: Agents MUST NEVER use ad-hoc Python, C++, or shell scripts to directly write or manipulate the binary bytes of `.imps` files, as this leads to corrupted string pools, missing auxiliary sections (like CSC), and `BufferOverflow` crashes in the `impulse inspect` tool.
+
+### 3.18 Four-Way Polyglot VM Parity, Strict Output Identity & Test Vector Integrity
+* **Primary Base-Level VM Check**: The Four-Way Polyglot Validation Suite (`impulse-graph-spec/tools/four_way_validation.py`) is the primary ground-truth regression and compliance check across all ImpulseVM engine implementations:
+  1. **C++ Kernel (Optimizations ON)** (`build_on/libimpulse_graph.dylib` / `.so`)
+  2. **C++ Kernel (Optimizations OFF)** (`build_off/libimpulse_graph.dylib` / `.so`)
+  3. **Java 25 Core Engine** (FFM Off-Heap & `jdk.incubator.vector` SIMD)
+  4. **OCaml Reference Engine** (Normative formal specification AST & bytecode oracle)
+* **100% Identical Output Mandate**: All engines MUST produce 100% bitwise/state-identical outputs across all register values (`R0`..`R63`), status codes (`IMPULSE_VM_OK`, error codes), program counters (`PC`), and condition flags (`ZF`, `ST`).
+* **Test Vector Immutability & Spec Fidelity**: AI agents MUST NOT edit existing test vectors in `test-vectors/vm-impas/` unless they are demonstrably and logically flawed compared to the normative specification. Existing test vectors represent immutable historical invariants.
+* **Test-Driven Development (TDD) for New Features & Bugs**: When uncovering unhandled edge cases, opcode behavioral nuances, or newly discovered implementation bugs, AI agents MUST add **NEW test vectors** (e.g. `tdd_*.impas`, `cov_*.impas`) rather than altering existing tests. Follow TDD principles by authoring the failing test vector first, verifying the mismatch across the engines, and implementing the engine fix to achieve 100% polyglot consensus.
 
 ---
 
@@ -164,7 +175,7 @@ $$\text{Pipeline} = \text{Anchor}(D_0, F_0, S_0) \gg= T_1 \gg= T_2 \dots \gg= T_
 
 Artifacts are published across **7 public registries**:
 
-1. **Maven Central (JVM)**: `org.impulsegraph:impulse-core`, `impulse-api`, `impulse-spec`, `impulse-kotlin`, `impulse-scala_3`.
+1. **Maven Central (JVM)**: Multi-Release JARs supporting Java 21 LTS and Java 22+ (Java 25 LTS & Java 26+): `org.impulsegraph:impulse-core`, `impulse-api`, `impulse-spec`, `impulse-storage`, `impulse-vm`, `impulse-compiler`, `impulse-builder`, `impulse-kotlin`, `impulse-scala_3`.
 2. **Crates.io (Rust)**: `impulse-graph` (engine crate) and `impulse-tools` (CLI optimizer & tooling).
 3. **PyPI (Python)**: `impulse-graph` (pre-compiled wheels with PyTorch `mmap` tensor support).
 4. **NuGet.org (.NET / C#)**: `ImpulseGraph` (managed API), `ImpulseGraph.Native` (cross-platform native binaries), `ImpulseGraph.FSharp`.
@@ -189,6 +200,19 @@ cargo test
 ### Java Engine (`~/impulse/impulse-graph-java/`)
 ```bash
 mvn clean test
+```
+
+### Four-Way Polyglot VM Validation Suite (`impulse-graph-spec/tools/four_way_validation.py`)
+```bash
+IMPULSE_LIB_PATH_ON="/Users/jesse/impulse/impulse-graph-core/impulse-cpp/build_on/libimpulse_graph.dylib" \
+IMPULSE_LIB_PATH_OFF="/Users/jesse/impulse/impulse-graph-core/impulse-cpp/build_off/libimpulse_graph.dylib" \
+python3 impulse-graph-spec/tools/four_way_validation.py
+```
+*(Optionally pass a pattern or filename filter as an argument to test specific vectors, e.g. `python3 impulse-graph-spec/tools/four_way_validation.py tc12`)*
+
+### Opcode Test Coverage Suite (`~/impulse/impulse-graph-spec/`)
+```bash
+python3 tools/run_vm_asm_suite.py
 ```
 
 ### Specification & Vectors (`~/impulse/impulse-graph-spec/`)

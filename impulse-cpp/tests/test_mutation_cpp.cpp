@@ -1,3 +1,5 @@
+#include "impulse_sexpr.hpp"
+
 /**
  * @file test_mutation_cpp.cpp
  * @brief Formal Mutation Testing Runner for Impulse C++ Core Engine.
@@ -459,6 +461,43 @@ int main() {
     {
         auto [magic_name, magic_ast] = impulse::datalog::MagicSetsTransformation::transform_query("path", "node_123");
         register_mutant(magic_name == "m_path_b" && magic_ast.find("node_123") != std::string::npos, "9.2: Datalog Magic Sets Transformation binding mutant");
+    }
+
+    // --- Category 10: IR Compiler & Code Generation Mutants ---
+    {
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)-[:Rel]->(b)-[:Rel]->(c) RETURN c");
+        
+        impulse::compiler::CompilerOptions opt_fusion = impulse::compiler::CompilerOptions::default_options();
+        opt_fusion.enable_kernel_fusion = true;
+        auto prog_fusion = impulse::compiler::ImpulseCompiler::compile(res.ast, nullptr, {}, opt_fusion);
+        
+        impulse::compiler::CompilerOptions opt_no_fusion = impulse::compiler::CompilerOptions::default_options();
+        opt_no_fusion.enable_kernel_fusion = false;
+        auto prog_no_fusion = impulse::compiler::ImpulseCompiler::compile(res.ast, nullptr, {}, opt_no_fusion);
+        
+        register_mutant(prog_fusion.instructions.size() < prog_no_fusion.instructions.size(), "10.1: Kernel Fusion optimization mutant");
+    }
+    {
+        auto prog = impulse::impscm::ImpScmAstBuilder::parse("(let ((val (> 10 5))) (return val))");
+        
+        impulse::compiler::CompilerOptions opt_cf = impulse::compiler::CompilerOptions::default_options();
+        opt_cf.enable_constant_folding = true;
+        auto prog_cf = impulse::compiler::ImpulseCompiler::compile(prog, nullptr, {}, opt_cf);
+        
+        impulse::compiler::CompilerOptions opt_no_cf = impulse::compiler::CompilerOptions::default_options();
+        opt_no_cf.enable_constant_folding = false;
+        auto prog_no_cf = impulse::compiler::ImpulseCompiler::compile(prog, nullptr, {}, opt_no_cf);
+        
+        register_mutant(prog_cf.to_impas_string() != prog_no_cf.to_impas_string(), "10.2: Constant Folding optimization mutant");
+    }
+    {
+        // Debug Disassembler and AST Printers
+        auto res = impulse::compiler::CypherCompiler::compile("MATCH (a)-[:Rel]->(b) RETURN b");
+        auto prog = impulse::compiler::ImpulseCompiler::compile(res.ast);
+        std::string disassembly = prog.to_impas_string();
+        std::string ast_str = res.ast->to_scm_string();
+        register_mutant(disassembly.find("OP_") != std::string::npos, "10.3: Bytecode disassembler format mutant");
+        register_mutant(ast_str.find("(") != std::string::npos, "10.4: AST to_scm_string serialization mutant");
     }
 
     impulse_vm_context_destroy(ctx);
