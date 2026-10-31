@@ -150,6 +150,20 @@ int main() {
         std::cout << "  ✓ Hybrid vector_ann (0xCA) + ORDER BY vector_dot (0xCB) lowering: PASSED\n" << std::endl;
     }
 
+    // 11. Issue #36: Undirected -[:REL]- and pipe-separated relation union -[:R1|R2]->
+    {
+        auto res_undir = CypherCompiler::compile("MATCH (a:Gene)-[:INTERACTS]-(b:Gene) WHERE a.id = 0 RETURN b");
+        std::string s_undir = res_undir.ast->to_scm_string();
+        assert(s_undir.find("(set:union (csr-walk \"INTERACTS\") (csc-walk \"INTERACTS\"))") != std::string::npos ||
+               s_undir.find("(set-union (csr-walk \"INTERACTS\") (csc-walk \"INTERACTS\"))") != std::string::npos);
+
+        auto res_union = CypherCompiler::compile("MATCH (a:Drug)-[:TREATS|PALLIATES]->(d:Disease) WHERE a.id = 0 RETURN d");
+        std::string s_union = res_union.ast->to_scm_string();
+        assert(s_union.find("(set:union (csr-walk \"TREATS\") (csr-walk \"PALLIATES\"))") != std::string::npos ||
+               s_union.find("(set-union (csr-walk \"TREATS\") (csr-walk \"PALLIATES\"))") != std::string::npos);
+        std::cout << "  ✓ Undirected -[:REL]- and relation union -[:R1|R2]-> lowering: PASSED\n" << std::endl;
+    }
+
     std::cout << "\n=========================================================================\n";
     std::cout << "                   ALL C++ CYPHER PARSER TESTS PASSED!                   \n";
     std::cout << "=========================================================================\n";
