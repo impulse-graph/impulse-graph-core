@@ -2273,6 +2273,41 @@ op_SET_UNION: {
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
+    if (type1 == TYPE_LANE_FRONTIER && type2 == TYPE_LANE_FRONTIER) {
+        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        size_t h1 = static_cast<size_t>(val1);
+        size_t h2 = static_cast<size_t>(val2);
+        if (h1 >= VM_MAX_LANE_FRONTIER_HANDLES || h1 >= vm_state->query_context->lane_frontiers_count ||
+            h2 >= VM_MAX_LANE_FRONTIER_HANDLES || h2 >= vm_state->query_context->lane_frontiers_count) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& lf1 = vm_state->query_context->lane_frontiers[h1];
+        const auto& lf2 = vm_state->query_context->lane_frontiers[h2];
+        size_t n_nodes = std::max(lf1.lanes.size(), lf2.lanes.size());
+        uint32_t k_lanes = std::max(lf1.num_lanes, lf2.num_lanes);
+        int h_lf_dst = (dst == src1) ? static_cast<int>(h1)
+                     : ((dst == src2) ? static_cast<int>(h2)
+                     : acquire_lane_frontier(vm_state->query_context, n_nodes, k_lanes));
+        if (h_lf_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        auto& lf_dst = vm_state->query_context->lane_frontiers[h_lf_dst];
+        if (lf_dst.lanes.size() < n_nodes) lf_dst.lanes.resize(n_nodes, 0ULL);
+        lf_dst.num_lanes = k_lanes;
+        lf_dst.active_mask = lf1.active_mask | lf2.active_mask;
+        bool any_set = false;
+        for (size_t u = 0; u < n_nodes; ++u) {
+            uint64_t w1 = (u < lf1.lanes.size()) ? lf1.lanes[u] : 0ULL;
+            uint64_t w2 = (u < lf2.lanes.size()) ? lf2.lanes[u] : 0ULL;
+            uint64_t w = (w1 | w2) & lf_dst.active_mask;
+            lf_dst.lanes[u] = w;
+            if (w != 0ULL) any_set = true;
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(h_lf_dst);
+        vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
+        if (any_set) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
     bool dst_was_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
 
     int h_dst = -1;
@@ -2344,6 +2379,41 @@ op_SET_INTERSECT: {
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
+    if (type1 == TYPE_LANE_FRONTIER && type2 == TYPE_LANE_FRONTIER) {
+        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        size_t h1 = static_cast<size_t>(val1);
+        size_t h2 = static_cast<size_t>(val2);
+        if (h1 >= VM_MAX_LANE_FRONTIER_HANDLES || h1 >= vm_state->query_context->lane_frontiers_count ||
+            h2 >= VM_MAX_LANE_FRONTIER_HANDLES || h2 >= vm_state->query_context->lane_frontiers_count) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& lf1 = vm_state->query_context->lane_frontiers[h1];
+        const auto& lf2 = vm_state->query_context->lane_frontiers[h2];
+        size_t n_nodes = std::max(lf1.lanes.size(), lf2.lanes.size());
+        uint32_t k_lanes = std::max(lf1.num_lanes, lf2.num_lanes);
+        int h_lf_dst = (dst == src1) ? static_cast<int>(h1)
+                     : ((dst == src2) ? static_cast<int>(h2)
+                     : acquire_lane_frontier(vm_state->query_context, n_nodes, k_lanes));
+        if (h_lf_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        auto& lf_dst = vm_state->query_context->lane_frontiers[h_lf_dst];
+        if (lf_dst.lanes.size() < n_nodes) lf_dst.lanes.resize(n_nodes, 0ULL);
+        lf_dst.num_lanes = k_lanes;
+        lf_dst.active_mask = lf1.active_mask | lf2.active_mask;
+        bool any_set = false;
+        for (size_t u = 0; u < n_nodes; ++u) {
+            uint64_t w1 = (u < lf1.lanes.size()) ? lf1.lanes[u] : 0ULL;
+            uint64_t w2 = (u < lf2.lanes.size()) ? lf2.lanes[u] : 0ULL;
+            uint64_t w = (w1 & w2) & lf_dst.active_mask;
+            lf_dst.lanes[u] = w;
+            if (w != 0ULL) any_set = true;
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(h_lf_dst);
+        vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
+        if (any_set) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
     bool dst_was_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
 
     int h_dst = -1;
@@ -2439,6 +2509,41 @@ op_SET_DIFFERENCE: {
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
+    if (type1 == TYPE_LANE_FRONTIER && type2 == TYPE_LANE_FRONTIER) {
+        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        size_t h1 = static_cast<size_t>(val1);
+        size_t h2 = static_cast<size_t>(val2);
+        if (h1 >= VM_MAX_LANE_FRONTIER_HANDLES || h1 >= vm_state->query_context->lane_frontiers_count ||
+            h2 >= VM_MAX_LANE_FRONTIER_HANDLES || h2 >= vm_state->query_context->lane_frontiers_count) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& lf1 = vm_state->query_context->lane_frontiers[h1];
+        const auto& lf2 = vm_state->query_context->lane_frontiers[h2];
+        size_t n_nodes = std::max(lf1.lanes.size(), lf2.lanes.size());
+        uint32_t k_lanes = std::max(lf1.num_lanes, lf2.num_lanes);
+        int h_lf_dst = (dst == src1) ? static_cast<int>(h1)
+                     : ((dst == src2) ? static_cast<int>(h2)
+                     : acquire_lane_frontier(vm_state->query_context, n_nodes, k_lanes));
+        if (h_lf_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        auto& lf_dst = vm_state->query_context->lane_frontiers[h_lf_dst];
+        if (lf_dst.lanes.size() < n_nodes) lf_dst.lanes.resize(n_nodes, 0ULL);
+        lf_dst.num_lanes = k_lanes;
+        lf_dst.active_mask = lf1.active_mask | lf2.active_mask;
+        bool any_set = false;
+        for (size_t u = 0; u < n_nodes; ++u) {
+            uint64_t w1 = (u < lf1.lanes.size()) ? lf1.lanes[u] : 0ULL;
+            uint64_t w2 = (u < lf2.lanes.size()) ? lf2.lanes[u] : 0ULL;
+            uint64_t w = (w1 & ~w2) & lf_dst.active_mask;
+            lf_dst.lanes[u] = w;
+            if (w != 0ULL) any_set = true;
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(h_lf_dst);
+        vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
+        if (any_set) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
     bool dst_was_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
 
     int h_dst = -1;
@@ -3618,7 +3723,8 @@ op_CSC_WALK: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty()) {
+    if (!slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty() &&
+        !(vm_state->query_context->snapshot && slot.offsets_ptr && slot.targets_ptr)) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
@@ -3784,6 +3890,32 @@ op_CSC_WALK: {
                     if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
+                }
+            }
+        }
+    } else if (!src_is_null && vm_state->query_context->snapshot && slot.offsets_ptr && slot.targets_ptr) {
+        for (uint64_t u = 0; u < slot.node_count; ++u) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                uint64_t v = slot.get_csr_target(idx);
+                bool hit = false;
+                if (src_is_bitset) {
+                    hit = bitset_test(vm_state->query_context->bitsets[h_src], v, vm_state->query_context->max_nodes);
+                } else if (src_is_vec) {
+                    const uint64_t* vec_ptr = nullptr;
+                    size_t vec_len = 0;
+                    if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len)) {
+                        for (size_t k = 0; k < vec_len; ++k) {
+                            if (vec_ptr[k] == v) { hit = true; break; }
+                        }
+                    }
+                } else {
+                    hit = (v == scalar_src);
+                }
+                if (hit) {
+                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                    break;
                 }
             }
         }
