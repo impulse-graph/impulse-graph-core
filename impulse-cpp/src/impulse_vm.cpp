@@ -9604,6 +9604,17 @@ op_VECTOR_ANN_SEARCH: {
                 auto& approx_buf = vm_state->query_context->scratch_f32_a;
                 if (approx_buf.size() < dim) approx_buf.resize(dim, 0.0f);
 
+                size_t bq1_num_words = (dim + 63) / 64;
+                auto& q_bq1_words = vm_state->query_context->scratch_lanes_b;
+                if (use_quant && v_quant_type == 1) {
+                    q_bq1_words.assign(bq1_num_words, 0ULL);
+                    for (size_t d = 0; d < dim; ++d) {
+                        if (q_vec[d] >= 0.0f) {
+                            q_bq1_words[d >> 6] |= (1ULL << (d & 63));
+                        }
+                    }
+                }
+
                 auto eval_beam_dist = [&](uint32_t u) -> float {
                     if (!use_quant) {
                         float dist = 0.0f;
@@ -9611,14 +9622,22 @@ op_VECTOR_ANN_SEARCH: {
                         return dist;
                     }
                     const uint8_t* row_ptr = quant_slab + static_cast<size_t>(u) * static_cast<size_t>(quant_row_bytes);
-                    if (v_quant_type == 1) { // QuantBQ1
+                    if (v_quant_type == 1) { // QuantBQ1: 64-bit word-packed XOR + hardware popcount
                         IMPULSE_TESTCASE(v_quant_type == 1);
                         uint32_t ham = 0;
-                        for (size_t d = 0; d < dim; ++d) {
-                            uint8_t byte_val = row_ptr[d >> 3];
-                            bool bv = ((byte_val >> (d & 7)) & 1u) != 0;
-                            bool bq = (q_vec[d] >= 0.0f);
-                            if (bq != bv) ++ham;
+                        size_t full_words = dim >> 6;
+                        for (size_t w = 0; w < full_words; ++w) {
+                            uint64_t v_word = 0ULL;
+                            std::memcpy(&v_word, row_ptr + (w << 3), sizeof(uint64_t));
+                            ham += static_cast<uint32_t>(std::popcount(q_bq1_words[w] ^ v_word));
+                        }
+                        size_t rem_bits = dim & 63;
+                        if (rem_bits > 0) {
+                            uint64_t v_tail = 0ULL;
+                            size_t tail_bytes = (rem_bits + 7) >> 3;
+                            std::memcpy(&v_tail, row_ptr + (full_words << 3), tail_bytes);
+                            uint64_t tail_mask = (1ULL << rem_bits) - 1ULL;
+                            ham += static_cast<uint32_t>(std::popcount((q_bq1_words[full_words] ^ v_tail) & tail_mask));
                         }
                         return static_cast<float>(ham);
                     } else if (v_quant_type == 2) { // QuantSQ8
