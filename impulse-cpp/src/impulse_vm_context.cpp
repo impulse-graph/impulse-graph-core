@@ -4,6 +4,7 @@
  *        and fault-injection / MC/DC coverage hooks for ImpulseVM.
  */
 #include "impulse_vm_internal.hpp"
+#include "impulse_sha256.h"
 
 int g_vm_branch_cov_fast = 0;
 
@@ -829,6 +830,270 @@ void impulse_vm_context_bind_inline_data(impulse_vm_context_t* ctx, const void* 
         ctx->inline_data_ptr = static_cast<const uint8_t*>(data_ptr);
         ctx->inline_data_bytes = bytes;
     }
+}
+
+namespace {
+struct StateHashStream {
+    impulse_sha256_ctx ctx;
+
+    StateHashStream() {
+        impulse_sha256_init(&ctx);
+    }
+
+    void write_bytes(const void* data, size_t len) {
+        if (len > 0 && data) {
+            impulse_sha256_update(&ctx, static_cast<const uint8_t*>(data), len);
+        }
+    }
+
+    void write_u8(uint8_t val) {
+        write_bytes(&val, 1);
+    }
+
+    void write_u16_le(uint16_t val) {
+        uint8_t buf[2] = {
+            static_cast<uint8_t>(val & 0xFF),
+            static_cast<uint8_t>((val >> 8) & 0xFF)
+        };
+        write_bytes(buf, 2);
+    }
+
+    void write_u32_le(uint32_t val) {
+        uint8_t buf[4] = {
+            static_cast<uint8_t>(val & 0xFF),
+            static_cast<uint8_t>((val >> 8) & 0xFF),
+            static_cast<uint8_t>((val >> 16) & 0xFF),
+            static_cast<uint8_t>((val >> 24) & 0xFF)
+        };
+        write_bytes(buf, 4);
+    }
+
+    void write_i32_le(int32_t val) {
+        write_u32_le(static_cast<uint32_t>(val));
+    }
+
+    void write_u64_le(uint64_t val) {
+        uint8_t buf[8] = {
+            static_cast<uint8_t>(val & 0xFF),
+            static_cast<uint8_t>((val >> 8) & 0xFF),
+            static_cast<uint8_t>((val >> 16) & 0xFF),
+            static_cast<uint8_t>((val >> 24) & 0xFF),
+            static_cast<uint8_t>((val >> 32) & 0xFF),
+            static_cast<uint8_t>((val >> 40) & 0xFF),
+            static_cast<uint8_t>((val >> 48) & 0xFF),
+            static_cast<uint8_t>((val >> 56) & 0xFF)
+        };
+        write_bytes(buf, 8);
+    }
+
+    void write_f32_le(float val) {
+        uint32_t u;
+        if (std::isnan(val)) {
+            u = 0x7FC00000u;
+        } else if (val == 0.0f) {
+            u = 0x00000000u; // Normalizes -0.0f
+        } else {
+            std::memcpy(&u, &val, 4);
+        }
+        write_u32_le(u);
+    }
+
+    void write_f64_le(double val) {
+        uint64_t u;
+        if (std::isnan(val)) {
+            u = 0x7FF8000000000000ULL;
+        } else if (val == 0.0) {
+            u = 0x0000000000000000ULL; // Normalizes -0.0
+        } else {
+            std::memcpy(&u, &val, 8);
+        }
+        write_u64_le(u);
+    }
+
+    void finish(uint8_t hash_out[32]) {
+        impulse_sha256_final(&ctx, hash_out);
+    }
+};
+} // namespace
+
+int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8_t hash_out[32]) {
+    if (!state || !hash_out) return -1;
+    StateHashStream hs;
+
+    // 1. Header: Magic "ICTX", Version 1 (uint16_t), Reserved 0 (uint16_t)
+    const uint8_t magic[4] = {'I', 'C', 'T', 'X'};
+    hs.write_bytes(magic, 4);
+    hs.write_u16_le(1);
+    hs.write_u16_le(0);
+
+    // 2. State metadata: status (int32_t), pc (uint32_t), flags (uint64_t)
+    hs.write_i32_le(status);
+    hs.write_u32_le(state->pc);
+    hs.write_u64_le(state->flags);
+
+    // 3. Subroutine call stack: call_stack_depth (uint32_t), call_stack[8]
+    hs.write_u32_le(state->call_stack_depth);
+    for (size_t i = 0; i < 8; ++i) {
+        hs.write_u32_le(state->call_stack[i]);
+    }
+
+    // 4. Architectural registers: 64 x (type uint8_t, value uint64_t LE)
+    for (size_t r = 0; r < 64; ++r) {
+        hs.write_u8(state->register_types[r]);
+        hs.write_u64_le(state->registers[r]);
+    }
+
+    // 5. Dereference active handle registers
+    const impulse_vm_context_t* ctx = state->query_context;
+    for (size_t r = 0; r < 64; ++r) {
+        uint8_t type = state->register_types[r];
+        uint64_t val = state->registers[r];
+
+        switch (type) {
+            case TYPE_BITSET_HANDLE: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_BITSET_HANDLES && ctx->bitset_allocated[handle]) {
+                    const auto& bs = ctx->bitsets[handle];
+                    uint64_t card = 0;
+                    for (size_t w = 0; w < bs.word_count; ++w) {
+                        card += std::popcount(bs.words[w]);
+                    }
+                    hs.write_u64_le(card);
+                    for (size_t w = 0; w < bs.word_count; ++w) {
+                        uint64_t word = bs.words[w];
+                        while (word != 0) {
+                            int bit = std::countr_zero(word);
+                            uint64_t node_id = (static_cast<uint64_t>(w) << 6) | static_cast<uint64_t>(bit);
+                            hs.write_u64_le(node_id);
+                            word &= word - 1;
+                        }
+                    }
+                } else {
+                    hs.write_u64_le(0ULL);
+                }
+                break;
+            }
+            case TYPE_FLOAT_VECTOR: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->float_vectors_allocated[handle]) {
+                    size_t len = ctx->float_vector_lengths[handle];
+                    if (len == 0) len = ctx->float_vectors[handle].size();
+                    hs.write_u32_le(static_cast<uint32_t>(len));
+                    const float* fvec = ctx->float_vectors[handle].data();
+                    for (size_t j = 0; j < len; ++j) {
+                        hs.write_f32_le(fvec[j]);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            case TYPE_DOUBLE_VECTOR: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle]) {
+                    size_t len = ctx->double_vector_lengths[handle];
+                    if (len == 0) len = ctx->double_vectors[handle].size();
+                    hs.write_u32_le(static_cast<uint32_t>(len));
+                    const double* dvec = ctx->double_vectors[handle].data();
+                    for (size_t j = 0; j < len; ++j) {
+                        hs.write_f64_le(dvec[j]);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            case TYPE_NODE_VECTOR:
+            case TYPE_UINT64_VECTOR: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
+                    size_t len = ctx->node_vector_lengths[handle];
+                    if (len == 0) len = ctx->node_vectors[handle].size();
+                    hs.write_u32_le(static_cast<uint32_t>(len));
+                    const uint64_t* nvec = ctx->node_vectors[handle].data();
+                    for (size_t j = 0; j < len; ++j) {
+                        hs.write_u64_le(nvec[j]);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            case TYPE_LANE_FRONTIER: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES && ctx->lane_frontiers_allocated[handle]) {
+                    const auto& lf = ctx->lane_frontiers[handle];
+                    hs.write_u32_le(lf.num_lanes);
+                    hs.write_u32_le(static_cast<uint32_t>(lf.width));
+                    hs.write_u64_le(lf.active_mask);
+                    uint32_t ncount = static_cast<uint32_t>(lf.lanes.size());
+                    hs.write_u32_le(ncount);
+                    for (size_t n = 0; n < lf.lanes.size(); ++n) {
+                        hs.write_u64_le(lf.lanes[n]);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                    hs.write_u32_le(0U);
+                    hs.write_u64_le(0ULL);
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            case TYPE_STRING_VECTOR: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->string_vectors_allocated[handle]) {
+                    const auto& svec = ctx->string_vectors[handle];
+                    hs.write_u32_le(static_cast<uint32_t>(svec.size()));
+                    for (size_t j = 0; j < svec.size(); ++j) {
+                        const char* s = svec[j] ? svec[j] : "";
+                        uint32_t slen = static_cast<uint32_t>(std::strlen(s));
+                        hs.write_u32_le(slen);
+                        hs.write_bytes(s, slen);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            case TYPE_VALUE_MAP: {
+                size_t handle = static_cast<size_t>(val);
+                if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->value_maps_allocated[handle]) {
+                    const auto& vm = ctx->value_maps[handle];
+                    uint32_t vlen = static_cast<uint32_t>(std::min(vm.keys.size(), vm.values.size()));
+                    hs.write_u32_le(vlen);
+                    for (size_t j = 0; j < vlen; ++j) {
+                        const char* k = vm.keys[j] ? vm.keys[j] : "";
+                        uint32_t klen = static_cast<uint32_t>(std::strlen(k));
+                        hs.write_u32_le(klen);
+                        hs.write_bytes(k, klen);
+                        hs.write_f32_le(vm.values[j]);
+                    }
+                } else {
+                    hs.write_u32_le(0U);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    hs.finish(hash_out);
+    return 0;
+}
+
+int impulse_vm_state_hash_hex(const impulse_vm_state_t* state, int32_t status, char hex_out[65]) {
+    if (!state || !hex_out) return -1;
+    uint8_t hash[32];
+    int rc = impulse_vm_state_hash(state, status, hash);
+    if (rc != 0) return rc;
+    static const char hex_chars[] = "0123456789abcdef";
+    for (size_t i = 0; i < 32; ++i) {
+        hex_out[i * 2]     = hex_chars[(hash[i] >> 4) & 0x0F];
+        hex_out[i * 2 + 1] = hex_chars[hash[i] & 0x0F];
+    }
+    hex_out[64] = '\0';
+    return 0;
 }
 
 

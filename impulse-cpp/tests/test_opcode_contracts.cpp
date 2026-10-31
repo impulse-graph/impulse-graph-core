@@ -16,6 +16,7 @@
 #include "../src/impulse_vm_internal.hpp"
 
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -1071,6 +1072,44 @@ static void test_pass6_vmcontext_invariants(const ImpulseOpcodeVariantContract& 
 // Main Suite Runner
 // ============================================================================
 int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--dump-json") == 0) {
+        std::vector<ImpulseOpcodeVariantContract> contracts = get_all_opcode_contracts();
+        std::ostream* out = &std::cout;
+        std::ofstream fout;
+        if (argc > 2) {
+            fout.open(argv[2]);
+            if (fout.is_open()) out = &fout;
+        }
+        *out << "[\n";
+        for (size_t i = 0; i < contracts.size(); ++i) {
+            const auto& c = contracts[i];
+            *out << "  {\n";
+            *out << "    \"opcode\": " << static_cast<int>(c.opcode) << ",\n";
+            *out << "    \"mnemonic\": \"" << c.mnemonic << "\",\n";
+            *out << "    \"variant_name\": \"" << c.variant_name << "\",\n";
+            *out << "    \"flags_mask\": " << static_cast<int>(c.flags_mask) << ",\n";
+            *out << "    \"flags_match\": " << static_cast<int>(c.flags_match) << ",\n";
+            *out << "    \"defined_flags_mask\": " << static_cast<int>(c.defined_flags_mask) << ",\n";
+            *out << "    \"fixed_payload_bits\": " << c.fixed_payload_bits << ",\n";
+            *out << "    \"dst_layout\": " << static_cast<int>(c.dst_layout) << ",\n";
+            *out << "    \"src_layout\": " << static_cast<int>(c.src_layout) << ",\n";
+            *out << "    \"aux1_layout\": " << static_cast<int>(c.aux1_layout) << ",\n";
+            *out << "    \"aux2_layout\": " << static_cast<int>(c.aux2_layout) << ",\n";
+            *out << "    \"allowed_src_types\": " << c.allowed_src_types << ",\n";
+            *out << "    \"allowed_aux1_types\": " << c.allowed_aux1_types << ",\n";
+            *out << "    \"allowed_aux2_types\": " << c.allowed_aux2_types << ",\n";
+            *out << "    \"output_dst_types\": " << c.output_dst_types << ",\n";
+            *out << "    \"allow_zero_skip_aux1\": " << (c.allow_zero_skip_aux1 ? "true" : "false") << ",\n";
+            *out << "    \"allow_zero_skip_aux2\": " << (c.allow_zero_skip_aux2 ? "true" : "false") << ",\n";
+            *out << "    \"sets_vm_flags_mask\": " << static_cast<int>(c.sets_vm_flags_mask) << ",\n";
+            *out << "    \"requires_context\": " << (c.requires_context ? "true" : "false") << ",\n";
+            *out << "    \"modifies_dst_state\": " << (c.modifies_dst_state ? "true" : "false") << "\n";
+            *out << "  }" << (i + 1 < contracts.size() ? "," : "") << "\n";
+        }
+        *out << "]\n";
+        return 0;
+    }
+
     (void)argc;
     (void)argv;
 
