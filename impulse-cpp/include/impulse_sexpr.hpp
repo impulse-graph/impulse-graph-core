@@ -172,7 +172,7 @@ public:
             // For (> (bitset:cardinality frontier) 0)
             // Just return the LHS cardinality node since our compiler currently handles this specifically
             return build(expr.list[1]);
-        } else if (head == "csr-walk" || head == "g:walk-csr" || head == "mxv" || head == "pagerank-step" || head == "cc-afforest" || head == "ewise-add") {
+        } else if (head == "csr-walk" || head == "g:walk-csr" || head == "mxv" || head == "pagerank-step" || head == "cc-afforest" || head == "ewise-add" || head == "ewise-mul" || head == "degree-norm") {
             std::string rel = "edge";
             for (size_t i = 1; i < expr.list.size(); ++i) {
                 if (!expr.list[i].is_list && expr.list[i].atom != "g" && expr.list[i].atom != "frontier" && expr.list[i].atom != "updateEdge") {
@@ -180,6 +180,8 @@ public:
                 }
             }
             return ScmWalk::forward(rel);
+        } else if (head == "topk") {
+            return std::make_shared<ScmReduce>(ScmReduce::Op::ARGMAX);
         } else if (head == "csc-walk" || head == "g:walk-csc") {
             std::string rel = "edge";
             for (size_t i = 1; i < expr.list.size(); ++i) {
