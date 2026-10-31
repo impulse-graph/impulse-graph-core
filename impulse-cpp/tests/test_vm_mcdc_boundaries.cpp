@@ -1648,8 +1648,8 @@ void test_mcdc_opcodes_filtered_and_advanced_traversals() {
 
         // 10. GraphBLAS Algorithms: OP_CC_AFFOREST, OP_MXV, OP_VXM, OP_REDUCE
         { OP_CC_AFFOREST, 0, 36, 0 },
-        { OP_MXV, 0, 37, static_cast<uint32_t>(0 | (8 << 16)) }, // rel 0, vec R8
-        { OP_VXM, 0, 38, static_cast<uint32_t>(0 | (8 << 16)) },
+        { OP_MXV, 0, 37, static_cast<uint32_t>(8 | (0 << 8)) }, // rel 0, vec R8
+        { OP_VXM, 0, 38, static_cast<uint32_t>(8 | (0 << 8)) },
         { OP_REDUCE, 0, 39, 8 }, // reduce vector R8
 
         { OP_HALT, 0, 0, 0 }
@@ -1930,6 +1930,8 @@ void test_mcdc_pass10_deep_decisions() {
     state.query_context = ctx;
 
     // Registers setup
+    state.registers[0] = 0;
+    state.register_types[0] = TYPE_NODE_ID;
     state.registers[1] = static_cast<uint64_t>(h_f1);
     state.register_types[1] = TYPE_FLOAT_VECTOR;
     state.registers[2] = static_cast<uint64_t>(h_f2);
@@ -1954,11 +1956,11 @@ void test_mcdc_pass10_deep_decisions() {
         { OP_VXM, 1, 13, 11 | (0 << 16) }, // R13 = R11 * M
 
         // Element-wise Add & Mult Float
-        { OP_EWISE_ADD, 0, 3, 1 | (2 << 16) },
-        { OP_EWISE_MULT, 0, 3, 1 | (2 << 16) },
+        { OP_EWISE_ADD, 0, 3, 1 | (2 << 8) },
+        { OP_EWISE_MULT, 0, 3, 1 | (2 << 8) },
         // Element-wise Add & Mult Double
-        { OP_EWISE_ADD, 1, 13, 11 | (12 << 16) },
-        { OP_EWISE_MULT, 1, 13, 11 | (12 << 16) },
+        { OP_EWISE_ADD, 1, 13, 11 | (12 << 8) },
+        { OP_EWISE_MULT, 1, 13, 11 | (12 << 8) },
 
         // Reduce Float & Double
         { OP_REDUCE, 0, 4, 1 },  // R4 = sum(R1) (Float)
@@ -1967,11 +1969,11 @@ void test_mcdc_pass10_deep_decisions() {
         // Analytics opcodes
         { OP_BRANDES_FORWARD, 0, 5, 0 },  // Root node 0
         { OP_BRANDES_BACKWARD, 0, 6, 0 },
-        { OP_DELTA_STEP_RELAX, 0, 7, 0 | (1 << 16) },
+        { OP_DELTA_STEP_RELAX, 0, 7, 0 },
         { OP_LOUVAIN_MODULARITY, 0, 8, 0 },
-        { OP_KCORE_DECOMPOSITION, 0, 9, 0 | (1 << 16) },
+        { OP_KCORE_DECOMPOSITION, 0, 9, 0 },
         { OP_ISLAND_DETECT, 0, 10, 0 },
-        { OP_SPARSE_MATVEC, 0, 15, 0 | (1 << 16) },
+        { OP_SPARSE_MATVEC, 0, 15, 1 },
 
         { OP_HALT, 0, 0, 0 }
     };
@@ -2073,7 +2075,7 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
         // Stable check with matching bitsets
         { OP_STABLE_CHECK, 0, 1, 2 },
         // Frontier diff
-        { OP_FRONTIER_DIFF, 0, 3, 1 | (2 << 16) },
+        { OP_FRONTIER_DIFF, 0, 3, 1 | (2 << 8) },
         // Fixpoint kleene star on relation slot 0
         { OP_FIXPOINT_KLEENE_STAR, 0, 1, 2 | (0 << 16) },
 

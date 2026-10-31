@@ -1,3 +1,24 @@
+/**
+ * Formal Opcode Contract: OP_L1_NORM_DIFF (0x39)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   aux1_reg:         (inst.payload >> 16) & 0xFFFF (PAYLOAD_HIGH16)
+ *   allowed_src:      TYPE_FLOAT_VECTOR | TYPE_FLOAT | TYPE_INT64
+ *   allowed_aux1:     TYPE_FLOAT_VECTOR | TYPE_FLOAT | TYPE_INT64
+ *   output_dst:       TYPE_FLOAT
+ *   flags:            ZF set if diff < 1e-4f
+ *   requires_ctx:     true
+ */
+#ifndef OP_39_CONTRACT_DEFINED
+#define OP_39_CONTRACT_DEFINED
+#define OP_39_DEFINED_FLAGS        0x00u
+#define OP_39_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_INT64))
+#define OP_39_ALLOWED_AUX1_TYPES   (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_INT64))
+#define OP_39_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT))
+#endif
+
 // Opcode 0x39: OP_L1_NORM_DIFF
 op_L1_NORM_DIFF: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,6 +28,9 @@ op_L1_NORM_DIFF: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_39_ALLOWED_SRC_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_39_ALLOWED_AUX1_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
     float l1_diff = 0.0f;

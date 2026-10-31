@@ -1,3 +1,32 @@
+/**
+ * @file op_24_mask_and.inc
+ * @brief Formal Contract for OP_MASK_AND (0x24).
+ *
+ * Mnemonic: OP_MASK_AND
+ * Opcode: 0x24
+ * Description: BitSet bitwise intersection (AND) between two mask frontiers.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src1 = payload & 0xFF, src2 = (payload >> 8) & 0xFF
+ *
+ * Inputs:
+ *  - src1, src2: TYPE_BITSET_HANDLE
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if intersection is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context bitset pool)
+ */
+#ifndef OP_24_CONTRACT_DEFINED
+#define OP_24_CONTRACT_DEFINED 1
+#define OP_24_ALLOWED_SRC_TYPES  (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE)
+#define OP_24_ALLOWED_AUX1_TYPES (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE)
+#endif
+
 // Opcode 0x24: OP_MASK_AND
 op_MASK_AND: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,6 +36,9 @@ op_MASK_AND: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_24_ALLOWED_SRC_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_24_ALLOWED_AUX1_TYPES);
 
     int h1 = static_cast<int>(vm_state->registers[src1]);
     int h2 = static_cast<int>(vm_state->registers[src2]);

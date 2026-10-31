@@ -1,9 +1,37 @@
+/**
+ * @file op_05_map_keys_to_dense.inc
+ * @brief Formal Contract for OP_MAP_KEYS_TO_DENSE (0x05).
+ *
+ * Mnemonic: OP_MAP_KEYS_TO_DENSE
+ * Opcode: 0x05
+ * Description: Maps domain string/integer keys from input to dense node IDs within a BitSet frontier.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, domain_id = inst.payload & 0xFFFF
+ *
+ * Inputs:
+ *  - input_param: impulse_vm_input_keys*, domain key attribute table
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if mapped set is empty, cleared otherwise
+ *
+ * Context Requirement:
+ *  - Requires context (query_context attribute slots and bitset pool)
+ */
+#ifndef OP_05_CONTRACT_DEFINED
+#define OP_05_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x05: OP_MAP_KEYS_TO_DENSE
 op_MAP_KEYS_TO_DENSE: {
     const auto& inst = bytecode[vm_state->pc];
     uint16_t dst = inst.dst_reg;
     uint16_t domain_id = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     if (domain_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);

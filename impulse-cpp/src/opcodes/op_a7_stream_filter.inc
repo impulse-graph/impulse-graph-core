@@ -1,6 +1,15 @@
+#ifndef OP_A7_CONTRACT_DEFINED
+#define OP_A7_CONTRACT_DEFINED
 /**
  * @file op_a7_stream_filter.inc
  * @brief Opcode 0xA7: OP_STREAM_FILTER — Aborts current edge evaluation if s_regs[sDst] == 0.0f.
+ *
+ * Formal Opcode Contract:
+ *  - Opcode: 0xA7 (OP_STREAM_FILTER)
+ *  - Execution Scope: Edge Stream Shader Sub-Opcode (NOP in top-level VM dispatch)
+ *  - Stream Layout: sDst (stream predicate reg 0..15)
+ *  - Allowed Types: None (Stream sub-opcode)
+ *  - Output: None (Top-level VM registers untouched)
  *
  * ARCHITECTURAL NOTE (Edge Stream Shader Sub-Opcode vs. Top-Level VM Opcode):
  * ---------------------------------------------------------------------------
@@ -23,6 +32,7 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#endif
                     case OP_STREAM_FILTER: {
                         if (s_regs[sDst] == 0.0f) abort = true;
                         break;

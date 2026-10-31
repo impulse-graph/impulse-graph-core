@@ -1,3 +1,24 @@
+/**
+ * @file op_87_csc_walk_direct_store.inc
+ * @brief Formal Contract for OP_CSC_WALK_DIRECT_STORE (0x87).
+ *
+ * Syntax: OP_CSC_WALK_DIRECT_STORE <dst_reg>, <src_reg> (payload: [rel_id:16 | ... | src:8])
+ * Inputs:
+ *   - dst_reg: Target register receiving visited incoming source node bitset
+ *   - src_reg (payload_low8): Target frontier bitset or scalar node ID
+ * Preconditions:
+ *   - src_reg must be TYPE_INT64, TYPE_NODE_ID, or TYPE_BITSET_HANDLE
+ * Outputs:
+ *   - dst_reg set to TYPE_BITSET_HANDLE
+ *   - Flags: ZF set if reverse traversal output is empty
+ */
+#ifndef OP_87_CONTRACT_DEFINED
+#define OP_87_CONTRACT_DEFINED
+#define OP_87_DEFINED_FLAGS        0x00u
+#define OP_87_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_87_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0x87: OP_CSC_WALK_DIRECT_STORE
 op_CSC_WALK_DIRECT_STORE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -7,9 +28,8 @@ op_CSC_WALK_DIRECT_STORE: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
 
-    if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr || !slot.csc_targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_87_ALLOWED_SRC_TYPES);
 
     uint8_t src_type = vm_state->register_types[src];
     uint64_t src_val = vm_state->registers[src];
@@ -25,40 +45,76 @@ op_CSC_WALK_DIRECT_STORE: {
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
-    size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
-    if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
-        uint64_t target_u = src_val;
-        #pragma omp parallel for schedule(static)
-        for (size_t v = 0; v < N; ++v) {
-            uint64_t start = slot.get_csc_offset(v);
-            uint64_t end = slot.get_csc_offset(v + 1);
-            for (uint64_t e = start; e < end; ++e) {
-                uint64_t u = slot.get_csc_target(e);
-                if (u == target_u) {
-                    #pragma omp atomic
-                    bs_dst.words[v >> 6] |= (1ULL << (v & 63));
-                    break;
+    if (rel < vm_state->query_context->slots.size()) {
+        const auto& slot = vm_state->query_context->slots[rel];
+        bool has_csc = (slot.csc_offsets_ptr != nullptr || !slot.dynamic_csc_offsets.empty());
+        if (has_csc) {
+            size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
+            size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
+            if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
+                uint64_t target_u = src_val;
+                #pragma omp parallel for schedule(static)
+                for (size_t v = 0; v < N; ++v) {
+                    uint64_t start = slot.get_csc_offset(v);
+                    uint64_t end = slot.get_csc_offset(v + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t u = slot.get_csc_target(e);
+                        if (u == target_u) {
+                            #pragma omp atomic
+                            bs_dst.words[v >> 6] |= (1ULL << (v & 63));
+                            break;
+                        }
+                    }
                 }
+            } else if (src_is_bitset) {
+                int h_src = static_cast<int>(src_val);
+                const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                #pragma omp parallel for schedule(static)
+                for (size_t v = 0; v < N; ++v) {
+                    uint64_t start = slot.get_csc_offset(v);
+                    uint64_t end = slot.get_csc_offset(v + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t u = slot.get_csc_target(e);
+                        if (bs_src.test(u)) {
+                            #pragma omp atomic
+                            bs_dst.words[v >> 6] |= (1ULL << (v & 63));
+                            break;
+                        }
+                    }
+                }
+                if (dst == src) release_bitset(vm_state->query_context, h_src);
+            }
+        } else if (slot.offsets_ptr && slot.targets_ptr) {
+            size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+            if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
+                uint64_t target_v = src_val;
+                for (size_t u = 0; u < N; ++u) {
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        if (slot.get_csr_target(e) == target_v) {
+                            bs_dst.set(u);
+                            break;
+                        }
+                    }
+                }
+            } else if (src_is_bitset) {
+                int h_src = static_cast<int>(src_val);
+                const auto& bs_src = vm_state->query_context->bitsets[h_src];
+                for (size_t u = 0; u < N; ++u) {
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    for (uint64_t e = start; e < end; ++e) {
+                        uint64_t v = slot.get_csr_target(e);
+                        if (bs_src.test(v)) {
+                            bs_dst.set(u);
+                            break;
+                        }
+                    }
+                }
+                if (dst == src) release_bitset(vm_state->query_context, h_src);
             }
         }
-    } else if (src_is_bitset) {
-        int h_src = static_cast<int>(src_val);
-        const auto& bs_src = vm_state->query_context->bitsets[h_src];
-        #pragma omp parallel for schedule(static)
-        for (size_t v = 0; v < N; ++v) {
-            uint64_t start = slot.get_csc_offset(v);
-            uint64_t end = slot.get_csc_offset(v + 1);
-            for (uint64_t e = start; e < end; ++e) {
-                uint64_t u = slot.get_csc_target(e);
-                if (bs_src.test(u)) {
-                    #pragma omp atomic
-                    bs_dst.words[v >> 6] |= (1ULL << (v & 63));
-                    break;
-                }
-            }
-        }
-        if (dst == src) release_bitset(vm_state->query_context, h_src);
     }
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;

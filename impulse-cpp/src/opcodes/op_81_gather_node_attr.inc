@@ -1,3 +1,26 @@
+/**
+ * @file op_81_gather_node_attr.inc
+ * @brief Formal Contract for OP_GATHER_NODE_ATTR (0x81).
+ *
+ * Syntax:
+ *   - flags=0: OP_GATHER_NODE_ATTR <dst_reg>, <frontier_reg> (payload: [domain:16 | attr:8 | frontier:8])
+ *   - flags=0x80: OP_GATHER_NODE_ATTR <dst_reg>, <frontier_reg> (128-bit wide domain/attr)
+ * Inputs:
+ *   - dst_reg: Target register receiving gathered float vector
+ *   - frontier_reg (payload_low8 or payload_low16): Frontier bitset or scalar node ID
+ * Preconditions:
+ *   - frontier_reg must be TYPE_BITSET_HANDLE, TYPE_NODE_ID, or TYPE_INT64
+ * Outputs:
+ *   - dst_reg set to TYPE_FLOAT_VECTOR
+ *   - Flags: None
+ */
+#ifndef OP_81_CONTRACT_DEFINED
+#define OP_81_CONTRACT_DEFINED
+#define OP_81_DEFINED_FLAGS        0x80u
+#define OP_81_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE)
+#define OP_81_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#endif
+
 // Opcode 0x81: OP_GATHER_NODE_ATTR
 op_GATHER_NODE_ATTR: {
     const auto& inst = bytecode[vm_state->pc];
@@ -18,6 +41,9 @@ op_GATHER_NODE_ATTR: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(frontier_reg);
+
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, frontier_reg, OP_81_ALLOWED_SRC_TYPES);
 
     bool front_is_bs = (vm_state->register_types[frontier_reg] == TYPE_BITSET_HANDLE);
     int h_front = front_is_bs ? static_cast<int>(vm_state->registers[frontier_reg]) : -1;

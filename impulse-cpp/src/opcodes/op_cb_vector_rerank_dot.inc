@@ -1,3 +1,29 @@
+/**
+ * Formal Opcode Contract: OP_VECTOR_RERANK_DOT (0xCB)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   cand_reg (src):   inst.payload & 0xFF (PAYLOAD_LOW8)
+ *   q_reg (aux1):     (inst.payload >> 8) & 0xFF (PAYLOAD_BYTE1)
+ *   attr_id:          (inst.payload >> 16) & 0xFFFF
+ *   allowed_src:      TYPE_BITSET_HANDLE | TYPE_LANE_FRONTIER
+ *   allowed_aux1:     TYPE_FLOAT_VECTOR
+ *   output_dst:       TYPE_FLOAT_VECTOR
+ *   metric (flags & 0x03):
+ *     0x00: Dot Product
+ *     0x01: Cosine Similarity
+ *     0x02: L2 Distance (Squared)
+ *     ZF set if output scores are all zero
+ *   requires_ctx:     true
+ */
+#ifndef OP_CB_CONTRACT_DEFINED
+#define OP_CB_CONTRACT_DEFINED
+#define OP_CB_DEFINED_FLAGS        0x03u
+#define OP_CB_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_CB_ALLOWED_AUX1_TYPES   (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#define OP_CB_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#endif
+
 // Opcode 0xCB: OP_VECTOR_RERANK_DOT
 op_VECTOR_RERANK_DOT: {
     {

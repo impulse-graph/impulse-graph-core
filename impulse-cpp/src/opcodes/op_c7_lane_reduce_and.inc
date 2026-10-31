@@ -1,3 +1,26 @@
+/**
+ * Formal Opcode Contract: OP_LANE_REDUCE_AND (0xC7)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   max_nodes_opt:    (inst.payload >> 16) & 0xFFFF
+ *   allowed_src:      TYPE_LANE_FRONTIER
+ *   output_dst:       TYPE_INT64
+ *   modes (flags & 0x03):
+ *     0x00: Bitwise AND all reached mask
+ *     0x01: Islanded mask (active & ~all_reached)
+ *     0x02: Universal node count
+ *   flags:            ZF set if result is zero
+ *   requires_ctx:     true
+ */
+#ifndef OP_C7_CONTRACT_DEFINED
+#define OP_C7_CONTRACT_DEFINED
+#define OP_C7_DEFINED_FLAGS        0x03u
+#define OP_C7_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_C7_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_INT64))
+#endif
+
 // Opcode 0xC7: OP_LANE_REDUCE_AND
 op_LANE_REDUCE_AND: {
     {

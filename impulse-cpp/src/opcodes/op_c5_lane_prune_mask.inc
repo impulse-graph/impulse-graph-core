@@ -1,3 +1,29 @@
+/**
+ * Formal Opcode Contract: OP_LANE_PRUNE_MASK (0xC5)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8)
+ *   arg1_reg (aux1):  (inst.payload >> 8) & 0xFF (PAYLOAD_BYTE1)
+ *   allowed_src:      TYPE_LANE_FRONTIER
+ *   output_dst:       TYPE_LANE_FRONTIER
+ *   modes (flags & 0x03):
+ *     0x00: Mode 0 - Mask AND (allowed aux1: TYPE_INT64 | TYPE_NODE_ID)
+ *     0x01: Mode 1 - Mask AND-NOT (allowed aux1: TYPE_INT64 | TYPE_NODE_ID)
+ *     0x02: Mode 2 - Degree Hub Pruning (allowed aux1: TYPE_INT64 | TYPE_NODE_ID, zero skip)
+ *     0x03: Mode 3 - Invert Lanes (allowed aux1: none)
+ *   flags:            ZF set if active frontier mask is empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_C5_CONTRACT_DEFINED
+#define OP_C5_CONTRACT_DEFINED
+#define OP_C5_DEFINED_FLAGS        0x03u
+#define OP_C5_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_C5_MODES012_AUX1_TYPES  IMP_TYPES_INT_OR_NODE
+#define OP_C5_MODE3_AUX1_TYPES     IMP_TYPES_NONE
+#define OP_C5_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#endif
+
 // Opcode 0xC5: OP_LANE_PRUNE_MASK
 op_LANE_PRUNE_MASK: {
     {
@@ -26,6 +52,7 @@ op_LANE_PRUNE_MASK: {
 
         if (mode == 0) {
             VALIDATE_REG(arg1);
+            IMPULSE_CHECK_REG_TYPE(vm_state, arg1, (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE));
             uint8_t t_arg = vm_state->register_types[arg1];
             if (t_arg == TYPE_BITSET_HANDLE) {
                 uint64_t h_bs = vm_state->registers[arg1];
@@ -51,8 +78,6 @@ op_LANE_PRUNE_MASK: {
                 for (size_t u = 0; u < n_nodes; ++u) {
                     lf_dst.lanes[u] &= ~mask;
                 }
-            } else if (t_arg != TYPE_NULL) {
-                return IMPULSE_VM_ERR_INVALID_REGISTER;
             }
         } else if (mode == 1) {
             uint32_t half = (arg1 > 0) ? std::min<uint32_t>(32u, arg1) : std::max<uint32_t>(1u, lf_dst.num_lanes / 2u);
@@ -64,8 +89,11 @@ op_LANE_PRUNE_MASK: {
                 lf_dst.lanes[u] = allow_bits & ~deny_bits;
             }
         } else if (mode == 2) {
-            VALIDATE_REG(arg1);
-            uint8_t t_arg = vm_state->register_types[arg1];
+            if (arg1 > 0) {
+                VALIDATE_REG(arg1);
+                IMPULSE_CHECK_REG_TYPE(vm_state, arg1, (IMP_TYPES_INT_OR_NODE | IMP_TYPES_NODE_VEC));
+            }
+            uint8_t t_arg = (arg1 > 0) ? vm_state->register_types[arg1] : TYPE_NULL;
             uint64_t max_deg = (t_arg == TYPE_INT64 || t_arg == TYPE_NODE_ID) ? vm_state->registers[arg1] : arg1;
             uint32_t min_k = std::max<uint32_t>(1u, arg2);
             for (size_t u = 0; u < n_nodes; ++u) {

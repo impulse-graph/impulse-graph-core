@@ -1,3 +1,30 @@
+/**
+ * @file op_12_csr_degree.inc
+ * @brief Formal Contract for OP_CSR_DEGREE (0x12).
+ *
+ * Mnemonic: OP_CSR_DEGREE
+ * Opcode: 0x12
+ * Description: Computes out-degree sum of input scalar node ID or BitSet active frontier.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFFFF, rel = (payload >> 16) & 0xFFFF
+ *
+ * Inputs:
+ *  - src: TYPE_NODE_ID | TYPE_INT64 | TYPE_BITSET_HANDLE
+ *
+ * Outputs:
+ *  - dst: TYPE_INT64
+ *
+ * Flags:
+ *  - ZF: Set if computed degree is 0
+ *
+ * Context Requirement:
+ *  - Requires context (query_context snapshot slots)
+ */
+#ifndef OP_12_CONTRACT_DEFINED
+#define OP_12_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x12: OP_CSR_DEGREE
 op_CSR_DEGREE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -13,6 +40,8 @@ op_CSR_DEGREE: {
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

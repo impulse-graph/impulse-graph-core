@@ -1,3 +1,24 @@
+/**
+ * @file op_80_load_column_vector.inc
+ * @brief Formal Contract for OP_LOAD_COLUMN_VECTOR (0x80).
+ *
+ * Syntax: OP_LOAD_COLUMN_VECTOR <dst_reg> (payload: [attr_idx:16 | domain_or_rel:16])
+ * Inputs:
+ *   - dst_reg: Target register receiving off-heap float column vector
+ *   - payload: High 16 bits = attribute index, low 16 bits = domain / relation ID
+ * Preconditions:
+ *   - Snapshot attribute slot must exist and contain float data
+ * Outputs:
+ *   - dst_reg set to TYPE_FLOAT_VECTOR
+ *   - Flags: None
+ */
+#ifndef OP_80_CONTRACT_DEFINED
+#define OP_80_CONTRACT_DEFINED
+#define OP_80_DEFINED_FLAGS        0x00u
+#define OP_80_ALLOWED_SRC_TYPES    (IMP_TYPES_NONE)
+#define OP_80_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#endif
+
 // Opcode 0x80: OP_LOAD_COLUMN_VECTOR
 op_LOAD_COLUMN_VECTOR: {
     const auto& inst = bytecode[vm_state->pc];
@@ -5,6 +26,8 @@ op_LOAD_COLUMN_VECTOR: {
     uint16_t domain_or_rel = inst.payload & 0xFFFF;
     uint16_t attr_idx = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
+
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
     size_t N = vm_state->query_context->max_nodes;
     if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {

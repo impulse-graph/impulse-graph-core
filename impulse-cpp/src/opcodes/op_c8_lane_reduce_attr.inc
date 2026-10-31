@@ -1,3 +1,39 @@
+/**
+ * Formal Opcode Contract: OP_LANE_REDUCE_ATTR (0xC8)
+ *
+ * Layout:
+ *   Variant 0 (flags & 0x01 == 0): Snapshot Attribute Scalar Reduction
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFF (PAYLOAD_LOW8)
+ *     attr_id (imm):  (inst.payload >> 8) & 0xFF
+ *     red_op (imm):   (inst.payload >> 16) & 0xFFFF
+ *     allowed_src:    TYPE_LANE_FRONTIER
+ *     allowed_aux1:   none (immediate attribute id)
+ *     output_dst:     TYPE_FLOAT_VECTOR
+ *     flags:          ZF set if output vector is zero
+ *     requires_ctx:   true
+ *
+ *   Variant 1 (flags & 0x01 == 1): Register Vector Scalar/Argmin Reduction
+ *     dst_reg:        inst.dst_reg (DST_REG)
+ *     src_reg:        inst.payload & 0xFF (PAYLOAD_LOW8)
+ *     vec_reg (aux1): (inst.payload >> 8) & 0xFF (PAYLOAD_BYTE1)
+ *     red_op (imm):   (inst.payload >> 16) & 0xFFFF
+ *     allowed_src:    TYPE_LANE_FRONTIER
+ *     allowed_aux1:   TYPE_FLOAT_VECTOR | TYPE_DOUBLE_VECTOR | TYPE_NODE_VECTOR | TYPE_UINT64_VECTOR
+ *     output_dst:     TYPE_FLOAT_VECTOR (for SUM/MIN/MAX) or TYPE_UINT64_VECTOR (for ARGMIN/ARGMAX)
+ *     flags:          ZF set if output is zero
+ *     requires_ctx:   true
+ */
+#ifndef OP_C8_CONTRACT_DEFINED
+#define OP_C8_CONTRACT_DEFINED
+#define OP_C8_DEFINED_FLAGS        0x01u
+#define OP_C8_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_C8_FLAG0_AUX1_TYPES     IMP_TYPES_NONE
+#define OP_C8_FLAG1_AUX1_TYPES     (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_NODE_VEC)
+#define OP_C8_OUTPUT_SCALAR_DST    (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
+#define OP_C8_OUTPUT_ARG_DST       (IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#endif
+
 // Opcode 0xC8: OP_LANE_REDUCE_ATTR
 op_LANE_REDUCE_ATTR: {
     {
@@ -9,6 +45,10 @@ op_LANE_REDUCE_ATTR: {
         uint8_t flags = inst.flags;
         VALIDATE_REG(dst);
         VALIDATE_REG(src_reg);
+        if (flags & 0x01) {
+            VALIDATE_REG(attr_or_reg);
+            IMPULSE_CHECK_REG_TYPE(vm_state, attr_or_reg, OP_C8_FLAG1_AUX1_TYPES);
+        }
         if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
         if (vm_state->register_types[src_reg] != TYPE_LANE_FRONTIER) {

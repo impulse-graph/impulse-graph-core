@@ -1,3 +1,30 @@
+/**
+ * @file op_2f_vec_math_ternary.inc
+ * @brief Formal Contract for OP_VEC_MATH_TERNARY (0x2F).
+ *
+ * Mnemonic: OP_VEC_MATH_TERNARY
+ * Opcode: 0x2F
+ * Description: Vectorized ternary fused mathematical evaluation (e.g. LERP, FMA).
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src1 = payload & 0xFF, src2 = (payload >> 8) & 0xFF, src3 = (payload >> 16) & 0xFF, func_id = payload >> 24
+ *
+ * Inputs:
+ *  - src1, src2, src3: FLOAT_OR_DBL
+ *
+ * Outputs:
+ *  - dst: FLOAT_OR_DBL
+ *
+ * Flags:
+ *  - Unmodified
+ *
+ * Context Requirement:
+ *  - Requires context (query_context vector pool)
+ */
+#ifndef OP_2F_CONTRACT_DEFINED
+#define OP_2F_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x2F: OP_VEC_MATH_TERNARY
 op_VEC_MATH_TERNARY: {
     const auto& inst = bytecode[vm_state->pc];
@@ -30,17 +57,10 @@ op_VEC_MATH_TERNARY: {
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, IMP_TYPES_FLOAT_OR_DBL);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, IMP_TYPES_FLOAT_OR_DBL);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src3, IMP_TYPES_FLOAT_OR_DBL);
     uint8_t type_tag = inst.flags;
-
-    if (vm_state->register_types[src1] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src1] != TYPE_FLOAT_VECTOR) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
-    if (vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src2] != TYPE_FLOAT_VECTOR) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
-    if (vm_state->register_types[src3] != TYPE_DOUBLE_VECTOR && vm_state->register_types[src3] != TYPE_FLOAT_VECTOR) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
     int h_s1 = static_cast<int>(vm_state->registers[src1]);
     int h_s2 = static_cast<int>(vm_state->registers[src2]);
     int h_s3 = static_cast<int>(vm_state->registers[src3]);

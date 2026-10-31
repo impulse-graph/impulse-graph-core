@@ -1,3 +1,21 @@
+/**
+ * Formal Opcode Contract: OP_VECTOR_REDUCE_SUM (0x35)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   allowed_src:      IMP_TYPES_FLOAT_OR_DBL | TYPE_FLOAT | TYPE_DOUBLE
+ *   output_dst:       TYPE_FLOAT | TYPE_DOUBLE
+ *   flags:            ZF set if sum == 0.0
+ *   requires_ctx:     true
+ */
+#ifndef OP_35_CONTRACT_DEFINED
+#define OP_35_CONTRACT_DEFINED
+#define OP_35_DEFINED_FLAGS        0x00u
+#define OP_35_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE))
+#define OP_35_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE))
+#endif
+
 // Opcode 0x35: OP_VECTOR_REDUCE_SUM
 op_VECTOR_REDUCE_SUM: {
     const auto& inst = bytecode[vm_state->pc];
@@ -5,6 +23,8 @@ op_VECTOR_REDUCE_SUM: {
     uint16_t src = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_35_ALLOWED_SRC_TYPES);
 
     size_t size = vm_state->query_context->max_nodes;
     double sum = 0.0;

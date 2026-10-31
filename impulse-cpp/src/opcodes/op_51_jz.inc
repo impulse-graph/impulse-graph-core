@@ -1,3 +1,17 @@
+/**
+ * Formal Opcode Contract: OP_JZ (0x51)
+ *
+ * Layout:
+ *   payload:          int32_t PC jump offset if ZF == 1
+ *   allowed_src:      none
+ *   requires_ctx:     false
+ */
+#ifndef OP_51_CONTRACT_DEFINED
+#define OP_51_CONTRACT_DEFINED
+#define OP_51_DEFINED_FLAGS        0x00u
+#define OP_51_OUTPUT_DST_TYPES     IMP_TYPES_NONE
+#endif
+
 // Opcode 0x51: OP_JZ
 op_JZ: {
     const auto& inst = bytecode[vm_state->pc];

@@ -1,3 +1,24 @@
+/**
+ * @file op_70_mov.inc
+ * @brief Formal Contract for OP_MOV (0x70).
+ *
+ * Syntax: OP_MOV <dst_reg>, <src_reg>
+ * Inputs:
+ *   - dst_reg: Destination register
+ *   - src_reg (payload_low16): Source register to copy from
+ * Preconditions:
+ *   - src_reg can be any allocated register type (deep-clones bitsets)
+ * Outputs:
+ *   - dst_reg receives exact value and type tag of src_reg
+ *   - Flags: None
+ */
+#ifndef OP_70_CONTRACT_DEFINED
+#define OP_70_CONTRACT_DEFINED
+#define OP_70_DEFINED_FLAGS        0x00u
+#define OP_70_ALLOWED_SRC_TYPES    (IMP_TYPES_ANY)
+#define OP_70_OUTPUT_DST_TYPES     (IMP_TYPES_ANY)
+#endif
+
 // Opcode 0x70: OP_MOV
 op_MOV: {
     const auto& inst = bytecode[vm_state->pc];

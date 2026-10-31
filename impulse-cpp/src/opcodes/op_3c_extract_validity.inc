@@ -1,3 +1,21 @@
+/**
+ * Formal Opcode Contract: OP_EXTRACT_VALIDITY (0x3C)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFFFF (PAYLOAD_LOW16)
+ *   allowed_src:      IMP_TYPES_NUMERIC_VEC
+ *   output_dst:       TYPE_BITSET_HANDLE
+ *   flags:            ZF set if validity bitset is empty
+ *   requires_ctx:     true
+ */
+#ifndef OP_3C_CONTRACT_DEFINED
+#define OP_3C_CONTRACT_DEFINED
+#define OP_3C_DEFINED_FLAGS        0x00u
+#define OP_3C_ALLOWED_SRC_TYPES    (IMP_TYPES_NUMERIC_VEC)
+#define OP_3C_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#endif
+
 // Opcode 0x3C: OP_EXTRACT_VALIDITY
 op_EXTRACT_VALIDITY: {
     const auto& inst = bytecode[vm_state->pc];
@@ -5,11 +23,9 @@ op_EXTRACT_VALIDITY: {
     uint16_t src = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_3C_ALLOWED_SRC_TYPES);
     uint8_t stype = vm_state->register_types[src];
-    if (stype != TYPE_FLOAT_VECTOR && stype != TYPE_DOUBLE_VECTOR &&
-        stype != TYPE_NODE_VECTOR && stype != TYPE_UINT64_VECTOR) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
 
     int hDst = acquire_bitset(vm_state->query_context);
     if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

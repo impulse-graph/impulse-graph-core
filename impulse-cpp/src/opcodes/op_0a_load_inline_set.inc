@@ -1,3 +1,30 @@
+/**
+ * @file op_0a_load_inline_set.inc
+ * @brief Formal Contract for OP_LOAD_INLINE_SET (0x0A).
+ *
+ * Mnemonic: OP_LOAD_INLINE_SET
+ * Opcode: 0x0A
+ * Description: Loads inline array of node IDs directly into an off-heap BitSet frontier.
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, offset = payload & 0xFFFF, count = payload >> 16
+ *
+ * Inputs:
+ *  - query_context->inline_data_ptr
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Cleared (0)
+ *
+ * Context Requirement:
+ *  - Requires context (query_context inline data and bitset pool)
+ */
+#ifndef OP_0A_CONTRACT_DEFINED
+#define OP_0A_CONTRACT_DEFINED 1
+#endif
+
 // Opcode 0x0A: OP_LOAD_INLINE_SET
 op_LOAD_INLINE_SET: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];

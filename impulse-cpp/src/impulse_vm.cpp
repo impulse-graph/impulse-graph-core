@@ -6,6 +6,8 @@
  * directly into `impulse_vm_execute` to preserve zero-overhead computed-goto dispatch.
  */
 #include "impulse_vm_internal.hpp"
+#include "impulse_opcode_contracts.hpp"
+using namespace impulse::vm;
 #include "opcodes/shared/mock_attr_common.hpp"
 #include "opcodes/shared/coo_walk_common.hpp"
 #include "opcodes/shared/dense_walk_common.hpp"

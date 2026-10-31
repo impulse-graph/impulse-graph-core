@@ -1,3 +1,22 @@
+/**
+ * Formal Opcode Contract: OP_REDUCE (0x45)
+ *
+ * Layout:
+ *   dst_reg:          inst.dst_reg (DST_REG)
+ *   src_reg:          inst.payload & 0xFF (PAYLOAD_LOW8, src_vec)
+ *   op_id:            (inst.payload >> 16) & 0xFFFF
+ *   allowed_src:      IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_NODE_VEC
+ *   output_dst:       TYPE_FLOAT | TYPE_DOUBLE | TYPE_NODE_ID
+ *   flags:            ZF set if ARGMIN/ARGMAX index == 0
+ *   requires_ctx:     true
+ */
+#ifndef OP_45_CONTRACT_DEFINED
+#define OP_45_CONTRACT_DEFINED
+#define OP_45_DEFINED_FLAGS        0x00u
+#define OP_45_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_NODE_VEC)
+#define OP_45_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NODE_ID))
+#endif
+
 // Opcode 0x45: OP_REDUCE
 op_REDUCE: {
     const auto& inst = bytecode[vm_state->pc];
@@ -6,6 +25,8 @@ op_REDUCE: {
     uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_45_ALLOWED_SRC_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
     if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {

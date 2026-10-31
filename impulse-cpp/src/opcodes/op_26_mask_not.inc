@@ -1,3 +1,31 @@
+/**
+ * @file op_26_mask_not.inc
+ * @brief Formal Contract for OP_MASK_NOT (0x26).
+ *
+ * Mnemonic: OP_MASK_NOT
+ * Opcode: 0x26
+ * Description: BitSet bitwise complement (NOT / universal node domain negation).
+ *
+ * Operands:
+ *  - dst = inst.dst_reg, src = payload & 0xFF
+ *
+ * Inputs:
+ *  - src: TYPE_BITSET_HANDLE
+ *
+ * Outputs:
+ *  - dst: TYPE_BITSET_HANDLE
+ *
+ * Flags:
+ *  - ZF: Set if inverted bitset is empty
+ *
+ * Context Requirement:
+ *  - Requires context (query_context bitset pool)
+ */
+#ifndef OP_26_CONTRACT_DEFINED
+#define OP_26_CONTRACT_DEFINED 1
+#define OP_26_ALLOWED_SRC_TYPES (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE)
+#endif
+
 // Opcode 0x26: OP_MASK_NOT
 op_MASK_NOT: {
     const auto& inst = bytecode[vm_state->pc];
@@ -5,6 +33,8 @@ op_MASK_NOT: {
     uint16_t src = inst.payload & 0xFF;
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_26_ALLOWED_SRC_TYPES);
 
     int h_src = static_cast<int>(vm_state->registers[src]);
     int h_dst = -1;
