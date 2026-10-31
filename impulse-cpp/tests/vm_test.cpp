@@ -1373,6 +1373,54 @@ static void test_fuel_and_gas_exhaustion() {
     std::cout << "[VM Test] Fuel & Gas Exhaustion: PASSED" << std::endl;
 }
 
+void test_deterministic_vm_state_hash() {
+    impulse_vm_state_t state1{};
+    impulse_vm_state_t state2{};
+
+    char hex1[65];
+    char hex2[65];
+
+    // 1. Initial zeroed states must have identical hashes
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_OK, hex1) == 0);
+    assert(impulse_vm_state_hash_hex(&state2, IMPULSE_VM_OK, hex2) == 0);
+    assert(std::strcmp(hex1, hex2) == 0);
+    assert(std::strlen(hex1) == 64);
+
+    // 2. Modifying PC or status changes the hash
+    char hex_diff_status[65];
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_ERR_INVALID_OPCODE, hex_diff_status) == 0);
+    assert(std::strcmp(hex1, hex_diff_status) != 0);
+
+    // 3. Normalization of -0.0f and +0.0f
+    auto* ctx = impulse_vm_context_create(nullptr);
+    int h1 = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h1, 0, 0.0f);
+
+    state1.query_context = ctx;
+    state1.register_types[0] = TYPE_FLOAT_VECTOR;
+    state1.registers[0] = h1;
+
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_OK, hex1) == 0);
+    impulse_vm_context_float_vector_set(ctx, h1, 0, -0.0f);
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_OK, hex2) == 0);
+    assert(std::strcmp(hex1, hex2) == 0);
+
+    // 4. Modifying bitset changes the hash
+    int bs_h = impulse_vm_context_acquire_bitset(ctx);
+    state1.register_types[1] = TYPE_BITSET_HANDLE;
+    state1.registers[1] = bs_h;
+    state2.register_types[1] = TYPE_BITSET_HANDLE;
+    state2.registers[1] = bs_h;
+
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_OK, hex1) == 0);
+    impulse_vm_context_bitset_add(ctx, bs_h, 42);
+    assert(impulse_vm_state_hash_hex(&state1, IMPULSE_VM_OK, hex2) == 0);
+    assert(std::strcmp(hex1, hex2) != 0);
+
+    impulse_vm_context_destroy(ctx);
+    std::cout << "[VM Test] Deterministic VM State Hash (ICTX): PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "--- Impulse C++ VM Unit Test Suite ---" << std::endl;
     test_vm_state_layout_size();
@@ -1392,6 +1440,7 @@ int main() {
     test_new_opcodes();
     test_error_handling();
     test_fuel_and_gas_exhaustion();
+    test_deterministic_vm_state_hash();
     std::cout << "All VM tests passed successfully!" << std::endl;
     return 0;
 }

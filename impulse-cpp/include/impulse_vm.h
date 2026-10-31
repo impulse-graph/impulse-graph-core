@@ -487,6 +487,37 @@ IMPULSE_API impulse_vm_status_t impulse_vm_execute(
     uint64_t input_param
 );
 
+/**
+ * @brief Computes deterministic SHA-256 state hash of VM state and execution context.
+ *
+ * Hashes PC, flags, status, call stack, registers R0..R63, and recursively hashes the semantic
+ * contents of all referenced off-heap bitsets, vectors, lane frontiers, and value maps.
+ *
+ * @param state Pointer to VM state frame.
+ * @param status VM execution status code.
+ * @param hash_out 32-byte buffer receiving SHA-256 digest.
+ * @return 0 on success, negative on error.
+ */
+IMPULSE_API int impulse_vm_state_hash(
+    const impulse_vm_state_t* state,
+    int32_t status,
+    uint8_t hash_out[32]
+);
+
+/**
+ * @brief Computes deterministic SHA-256 state hash as a 64-character lowercase hexadecimal string.
+ *
+ * @param state Pointer to VM state frame.
+ * @param status VM execution status code.
+ * @param hex_out Buffer of at least 65 bytes receiving null-terminated hex string.
+ * @return 0 on success, negative on error.
+ */
+IMPULSE_API int impulse_vm_state_hash_hex(
+    const impulse_vm_state_t* state,
+    int32_t status,
+    char hex_out[65]
+);
+
 IMPULSE_API size_t impulse_vm_get_required_buffer_size(
     const impulse_snapshot_t* snapshot,
     uint16_t domain_id
