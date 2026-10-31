@@ -203,6 +203,7 @@ struct impulse_vm_context {
     std::array<VmLaneFrontier, VM_MAX_LANE_FRONTIER_HANDLES> lane_frontiers;
     size_t lane_frontiers_count = 0;
     std::vector<uint64_t> scratch_lanes;
+    std::vector<uint64_t> scratch_lanes_b;
 
     // Pre-allocated scratch buffers for zero-allocation hot-path execution
     std::vector<uint32_t> scratch_u32_a;
@@ -979,6 +980,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         }
     }
     ctx->scratch_lanes.reserve(lane_cap);
+    ctx->scratch_lanes_b.reserve(lane_cap);
     ctx->scratch_u32_a.reserve(lane_cap);
     ctx->scratch_u32_b.reserve(lane_cap);
     ctx->scratch_u64_a.reserve(lane_cap);
@@ -8567,16 +8569,91 @@ op_LANE_CSC_WALK: {
         };
 
         if (is_fixpoint) {
-            bool step_changed = true;
+            auto& delta = vm_state->query_context->scratch_lanes;
+            auto& next_delta = vm_state->query_context->scratch_lanes_b;
+            delta.assign(n_nodes, 0ULL);
+            next_delta.assign(n_nodes, 0ULL);
+            bool has_delta = false;
+            for (size_t u = 0; u < n_nodes; ++u) {
+                uint64_t m = lf_dst.lanes[u];
+                delta[u] = m;
+                if (m != 0ULL) has_delta = true;
+            }
             int iter = 0;
-            auto& snap = vm_state->query_context->scratch_lanes;
-            while (step_changed && iter < 1024) {
-                snap.clear();
-                snap.resize(lf_dst.lanes.size(), 0ULL);
-                if (!lf_dst.lanes.empty()) {
-                    std::memcpy(snap.data(), lf_dst.lanes.data(), lf_dst.lanes.size() * sizeof(uint64_t));
+            while (has_delta && iter < 1024) {
+                std::memset(next_delta.data(), 0, n_nodes * sizeof(uint64_t));
+                has_delta = false;
+                if (!is_csc) {
+                    if (slot.offsets_ptr && slot.targets_ptr) {
+                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, delta.size());
+                        for (size_t u = 0; u < csr_n; ++u) {
+                            uint64_t u_mask = delta[u] & lf_dst.active_mask;
+                            if (u_mask == 0ULL) continue;
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
+                            for (uint64_t e = start; e < end; ++e) {
+                                uint64_t v = slot.get_csr_target(e);
+                                if (v < n_nodes) {
+                                    uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
+                                    uint64_t prop = u_mask & ~trip;
+                                    uint64_t newly_reached = prop & ~lf_dst.lanes[v];
+                                    if (newly_reached != 0ULL) {
+                                        lf_dst.lanes[v] |= newly_reached;
+                                        next_delta[v] |= newly_reached;
+                                        has_delta = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if (slot.csc_offsets_ptr && slot.csc_targets_ptr && !trip_ptr) {
+                        size_t csc_n = std::min<size_t>(
+                            slot.csc_node_count > 0 ? slot.csc_node_count : (slot.node_count > 0 ? slot.node_count : n_nodes),
+                            delta.size()
+                        );
+                        for (size_t v = 0; v < csc_n; ++v) {
+                            uint64_t v_mask = delta[v] & lf_dst.active_mask;
+                            if (v_mask == 0ULL) continue;
+                            uint64_t start = slot.get_csc_offset(v);
+                            uint64_t end = slot.get_csc_offset(v + 1);
+                            for (uint64_t e = start; e < end; ++e) {
+                                uint64_t u = slot.get_csc_target(e);
+                                if (u < n_nodes) {
+                                    uint64_t newly_reached = v_mask & ~lf_dst.lanes[u];
+                                    if (newly_reached != 0ULL) {
+                                        lf_dst.lanes[u] |= newly_reached;
+                                        next_delta[u] |= newly_reached;
+                                        has_delta = true;
+                                    }
+                                }
+                            }
+                        }
+                    } else if (slot.offsets_ptr && slot.targets_ptr) {
+                        size_t csr_n = std::min<size_t>(slot.node_count > 0 ? slot.node_count : n_nodes, n_nodes);
+                        for (size_t u = 0; u < csr_n; ++u) {
+                            uint64_t start = slot.get_csr_offset(u);
+                            uint64_t end = slot.get_csr_offset(u + 1);
+                            for (uint64_t e = start; e < end; ++e) {
+                                uint64_t v = slot.get_csr_target(e);
+                                if (v < delta.size()) {
+                                    uint64_t v_mask = delta[v] & lf_dst.active_mask;
+                                    if (v_mask != 0ULL) {
+                                        uint64_t trip = (trip_ptr && e < trip_ptr->size()) ? (*trip_ptr)[e] : 0ULL;
+                                        uint64_t prop = v_mask & ~trip;
+                                        uint64_t newly_reached = prop & ~lf_dst.lanes[u];
+                                        if (newly_reached != 0ULL) {
+                                            lf_dst.lanes[u] |= newly_reached;
+                                            next_delta[u] |= newly_reached;
+                                            has_delta = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                step_changed = step_once(snap, lf_dst.lanes);
+                delta.swap(next_delta);
                 iter++;
             }
         } else {
