@@ -280,11 +280,11 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                 int op_id = 0;
                 switch (red->op_val) {
                     case ScmReduce::Op::SUM:
-                    case ScmReduce::Op::COUNT: op_id = 0; break;
-                    case ScmReduce::Op::MIN: op_id = 1; break;
-                    case ScmReduce::Op::MAX: op_id = 2; break;
-                    case ScmReduce::Op::ARGMIN: op_id = 3; break;
-                    case ScmReduce::Op::ARGMAX: op_id = 4; break;
+                    case ScmReduce::Op::COUNT: op_id = BINARY_OP_ADD; break;
+                    case ScmReduce::Op::MIN: op_id = BINARY_OP_MIN; break;
+                    case ScmReduce::Op::MAX: op_id = BINARY_OP_MAX; break;
+                    case ScmReduce::Op::ARGMIN: op_id = BINARY_OP_ARGMIN; break;
+                    case ScmReduce::Op::ARGMAX: op_id = BINARY_OP_ARGMAX; break;
                     case ScmReduce::Op::FIRST: op_id = 5; break;
                 }
                 uint32_t payload = (op_id << 16) | (src_reg & 0xFFFF);
@@ -310,6 +310,114 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                 inst.flags = flags;
                 inst.dst_reg = src_reg;
                 inst.payload = (src_reg << 16) | src_reg;
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_INIT_SEEDS) {
+                auto n = std::static_pointer_cast<ScmLaneInitSeeds>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_INIT_SEEDS;
+                inst.flags = n->width_flag;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_INIT_GROUPS) {
+                auto n = std::static_pointer_cast<ScmLaneInitGroups>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_INIT_GROUPS;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(n->pairs_reg & 0xFFFF) |
+                               (static_cast<uint32_t>(n->num_groups & 0xFFFF) << 16);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_SET_EDGE_MASK) {
+                auto n = std::static_pointer_cast<ScmLaneSetEdgeMask>(step);
+                int rel_id = n->physical_rel_id >= 0 ? n->physical_rel_id : 0;
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_SET_EDGE_MASK;
+                inst.dst_reg = src_reg;
+                inst.payload = static_cast<uint32_t>(n->pairs_reg & 0xFFFF) |
+                               (static_cast<uint32_t>(rel_id & 0xFFFF) << 16);
+                instr_list.push_back(inst);
+                current_reg = src_reg;
+            } else if (step->kind() == NodeKind::LANE_WALK) {
+                auto n = std::static_pointer_cast<ScmLaneWalk>(step);
+                int rel_id = n->physical_rel_id >= 0 ? n->physical_rel_id : 0;
+                impulse_instruction_t inst{};
+                inst.opcode = (n->direction == WalkDirection::FORWARD_CSR) ? OP_LANE_CSR_WALK : OP_LANE_CSC_WALK;
+                inst.flags = n->fixed_point ? 1 : 0;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFFFF) |
+                               (static_cast<uint32_t>(rel_id & 0xFFFF) << 16);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_PRUNE_MASK) {
+                auto n = std::static_pointer_cast<ScmLanePruneMask>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_PRUNE_MASK;
+                inst.flags = n->mode;
+                inst.dst_reg = src_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->arg0 & 0xFFFF) << 8) |
+                               (static_cast<uint32_t>(n->arg1 & 0xFF) << 24);
+                instr_list.push_back(inst);
+                current_reg = src_reg;
+            } else if (step->kind() == NodeKind::LANE_FILTER_QUORUM) {
+                auto n = std::static_pointer_cast<ScmLaneFilterQuorum>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_FILTER_QUORUM;
+                inst.dst_reg = dst_reg;
+                if (n->mask_reg > 0) {
+                    inst.flags = 1;
+                    inst.payload = static_cast<uint32_t>(src_reg & 0xFF) |
+                                   (static_cast<uint32_t>(n->min_quorum & 0xFF) << 8) |
+                                   (static_cast<uint32_t>(n->mask_reg & 0xFF) << 16);
+                } else {
+                    inst.flags = 0;
+                    inst.payload = static_cast<uint32_t>(src_reg & 0xFFFF) |
+                                   (static_cast<uint32_t>(n->min_quorum & 0xFFFF) << 16);
+                }
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_REDUCE_AND) {
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_REDUCE_AND;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFFFF);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_REDUCE_ATTR) {
+                auto n = std::static_pointer_cast<ScmLaneReduceAttr>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_REDUCE_ATTR;
+                inst.flags = 0;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->attr_id & 0xFF) << 8) |
+                               (static_cast<uint32_t>(n->reduce_op & 0xFFFF) << 16);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::LANE_SET_COVER) {
+                auto n = std::static_pointer_cast<ScmLaneSetCover>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_LANE_SET_COVER;
+                inst.flags = n->mode;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->mask_reg & 0xFF) << 8);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::VECTOR_ANN_SEARCH) {
+                auto n = std::static_pointer_cast<ScmVectorAnnSearch>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_VECTOR_ANN_SEARCH;
+                inst.flags = n->fused_lane_frontier ? 1 : 0;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(n->query_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->top_k & 0xFF) << 8) |
+                               (static_cast<uint32_t>(n->index_or_attr_id & 0xFFFF) << 16);
+                instr_list.push_back(inst);
+            } else if (step->kind() == NodeKind::VECTOR_RERANK_DOT) {
+                auto n = std::static_pointer_cast<ScmVectorRerankDot>(step);
+                impulse_instruction_t inst{};
+                inst.opcode = OP_VECTOR_RERANK_DOT;
+                inst.flags = n->metric;
+                inst.dst_reg = dst_reg;
+                inst.payload = static_cast<uint32_t>(src_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->query_reg & 0xFF) << 8) |
+                               (static_cast<uint32_t>(n->attr_id & 0xFFFF) << 16);
                 instr_list.push_back(inst);
             } else if (step->kind() == NodeKind::LIST) {
                 auto list = std::static_pointer_cast<ScmList>(step);

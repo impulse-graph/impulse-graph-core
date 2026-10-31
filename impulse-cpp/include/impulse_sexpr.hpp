@@ -204,6 +204,67 @@ public:
             auto r = std::make_shared<ScmReturn>();
             r->expr = build(expr.list[1]);
             return r;
+        } else if (head == "csr-walk-2hop" && expr.list.size() >= 3) {
+            return std::make_shared<ScmWalk2Hop>(expr.list[1].atom, expr.list[2].atom);
+        } else if (head == "lane-init-seeds") {
+            uint16_t sreg = (expr.list.size() > 1 && !expr.list[1].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[1].atom)) : 0;
+            uint8_t wflag = (expr.list.size() > 2 && !expr.list[2].atom.empty()) ? static_cast<uint8_t>(std::stoul(expr.list[2].atom)) : 0;
+            return std::make_shared<ScmLaneInitSeeds>(sreg, wflag);
+        } else if (head == "lane-init-groups" && expr.list.size() >= 3) {
+            uint16_t preg = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            uint16_t ngroups = static_cast<uint16_t>(std::stoul(expr.list[2].atom));
+            return std::make_shared<ScmLaneInitGroups>(preg, ngroups);
+        } else if (head == "lane-set-edge-mask" && expr.list.size() >= 3) {
+            uint16_t preg = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            std::string rel = expr.list[2].atom;
+            int rel_id = (!rel.empty() && std::isdigit(static_cast<unsigned char>(rel[0]))) ? std::stoi(rel) : -1;
+            return std::make_shared<ScmLaneSetEdgeMask>(preg, rel, rel_id);
+        } else if ((head == "lane-walk-csr" || head == "lane-csr-walk") && expr.list.size() >= 2) {
+            std::string rel = expr.list[1].atom;
+            bool fp = (expr.list.size() > 2 && (expr.list[2].atom == "1" || expr.list[2].atom == "#t" || expr.list[2].atom == "true"));
+            auto w = ScmLaneWalk::forward(rel, fp);
+            if (!rel.empty() && std::isdigit(static_cast<unsigned char>(rel[0]))) {
+                w->physical_rel_id = std::stoi(rel);
+            }
+            return w;
+        } else if ((head == "lane-walk-csc" || head == "lane-csc-walk") && expr.list.size() >= 2) {
+            std::string rel = expr.list[1].atom;
+            bool fp = (expr.list.size() > 2 && (expr.list[2].atom == "1" || expr.list[2].atom == "#t" || expr.list[2].atom == "true"));
+            auto w = ScmLaneWalk::reverse(rel, fp);
+            if (!rel.empty() && std::isdigit(static_cast<unsigned char>(rel[0]))) {
+                w->physical_rel_id = std::stoi(rel);
+            }
+            return w;
+        } else if (head == "lane-prune-mask" && expr.list.size() >= 3) {
+            uint8_t mode = static_cast<uint8_t>(std::stoul(expr.list[1].atom));
+            uint16_t arg0 = static_cast<uint16_t>(std::stoul(expr.list[2].atom));
+            uint16_t arg1 = (expr.list.size() > 3 && !expr.list[3].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[3].atom)) : 0;
+            return std::make_shared<ScmLanePruneMask>(mode, arg0, arg1);
+        } else if (head == "lane-filter-quorum" && expr.list.size() >= 2) {
+            uint16_t mq = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            uint16_t mreg = (expr.list.size() > 2 && !expr.list[2].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[2].atom)) : 0xFF;
+            return std::make_shared<ScmLaneFilterQuorum>(mq, mreg);
+        } else if (head == "lane-reduce-and") {
+            return std::make_shared<ScmLaneReduceAnd>();
+        } else if (head == "lane-reduce-attr" && expr.list.size() >= 3) {
+            uint16_t aid = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            uint8_t op = static_cast<uint8_t>(std::stoul(expr.list[2].atom));
+            return std::make_shared<ScmLaneReduceAttr>(aid, op);
+        } else if (head == "lane-set-cover") {
+            uint16_t mreg = (expr.list.size() > 1 && !expr.list[1].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[1].atom)) : 0xFF;
+            uint8_t mode = (expr.list.size() > 2 && !expr.list[2].atom.empty()) ? static_cast<uint8_t>(std::stoul(expr.list[2].atom)) : 0;
+            return std::make_shared<ScmLaneSetCover>(mreg, mode);
+        } else if (head == "vector-ann-search" && expr.list.size() >= 3) {
+            uint16_t qreg = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            uint16_t top_k = static_cast<uint16_t>(std::stoul(expr.list[2].atom));
+            uint16_t idx_id = (expr.list.size() > 3 && !expr.list[3].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[3].atom)) : 0;
+            bool fused = (expr.list.size() > 4 && (expr.list[4].atom == "1" || expr.list[4].atom == "#t" || expr.list[4].atom == "true"));
+            return std::make_shared<ScmVectorAnnSearch>(qreg, top_k, idx_id, fused);
+        } else if (head == "vector-rerank-dot" && expr.list.size() >= 2) {
+            uint16_t qreg = static_cast<uint16_t>(std::stoul(expr.list[1].atom));
+            uint16_t aid = (expr.list.size() > 2 && !expr.list[2].atom.empty()) ? static_cast<uint16_t>(std::stoul(expr.list[2].atom)) : 0;
+            uint8_t met = (expr.list.size() > 3 && !expr.list[3].atom.empty()) ? static_cast<uint8_t>(std::stoul(expr.list[3].atom)) : 0;
+            return std::make_shared<ScmVectorRerankDot>(qreg, aid, met);
         }
 
         return nullptr;

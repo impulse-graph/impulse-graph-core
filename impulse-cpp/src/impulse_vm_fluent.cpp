@@ -517,12 +517,1698 @@ QueryBuilder& QueryBuilder::collectValueMap() {
 
 // --- Compilation ---
 
+QueryBuilder& QueryBuilder::walkEdge2Hop(uint16_t rel1_id, uint16_t rel2_id, uint8_t flags) {
+    uint32_t payload = static_cast<uint32_t>(rel1_id) | (static_cast<uint32_t>(rel2_id) << 16);
+    emit(OP_CSR_WALK_2HOP, flags, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::floatVectorScale(float scale_factor) {
+    uint32_t scale_bits{0};
+    std::memcpy(&scale_bits, &scale_factor, sizeof(float));
+    emit(OP_FLOAT_VECTOR_SCALE, 0, current_reg_, scale_bits);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::vectorTimeValidAt(uint16_t ts_reg, uint16_t start_attr_reg, uint16_t end_attr_reg) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                       (static_cast<uint32_t>(ts_reg & 0xFF) << 8) |
+                       (static_cast<uint32_t>(start_attr_reg & 0xFF) << 16) |
+                       (static_cast<uint32_t>(end_attr_reg & 0xFF) << 24);
+    emit(OP_VECTOR_TIME_VALID_AT, 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::reduceMin() {
+    return reduce(BINARY_OP_MIN);
+}
+
+QueryBuilder& QueryBuilder::reduceMax() {
+    return reduce(BINARY_OP_MAX);
+}
+
+QueryBuilder& QueryBuilder::argMin() {
+    return reduce(BINARY_OP_ARGMIN);
+}
+
+QueryBuilder& QueryBuilder::argMax() {
+    return reduce(BINARY_OP_ARGMAX);
+}
+
+QueryBuilder& QueryBuilder::laneInitSeeds(uint16_t seed_reg, uint8_t width_flag) {
+    emit(OP_LANE_INIT_SEEDS, width_flag, current_reg_, static_cast<uint32_t>(seed_reg & 0xFFFF));
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneInitGroups(uint16_t pairs_reg, uint16_t num_groups) {
+    uint32_t payload = static_cast<uint32_t>(pairs_reg & 0xFFFF) |
+                       (static_cast<uint32_t>(num_groups & 0xFFFF) << 16);
+    emit(OP_LANE_INIT_GROUPS, 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneSetEdgeMask(uint16_t pairs_reg, uint16_t relation_id) {
+    uint32_t payload = static_cast<uint32_t>(pairs_reg & 0xFFFF) |
+                       (static_cast<uint32_t>(relation_id & 0xFFFF) << 16);
+    emit(OP_LANE_SET_EDGE_MASK, 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneWalkCsr(uint16_t relation_id, bool fixed_point) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFFFF) |
+                       (static_cast<uint32_t>(relation_id & 0xFFFF) << 16);
+    emit(OP_LANE_CSR_WALK, fixed_point ? 1 : 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneWalkCsc(uint16_t relation_id, bool fixed_point) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFFFF) |
+                       (static_cast<uint32_t>(relation_id & 0xFFFF) << 16);
+    emit(OP_LANE_CSC_WALK, fixed_point ? 1 : 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::lanePruneMask(uint8_t mode, uint16_t arg0, uint16_t arg1) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                       (static_cast<uint32_t>(arg0 & 0xFFFF) << 8) |
+                       (static_cast<uint32_t>(arg1 & 0xFF) << 24);
+    emit(OP_LANE_PRUNE_MASK, mode, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneFilterQuorum(uint16_t min_quorum, uint16_t mask_reg) {
+    if (mask_reg > 0) {
+        uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                           (static_cast<uint32_t>(min_quorum & 0xFF) << 8) |
+                           (static_cast<uint32_t>(mask_reg & 0xFF) << 16);
+        emit(OP_LANE_FILTER_QUORUM, 1, current_reg_, payload);
+    } else {
+        uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFFFF) |
+                           (static_cast<uint32_t>(min_quorum & 0xFFFF) << 16);
+        emit(OP_LANE_FILTER_QUORUM, 0, current_reg_, payload);
+    }
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneReduceAnd() {
+    emit(OP_LANE_REDUCE_AND, 0, current_reg_, static_cast<uint32_t>(current_reg_ & 0xFFFF));
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneReduceAttr(uint16_t attr_id, uint8_t reduce_op) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                       (static_cast<uint32_t>(attr_id & 0xFF) << 8) |
+                       (static_cast<uint32_t>(reduce_op & 0xFFFF) << 16);
+    emit(OP_LANE_REDUCE_ATTR, 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::laneSetCover(uint16_t mask_reg, uint8_t mode) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                       (static_cast<uint32_t>(mask_reg & 0xFF) << 8);
+    emit(OP_LANE_SET_COVER, mode, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::vectorAnnSearch(uint16_t query_reg, uint16_t top_k, uint16_t index_or_attr_id, bool fused_lane_frontier) {
+    uint32_t payload = static_cast<uint32_t>(query_reg & 0xFF) |
+                       (static_cast<uint32_t>(top_k & 0xFF) << 8) |
+                       (static_cast<uint32_t>(index_or_attr_id & 0xFFFF) << 16);
+    emit(OP_VECTOR_ANN_SEARCH, fused_lane_frontier ? 1 : 0, current_reg_, payload);
+    return *this;
+}
+
+QueryBuilder& QueryBuilder::vectorRerankDot(uint16_t query_reg, uint16_t attr_id, uint8_t metric) {
+    uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFF) |
+                       (static_cast<uint32_t>(query_reg & 0xFF) << 8) |
+                       (static_cast<uint32_t>(attr_id & 0xFFFF) << 16);
+    emit(OP_VECTOR_RERANK_DOT, metric, current_reg_, payload);
+    return *this;
+}
+
 CompiledQuery QueryBuilder::compile() {
     IMPULSE_ASSERT(current_reg_ < 64);
     std::vector<impulse_instruction_t> compiled = instructions_;
     compiled.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
     IMPULSE_ASSERT(!compiled.empty());
     return CompiledQuery(std::move(compiled), current_reg_);
+}
+
+// ---------------------------------------------------------------------------
+// High-Level Domain-Bound C++20 Fluent API Implementation
+// ---------------------------------------------------------------------------
+
+namespace {
+
+static uint16_t resolve_domain_id_by_name(const impulse_snapshot_t* snap, const std::string& name) {
+    if (!snap) return 0;
+    uint16_t count = impulse_snapshot_domain_count(snap);
+    for (uint16_t i = 0; i < count; ++i) {
+        impulse_domain_catalog_entry_t entry{};
+        const char* dname = nullptr;
+        if (impulse_snapshot_get_domain_entry(snap, i, &entry, &dname) == IMPULSE_OK && dname) {
+            if (name == dname) return i;
+        }
+    }
+    if (name.rfind("dom_", 0) == 0) {
+        return static_cast<uint16_t>(std::stoul(name.substr(4)));
+    }
+    if (!name.empty() && std::isdigit(static_cast<unsigned char>(name[0]))) {
+        return static_cast<uint16_t>(std::stoul(name));
+    }
+    return 0;
+}
+
+static uint16_t resolve_relation_id_by_name(const impulse_snapshot_t* snap, uint16_t /*domain_id*/, const std::string& rel_name) {
+    if (!snap) return 0;
+    if (rel_name.rfind("rel_", 0) == 0) {
+        return static_cast<uint16_t>(std::stoul(rel_name.substr(4)));
+    }
+    if (!rel_name.empty() && std::isdigit(static_cast<unsigned char>(rel_name[0]))) {
+        return static_cast<uint16_t>(std::stoul(rel_name));
+    }
+    uint16_t rel_count = impulse_snapshot_relation_count(snap);
+    for (uint16_t i = 0; i < rel_count; ++i) {
+        if (rel_name == ("rel_" + std::to_string(i))) return i;
+    }
+    return 0;
+}
+
+static uint32_t get_domain_node_count(const impulse_snapshot_t* snap, uint16_t domain_id) {
+    if (!snap) return 0;
+    uint16_t rel_count = impulse_snapshot_relation_count(snap);
+    uint64_t max_n = 0;
+    for (uint16_t r = 0; r < rel_count; ++r) {
+        impulse_relation_directory_entry_t entry{};
+        if (impulse_snapshot_get_relation_entry(snap, r, &entry) == IMPULSE_OK) {
+            if (entry.src_domain_id == domain_id && entry.node_count > max_n) {
+                max_n = entry.node_count;
+            }
+        }
+    }
+    if (max_n == 0) {
+        max_n = impulse_snapshot_max_node_count(snap);
+    }
+    return static_cast<uint32_t>(max_n);
+}
+
+static uint32_t resolve_key_to_dense(const impulse_snapshot_t* snap, uint16_t domain_id, const std::string& key) {
+    if (snap) {
+        uint32_t dense_id = 0;
+        if (impulse_snapshot_resolve_key(snap, domain_id, key.data(), key.size(), &dense_id) == IMPULSE_OK) {
+            return dense_id;
+        }
+    }
+    if (!key.empty() && std::isdigit(static_cast<unsigned char>(key[0]))) {
+        return static_cast<uint32_t>(std::stoul(key));
+    }
+    return 0;
+}
+
+static std::string resolve_dense_to_key(const impulse_snapshot_t* snap, uint16_t domain_id, uint32_t node_id) {
+    if (snap) {
+        const void* key_bytes = nullptr;
+        size_t key_len = 0;
+        if (impulse_snapshot_resolve_dense_id(snap, domain_id, node_id, &key_bytes, &key_len) == IMPULSE_OK &&
+            key_bytes != nullptr && key_len > 0) {
+            return std::string(static_cast<const char*>(key_bytes), key_len);
+        }
+    }
+    return std::to_string(node_id);
+}
+
+static uint16_t resolve_attr_or_index_id(const impulse_snapshot_t* snap, const std::string& name) {
+    if (name.empty()) return 0;
+    if (std::isdigit(static_cast<unsigned char>(name[0]))) {
+        return static_cast<uint16_t>(std::stoul(name));
+    }
+    if (snap) {
+        uint16_t idx_count = impulse_snapshot_get_index_count(snap);
+        for (uint16_t k = 0; k < idx_count; ++k) {
+            const char* idx_name = nullptr;
+            if (impulse_snapshot_get_index(snap, k, nullptr, nullptr, nullptr, nullptr, nullptr, &idx_name, nullptr, nullptr) == IMPULSE_OK &&
+                idx_name && name == idx_name) {
+                return k;
+            }
+        }
+    }
+    return 0;
+}
+
+} // anonymous namespace
+
+MultiLaneResult::MultiLaneResult(const impulse_snapshot_t* snapshot,
+                                 uint16_t domain_id,
+                                 uint32_t domain_node_count,
+                                 uint32_t lane_count,
+                                 std::vector<std::string> lane_keys,
+                                 std::vector<uint64_t> words_per_node)
+    : snapshot_(snapshot),
+      domain_id_(domain_id),
+      domain_node_count_(domain_node_count),
+      lane_count_(lane_count),
+      words_per_lane_((lane_count + 63U) / 64U),
+      lane_keys_(std::move(lane_keys)),
+      words_per_node_(std::move(words_per_node)) {}
+
+uint64_t MultiLaneResult::laneMaskFor(uint32_t node_id) const {
+    if (node_id >= domain_node_count_ || words_per_lane_ == 0) return 0ULL;
+    return words_per_node_[static_cast<size_t>(node_id) * words_per_lane_];
+}
+
+uint32_t MultiLaneResult::lanePopcountFor(uint32_t node_id) const {
+    if (node_id >= domain_node_count_ || words_per_lane_ == 0) return 0U;
+    uint32_t total = 0;
+    const uint64_t* row = &words_per_node_[static_cast<size_t>(node_id) * words_per_lane_];
+    for (uint32_t w = 0; w < words_per_lane_; ++w) {
+        total += static_cast<uint32_t>(std::popcount(row[w]));
+    }
+    return total;
+}
+
+std::vector<uint32_t> MultiLaneResult::attributionFor(uint32_t node_id) const {
+    std::vector<uint32_t> lanes;
+    if (node_id >= domain_node_count_ || words_per_lane_ == 0) return lanes;
+    const uint64_t* row = &words_per_node_[static_cast<size_t>(node_id) * words_per_lane_];
+    for (uint32_t w = 0; w < words_per_lane_; ++w) {
+        uint64_t m = row[w];
+        while (m != 0ULL) {
+            uint32_t b = static_cast<uint32_t>(std::countr_zero(m));
+            uint32_t global_lane = w * 64U + b;
+            if (global_lane < lane_count_) {
+                lanes.push_back(global_lane);
+            }
+            m &= (m - 1ULL);
+        }
+    }
+    return lanes;
+}
+
+std::vector<std::string> MultiLaneResult::keyAttributionFor(const std::string& node_key) const {
+    uint32_t u = resolve_key_to_dense(snapshot_, domain_id_, node_key);
+    auto lanes = attributionFor(u);
+    std::vector<std::string> out;
+    out.reserve(lanes.size());
+    for (uint32_t lb : lanes) {
+        if (lb < lane_keys_.size()) {
+            out.push_back(lane_keys_[lb]);
+        } else {
+            out.push_back(std::to_string(lb));
+        }
+    }
+    return out;
+}
+
+std::vector<uint32_t> MultiLaneResult::nodesWithQuorum(uint32_t min_lanes) const {
+    std::vector<uint32_t> out;
+    if (words_per_lane_ == 0 || lane_count_ == 0) return out;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        if (lanePopcountFor(u) >= min_lanes) {
+            out.push_back(u);
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<std::string, uint32_t>> MultiLaneResult::keysWithQuorum(uint32_t min_lanes) const {
+    std::vector<std::pair<std::string, uint32_t>> out;
+    if (words_per_lane_ == 0 || lane_count_ == 0) return out;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        uint32_t pc = lanePopcountFor(u);
+        if (pc >= min_lanes) {
+            out.emplace_back(resolve_dense_to_key(snapshot_, domain_id_, u), pc);
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> MultiLaneResult::findSetCoverPairs(uint64_t target_mask) const {
+    std::vector<std::pair<uint32_t, uint32_t>> pairs;
+    if (lane_count_ == 0 || words_per_lane_ == 0) return pairs;
+    uint64_t eff_mask = target_mask;
+    if (lane_count_ < 64) {
+        eff_mask &= ((1ULL << lane_count_) - 1ULL);
+    }
+    if (eff_mask == 0ULL) return pairs;
+
+    std::vector<uint32_t> active;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        if ((laneMaskFor(u) & eff_mask) != 0ULL) {
+            active.push_back(u);
+        }
+    }
+    for (size_t i = 0; i < active.size(); ++i) {
+        uint64_t mu = laneMaskFor(active[i]) & eff_mask;
+        for (size_t j = i + 1; j < active.size(); ++j) {
+            uint64_t mv = laneMaskFor(active[j]) & eff_mask;
+            if ((mu | mv) == eff_mask) {
+                pairs.emplace_back(active[i], active[j]);
+            }
+        }
+    }
+    return pairs;
+}
+
+std::vector<uint32_t> MultiLaneResult::findGreedySetCover(uint64_t target_mask, uint32_t max_nodes) const {
+    std::vector<uint32_t> selected;
+    if (lane_count_ == 0 || words_per_lane_ == 0 || max_nodes == 0) return selected;
+
+    std::vector<uint64_t> uncovered(words_per_lane_, ~0ULL);
+    uncovered[0] &= target_mask;
+    if (lane_count_ % 64 != 0) {
+        uncovered[words_per_lane_ - 1] &= ((1ULL << (lane_count_ % 64)) - 1ULL);
+    }
+
+    auto has_uncovered = [&]() {
+        for (uint64_t w : uncovered) {
+            if (w != 0ULL) return true;
+        }
+        return false;
+    };
+
+    for (uint32_t step = 0; step < max_nodes && has_uncovered(); ++step) {
+        uint32_t best_u = UINT32_MAX;
+        uint32_t best_gain = 0;
+        for (uint32_t u = 0; u < domain_node_count_; ++u) {
+            uint32_t gain = 0;
+            const uint64_t* row = &words_per_node_[static_cast<size_t>(u) * words_per_lane_];
+            for (uint32_t w = 0; w < words_per_lane_; ++w) {
+                gain += static_cast<uint32_t>(std::popcount(row[w] & uncovered[w]));
+            }
+            if (gain > best_gain) {
+                best_gain = gain;
+                best_u = u;
+            }
+        }
+        if (best_u == UINT32_MAX || best_gain == 0) break;
+        selected.push_back(best_u);
+        const uint64_t* best_row = &words_per_node_[static_cast<size_t>(best_u) * words_per_lane_];
+        for (uint32_t w = 0; w < words_per_lane_; ++w) {
+            uncovered[w] &= ~best_row[w];
+        }
+    }
+    return selected;
+}
+
+// --- Single-Lane Traversal Implementation ---
+
+Traversal::Traversal(const impulse_snapshot_t* snapshot, uint16_t domain_id, std::vector<uint64_t> seeds, bool all_nodes)
+    : snapshot_(snapshot),
+      initial_domain_id_(domain_id),
+      current_domain_id_(domain_id),
+      seeds_(std::move(seeds)),
+      all_nodes_(all_nodes) {}
+
+Traversal& Traversal::out(const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::OUT;
+    s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::in(const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::IN;
+    s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::outFiltered(const std::string& relation, uint32_t filter_id) {
+    Step s{};
+    s.kind = Step::Kind::OUT_FILTERED;
+    s.str1 = relation;
+    s.u32_arg1 = filter_id;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::outPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    Step s{};
+    s.kind = Step::Kind::OUT_PREDICATE;
+    s.str1 = relation;
+    s.str2 = edge_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::inPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    Step s{};
+    s.kind = Step::Kind::IN_PREDICATE;
+    s.str1 = relation;
+    s.str2 = edge_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::out2Hop(const std::string& rel1, const std::string& rel2) {
+    Step s{};
+    s.kind = Step::Kind::OUT_2HOP;
+    s.str1 = rel1;
+    s.str2 = rel2;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::repeat(int iterations, const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::REPEAT;
+    s.str1 = relation;
+    s.u32_arg1 = static_cast<uint32_t>(std::max(0, iterations));
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::repeatUntilStable(const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::REPEAT_UNTIL_STABLE;
+    s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::filter(const std::string& node_cel_predicate) {
+    Step s{};
+    s.kind = Step::Kind::FILTER_CEL;
+    s.str1 = node_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::project(const std::string& cel_expression) {
+    Step s{};
+    s.kind = Step::Kind::PROJECT_CEL;
+    s.str1 = cel_expression;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::validAt(int64_t epoch_millis) {
+    Step s{};
+    s.kind = Step::Kind::VALID_AT;
+    s.i64_arg = epoch_millis;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::unionWith(const Traversal& other) {
+    Step s{};
+    s.kind = Step::Kind::SET_UNION;
+    s.other_nodes = other.collect();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::intersect(const Traversal& other) {
+    Step s{};
+    s.kind = Step::Kind::SET_INTERSECT;
+    s.other_nodes = other.collect();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::difference(const Traversal& other) {
+    Step s{};
+    s.kind = Step::Kind::SET_DIFFERENCE;
+    s.other_nodes = other.collect();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::mulNodeAttr(const std::string& attr_name) {
+    Step s{};
+    s.kind = Step::Kind::MUL_ATTR;
+    s.str1 = attr_name;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::scaleState(float factor) {
+    Step s{};
+    s.kind = Step::Kind::SCALE_STATE;
+    s.f32_arg = factor;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::divNodeAttr(const std::string& attr_name) {
+    Step s{};
+    s.kind = Step::Kind::DIV_ATTR;
+    s.str1 = attr_name;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+double Traversal::l1NormDiff(const Traversal& other) const {
+    auto v1 = evaluateStateVector();
+    auto v2 = other.evaluateStateVector();
+    size_t n = std::max(v1.size(), v2.size());
+    double diff = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        double a = (i < v1.size()) ? v1[i] : 0.0;
+        double b = (i < v2.size()) ? v2[i] : 0.0;
+        diff += std::abs(a - b);
+    }
+    return diff;
+}
+
+Traversal& Traversal::mxv(const std::string& relation, uint8_t semiring) {
+    Step s{};
+    s.kind = Step::Kind::MXV;
+    s.str1 = relation;
+    s.u32_arg1 = semiring;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::vxm(const std::string& relation, uint8_t semiring) {
+    Step s{};
+    s.kind = Step::Kind::VXM;
+    s.str1 = relation;
+    s.u32_arg1 = semiring;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::ewiseAdd(const Traversal& other, uint8_t binary_op) {
+    Step s{};
+    s.kind = Step::Kind::EWISE_ADD;
+    s.u32_arg1 = binary_op;
+    s.other_nodes = other.collect();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::ewiseMult(const Traversal& other, uint8_t binary_op) {
+    Step s{};
+    s.kind = Step::Kind::EWISE_MULT;
+    s.u32_arg1 = binary_op;
+    s.other_nodes = other.collect();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::degree(const std::string& relation) {
+    Step s{};
+    s.kind = Step::Kind::DEGREE;
+    s.str1 = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::sampleNeighbors(const std::string& relation, int32_t k, uint32_t seed) {
+    Step s{};
+    s.kind = Step::Kind::SAMPLE_NEIGHBORS;
+    s.str1 = relation;
+    s.u32_arg1 = static_cast<uint32_t>(k);
+    s.u32_arg2 = seed;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::randomWalk(const std::string& relation, int32_t steps_cnt, uint32_t seed) {
+    Step s{};
+    s.kind = Step::Kind::RANDOM_WALK;
+    s.str1 = relation;
+    s.u32_arg1 = static_cast<uint32_t>(steps_cnt);
+    s.u32_arg2 = seed;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::kCore(int32_t k) {
+    Step s{};
+    s.kind = Step::Kind::KCORE;
+    s.u32_arg1 = static_cast<uint32_t>(k);
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+Traversal& Traversal::rerank(const std::vector<float>& query_vector, const std::string& attr_name, uint8_t metric) {
+    Step s{};
+    s.kind = Step::Kind::RERANK;
+    s.str1 = attr_name;
+    s.u32_arg1 = metric;
+    s.float_vec = query_vector;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+CompiledQuery Traversal::compile() const {
+    QueryBuilder qb(0);
+    if (all_nodes_ || seeds_.size() != 1) {
+        qb.inputSet(0);
+    } else {
+        qb.inputNode(0);
+    }
+    for (const auto& step : steps_) {
+        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str1);
+        switch (step.kind) {
+            case Step::Kind::OUT:
+            case Step::Kind::MXV:
+                qb.walkEdge(rel_id);
+                break;
+            case Step::Kind::IN:
+            case Step::Kind::VXM:
+                qb.walkCsc(rel_id);
+                break;
+            case Step::Kind::OUT_FILTERED:
+                qb.walkEdgeFiltered(rel_id, step.u32_arg1);
+                break;
+            case Step::Kind::OUT_PREDICATE:
+                qb.walkEdgePredicate(rel_id, 0);
+                break;
+            case Step::Kind::IN_PREDICATE:
+                qb.walkCsc(rel_id);
+                break;
+            case Step::Kind::OUT_2HOP: {
+                uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str2);
+                qb.walkEdge2Hop(rel_id, r2);
+                break;
+            }
+            case Step::Kind::REPEAT:
+                qb.repeat(static_cast<int>(step.u32_arg1), [rel_id](QueryBuilder& b) {
+                    b.walkEdge(rel_id);
+                });
+                break;
+            case Step::Kind::REPEAT_UNTIL_STABLE:
+                qb.repeatUntilStable([rel_id](QueryBuilder& b) {
+                    b.walkEdge(rel_id);
+                });
+                break;
+            case Step::Kind::FILTER_CEL:
+                qb.filterCel(step.str1);
+                break;
+            case Step::Kind::PROJECT_CEL:
+                qb.project(step.str1);
+                break;
+            case Step::Kind::VALID_AT:
+                qb.loadConstInt(step.i64_arg, 3);
+                qb.setCurrentRegister(0);
+                qb.vectorTimeValidAt(3, 1, 2);
+                break;
+            case Step::Kind::DEGREE:
+                qb.walkDegree(rel_id);
+                break;
+            case Step::Kind::SAMPLE_NEIGHBORS:
+                qb.sampleNeighbors(rel_id, static_cast<int32_t>(step.u32_arg1), step.u32_arg2);
+                break;
+            case Step::Kind::RANDOM_WALK:
+                qb.randomWalk(rel_id, static_cast<int32_t>(step.u32_arg1), step.u32_arg2);
+                break;
+            case Step::Kind::KCORE:
+                qb.kcoreDecomposition();
+                break;
+            case Step::Kind::SCALE_STATE:
+                qb.floatVectorScale(step.f32_arg);
+                break;
+            default:
+                break;
+        }
+    }
+    qb.collectBitset();
+    return qb.compile();
+}
+
+std::vector<uint64_t> Traversal::collect() const {
+    if (!snapshot_) return {};
+    uint32_t max_n = get_domain_node_count(snapshot_, initial_domain_id_);
+    if (max_n == 0) return {};
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return {};
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    // Seed initial frontier in R0
+    std::vector<impulse_instruction_t> init_prog;
+    if (all_nodes_) {
+        init_prog.push_back(impulse_instruction_t{OP_INIT_INPUT_SET, 0, 0, 0});
+    } else if (seeds_.empty()) {
+        init_prog.push_back(impulse_instruction_t{OP_CLEAR_REG, 0, 0, 0});
+    } else {
+        init_prog.push_back(impulse_instruction_t{OP_INIT_INPUT_NODE, 0, 0, 0});
+    }
+    init_prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
+
+    if (all_nodes_ || seeds_.empty()) {
+        state.pc = 0;
+        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, 0);
+    } else {
+        // Union all seeds into R0 via VM
+        state.pc = 0;
+        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, seeds_[0]);
+        for (size_t i = 1; i < seeds_.size(); ++i) {
+            impulse_instruction_t add_seed[3] = {
+                {OP_INIT_INPUT_NODE, 0, 2, 0},
+                {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (2 << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(add_seed, 3, &state, seeds_[i]);
+        }
+    }
+
+    for (const auto& step : steps_) {
+        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str1);
+        if (step.kind == Step::Kind::OUT || step.kind == Step::Kind::MXV) {
+            impulse_instruction_t insts[2] = {
+                {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::IN || step.kind == Step::Kind::VXM) {
+            impulse_instruction_t insts[2] = {
+                {OP_CSC_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::OUT_2HOP) {
+            uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str2);
+            impulse_instruction_t insts[2] = {
+                {OP_CSR_WALK_2HOP, 0, 0, static_cast<uint32_t>(rel_id | (r2 << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::OUT_FILTERED) {
+            impulse_instruction_t insts[2] = {
+                {OP_CSR_WALK_FILTERED, 0, 0, static_cast<uint32_t>((rel_id << 16) | ((step.u32_arg1 & 0xFF) << 8) | 0)},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::OUT_PREDICATE) {
+            impulse_instruction_t insts[2] = {
+                {OP_CSR_WALK_PREDICATE, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::REPEAT) {
+            for (uint32_t it = 0; it < step.u32_arg1; ++it) {
+                impulse_instruction_t insts[2] = {
+                    {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                    {OP_HALT, 0, 0, 0}
+                };
+                state.pc = 0;
+                impulse_vm_execute(insts, 2, &state, 0);
+            }
+        } else if (step.kind == Step::Kind::REPEAT_UNTIL_STABLE) {
+            impulse_instruction_t insts[3] = {
+                {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                {OP_STABLE_CHECK, 0, 0, static_cast<uint32_t>(-1)},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 3, &state, 0);
+        } else if (step.kind == Step::Kind::SET_UNION || step.kind == Step::Kind::SET_INTERSECT ||
+                   step.kind == Step::Kind::SET_DIFFERENCE || step.kind == Step::Kind::EWISE_ADD ||
+                   step.kind == Step::Kind::EWISE_MULT) {
+            // Load other_nodes into R3 via VM
+            impulse_instruction_t clr[2] = {{OP_CLEAR_REG, 0, 3, 0}, {OP_HALT, 0, 0, 0}};
+            state.pc = 0;
+            impulse_vm_execute(clr, 2, &state, 0);
+            if (!step.other_nodes.empty()) {
+                impulse_instruction_t init3[2] = {{OP_INIT_INPUT_NODE, 0, 3, 0}, {OP_HALT, 0, 0, 0}};
+                state.pc = 0;
+                impulse_vm_execute(init3, 2, &state, step.other_nodes[0]);
+                for (size_t i = 1; i < step.other_nodes.size(); ++i) {
+                    impulse_instruction_t u3[3] = {
+                        {OP_INIT_INPUT_NODE, 0, 4, 0},
+                        {OP_SET_UNION, 0, 3, static_cast<uint32_t>(3 | (4 << 16))},
+                        {OP_HALT, 0, 0, 0}
+                    };
+                    state.pc = 0;
+                    impulse_vm_execute(u3, 3, &state, step.other_nodes[i]);
+                }
+            }
+            uint8_t op = OP_SET_UNION;
+            if (step.kind == Step::Kind::SET_INTERSECT || step.kind == Step::Kind::EWISE_MULT) op = OP_SET_INTERSECT;
+            else if (step.kind == Step::Kind::SET_DIFFERENCE) op = OP_SET_DIFFERENCE;
+            impulse_instruction_t comb[2] = {
+                {op, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(comb, 2, &state, 0);
+        } else if (step.kind == Step::Kind::SAMPLE_NEIGHBORS) {
+            impulse_instruction_t insts[2] = {
+                {OP_SAMPLE_NEIGHBORS, 0, 0, static_cast<uint32_t>((rel_id << 16) | (step.u32_arg1 & 0xFFFF))},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::RANDOM_WALK) {
+            impulse_instruction_t insts[2] = {
+                {OP_RANDOM_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | (step.u32_arg1 & 0xFFFF))},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::KCORE) {
+            impulse_instruction_t insts[2] = {
+                {OP_KCORE_DECOMPOSITION, 0, 0, step.u32_arg1},
+                {OP_HALT, 0, 0, 0}
+            };
+            state.pc = 0;
+            impulse_vm_execute(insts, 2, &state, 0);
+        }
+    }
+
+    std::vector<uint64_t> out;
+    if (state.register_types[0] == TYPE_BITSET_HANDLE) {
+        uint64_t handle = state.registers[0];
+        for (uint32_t u = 0; u < max_n; ++u) {
+            if (impulse_vm_context_bitset_test(ctx, handle, u)) {
+                out.push_back(u);
+            }
+        }
+    }
+    impulse_vm_context_destroy(ctx);
+    return out;
+}
+
+std::vector<std::string> Traversal::collectKeys() const {
+    auto nodes = collect();
+    std::vector<std::string> keys;
+    keys.reserve(nodes.size());
+    for (uint64_t u : nodes) {
+        keys.push_back(resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(u)));
+    }
+    return keys;
+}
+
+size_t Traversal::count() const {
+    return collect().size();
+}
+
+std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_active_nodes) const {
+    auto active = collect();
+    if (out_active_nodes) *out_active_nodes = active;
+    uint32_t max_n = get_domain_node_count(snapshot_, current_domain_id_);
+    std::vector<float> state_vec(max_n, 0.0f);
+
+    const float* attr_f32 = nullptr;
+    uint64_t attr_bytes = 0;
+    if (snapshot_ && impulse_snapshot_relation_count(snapshot_) > 0) {
+        const void* raw_data = nullptr;
+        uint8_t tc = 0;
+        uint32_t dim = 0;
+        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
+            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
+            attr_f32 = static_cast<const float*>(raw_data);
+        }
+    }
+    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
+
+    for (uint64_t u : active) {
+        if (u < max_n) {
+            state_vec[u] = (u < attr_count) ? attr_f32[u] : 1.0f;
+        }
+    }
+
+    for (const auto& step : steps_) {
+        if (step.kind == Step::Kind::SCALE_STATE) {
+            for (uint64_t u : active) {
+                if (u < max_n) state_vec[u] *= step.f32_arg;
+            }
+        } else if (step.kind == Step::Kind::MUL_ATTR && attr_f32) {
+            for (uint64_t u : active) {
+                if (u < max_n && u < attr_count) state_vec[u] *= attr_f32[u];
+            }
+        } else if (step.kind == Step::Kind::DIV_ATTR && attr_f32) {
+            for (uint64_t u : active) {
+                if (u < max_n && u < attr_count && attr_f32[u] != 0.0f) state_vec[u] /= attr_f32[u];
+            }
+        }
+    }
+    return state_vec;
+}
+
+double Traversal::reduceSum() const {
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    double sum = 0.0;
+    for (uint64_t u : active) {
+        if (u < vec.size()) sum += vec[u];
+    }
+    return sum;
+}
+
+double Traversal::walkReduceSum(const std::string& relation, const std::string& /*attr_name*/) const {
+    Traversal next = *this;
+    next.out(relation);
+    return next.reduceSum();
+}
+
+double Traversal::reduceMin() const {
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    if (active.empty()) return 0.0;
+    double best = vec[active[0]];
+    for (uint64_t u : active) {
+        if (u < vec.size() && vec[u] < best) best = vec[u];
+    }
+    return best;
+}
+
+double Traversal::reduceMax() const {
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    if (active.empty()) return 0.0;
+    double best = vec[active[0]];
+    for (uint64_t u : active) {
+        if (u < vec.size() && vec[u] > best) best = vec[u];
+    }
+    return best;
+}
+
+int64_t Traversal::argMin() const {
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    if (active.empty()) return -1;
+    int64_t best_u = static_cast<int64_t>(active[0]);
+    double best_v = vec[active[0]];
+    for (uint64_t u : active) {
+        if (u < vec.size()) {
+            if (vec[u] < best_v || (vec[u] == best_v && static_cast<int64_t>(u) < best_u)) {
+                best_v = vec[u];
+                best_u = static_cast<int64_t>(u);
+            }
+        }
+    }
+    return best_u;
+}
+
+int64_t Traversal::argMax() const {
+    std::vector<uint64_t> active;
+    auto vec = evaluateStateVector(&active);
+    if (active.empty()) return -1;
+    int64_t best_u = static_cast<int64_t>(active[0]);
+    double best_v = vec[active[0]];
+    for (uint64_t u : active) {
+        if (u < vec.size()) {
+            if (vec[u] > best_v || (vec[u] == best_v && static_cast<int64_t>(u) < best_u)) {
+                best_v = vec[u];
+                best_u = static_cast<int64_t>(u);
+            }
+        }
+    }
+    return best_u;
+}
+
+std::string Traversal::argMinKey() const {
+    int64_t u = argMin();
+    return (u < 0) ? "" : resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(u));
+}
+
+std::string Traversal::argMaxKey() const {
+    int64_t u = argMax();
+    return (u < 0) ? "" : resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(u));
+}
+
+// --- Multi-Lane Traversal Implementation ---
+
+MultiLaneTraversal::MultiLaneTraversal(const impulse_snapshot_t* snapshot,
+                                       uint16_t domain_id,
+                                       InitMode mode,
+                                       std::vector<uint64_t> seeds,
+                                       std::vector<std::string> lane_keys,
+                                       std::vector<std::pair<uint32_t, uint32_t>> group_pairs,
+                                       uint16_t outage_rel_id,
+                                       std::vector<std::vector<uint32_t>> tripped_edges_per_lane)
+    : snapshot_(snapshot),
+      current_domain_id_(domain_id),
+      mode_(mode),
+      seeds_(std::move(seeds)),
+      lane_keys_(std::move(lane_keys)),
+      group_pairs_(std::move(group_pairs)),
+      outage_rel_id_(outage_rel_id),
+      tripped_edges_per_lane_(std::move(tripped_edges_per_lane)) {}
+
+MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::OUT;
+    s.str_arg = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation, const std::string& /*edge_cel_predicate*/) {
+    return out(relation);
+}
+
+MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::IN;
+    s.str_arg = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation, const std::string& /*edge_cel_predicate*/) {
+    return in(relation);
+}
+
+MultiLaneTraversal& MultiLaneTraversal::repeat(int iterations, const std::string& relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::REPEAT;
+    s.str_arg = relation;
+    s.u16_arg = static_cast<uint16_t>(std::max(0, iterations));
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::repeatUntilStable(const std::string& relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::REPEAT_UNTIL_STABLE;
+    s.str_arg = relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::filter(const std::string& node_cel_predicate) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::FILTER_CEL;
+    s.str_arg = node_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::project(const std::string& cel_expression) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::PROJECT_CEL;
+    s.str_arg = cel_expression;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::pruneWhere(const std::string& deny_cel_predicate) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::PRUNE_WHERE_CEL;
+    s.str_arg = deny_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::pruneDeniedBy(const std::string& deny_relation) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::PRUNE_DENIED_BY;
+    s.str_arg = deny_relation;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::pruneHubs(uint16_t max_degree, uint8_t min_quorum) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::PRUNE_HUBS;
+    s.u16_arg = max_degree;
+    s.u8_arg = min_quorum;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::whereQuorum(uint8_t min_lanes) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::WHERE_QUORUM;
+    s.u8_arg = min_lanes;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::whereMask(uint64_t required_any_mask, uint64_t forbidden_mask) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::WHERE_MASK;
+    s.mask_req = required_any_mask;
+    s.mask_forbid = forbidden_mask;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+std::vector<uint32_t> MultiLaneTraversal::resolveKeyIndices(const std::vector<std::string>& keys) const {
+    std::vector<uint32_t> indices;
+    for (const auto& k : keys) {
+        for (size_t i = 0; i < lane_keys_.size(); ++i) {
+            if (lane_keys_[i] == k) {
+                indices.push_back(static_cast<uint32_t>(i));
+                break;
+            }
+        }
+    }
+    return indices;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::mustHitAtLeast(uint8_t min_lanes, const std::vector<std::string>& subset_seed_keys) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::MUST_HIT_AT_LEAST;
+    s.u8_arg = min_lanes;
+    s.lane_indices = resolveKeyIndices(subset_seed_keys);
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::mustAvoidAll(const std::vector<std::string>& forbidden_seed_keys) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::MUST_AVOID_ALL;
+    s.lane_indices = resolveKeyIndices(forbidden_seed_keys);
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneResult MultiLaneTraversal::collect() const {
+    uint32_t N = get_domain_node_count(snapshot_, current_domain_id_);
+    uint32_t K = static_cast<uint32_t>(seeds_.size());
+    uint32_t words_per_lane = (K + 63U) / 64U;
+    std::vector<uint64_t> words_per_node(static_cast<size_t>(N) * words_per_lane, 0ULL);
+
+    if (!snapshot_ || N == 0 || K == 0) {
+        return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+    }
+
+    // Execute in batches of <= 64 lanes through ImpulseVM (OP_LANE_*)
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) {
+        return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+    }
+
+    for (uint32_t batch_idx = 0; batch_idx < words_per_lane; ++batch_idx) {
+        uint32_t lane_start = batch_idx * 64U;
+        uint32_t batch_k = std::min(64U, K - lane_start);
+
+        impulse_vm_state_t state{};
+        state.query_context = ctx;
+
+        // Build inline data section with batch_k seed uint32_t values
+        std::vector<uint32_t> inline_u32;
+        std::vector<uint32_t> group_u32;
+        if (mode_ == InitMode::SEEDS || mode_ == InitMode::OUTAGES) {
+            for (uint32_t b = 0; b < batch_k; ++b) {
+                inline_u32.push_back(static_cast<uint32_t>(seeds_[lane_start + b]));
+            }
+        } else if (mode_ == InitMode::GROUPS) {
+            for (const auto& gp : group_pairs_) {
+                if (gp.second >= lane_start && gp.second < lane_start + batch_k) {
+                    inline_u32.push_back(gp.first);
+                    group_u32.push_back(gp.second - lane_start);
+                }
+            }
+        }
+
+        size_t group_offset_bytes = inline_u32.size() * sizeof(uint32_t);
+        size_t group_u32_count = group_u32.size();
+        for (uint32_t g : group_u32) {
+            inline_u32.push_back(g);
+        }
+
+        size_t outage_pairs_offset_bytes = inline_u32.size() * sizeof(uint32_t);
+        size_t outage_pairs_u32_count = 0;
+        if (mode_ == InitMode::OUTAGES) {
+            for (uint32_t b = 0; b < batch_k; ++b) {
+                uint32_t global_lane = lane_start + b;
+                if (global_lane < tripped_edges_per_lane_.size()) {
+                    for (uint32_t edge_idx : tripped_edges_per_lane_[global_lane]) {
+                        inline_u32.push_back(edge_idx);
+                        inline_u32.push_back(b);
+                        outage_pairs_u32_count += 2;
+                    }
+                }
+            }
+        }
+
+        impulse_vm_context_bind_inline_data(ctx, inline_u32.data(), inline_u32.size() * sizeof(uint32_t));
+
+        std::vector<impulse_instruction_t> prog;
+        uint32_t seed_u32_count = static_cast<uint32_t>(group_offset_bytes / sizeof(uint32_t));
+        // R1 <- inline node array of seeds/group_nodes
+        prog.push_back(impulse_instruction_t{
+            OP_LOAD_INLINE_ARRAY, 1, 1,
+            static_cast<uint32_t>(0 | (seed_u32_count << 16))
+        });
+
+        if (mode_ == InitMode::GROUPS) {
+            prog.push_back(impulse_instruction_t{
+                OP_LOAD_INLINE_ARRAY, 1, 2,
+                static_cast<uint32_t>(static_cast<uint16_t>(group_offset_bytes) |
+                                      (static_cast<uint32_t>(group_u32_count) << 16))
+            });
+            prog.push_back(impulse_instruction_t{
+                OP_LANE_INIT_GROUPS, 0, 0,
+                static_cast<uint32_t>(1 | (2 << 8) | (batch_k << 16))
+            });
+        } else {
+            prog.push_back(impulse_instruction_t{
+                OP_LANE_INIT_SEEDS, 0, 0, 1
+            });
+        }
+
+        if (mode_ == InitMode::OUTAGES && outage_pairs_u32_count > 0) {
+            prog.push_back(impulse_instruction_t{
+                OP_LOAD_INLINE_ARRAY, 0, 2,
+                static_cast<uint32_t>(static_cast<uint16_t>(outage_pairs_offset_bytes) |
+                                      (static_cast<uint32_t>(outage_pairs_u32_count / 2) << 16))
+            });
+            prog.push_back(impulse_instruction_t{
+                OP_LANE_SET_EDGE_MASK, 1, 0,
+                static_cast<uint32_t>(0 | (2 << 8) | (static_cast<uint32_t>(outage_rel_id_) << 16))
+            });
+        }
+
+        // Execute hop & hub pruning steps on batch frontier R0
+        for (const auto& step : steps_) {
+            if (step.kind == LaneStep::Kind::OUT) {
+                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
+                prog.push_back(impulse_instruction_t{
+                    OP_LANE_CSR_WALK, 0, 0,
+                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
+                });
+            } else if (step.kind == LaneStep::Kind::IN) {
+                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
+                prog.push_back(impulse_instruction_t{
+                    OP_LANE_CSC_WALK, 0, 0,
+                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
+                });
+            } else if (step.kind == LaneStep::Kind::REPEAT) {
+                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
+                for (uint16_t it = 0; it < step.u16_arg; ++it) {
+                    prog.push_back(impulse_instruction_t{
+                        OP_LANE_CSR_WALK, 0, 0,
+                        static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
+                    });
+                }
+            } else if (step.kind == LaneStep::Kind::REPEAT_UNTIL_STABLE) {
+                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
+                prog.push_back(impulse_instruction_t{
+                    OP_LANE_CSR_WALK, 1, 0,
+                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
+                });
+            } else if (step.kind == LaneStep::Kind::PRUNE_HUBS && words_per_lane == 1) {
+                prog.push_back(impulse_instruction_t{
+                    OP_LANE_PRUNE_MASK, 2, 0,
+                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(step.u16_arg) << 8) | (static_cast<uint32_t>(step.u8_arg) << 24))
+                });
+            }
+        }
+        prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
+
+        impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
+        if (st == IMPULSE_VM_OK && state.register_types[0] == TYPE_LANE_FRONTIER) {
+            size_t l_handle = static_cast<size_t>(state.registers[0]);
+            const uint64_t* lane_data = impulse_vm_context_lane_frontier_data(ctx, l_handle);
+            size_t lane_nodes = impulse_vm_context_lane_frontier_node_count(ctx, l_handle);
+            uint64_t act_mask = impulse_vm_context_lane_frontier_active_mask(ctx, l_handle);
+            if (lane_data != nullptr) {
+                size_t copy_n = std::min<size_t>(N, lane_nodes);
+                for (size_t u = 0; u < copy_n; ++u) {
+                    words_per_node[u * words_per_lane + batch_idx] = (lane_data[u] & act_mask);
+                }
+            }
+        }
+        impulse_vm_context_release_lane_frontier(ctx, 0);
+    }
+
+    impulse_vm_context_destroy(ctx);
+
+    // Apply cross-lane filters (.whereQuorum, .whereMask, .mustHitAtLeast, .mustAvoidAll, .filter, .pruneWhere, .project)
+    for (const auto& step : steps_) {
+        if (step.kind == LaneStep::Kind::WHERE_QUORUM) {
+            for (uint32_t u = 0; u < N; ++u) {
+                uint32_t pc = 0;
+                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                for (uint32_t w = 0; w < words_per_lane; ++w) pc += static_cast<uint32_t>(std::popcount(row[w]));
+                if (pc < step.u8_arg) {
+                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                }
+            }
+        } else if (step.kind == LaneStep::Kind::WHERE_MASK) {
+            for (uint32_t u = 0; u < N; ++u) {
+                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                uint64_t m0 = row[0];
+                if ((m0 & step.mask_req) == 0ULL || (m0 & step.mask_forbid) != 0ULL) {
+                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                }
+            }
+        } else if (step.kind == LaneStep::Kind::MUST_HIT_AT_LEAST) {
+            for (uint32_t u = 0; u < N; ++u) {
+                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                uint32_t hits = 0;
+                for (uint32_t lb : step.lane_indices) {
+                    uint32_t w = lb / 64U;
+                    uint32_t b = lb % 64U;
+                    if (w < words_per_lane && ((row[w] >> b) & 1ULL) != 0ULL) {
+                        hits++;
+                    }
+                }
+                if (hits < step.u8_arg) {
+                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                }
+            }
+        } else if (step.kind == LaneStep::Kind::MUST_AVOID_ALL) {
+            for (uint32_t u = 0; u < N; ++u) {
+                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                bool hit_forbid = false;
+                for (uint32_t lb : step.lane_indices) {
+                    uint32_t w = lb / 64U;
+                    uint32_t b = lb % 64U;
+                    if (w < words_per_lane && ((row[w] >> b) & 1ULL) != 0ULL) {
+                        hit_forbid = true;
+                        break;
+                    }
+                }
+                if (hit_forbid) {
+                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                }
+            }
+        } else if (step.kind == LaneStep::Kind::FILTER_CEL || step.kind == LaneStep::Kind::PRUNE_WHERE_CEL ||
+                   step.kind == LaneStep::Kind::PROJECT_CEL) {
+            impulse::cel::Parser p(step.str_arg);
+            auto ast = p.parse_expression();
+            if (ast) {
+                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+                for (uint32_t u = 0; u < N; ++u) {
+                    uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                    if (row[0] == 0ULL) continue;
+                    if (step.kind == LaneStep::Kind::FILTER_CEL) {
+                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row[0])) {
+                            for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                        }
+                    } else if (step.kind == LaneStep::Kind::PRUNE_WHERE_CEL) {
+                        if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row[0])) {
+                            for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                        }
+                    } else if (step.kind == LaneStep::Kind::PROJECT_CEL) {
+                        row[0] = impulse::cel::CelMultiLaneEvaluator::eval_project_lane(opt_ast, row[0]);
+                    }
+                }
+            }
+        }
+    }
+
+    return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+}
+
+Traversal MultiLaneTraversal::toQuorumTraversal(uint8_t min_lanes) const {
+    auto res = collect();
+    auto quorum_nodes32 = res.nodesWithQuorum(min_lanes);
+    std::vector<uint64_t> qnodes(quorum_nodes32.begin(), quorum_nodes32.end());
+    return Traversal(snapshot_, current_domain_id_, std::move(qnodes), false);
+}
+
+std::vector<double> MultiLaneTraversal::reducePerLane(const std::string& /*node_attribute*/, ReducerOp op) const {
+    auto res = collect();
+    uint32_t K = res.laneCount();
+    uint32_t N = res.domainNodeCount();
+    std::vector<double> out(K, 0.0);
+    if (K == 0 || N == 0 || !snapshot_) return out;
+
+    const float* attr_f32 = nullptr;
+    uint64_t attr_bytes = 0;
+    if (impulse_snapshot_relation_count(snapshot_) > 0) {
+        const void* raw_data = nullptr;
+        uint8_t tc = 0;
+        uint32_t dim = 0;
+        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
+            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
+            attr_f32 = static_cast<const float*>(raw_data);
+        }
+    }
+    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
+
+    std::vector<uint32_t> counts(K, 0);
+    if (op == ReducerOp::MIN) std::fill(out.begin(), out.end(), 1e30);
+    else if (op == ReducerOp::MAX) std::fill(out.begin(), out.end(), -1e30);
+
+    for (uint32_t u = 0; u < N; ++u) {
+        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
+        auto lanes = res.attributionFor(u);
+        for (uint32_t b : lanes) {
+            if (b >= K) continue;
+            counts[b]++;
+            switch (op) {
+                case ReducerOp::SUM:
+                case ReducerOp::AVG:
+                    out[b] += val;
+                    break;
+                case ReducerOp::MIN:
+                    if (val < out[b]) out[b] = val;
+                    break;
+                case ReducerOp::MAX:
+                    if (val > out[b]) out[b] = val;
+                    break;
+                case ReducerOp::COUNT:
+                    out[b] += 1.0;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    for (uint32_t b = 0; b < K; ++b) {
+        if (counts[b] == 0 && (op == ReducerOp::MIN || op == ReducerOp::MAX)) {
+            out[b] = 0.0;
+        } else if (op == ReducerOp::AVG && counts[b] > 0) {
+            out[b] /= static_cast<double>(counts[b]);
+        }
+    }
+    return out;
+}
+
+std::vector<int64_t> MultiLaneTraversal::argMinNodesPerLane(const std::string& /*node_attribute*/) const {
+    auto res = collect();
+    uint32_t K = res.laneCount();
+    uint32_t N = res.domainNodeCount();
+    std::vector<int64_t> best_id(K, -1);
+    if (K == 0 || N == 0 || !snapshot_) return best_id;
+
+    const float* attr_f32 = nullptr;
+    uint64_t attr_bytes = 0;
+    if (impulse_snapshot_relation_count(snapshot_) > 0) {
+        const void* raw_data = nullptr;
+        uint8_t tc = 0;
+        uint32_t dim = 0;
+        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
+            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
+            attr_f32 = static_cast<const float*>(raw_data);
+        }
+    }
+    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
+    std::vector<double> best_val(K, 1e30);
+
+    for (uint32_t u = 0; u < N; ++u) {
+        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
+        auto lanes = res.attributionFor(u);
+        for (uint32_t b : lanes) {
+            if (b < K) {
+                if (best_id[b] == -1 || val < best_val[b] || (val == best_val[b] && static_cast<int64_t>(u) < best_id[b])) {
+                    best_val[b] = val;
+                    best_id[b] = static_cast<int64_t>(u);
+                }
+            }
+        }
+    }
+    return best_id;
+}
+
+std::vector<int64_t> MultiLaneTraversal::argMaxNodesPerLane(const std::string& /*node_attribute*/) const {
+    auto res = collect();
+    uint32_t K = res.laneCount();
+    uint32_t N = res.domainNodeCount();
+    std::vector<int64_t> best_id(K, -1);
+    if (K == 0 || N == 0 || !snapshot_) return best_id;
+
+    const float* attr_f32 = nullptr;
+    uint64_t attr_bytes = 0;
+    if (impulse_snapshot_relation_count(snapshot_) > 0) {
+        const void* raw_data = nullptr;
+        uint8_t tc = 0;
+        uint32_t dim = 0;
+        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
+            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
+            attr_f32 = static_cast<const float*>(raw_data);
+        }
+    }
+    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
+    std::vector<double> best_val(K, -1e30);
+
+    for (uint32_t u = 0; u < N; ++u) {
+        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
+        auto lanes = res.attributionFor(u);
+        for (uint32_t b : lanes) {
+            if (b < K) {
+                if (best_id[b] == -1 || val > best_val[b] || (val == best_val[b] && static_cast<int64_t>(u) < best_id[b])) {
+                    best_val[b] = val;
+                    best_id[b] = static_cast<int64_t>(u);
+                }
+            }
+        }
+    }
+    return best_id;
+}
+
+std::vector<std::string> MultiLaneTraversal::argMinKeysPerLane(const std::string& node_attribute) const {
+    auto ids = argMinNodesPerLane(node_attribute);
+    std::vector<std::string> keys(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        keys[i] = (ids[i] < 0) ? "" : resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(ids[i]));
+    }
+    return keys;
+}
+
+std::vector<std::string> MultiLaneTraversal::argMaxKeysPerLane(const std::string& node_attribute) const {
+    auto ids = argMaxNodesPerLane(node_attribute);
+    std::vector<std::string> keys(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        keys[i] = (ids[i] < 0) ? "" : resolve_dense_to_key(snapshot_, current_domain_id_, static_cast<uint32_t>(ids[i]));
+    }
+    return keys;
+}
+
+std::vector<bool> MultiLaneTraversal::checkAllNodesReachedPerLane() const {
+    auto res = collect();
+    uint32_t K = res.laneCount();
+    uint32_t N = res.domainNodeCount();
+    std::vector<bool> all_reached(K, N > 0);
+    for (uint32_t u = 0; u < N; ++u) {
+        auto lanes = res.attributionFor(u);
+        std::vector<bool> u_has(K, false);
+        for (uint32_t b : lanes) {
+            if (b < K) u_has[b] = true;
+        }
+        for (uint32_t b = 0; b < K; ++b) {
+            if (!u_has[b]) all_reached[b] = false;
+        }
+    }
+    return all_reached;
+}
+
+SteinerSubgraph MultiLaneTraversal::toSteinerSubgraph(uint8_t min_concept_quorum) const {
+    auto res = collect();
+    SteinerSubgraph sg;
+    sg.bridge_nodes = res.nodesWithQuorum(min_concept_quorum);
+    sg.all_nodes = res.nodesWithQuorum(1);
+    return sg;
+}
+
+// --- MultiLaneBuilder Implementation ---
+
+MultiLaneTraversal MultiLaneBuilder::fromSeeds(std::vector<uint64_t> node_ids) const {
+    std::vector<std::string> keys;
+    keys.reserve(node_ids.size());
+    for (uint64_t id : node_ids) {
+        keys.push_back(resolve_dense_to_key(snapshot_, domain_id_, static_cast<uint32_t>(id)));
+    }
+    return MultiLaneTraversal(snapshot_, domain_id_, MultiLaneTraversal::InitMode::SEEDS, std::move(node_ids), std::move(keys));
+}
+
+MultiLaneTraversal MultiLaneBuilder::fromKeys(const std::vector<std::string>& keys) const {
+    std::vector<uint64_t> seeds;
+    seeds.reserve(keys.size());
+    for (const auto& k : keys) {
+        seeds.push_back(resolve_key_to_dense(snapshot_, domain_id_, k));
+    }
+    return MultiLaneTraversal(snapshot_, domain_id_, MultiLaneTraversal::InitMode::SEEDS, std::move(seeds), keys);
+}
+
+MultiLaneTraversal MultiLaneBuilder::fromGroups(const std::vector<std::pair<std::string, std::vector<uint64_t>>>& concept_groups) const {
+    std::vector<uint64_t> dummy_seeds(concept_groups.size(), 0);
+    std::vector<std::string> group_names;
+    std::vector<std::pair<uint32_t, uint32_t>> pairs;
+    for (size_t g = 0; g < concept_groups.size(); ++g) {
+        group_names.push_back(concept_groups[g].first);
+        for (uint64_t u : concept_groups[g].second) {
+            pairs.emplace_back(static_cast<uint32_t>(u), static_cast<uint32_t>(g));
+        }
+    }
+    return MultiLaneTraversal(snapshot_, domain_id_, MultiLaneTraversal::InitMode::GROUPS,
+                              std::move(dummy_seeds), std::move(group_names), std::move(pairs));
+}
+
+MultiLaneTraversal MultiLaneBuilder::fromConceptVectors(
+    const std::string& index_or_attr,
+    const std::vector<std::pair<std::string, std::vector<float>>>& concept_vectors,
+    uint16_t hits_per_concept) const
+{
+    std::vector<std::pair<std::string, std::vector<uint64_t>>> groups;
+    DomainView dv(snapshot_, domain_id_);
+    for (const auto& cv : concept_vectors) {
+        auto hits = dv.vectorSearch(index_or_attr, cv.second, hits_per_concept).collect();
+        groups.emplace_back(cv.first, std::move(hits));
+    }
+    return fromGroups(groups);
+}
+
+MultiLaneTraversal MultiLaneBuilder::fromOutages(
+    const std::string& relation,
+    const std::vector<std::vector<uint32_t>>& tripped_edge_ids_per_lane) const
+{
+    uint16_t rel_id = resolve_relation_id_by_name(snapshot_, domain_id_, relation);
+    std::vector<uint64_t> seeds(tripped_edge_ids_per_lane.size(), 0);
+    return MultiLaneTraversal(snapshot_, domain_id_, MultiLaneTraversal::InitMode::OUTAGES,
+                              std::move(seeds), {}, {}, rel_id, tripped_edge_ids_per_lane);
+}
+
+// --- DomainView & SnapshotView Implementation ---
+
+Traversal DomainView::all() const {
+    return Traversal(snapshot_, domain_id_, {}, true);
+}
+
+Traversal DomainView::from(std::vector<uint64_t> node_ids) const {
+    return Traversal(snapshot_, domain_id_, std::move(node_ids), false);
+}
+
+Traversal DomainView::fromKey(const std::string& key) const {
+    return Traversal(snapshot_, domain_id_, {resolve_key_to_dense(snapshot_, domain_id_, key)}, false);
+}
+
+Traversal DomainView::fromKeys(const std::vector<std::string>& keys) const {
+    std::vector<uint64_t> ids;
+    ids.reserve(keys.size());
+    for (const auto& k : keys) {
+        ids.push_back(resolve_key_to_dense(snapshot_, domain_id_, k));
+    }
+    return Traversal(snapshot_, domain_id_, std::move(ids), false);
+}
+
+Traversal DomainView::vectorSearch(const std::string& index_or_attr, const std::vector<float>& query_vector, uint16_t top_k) const {
+    if (!snapshot_ || query_vector.empty() || top_k == 0) {
+        return Traversal(snapshot_, domain_id_, {}, false);
+    }
+    uint16_t idx_id = resolve_attr_or_index_id(snapshot_, index_or_attr);
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return Traversal(snapshot_, domain_id_, {}, false);
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+    impulse_vm_context_bind_inline_data(ctx, query_vector.data(), query_vector.size() * sizeof(float));
+
+    impulse_instruction_t prog[3] = {
+        {OP_LOAD_INLINE_ARRAY, 0, 1, static_cast<uint32_t>(0 | (static_cast<uint32_t>(query_vector.size()) << 16))},
+        {OP_VECTOR_ANN_SEARCH, 0, 0, static_cast<uint32_t>(1 | ((top_k & 0xFF) << 8) | ((idx_id & 0xFFFF) << 16))},
+        {OP_HALT, 0, 0, 0}
+    };
+    std::vector<uint64_t> hits;
+    if (impulse_vm_execute(prog, 3, &state, 0) == IMPULSE_VM_OK &&
+        state.register_types[0] == TYPE_BITSET_HANDLE) {
+        uint64_t h = state.registers[0];
+        uint32_t max_n = get_domain_node_count(snapshot_, domain_id_);
+        for (uint32_t u = 0; u < max_n; ++u) {
+            if (impulse_vm_context_bitset_test(ctx, h, u)) {
+                hits.push_back(u);
+            }
+        }
+    }
+    impulse_vm_context_destroy(ctx);
+    return Traversal(snapshot_, domain_id_, std::move(hits), false);
+}
+
+DomainView SnapshotView::domain(const std::string& domain_name) const {
+    return DomainView(snapshot_, resolve_domain_id_by_name(snapshot_, domain_name));
 }
 
 } // namespace impulse::vm

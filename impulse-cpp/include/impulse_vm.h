@@ -249,6 +249,20 @@ extern "C" {
 #define OP_STREAM_YIELD           0xBE
 #define OP_STREAM_SCATTER_REDUCE  0xBF
 
+// Multi-Lane Bit-Sliced Execution & Vector ANN Opcodes (0xC0 - 0xCB)
+#define OP_LANE_INIT_SEEDS        0xC0
+#define OP_LANE_INIT_GROUPS       0xC1
+#define OP_LANE_SET_EDGE_MASK     0xC2
+#define OP_LANE_CSR_WALK          0xC3
+#define OP_LANE_CSC_WALK          0xC4
+#define OP_LANE_PRUNE_MASK        0xC5
+#define OP_LANE_FILTER_QUORUM     0xC6
+#define OP_LANE_REDUCE_AND        0xC7
+#define OP_LANE_REDUCE_ATTR       0xC8
+#define OP_LANE_SET_COVER         0xC9
+#define OP_VECTOR_ANN_SEARCH      0xCA
+#define OP_VECTOR_RERANK_DOT      0xCB
+
 // GraphBLAS Semiring IDs
 #define SEMIRING_PLUS_TIMES         0
 #define SEMIRING_MIN_PLUS           1
@@ -262,6 +276,8 @@ extern "C" {
 #define BINARY_OP_MAX               3
 #define BINARY_OP_AND               4
 #define BINARY_OP_OR                5
+#define BINARY_OP_ARGMIN            6
+#define BINARY_OP_ARGMAX            7
 
 /** @brief Register Type Tags */
 typedef enum {
@@ -280,8 +296,22 @@ typedef enum {
     TYPE_FLOAT_VECTOR = 0x0C,
     TYPE_DOUBLE_VECTOR = 0x0D,
     TYPE_UINT64_VECTOR = 0x0E,
-    TYPE_FRONTIER_STATE = 0x0F
+    TYPE_FRONTIER_STATE = 0x0F,
+    TYPE_LANE_FRONTIER = 0x10
 } impulse_register_type_t;
+
+/** @brief Hardware Bit-Sliced Lane Width Tiers */
+typedef enum {
+    IMPULSE_LANE_WIDTH_8  = 8,
+    IMPULSE_LANE_WIDTH_16 = 16,
+    IMPULSE_LANE_WIDTH_32 = 32,
+    IMPULSE_LANE_WIDTH_64 = 64
+} impulse_lane_width_t;
+
+/** @brief UB-free 64-bit active lane mask constructor for K in [0..64+] */
+static inline uint64_t impulse_make_active_mask_u64(uint32_t k) {
+    return (k >= 64u) ? ~0ULL : ((k == 0u) ? 0ULL : ((1ULL << k) - 1ULL));
+}
 
 /** @brief VM Execution Status Codes */
 typedef enum {
@@ -379,6 +409,18 @@ IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx,
 IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
 IMPULSE_API float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+
+// Multi-Lane Frontier & Vector C-ABI Accessors
+IMPULSE_API void impulse_vm_context_node_vector_set(impulse_vm_context_t* ctx, size_t handle, const uint64_t* values, size_t count);
+IMPULSE_API size_t impulse_vm_context_node_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_float_vector_size(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API int impulse_vm_context_acquire_lane_frontier(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_release_lane_frontier(impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API uint32_t impulse_vm_context_lane_frontier_num_lanes(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API uint32_t impulse_vm_context_lane_frontier_width(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API uint64_t impulse_vm_context_lane_frontier_active_mask(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_lane_frontier_node_count(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API const uint64_t* impulse_vm_context_lane_frontier_data(const impulse_vm_context_t* ctx, size_t handle);
 
 IMPULSE_API void impulse_vm_context_mock_csr(
     impulse_vm_context_t* ctx,

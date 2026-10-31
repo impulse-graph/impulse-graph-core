@@ -257,6 +257,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
         return nullptr;
     }
+    if (impulse_faultsim_step() != 0) {
+        g_last_error = "Simulated I/O fault in impulse_snapshot_open";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
 
     std::string resolved = resolve_snapshot_path(file_path);
     const char* target_path = resolved.c_str();
@@ -298,7 +303,10 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
     size_t file_size = static_cast<size_t>(st.st_size);
+    IMPULSE_TESTCASE(file_size == 4096);
+    IMPULSE_TESTCASE(file_size < 4096);
     if (file_size < 4096) {
+        IMPULSE_WELL_FORMED_ASSERT(file_size >= 4096);
         g_last_error = "File size smaller than 4KB Page 0 header";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
         return nullptr;
@@ -324,6 +332,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
     std::memcpy(&snap->header, raw, sizeof(impulse_snapshot_header_t));
 
+    IMPULSE_WELL_FORMED_ASSERT(snap->header.magic == IMPULSE_MAGIC);
     if (snap->header.magic != IMPULSE_MAGIC) {
         g_last_error = "Invalid magic bytes";
         if (out_status) *out_status = IMPULSE_ERR_INVALID_MAGIC;
@@ -348,6 +357,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         }
 
         uint16_t expected_crc = compute_crc16(raw, 0x3E);
+        IMPULSE_WELL_FORMED_ASSERT(expected_crc == snap->header.header_checksum);
         if (expected_crc != snap->header.header_checksum) {
             g_last_error = "Header CRC-16 checksum mismatch";
             if (out_status) *out_status = IMPULSE_ERR_CORRUPT_CHECKSUM;
@@ -419,6 +429,8 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         const char* string_pool = reinterpret_cast<const char*>(raw + cur);
         cur += string_table_bytes;
 
+        IMPULSE_TESTCASE(string_table_bytes == 1);
+        IMPULSE_WELL_FORMED_ASSERT(string_table_bytes >= 1 && string_pool[0] == '\0');
         if (string_table_bytes == 0 || string_pool[0] != '\0') {
             g_last_error = "Invalid String Table: string_table_bytes must be >= 1 and string_pool[0] must be '\\0'";
             if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;

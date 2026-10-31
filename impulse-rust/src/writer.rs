@@ -249,6 +249,103 @@ impl SnapshotWriter {
         });
     }
 
+    /// Registers a pre-built `BuiltVamanaIndex` (`IMP_INDEX_VAMANA_ANN = 8`) in Section 2.6.
+    /// Layout inside `idx.data` (which starts at a 128-byte aligned `idx.data_offset`):
+    /// - `0..64`: `VamanaHeader`
+    /// - `64..128`: zero padding
+    /// - `128..128 + adj_slab.len()`: `adj_slab` (128-byte aligned!)
+    /// - `quant_rel_off..quant_rel_off + quant_slab.len()`: `quant_slab` (128-byte aligned!)
+    pub fn add_built_vamana_index(&mut self, name: &str, mut built: crate::vamana::BuiltVamanaIndex) {
+        let mut blob = Vec::new();
+        // Reserve 128 bytes for header + 64B padding
+        blob.resize(128, 0u8);
+        let adj_rel_off = 128u64;
+        built.header.adj_slab_offset = adj_rel_off; // Relative offset; converted to absolute in finalize_to_writer
+        built.header.adj_slab_bytes = built.adj_slab.len() as u64;
+        blob.extend_from_slice(&built.adj_slab);
+
+        if !built.quant_slab.is_empty() {
+            Self::align_buffer(&mut blob, 128);
+            let quant_rel_off = blob.len() as u64;
+            built.header.quant_code_offset = quant_rel_off; // Relative offset; converted to absolute in finalize_to_writer
+            blob.extend_from_slice(&built.quant_slab);
+        } else {
+            built.header.quant_code_offset = 0;
+        }
+
+        let hdr_bytes = unsafe {
+            std::slice::from_raw_parts(
+                &built.header as *const VamanaHeader as *const u8,
+                std::mem::size_of::<VamanaHeader>(),
+            )
+        };
+        blob[0..64].copy_from_slice(hdr_bytes);
+
+        self.add_index(
+            built.header.domain_id,
+            0xFFFF,
+            built.header.vec_attr_id,
+            IMP_INDEX_VAMANA_ANN,
+            name,
+            blob,
+        );
+    }
+
+    /// Builds and registers an `IMP_INDEX_VAMANA_ANN` (`8`) index from an existing domain Float32 vector attribute.
+    pub fn add_vamana_index(
+        &mut self,
+        domain_id: u16,
+        attr_name: &str,
+        index_name: &str,
+        cfg: &crate::vamana::VamanaBuildConfig,
+    ) -> Result<(), String> {
+        let mut found_attr: Option<(u16, u32, Vec<f32>)> = None;
+        for rel in &self.relations {
+            if rel.src_domain_id == domain_id {
+                for (a_idx, attr) in rel.attributes.iter().enumerate() {
+                    if attr.name == attr_name {
+                        let base_t = attr.type_code & IMPULSE_TYPE_MASK;
+                        if base_t != 6 {
+                            return Err(format!(
+                                "Attribute '{}' on domain {} is not Float32 (type_code=0x{:02X})",
+                                attr_name, domain_id, attr.type_code
+                            ));
+                        }
+                        if !attr.data.len().is_multiple_of(4) {
+                            return Err(format!(
+                                "Attribute '{}' byte length {} is not a multiple of 4",
+                                attr_name,
+                                attr.data.len()
+                            ));
+                        }
+                        let mut vecs = Vec::with_capacity(attr.data.len() / 4);
+                        for chunk in attr.data.chunks_exact(4) {
+                            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                        }
+                        found_attr = Some((a_idx as u16, attr.dimension.max(1), vecs));
+                        break;
+                    }
+                }
+            }
+            if found_attr.is_some() {
+                break;
+            }
+        }
+
+        let (vec_attr_id, dim, vectors) = found_attr.ok_or_else(|| {
+            format!(
+                "Vector attribute '{}' not found on domain {}",
+                attr_name, domain_id
+            )
+        })?;
+        let d = dim as usize;
+        let n = if d > 0 { vectors.len() / d } else { 0 };
+        let built =
+            crate::vamana::build_vamana_index(domain_id, vec_attr_id, &vectors, n, d, cfg)?;
+        self.add_built_vamana_index(index_name, built);
+        Ok(())
+    }
+
     pub fn finalize_to_writer(&mut self, writer: &mut impl Write) -> Result<(), ImpulseError> {
         // Sort relations primary by src_domain_id, secondary by tgt_domain_id
         self.relations.sort_by(|a, b| {
@@ -393,15 +490,56 @@ impl SnapshotWriter {
 
             // CSC Arrays (if enabled)
             if rel.include_csc {
+                let tgt_node_count = self
+                    .domains
+                    .iter()
+                    .find(|d| d.domain_id == rel.tgt_domain_id)
+                    .map(|d| d.node_count)
+                    .unwrap_or(rel.node_count) as usize;
+                let src_n = rel.node_count as usize;
+                let mut csc_row_offsets = vec![0u32; tgt_node_count + 1];
+                for &v in &rel.col_indices {
+                    if (v as usize) < tgt_node_count {
+                        csc_row_offsets[(v as usize) + 1] += 1;
+                    }
+                }
+                for v in 0..tgt_node_count {
+                    csc_row_offsets[v + 1] += csc_row_offsets[v];
+                }
+                let mut write_heads = csc_row_offsets.clone();
+                let mut csc_col_indices = vec![0u32; rel.col_indices.len()];
+                for u in 0..src_n.min(rel.row_offsets.len().saturating_sub(1)) {
+                    let start = rel.row_offsets[u] as usize;
+                    let end = (rel.row_offsets[u + 1] as usize).min(rel.col_indices.len());
+                    for &v in &rel.col_indices[start..end] {
+                        let v_idx = v as usize;
+                        if v_idx < tgt_node_count {
+                            let pos = write_heads[v_idx] as usize;
+                            if pos < csc_col_indices.len() {
+                                csc_col_indices[pos] = u as u32;
+                            }
+                            write_heads[v_idx] += 1;
+                        }
+                    }
+                }
+                let csc_row_bytes: Vec<u8> = csc_row_offsets
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+                let csc_col_bytes: Vec<u8> = csc_col_indices
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+
                 Self::align_buffer(&mut payload, 128);
                 rel.csc_row_off_offset = rel_blocks_base_offset + payload.len() as u64;
-                rel.csc_row_off_bytes = row_bytes.len() as u64;
-                payload.extend_from_slice(&row_bytes);
+                rel.csc_row_off_bytes = csc_row_bytes.len() as u64;
+                payload.extend_from_slice(&csc_row_bytes);
 
                 Self::align_buffer(&mut payload, 128);
                 rel.csc_col_idx_offset = rel_blocks_base_offset + payload.len() as u64;
-                rel.csc_col_idx_bytes = col_bytes.len() as u64;
-                payload.extend_from_slice(&col_bytes);
+                rel.csc_col_idx_bytes = csc_col_bytes.len() as u64;
+                payload.extend_from_slice(&csc_col_bytes);
             } else {
                 rel.csc_row_off_offset = 0;
                 rel.csc_row_off_bytes = 0;
@@ -432,6 +570,27 @@ impl SnapshotWriter {
         for idx in &mut self.indexes {
             Self::align_buffer(&mut payload, 128);
             idx.data_offset = rel_blocks_base_offset + payload.len() as u64;
+            if idx.index_type == IMP_INDEX_VAMANA_ANN && idx.data.len() >= 64 {
+                let rel_adj = u64::from_le_bytes(idx.data[40..48].try_into().unwrap());
+                let abs_adj = if rel_adj == 0 {
+                    idx.data_offset + 128
+                } else if rel_adj < idx.data_offset {
+                    idx.data_offset + rel_adj
+                } else {
+                    rel_adj
+                };
+                idx.data[40..48].copy_from_slice(&abs_adj.to_le_bytes());
+
+                let rel_quant = u64::from_le_bytes(idx.data[56..64].try_into().unwrap());
+                if rel_quant > 0 {
+                    let abs_quant = if rel_quant < idx.data_offset {
+                        idx.data_offset + rel_quant
+                    } else {
+                        rel_quant
+                    };
+                    idx.data[56..64].copy_from_slice(&abs_quant.to_le_bytes());
+                }
+            }
             idx.data_bytes = idx.data.len() as u64;
             payload.extend_from_slice(&idx.data);
         }
@@ -603,5 +762,11 @@ impl SnapshotWriter {
     pub fn finalize(&mut self) -> Result<(), ImpulseError> {
         let mut file = File::create(&self.output_path).map_err(|_| ImpulseError::IoFailure)?;
         self.finalize_to_writer(&mut file)
+    }
+
+    pub fn finalize_to_bytes(&mut self) -> Result<Vec<u8>, ImpulseError> {
+        let mut buf = Vec::new();
+        self.finalize_to_writer(&mut buf)?;
+        Ok(buf)
     }
 }

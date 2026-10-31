@@ -295,6 +295,107 @@ pub const IMP_INDEX_PERMUTATION: u8 = 1;
 pub const IMP_INDEX_ZONE_MAP: u8 = 2;
 pub const IMP_INDEX_INVERTED_BITSET: u8 = 3;
 pub const IMP_INDEX_MINIMAL_PERFECT_HASH: u8 = 4;
+pub const IMP_INDEX_TRIGRAM_3GRAM: u8 = 5;
+pub const IMP_INDEX_DOMAIN_SPLIT_BITSET: u8 = 6;
+pub const IMP_INDEX_TEMPORAL_INTERVAL: u8 = 7;
+pub const IMP_INDEX_VAMANA_ANN: u8 = 8;
+
+const_assert_eq!(std::mem::size_of::<IndexDirectoryEntry>(), 64);
+
+pub const VAMANA_MAGIC: u32 = 0x56414D41; // "VAMA" Little-Endian
+pub const VAMANA_VERSION: u16 = 1;
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VamanaMetric {
+    L2 = 0,      // Squared L2 distance (lower is closer)
+    Cosine = 1,  // Cosine distance 1 - cos(u, v) (lower is closer)
+    Dot = 2,     // Negative dot product -dot(u, v) for minimization / dot(u, v) for score
+    Hamming = 3, // Hamming distance over BQ1 bits
+}
+
+impl VamanaMetric {
+    pub fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(VamanaMetric::L2),
+            1 => Some(VamanaMetric::Cosine),
+            2 => Some(VamanaMetric::Dot),
+            3 => Some(VamanaMetric::Hamming),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            VamanaMetric::L2 => "L2",
+            VamanaMetric::Cosine => "COSINE",
+            VamanaMetric::Dot => "DOT",
+            VamanaMetric::Hamming => "HAMMING",
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VamanaQuantType {
+    None = 0, // Full-precision Float32 vectors only
+    Bq1 = 1,  // 1-bit Binary Quantization routing codes
+    Sq8 = 2,  // 8-bit Scalar Quantization routing codes
+    Fp16 = 3, // 16-bit IEEE-754 half-precision routing codes
+}
+
+impl VamanaQuantType {
+    pub fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(VamanaQuantType::None),
+            1 => Some(VamanaQuantType::Bq1),
+            2 => Some(VamanaQuantType::Sq8),
+            3 => Some(VamanaQuantType::Fp16),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            VamanaQuantType::None => "NONE",
+            VamanaQuantType::Bq1 => "BQ1",
+            VamanaQuantType::Sq8 => "SQ8",
+            VamanaQuantType::Fp16 => "FP16",
+        }
+    }
+
+    pub fn row_bytes(&self, dimension: usize) -> usize {
+        match self {
+            VamanaQuantType::None => 0,
+            VamanaQuantType::Bq1 => dimension.div_ceil(8),
+            VamanaQuantType::Sq8 => dimension,
+            VamanaQuantType::Fp16 => dimension * 2,
+        }
+    }
+}
+
+/// 64-byte ImpulseVamanaHeader (stored at a 128-byte aligned offset in Section 2.6 payload).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VamanaHeader {
+    pub magic: u32,             // 0x00..0x03 (0x56414D41 "VAMA")
+    pub version: u16,           // 0x04..0x05 (1)
+    pub metric: u8,             // 0x06 (0=L2, 1=COSINE, 2=DOT, 3=HAMMING)
+    pub quant_type: u8,         // 0x07 (0=NONE, 1=BQ1, 2=SQ8, 3=FP16)
+    pub domain_id: u16,         // 0x08..0x09
+    pub vec_attr_id: u16,       // 0x0A..0x0B
+    pub dimension: u32,         // 0x0C..0x0F
+    pub node_count: u64,        // 0x10..0x17
+    pub max_degree_r: u32,      // 0x18..0x1B
+    pub medoid_node_id: u32,    // 0x1C..0x1F
+    pub alpha: f32,             // 0x20..0x23
+    pub ef_construction: u32,   // 0x24..0x27
+    pub adj_slab_offset: u64,   // 0x28..0x2F (128B aligned)
+    pub adj_slab_bytes: u64,    // 0x30..0x37 (N * (R + 1) * 4)
+    pub quant_code_offset: u64, // 0x38..0x3F (128B aligned, or 0 if NONE)
+}
+
+const_assert_eq!(std::mem::size_of::<VamanaHeader>(), 64);
 
 const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 16);
 

@@ -39,6 +39,7 @@ struct CompilerOptions {
     bool enable_seed_inlining{true};
     bool enable_early_exit{true};
     bool enable_tracing{false};
+    uint32_t disabled_passes_mask{0};
 
     double fused_2hop_max_multiplicity_threshold{1.5};
     size_t simd_predicate_eval_min_degree_threshold{64};
@@ -55,7 +56,33 @@ struct CompilerOptions {
         opts.enable_register_ping_pong = false;
         opts.enable_seed_inlining = false;
         opts.enable_early_exit = false;
+        opts.disabled_passes_mask = IMPULSE_OPT_ALL_DISABLED;
         return opts;
+    }
+
+    static CompilerOptions from_disable_mask(uint32_t mask) {
+        CompilerOptions opts;
+        opts.disabled_passes_mask = mask;
+        if (mask & IMPULSE_OPT_CONSTANT_FOLDING)    opts.enable_constant_folding = false;
+        if (mask & IMPULSE_OPT_KERNEL_FUSION_2HOP)  opts.enable_kernel_fusion = false;
+        if (mask & IMPULSE_OPT_DIRECTION_SELECTION) opts.enable_direction_selection = false;
+        if (mask & IMPULSE_OPT_REGISTER_PING_PONG)  opts.enable_register_ping_pong = false;
+        if (mask & IMPULSE_OPT_SEED_INLINING)       opts.enable_seed_inlining = false;
+        if (mask & IMPULSE_OPT_EARLY_EXIT)          opts.enable_early_exit = false;
+        return opts;
+    }
+
+    [[nodiscard]] CompilerOptions effective() const {
+        CompilerOptions out = *this;
+        uint32_t mask = disabled_passes_mask | impulse_test_get_opt_disable_mask();
+        out.disabled_passes_mask = mask;
+        if (mask & IMPULSE_OPT_CONSTANT_FOLDING)    out.enable_constant_folding = false;
+        if (mask & IMPULSE_OPT_KERNEL_FUSION_2HOP)  out.enable_kernel_fusion = false;
+        if (mask & IMPULSE_OPT_DIRECTION_SELECTION) out.enable_direction_selection = false;
+        if (mask & IMPULSE_OPT_REGISTER_PING_PONG)  out.enable_register_ping_pong = false;
+        if (mask & IMPULSE_OPT_SEED_INLINING)       out.enable_seed_inlining = false;
+        if (mask & IMPULSE_OPT_EARLY_EXIT)          out.enable_early_exit = false;
+        return out;
     }
 };
 
@@ -82,7 +109,18 @@ enum class NodeKind {
     SYMBOL,
     LIST,
     STREAM_FILTER,
-    STREAM_PROJECT
+    STREAM_PROJECT,
+    LANE_INIT_SEEDS,
+    LANE_INIT_GROUPS,
+    LANE_SET_EDGE_MASK,
+    LANE_WALK,
+    LANE_PRUNE_MASK,
+    LANE_FILTER_QUORUM,
+    LANE_REDUCE_AND,
+    LANE_REDUCE_ATTR,
+    LANE_SET_COVER,
+    VECTOR_ANN_SEARCH,
+    VECTOR_RERANK_DOT
 };
 
 enum class WalkDirection {
@@ -349,6 +387,210 @@ public:
 };
 
 // ---------------------------------------------------------------------------
+// Multi-Lane (0xC0..0xC9) & Hybrid Vector Search (0xCA..0xCB) AST Nodes
+// ---------------------------------------------------------------------------
+class ScmLaneInitSeeds : public ImpScmNode {
+public:
+    uint16_t seed_reg{0};
+    uint8_t width_flag{0};
+    uint16_t dst_reg{0};
+
+    explicit ScmLaneInitSeeds(uint16_t sreg = 0, uint8_t wflag = 0)
+        : seed_reg(sreg), width_flag(wflag) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_INIT_SEEDS; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-init-seeds " + std::to_string(seed_reg) + " " + std::to_string(width_flag) + ")";
+    }
+};
+
+class ScmLaneInitGroups : public ImpScmNode {
+public:
+    uint16_t pairs_reg{0};
+    uint16_t num_groups{1};
+    uint16_t dst_reg{0};
+
+    ScmLaneInitGroups(uint16_t preg, uint16_t ngroups)
+        : pairs_reg(preg), num_groups(ngroups) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_INIT_GROUPS; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-init-groups " + std::to_string(pairs_reg) + " " + std::to_string(num_groups) + ")";
+    }
+};
+
+class ScmLaneSetEdgeMask : public ImpScmNode {
+public:
+    uint16_t pairs_reg{0};
+    std::string relation_name;
+    int physical_rel_id{-1};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    ScmLaneSetEdgeMask(uint16_t preg, std::string rel, int rel_id = -1)
+        : pairs_reg(preg), relation_name(std::move(rel)), physical_rel_id(rel_id) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_SET_EDGE_MASK; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        std::ostringstream ss;
+        ss << "(lane-set-edge-mask " << pairs_reg << " ";
+        if (physical_rel_id >= 0) ss << physical_rel_id;
+        else ss << "\"" << relation_name << "\"";
+        ss << ")";
+        return ss.str();
+    }
+};
+
+class ScmLaneWalk : public ImpScmNode {
+public:
+    WalkDirection direction{WalkDirection::FORWARD_CSR};
+    std::string relation_name;
+    int physical_rel_id{-1};
+    bool fixed_point{false};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    static std::shared_ptr<ScmLaneWalk> forward(std::string rel, bool fp = false) {
+        auto n = std::make_shared<ScmLaneWalk>();
+        n->direction = WalkDirection::FORWARD_CSR;
+        n->relation_name = std::move(rel);
+        n->fixed_point = fp;
+        return n;
+    }
+
+    static std::shared_ptr<ScmLaneWalk> reverse(std::string rel, bool fp = false) {
+        auto n = std::make_shared<ScmLaneWalk>();
+        n->direction = WalkDirection::REVERSE_CSC;
+        n->relation_name = std::move(rel);
+        n->fixed_point = fp;
+        return n;
+    }
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_WALK; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        std::ostringstream ss;
+        ss << "(" << (direction == WalkDirection::FORWARD_CSR ? "lane-walk-csr " : "lane-walk-csc ");
+        if (physical_rel_id >= 0) ss << physical_rel_id;
+        else ss << "\"" << relation_name << "\"";
+        if (fixed_point) ss << " 1";
+        ss << ")";
+        return ss.str();
+    }
+};
+
+class ScmLanePruneMask : public ImpScmNode {
+public:
+    uint8_t mode{0};
+    uint16_t arg0{0};
+    uint16_t arg1{0};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    ScmLanePruneMask(uint8_t m, uint16_t a0, uint16_t a1 = 0)
+        : mode(m), arg0(a0), arg1(a1) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_PRUNE_MASK; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-prune-mask " + std::to_string(mode) + " " + std::to_string(arg0) + " " + std::to_string(arg1) + ")";
+    }
+};
+
+class ScmLaneFilterQuorum : public ImpScmNode {
+public:
+    uint16_t min_quorum{1};
+    uint16_t mask_reg{0xFF};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    explicit ScmLaneFilterQuorum(uint16_t mq, uint16_t mreg = 0xFF)
+        : min_quorum(mq), mask_reg(mreg) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_FILTER_QUORUM; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-filter-quorum " + std::to_string(min_quorum) + " " + std::to_string(mask_reg) + ")";
+    }
+};
+
+class ScmLaneReduceAnd : public ImpScmNode {
+public:
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_REDUCE_AND; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-reduce-and)";
+    }
+};
+
+class ScmLaneReduceAttr : public ImpScmNode {
+public:
+    uint16_t attr_id{0};
+    uint8_t reduce_op{0};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    ScmLaneReduceAttr(uint16_t aid, uint8_t op)
+        : attr_id(aid), reduce_op(op) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_REDUCE_ATTR; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-reduce-attr " + std::to_string(attr_id) + " " + std::to_string(reduce_op) + ")";
+    }
+};
+
+class ScmLaneSetCover : public ImpScmNode {
+public:
+    uint16_t mask_reg{0xFF};
+    uint8_t mode{0};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    explicit ScmLaneSetCover(uint16_t mreg = 0xFF, uint8_t m = 0)
+        : mask_reg(mreg), mode(m) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::LANE_SET_COVER; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(lane-set-cover " + std::to_string(mask_reg) + " " + std::to_string(mode) + ")";
+    }
+};
+
+class ScmVectorAnnSearch : public ImpScmNode {
+public:
+    uint16_t query_reg{0};
+    uint16_t top_k{1};
+    uint16_t index_or_attr_id{0};
+    bool fused_lane_frontier{false};
+    uint16_t dst_reg{0};
+
+    ScmVectorAnnSearch(uint16_t qreg, uint16_t k, uint16_t idx_id = 0, bool fused = false)
+        : query_reg(qreg), top_k(k), index_or_attr_id(idx_id), fused_lane_frontier(fused) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::VECTOR_ANN_SEARCH; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(vector-ann-search " + std::to_string(query_reg) + " " + std::to_string(top_k) + " " +
+               std::to_string(index_or_attr_id) + " " + (fused_lane_frontier ? "1" : "0") + ")";
+    }
+};
+
+class ScmVectorRerankDot : public ImpScmNode {
+public:
+    uint16_t query_reg{0};
+    uint16_t attr_id{0};
+    uint8_t metric{0};
+    uint16_t src_reg{0};
+    uint16_t dst_reg{0};
+
+    ScmVectorRerankDot(uint16_t qreg, uint16_t aid = 0, uint8_t met = 0)
+        : query_reg(qreg), attr_id(aid), metric(met) {}
+
+    [[nodiscard]] NodeKind kind() const override { return NodeKind::VECTOR_RERANK_DOT; }
+    [[nodiscard]] std::string to_scm_string() const override {
+        return "(vector-rerank-dot " + std::to_string(query_reg) + " " +
+               std::to_string(attr_id) + " " + std::to_string(metric) + ")";
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Collect & Program AST Nodes
 // ---------------------------------------------------------------------------
 class ScmCollect : public ImpScmNode {
@@ -606,6 +848,68 @@ public:
                     op_name = "OP_COLLECT_BITSET";
                     comment = "Collect active result bitset from R" + std::to_string(inst.dst_reg);
                     break;
+                case OP_LANE_INIT_SEEDS:
+                    op_name = "OP_LANE_INIT_SEEDS";
+                    comment = "Init multi-lane seeds R" + std::to_string(inst.payload & 0xFFFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_INIT_GROUPS:
+                    op_name = "OP_LANE_INIT_GROUPS";
+                    comment = "Init group steiner lanes R" + std::to_string(inst.payload & 0xFFFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_SET_EDGE_MASK:
+                    op_name = "OP_LANE_SET_EDGE_MASK";
+                    comment = "Set counterfactual edge mask on R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_CSR_WALK: {
+                    op_name = "OP_LANE_CSR_WALK";
+                    uint16_t src = inst.payload & 0xFFFF;
+                    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+                    comment = "Multi-Lane CSR Walk src=R" + std::to_string(src) + " -> dst=R" + std::to_string(inst.dst_reg) + " via rel[" + std::to_string(rel) + "]";
+                    if (catalog) {
+                        std::string name = catalog->get_relation_name(rel);
+                        if (!name.empty()) comment += " (\"" + name + "\")";
+                    }
+                    break;
+                }
+                case OP_LANE_CSC_WALK: {
+                    op_name = "OP_LANE_CSC_WALK";
+                    uint16_t src = inst.payload & 0xFFFF;
+                    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
+                    comment = "Multi-Lane CSC Walk src=R" + std::to_string(src) + " -> dst=R" + std::to_string(inst.dst_reg) + " via rel[" + std::to_string(rel) + "]";
+                    if (catalog) {
+                        std::string name = catalog->get_relation_name(rel);
+                        if (!name.empty()) comment += " (\"" + name + "\")";
+                    }
+                    break;
+                }
+                case OP_LANE_PRUNE_MASK:
+                    op_name = "OP_LANE_PRUNE_MASK";
+                    comment = "Prune multi-lane frontier R" + std::to_string(inst.payload & 0xFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_FILTER_QUORUM:
+                    op_name = "OP_LANE_FILTER_QUORUM";
+                    comment = "Filter lane quorum >= " + std::to_string((inst.payload >> 8) & 0xFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_REDUCE_AND:
+                    op_name = "OP_LANE_REDUCE_AND";
+                    comment = "Reduce bitwise AND across all nodes -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_REDUCE_ATTR:
+                    op_name = "OP_LANE_REDUCE_ATTR";
+                    comment = "Reduce per-lane attribute -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_LANE_SET_COVER:
+                    op_name = "OP_LANE_SET_COVER";
+                    comment = "Compute lane set cover -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_VECTOR_ANN_SEARCH:
+                    op_name = "OP_VECTOR_ANN_SEARCH";
+                    comment = "Vamana ANN search q=R" + std::to_string(inst.payload & 0xFF) + " top_k=" + std::to_string((inst.payload >> 8) & 0xFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
+                case OP_VECTOR_RERANK_DOT:
+                    op_name = "OP_VECTOR_RERANK_DOT";
+                    comment = "SIMD vector rerank cand=R" + std::to_string(inst.payload & 0xFF) + " q=R" + std::to_string((inst.payload >> 8) & 0xFF) + " -> R" + std::to_string(inst.dst_reg);
+                    break;
                 default:
                     op_name = "OP_0x" + std::to_string(inst.opcode);
                     break;
@@ -644,13 +948,15 @@ public:
         const std::shared_ptr<ScmProgram>& program,
         const GraphCatalog* catalog = nullptr,
         const std::unordered_map<std::string, double>& params = {},
-        const CompilerOptions& options = CompilerOptions::default_options())
+        const CompilerOptions& raw_options = CompilerOptions::default_options())
     {
         if (!program || program->steps.empty()) {
             throw std::invalid_argument("Empty ImpScheme program");
         }
         IMPULSE_ASSERT(program != nullptr);
         IMPULSE_ASSERT(!program->steps.empty());
+
+        CompilerOptions options = raw_options.effective();
 
         // Pass 1: Pre-bind validation
         validate_ast(program);
@@ -805,6 +1111,20 @@ private:
                 new_w2->rel1_id = catalog ? catalog->get_relation_id(w2->rel1_name) : 0;
                 new_w2->rel2_id = catalog ? catalog->get_relation_id(w2->rel2_name) : 1;
                 bound_steps.push_back(new_w2);
+            } else if (step->kind() == NodeKind::LANE_WALK) {
+                auto lw = std::static_pointer_cast<ScmLaneWalk>(step);
+                auto new_lw = std::make_shared<ScmLaneWalk>(*lw);
+                if (new_lw->physical_rel_id < 0) {
+                    new_lw->physical_rel_id = catalog ? std::max(0, catalog->get_relation_id(lw->relation_name)) : 0;
+                }
+                bound_steps.push_back(new_lw);
+            } else if (step->kind() == NodeKind::LANE_SET_EDGE_MASK) {
+                auto em = std::static_pointer_cast<ScmLaneSetEdgeMask>(step);
+                auto new_em = std::make_shared<ScmLaneSetEdgeMask>(*em);
+                if (new_em->physical_rel_id < 0) {
+                    new_em->physical_rel_id = catalog ? std::max(0, catalog->get_relation_id(em->relation_name)) : 0;
+                }
+                bound_steps.push_back(new_em);
             } else {
                 bound_steps.push_back(step);
             }
@@ -864,6 +1184,61 @@ private:
                 auto new_c = std::make_shared<ScmCollect>(*c);
                 new_c->target_reg = current_reg;
                 alloc_steps.push_back(new_c);
+            } else if (step->kind() == NodeKind::LANE_INIT_SEEDS) {
+                auto n = std::make_shared<ScmLaneInitSeeds>(*std::static_pointer_cast<ScmLaneInitSeeds>(step));
+                n->dst_reg = current_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_INIT_GROUPS) {
+                auto n = std::make_shared<ScmLaneInitGroups>(*std::static_pointer_cast<ScmLaneInitGroups>(step));
+                n->dst_reg = current_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_SET_EDGE_MASK) {
+                auto n = std::make_shared<ScmLaneSetEdgeMask>(*std::static_pointer_cast<ScmLaneSetEdgeMask>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = current_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_WALK) {
+                auto n = std::make_shared<ScmLaneWalk>(*std::static_pointer_cast<ScmLaneWalk>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = options.enable_register_ping_pong ? ((current_reg == 0) ? 1 : 0) : static_cast<uint16_t>(idx + 1);
+                current_reg = n->dst_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_PRUNE_MASK) {
+                auto n = std::make_shared<ScmLanePruneMask>(*std::static_pointer_cast<ScmLanePruneMask>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = current_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_FILTER_QUORUM) {
+                auto n = std::make_shared<ScmLaneFilterQuorum>(*std::static_pointer_cast<ScmLaneFilterQuorum>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = options.enable_register_ping_pong ? ((current_reg == 0) ? 1 : 0) : static_cast<uint16_t>(idx + 1);
+                current_reg = n->dst_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_REDUCE_AND) {
+                auto n = std::make_shared<ScmLaneReduceAnd>(*std::static_pointer_cast<ScmLaneReduceAnd>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = (current_reg == 0) ? 1 : 0;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_REDUCE_ATTR) {
+                auto n = std::make_shared<ScmLaneReduceAttr>(*std::static_pointer_cast<ScmLaneReduceAttr>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = (current_reg == 0) ? 1 : 0;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::LANE_SET_COVER) {
+                auto n = std::make_shared<ScmLaneSetCover>(*std::static_pointer_cast<ScmLaneSetCover>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = (current_reg == 0) ? 1 : 0;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::VECTOR_ANN_SEARCH) {
+                auto n = std::make_shared<ScmVectorAnnSearch>(*std::static_pointer_cast<ScmVectorAnnSearch>(step));
+                n->dst_reg = current_reg;
+                alloc_steps.push_back(n);
+            } else if (step->kind() == NodeKind::VECTOR_RERANK_DOT) {
+                auto n = std::make_shared<ScmVectorRerankDot>(*std::static_pointer_cast<ScmVectorRerankDot>(step));
+                n->src_reg = current_reg;
+                n->dst_reg = (current_reg == 0) ? 1 : 0;
+                current_reg = n->dst_reg;
+                alloc_steps.push_back(n);
             } else {
                 alloc_steps.push_back(step);
             }
@@ -889,6 +1264,13 @@ private:
     static void emit_node(const AstPtr& step, CompileContext& ctx, const CompilerOptions& options) {
         if (step->kind() == NodeKind::WALK) {
             auto w = std::static_pointer_cast<ScmWalk>(step);
+            bool is_first_walk = (ctx.instructions.empty() && !ctx.env.count("frontier") && w->src_reg == 0);
+            if (is_first_walk && !options.enable_seed_inlining) {
+                impulse_instruction_t seed_inst{};
+                seed_inst.opcode = OP_INIT_INPUT_NODE;
+                seed_inst.dst_reg = 0;
+                ctx.instructions.push_back(seed_inst);
+            }
             impulse_instruction_t inst{};
             inst.opcode = (w->direction == WalkDirection::FORWARD_CSR) ? OP_CSR_WALK : OP_CSC_WALK;
             if (w->is_adaptive) {
@@ -905,10 +1287,23 @@ private:
             uint16_t rel_id = static_cast<uint16_t>(std::max(0, w->physical_rel_id));
             inst.payload = (static_cast<uint32_t>(rel_id) << 16) | static_cast<uint32_t>(w->src_reg);
             inst.flags = 0;
+            if (is_first_walk && options.enable_seed_inlining) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_INPUT_SEED;
+            }
+            if (options.enable_early_exit && !ctx.env.count("frontier")) {
+                inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
+            }
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::WALK_2HOP) {
             auto w2 = std::static_pointer_cast<ScmWalk2Hop>(step);
+            bool is_first_walk = (ctx.instructions.empty() && w2->src_reg == 0);
+            if (is_first_walk && !options.enable_seed_inlining) {
+                impulse_instruction_t seed_inst{};
+                seed_inst.opcode = OP_INIT_INPUT_NODE;
+                seed_inst.dst_reg = 0;
+                ctx.instructions.push_back(seed_inst);
+            }
             impulse_instruction_t inst{};
             inst.opcode = OP_CSR_WALK_2HOP;
             inst.dst_reg = w2->dst_reg;
@@ -1046,6 +1441,124 @@ private:
             inst.opcode = OP_HALT;
             inst.dst_reg = ctx.result_reg;
             ctx.instructions.push_back(inst);
+        } else if (step->kind() == NodeKind::LANE_INIT_SEEDS) {
+            auto n = std::static_pointer_cast<ScmLaneInitSeeds>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_INIT_SEEDS;
+            inst.flags = n->width_flag;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_INIT_GROUPS) {
+            auto n = std::static_pointer_cast<ScmLaneInitGroups>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_INIT_GROUPS;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->pairs_reg & 0xFFFF) |
+                           (static_cast<uint32_t>(n->num_groups & 0xFFFF) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_SET_EDGE_MASK) {
+            auto n = std::static_pointer_cast<ScmLaneSetEdgeMask>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_SET_EDGE_MASK;
+            inst.dst_reg = n->dst_reg;
+            uint16_t rel_id = static_cast<uint16_t>(std::max(0, n->physical_rel_id));
+            inst.payload = static_cast<uint32_t>(n->pairs_reg & 0xFFFF) |
+                           (static_cast<uint32_t>(rel_id) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_WALK) {
+            auto n = std::static_pointer_cast<ScmLaneWalk>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = (n->direction == WalkDirection::FORWARD_CSR) ? OP_LANE_CSR_WALK : OP_LANE_CSC_WALK;
+            inst.flags = n->fixed_point ? 1 : 0;
+            inst.dst_reg = n->dst_reg;
+            uint16_t rel_id = static_cast<uint16_t>(std::max(0, n->physical_rel_id));
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFFFF) |
+                           (static_cast<uint32_t>(rel_id) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_PRUNE_MASK) {
+            auto n = std::static_pointer_cast<ScmLanePruneMask>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_PRUNE_MASK;
+            inst.flags = n->mode;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->arg0 & 0xFFFF) << 8) |
+                           (static_cast<uint32_t>(n->arg1 & 0xFF) << 24);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_FILTER_QUORUM) {
+            auto n = std::static_pointer_cast<ScmLaneFilterQuorum>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_FILTER_QUORUM;
+            inst.dst_reg = n->dst_reg;
+            if (n->mask_reg > 0) {
+                inst.flags = 1;
+                inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
+                               (static_cast<uint32_t>(n->min_quorum & 0xFF) << 8) |
+                               (static_cast<uint32_t>(n->mask_reg & 0xFF) << 16);
+            } else {
+                inst.flags = 0;
+                inst.payload = static_cast<uint32_t>(n->src_reg & 0xFFFF) |
+                               (static_cast<uint32_t>(n->min_quorum & 0xFFFF) << 16);
+            }
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_REDUCE_AND) {
+            auto n = std::static_pointer_cast<ScmLaneReduceAnd>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_REDUCE_AND;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFFFF);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_REDUCE_ATTR) {
+            auto n = std::static_pointer_cast<ScmLaneReduceAttr>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_REDUCE_ATTR;
+            inst.flags = 0;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->attr_id & 0xFF) << 8) |
+                           (static_cast<uint32_t>(n->reduce_op & 0xFFFF) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::LANE_SET_COVER) {
+            auto n = std::static_pointer_cast<ScmLaneSetCover>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_LANE_SET_COVER;
+            inst.flags = n->mode;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->mask_reg & 0xFF) << 8);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::VECTOR_ANN_SEARCH) {
+            auto n = std::static_pointer_cast<ScmVectorAnnSearch>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_VECTOR_ANN_SEARCH;
+            inst.flags = n->fused_lane_frontier ? 1 : 0;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->query_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->top_k & 0xFF) << 8) |
+                           (static_cast<uint32_t>(n->index_or_attr_id & 0xFFFF) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
+        } else if (step->kind() == NodeKind::VECTOR_RERANK_DOT) {
+            auto n = std::static_pointer_cast<ScmVectorRerankDot>(step);
+            impulse_instruction_t inst{};
+            inst.opcode = OP_VECTOR_RERANK_DOT;
+            inst.flags = n->metric;
+            inst.dst_reg = n->dst_reg;
+            inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->query_reg & 0xFF) << 8) |
+                           (static_cast<uint32_t>(n->attr_id & 0xFFFF) << 16);
+            ctx.instructions.push_back(inst);
+            ctx.result_reg = inst.dst_reg;
         }
     }
 

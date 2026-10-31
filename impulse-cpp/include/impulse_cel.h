@@ -20,6 +20,7 @@
 #include <sstream>
 #include <cstdint>
 #include <cmath>
+#include <bit>
 
 namespace impulse {
 namespace cel {
@@ -36,6 +37,7 @@ enum class TokenType {
     PLUS, MINUS, STAR, SLASH, PERCENT,
     EQ_EQ, BANG_EQ, LT, LT_EQ, GT, GT_EQ,
     AMP_AMP, PIPE_PIPE, BANG,
+    AMP, PIPE, CARET, TILDE, LT_LT, GT_GT,
     QUESTION, COLON,
     DOT, COMMA, EQ,
     
@@ -95,16 +97,26 @@ public:
                 return Token{TokenType::BANG, "!", 0, 0.0, false, start};
             case '<':
                 if (peek() == '=') { cursor_++; return Token{TokenType::LT_EQ, "<=", 0, 0.0, false, start}; }
+                if (peek() == '<') { cursor_++; return Token{TokenType::LT_LT, "<<", 0, 0.0, false, start}; }
                 return Token{TokenType::LT, "<", 0, 0.0, false, start};
             case '>':
                 if (peek() == '=') { cursor_++; return Token{TokenType::GT_EQ, ">=", 0, 0.0, false, start}; }
+                if (peek() == '>') {
+                    cursor_++;
+                    if (peek() == '>') { cursor_++; return Token{TokenType::GT_GT, ">>>", 0, 0.0, false, start}; }
+                    return Token{TokenType::GT_GT, ">>", 0, 0.0, false, start};
+                }
                 return Token{TokenType::GT, ">", 0, 0.0, false, start};
             case '&':
                 if (peek() == '&') { cursor_++; return Token{TokenType::AMP_AMP, "&&", 0, 0.0, false, start}; }
-                break;
+                return Token{TokenType::AMP, "&", 0, 0.0, false, start};
             case '|':
                 if (peek() == '|') { cursor_++; return Token{TokenType::PIPE_PIPE, "||", 0, 0.0, false, start}; }
-                break;
+                return Token{TokenType::PIPE, "|", 0, 0.0, false, start};
+            case '^':
+                return Token{TokenType::CARET, "^", 0, 0.0, false, start};
+            case '~':
+                return Token{TokenType::TILDE, "~", 0, 0.0, false, start};
 
             case '$':
             case '@':
@@ -172,12 +184,61 @@ private:
     }
 
     Token parse_number(char first_digit, size_t start) {
+        if (first_digit == '0' && cursor_ < src_.size() && (src_[cursor_] == 'x' || src_[cursor_] == 'X')) {
+            std::string raw = std::string("0") + src_[cursor_++];
+            std::string digits;
+            while (cursor_ < src_.size()) {
+                char c = src_[cursor_];
+                if (std::isxdigit(static_cast<unsigned char>(c))) {
+                    raw += c;
+                    digits += c;
+                    cursor_++;
+                } else if (c == '_') {
+                    raw += c;
+                    cursor_++;
+                } else {
+                    break;
+                }
+            }
+            Token t;
+            t.pos = start;
+            t.text = raw;
+            t.type = TokenType::INT_LITERAL;
+            t.int_val = digits.empty() ? 0 : static_cast<int64_t>(std::stoull(digits, nullptr, 16));
+            return t;
+        }
+        if (first_digit == '0' && cursor_ < src_.size() && (src_[cursor_] == 'b' || src_[cursor_] == 'B')) {
+            std::string raw = std::string("0") + src_[cursor_++];
+            std::string digits;
+            while (cursor_ < src_.size()) {
+                char c = src_[cursor_];
+                if (c == '0' || c == '1') {
+                    raw += c;
+                    digits += c;
+                    cursor_++;
+                } else if (c == '_') {
+                    raw += c;
+                    cursor_++;
+                } else {
+                    break;
+                }
+            }
+            Token t;
+            t.pos = start;
+            t.text = raw;
+            t.type = TokenType::INT_LITERAL;
+            t.int_val = digits.empty() ? 0 : static_cast<int64_t>(std::stoull(digits, nullptr, 2));
+            return t;
+        }
+
         std::string num_str(1, first_digit);
         bool is_float = false;
         while (cursor_ < src_.size()) {
             char c = src_[cursor_];
             if (std::isdigit(static_cast<unsigned char>(c))) {
                 num_str += c;
+                cursor_++;
+            } else if (c == '_') {
                 cursor_++;
             } else if (c == '.' && !is_float && cursor_ + 1 < src_.size() && std::isdigit(static_cast<unsigned char>(src_[cursor_ + 1]))) {
                 is_float = true;
@@ -359,9 +420,13 @@ enum Precedence {
     PREC_OR,          // ||
     PREC_AND,         // &&
     PREC_COMPARE,     // == != < <= > >= in
+    PREC_BIT_OR,      // |
+    PREC_BIT_XOR,     // ^
+    PREC_BIT_AND,     // &
+    PREC_SHIFT,       // << >>
     PREC_ADD_SUB,     // + -
     PREC_MUL_DIV,     // * / %
-    PREC_UNARY,       // ! - +
+    PREC_UNARY,       // ! - + ~
     PREC_CALL_MEMBER  // . () []
 };
 
@@ -413,6 +478,15 @@ private:
             case TokenType::GT_EQ:
             case TokenType::KW_IN:
                 return PREC_COMPARE;
+            case TokenType::PIPE:
+                return PREC_BIT_OR;
+            case TokenType::CARET:
+                return PREC_BIT_XOR;
+            case TokenType::AMP:
+                return PREC_BIT_AND;
+            case TokenType::LT_LT:
+            case TokenType::GT_GT:
+                return PREC_SHIFT;
             case TokenType::PLUS:
             case TokenType::MINUS:
                 return PREC_ADD_SUB;
@@ -446,7 +520,8 @@ private:
                 return AstNode::make_ident(t.text);
             case TokenType::BANG:
             case TokenType::MINUS:
-            case TokenType::PLUS: {
+            case TokenType::PLUS:
+            case TokenType::TILDE: {
                 auto operand = parse_precedence(PREC_UNARY);
                 return AstNode::make_unary(t.text, operand);
             }
@@ -560,6 +635,7 @@ public:
             case AstKind::UNARY_OP:
                 if (node->text == "!") return "(mask-not " + to_impscheme(node->children[0]) + ")";
                 if (node->text == "-") return "(- 0 " + to_impscheme(node->children[0]) + ")";
+                if (node->text == "~") return "(~ " + to_impscheme(node->children[0]) + ")";
                 return to_impscheme(node->children[0]);
             case AstKind::BINARY_OP: {
                 std::string op = node->text;
@@ -611,7 +687,8 @@ public:
             {"relu", MATH_FUNC_RELU}, {"leaky_relu", MATH_FUNC_LEAKY_RELU}, {"sigmoid", MATH_FUNC_SIGMOID},
             {"gelu", MATH_FUNC_GELU}, {"silu", MATH_FUNC_SILU}, {"softplus", MATH_FUNC_SOFTPLUS},
             {"erf", MATH_FUNC_ERF}, {"erfc", MATH_FUNC_ERFC}, {"lgamma", MATH_FUNC_LGAMMA},
-            {"popcount", MATH_FUNC_POPCOUNT}, {"clz", MATH_FUNC_CLZ}, {"ctz", MATH_FUNC_CTZ},
+            {"popcount", MATH_FUNC_POPCOUNT}, {"bit_count", MATH_FUNC_POPCOUNT},
+            {"clz", MATH_FUNC_CLZ}, {"ctz", MATH_FUNC_CTZ}, {"first_lane", MATH_FUNC_CTZ},
             {"rotl", MATH_FUNC_ROTL}, {"rotr", MATH_FUNC_ROTR},
             {"safeDiv", MATH_FUNC_SAFE_DIV}, {"safe_div", MATH_FUNC_SAFE_DIV},
             {"isNan", MATH_FUNC_ISNAN}, {"isnan", MATH_FUNC_ISNAN},
@@ -678,6 +755,13 @@ private:
             if (child->kind == AstKind::LITERAL_FLOAT) {
                 return AstNode::make_float(-child->float_val);
             }
+        } else if (node->text == "~") {
+            if (child->kind == AstKind::LITERAL_INT) {
+                return AstNode::make_int(~child->int_val);
+            }
+            if (child->kind == AstKind::UNARY_OP && child->text == "~") {
+                return child->children[0];
+            }
         }
         return node;
     }
@@ -725,6 +809,12 @@ private:
             if (op == "<=") return AstNode::make_bool(a <= b);
             if (op == ">")  return AstNode::make_bool(a > b);
             if (op == ">=") return AstNode::make_bool(a >= b);
+            if (op == "&")  return AstNode::make_int(a & b);
+            if (op == "|")  return AstNode::make_int(a | b);
+            if (op == "^")  return AstNode::make_int(a ^ b);
+            if (op == "<<") return AstNode::make_int((b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) << b));
+            if (op == ">>") return AstNode::make_int((b < 0 || b >= 64) ? 0 : (a >> b));
+            if (op == ">>>") return AstNode::make_int((b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) >> b));
         }
 
         // 2. Float Constant Folding
@@ -854,6 +944,178 @@ private:
         if (node->kind == AstKind::LITERAL_INT && node->int_val == 1) return true;
         if (node->kind == AstKind::LITERAL_FLOAT && node->float_val == 1.0) return true;
         return false;
+    }
+};
+
+/**
+ * @brief Runtime evaluator for CEL Multi-Lane predicates (.filter / .pruneWhere)
+ *        and selective per-lane mask mutations (.project("lane = ...")).
+ */
+class CelMultiLaneEvaluator {
+public:
+    using AttrMap = std::unordered_map<std::string, int64_t>;
+
+    static int64_t eval_int(const std::shared_ptr<AstNode>& node,
+                            uint64_t lane_mask,
+                            const AttrMap* node_attrs = nullptr) {
+        if (!node) return 0;
+        switch (node->kind) {
+            case AstKind::LITERAL_INT:
+                return node->int_val;
+            case AstKind::LITERAL_FLOAT:
+                return static_cast<int64_t>(node->float_val);
+            case AstKind::LITERAL_BOOL:
+                return node->bool_val ? 1 : 0;
+            case AstKind::IDENTIFIER: {
+                if (node->text == "lane") return static_cast<int64_t>(lane_mask);
+                if (node_attrs) {
+                    auto it = node_attrs->find(node->text);
+                    if (it != node_attrs->end()) return it->second;
+                }
+                return 0;
+            }
+            case AstKind::MEMBER_ACCESS: {
+                if (node->text == "lane") return static_cast<int64_t>(lane_mask);
+                if (node_attrs) {
+                    auto it = node_attrs->find(node->text);
+                    if (it != node_attrs->end()) return it->second;
+                }
+                return 0;
+            }
+            case AstKind::UNARY_OP: {
+                int64_t v = eval_int(node->children[0], lane_mask, node_attrs);
+                if (node->text == "-") return -v;
+                if (node->text == "~") return ~v;
+                if (node->text == "!") return eval_bool(node->children[0], lane_mask, node_attrs) ? 0 : 1;
+                return v;
+            }
+            case AstKind::TERNARY_OP: {
+                bool c = eval_bool(node->children[0], lane_mask, node_attrs);
+                return eval_int(c ? node->children[1] : node->children[2], lane_mask, node_attrs);
+            }
+            case AstKind::BINARY_OP: {
+                const std::string& op = node->text;
+                if (op == "=") {
+                    return eval_int(node->children[1], lane_mask, node_attrs);
+                }
+                if (op == "&&" || op == "||" || op == "==" || op == "!=" ||
+                    op == "<" || op == "<=" || op == ">" || op == ">=") {
+                    return eval_bool(node, lane_mask, node_attrs) ? 1 : 0;
+                }
+                int64_t a = eval_int(node->children[0], lane_mask, node_attrs);
+                int64_t b = eval_int(node->children[1], lane_mask, node_attrs);
+                if (op == "+") return a + b;
+                if (op == "-") return a - b;
+                if (op == "*") return a * b;
+                if (op == "/") return (b != 0) ? (a / b) : 0;
+                if (op == "%") return (b != 0) ? (a % b) : 0;
+                if (op == "&") return a & b;
+                if (op == "|") return a | b;
+                if (op == "^") return a ^ b;
+                if (op == "<<") return (b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) << b);
+                if (op == ">>") return (b < 0 || b >= 64) ? 0 : (a >> b);
+                if (op == ">>>") return (b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) >> b);
+                return 0;
+            }
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
+                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    return static_cast<int64_t>(std::popcount(v));
+                }
+                if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
+                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    return (v == 0ULL) ? -1LL : static_cast<int64_t>(std::countr_zero(v));
+                }
+                if (fn == "last_lane" && !node->children.empty()) {
+                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    return (v == 0ULL) ? -1LL : static_cast<int64_t>(63 - std::countl_zero(v));
+                }
+                if (fn == "clz" && !node->children.empty()) {
+                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    return (v == 0ULL) ? 64LL : static_cast<int64_t>(std::countl_zero(v));
+                }
+                if (fn == "has_any" || fn == "has_all" || fn == "has_none" || fn == "has_lane") {
+                    return eval_bool(node, lane_mask, node_attrs) ? 1 : 0;
+                }
+                return 0;
+            }
+            default:
+                return 0;
+        }
+    }
+
+    static bool eval_bool(const std::shared_ptr<AstNode>& node,
+                          uint64_t lane_mask,
+                          const AttrMap* node_attrs = nullptr) {
+        if (!node) return false;
+        switch (node->kind) {
+            case AstKind::LITERAL_BOOL:
+                return node->bool_val;
+            case AstKind::LITERAL_INT:
+                return node->int_val != 0;
+            case AstKind::UNARY_OP:
+                if (node->text == "!") return !eval_bool(node->children[0], lane_mask, node_attrs);
+                return eval_int(node, lane_mask, node_attrs) != 0;
+            case AstKind::TERNARY_OP:
+                return eval_bool(eval_bool(node->children[0], lane_mask, node_attrs)
+                                     ? node->children[1]
+                                     : node->children[2],
+                                 lane_mask, node_attrs);
+            case AstKind::BINARY_OP: {
+                const std::string& op = node->text;
+                if (op == "&&") {
+                    return eval_bool(node->children[0], lane_mask, node_attrs) &&
+                           eval_bool(node->children[1], lane_mask, node_attrs);
+                }
+                if (op == "||") {
+                    return eval_bool(node->children[0], lane_mask, node_attrs) ||
+                           eval_bool(node->children[1], lane_mask, node_attrs);
+                }
+                int64_t a = eval_int(node->children[0], lane_mask, node_attrs);
+                int64_t b = eval_int(node->children[1], lane_mask, node_attrs);
+                if (op == "==") return a == b;
+                if (op == "!=") return a != b;
+                if (op == "<")  return a < b;
+                if (op == "<=") return a <= b;
+                if (op == ">")  return a > b;
+                if (op == ">=") return a >= b;
+                return eval_int(node, lane_mask, node_attrs) != 0;
+            }
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if (fn == "has_any" && node->children.size() >= 2) {
+                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    uint64_t req = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                    return (m & req) != 0ULL;
+                }
+                if (fn == "has_all" && node->children.size() >= 2) {
+                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    uint64_t req = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                    return (m & req) == req;
+                }
+                if (fn == "has_none" && node->children.size() >= 2) {
+                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    uint64_t forbid = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                    return (m & forbid) == 0ULL;
+                }
+                if (fn == "has_lane" && node->children.size() >= 2) {
+                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
+                    int64_t idx = eval_int(node->children[1], lane_mask, node_attrs);
+                    if (idx < 0 || idx >= 64) return false;
+                    return ((m >> idx) & 1ULL) != 0ULL;
+                }
+                return eval_int(node, lane_mask, node_attrs) != 0;
+            }
+            default:
+                return eval_int(node, lane_mask, node_attrs) != 0;
+        }
+    }
+
+    static uint64_t eval_project_lane(const std::shared_ptr<AstNode>& node,
+                                      uint64_t lane_mask,
+                                      const AttrMap* node_attrs = nullptr) {
+        return static_cast<uint64_t>(eval_int(node, lane_mask, node_attrs));
     }
 };
 
