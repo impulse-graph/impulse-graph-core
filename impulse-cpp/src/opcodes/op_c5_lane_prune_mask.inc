@@ -89,11 +89,11 @@ op_LANE_PRUNE_MASK: {
                 lf_dst.lanes[u] = allow_bits & ~deny_bits;
             }
         } else if (mode == 2) {
-            if (arg1 > 0) {
+            if (arg1 > 0 && arg1 != src_reg) {
                 VALIDATE_REG(arg1);
                 IMPULSE_CHECK_REG_TYPE(vm_state, arg1, (IMP_TYPES_INT_OR_NODE | IMP_TYPES_NODE_VEC));
             }
-            uint8_t t_arg = (arg1 > 0) ? vm_state->register_types[arg1] : TYPE_NULL;
+            uint8_t t_arg = (arg1 > 0 && arg1 != src_reg) ? vm_state->register_types[arg1] : static_cast<uint8_t>(TYPE_NULL);
             uint64_t max_deg = (t_arg == TYPE_INT64 || t_arg == TYPE_NODE_ID) ? vm_state->registers[arg1] : arg1;
             uint32_t min_k = std::max<uint32_t>(1u, arg2);
             for (size_t u = 0; u < n_nodes; ++u) {

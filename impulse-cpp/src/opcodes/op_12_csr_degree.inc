@@ -41,7 +41,7 @@ op_CSR_DEGREE: {
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL));
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

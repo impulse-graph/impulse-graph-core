@@ -931,10 +931,11 @@ int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8
     hs.write_u32_le(state->pc);
     hs.write_u64_le(state->flags);
 
-    // 3. Subroutine call stack: call_stack_depth (uint32_t), call_stack[8]
+    // 3. Subroutine call stack: call_stack_depth (uint32_t), 8 slots with inactive slots zeroed
     hs.write_u32_le(state->call_stack_depth);
     for (size_t i = 0; i < 8; ++i) {
-        hs.write_u32_le(state->call_stack[i]);
+        uint32_t frame_pc = (i < state->call_stack_depth) ? state->call_stack[i] : 0;
+        hs.write_u32_le(frame_pc);
     }
 
     // 4. Architectural registers: 64 x (type uint8_t, value uint64_t LE)
@@ -1024,7 +1025,15 @@ int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8
                 if (ctx && handle < VM_MAX_LANE_FRONTIER_HANDLES && ctx->lane_frontiers_allocated[handle]) {
                     const auto& lf = ctx->lane_frontiers[handle];
                     hs.write_u32_le(lf.num_lanes);
-                    hs.write_u32_le(static_cast<uint32_t>(lf.width));
+                    uint32_t max_lanes = 64;
+                    switch (lf.width) {
+                        case IMPULSE_LANE_WIDTH_8: max_lanes = 8; break;
+                        case IMPULSE_LANE_WIDTH_16: max_lanes = 16; break;
+                        case IMPULSE_LANE_WIDTH_32: max_lanes = 32; break;
+                        case IMPULSE_LANE_WIDTH_64: max_lanes = 64; break;
+                        default: max_lanes = 64; break;
+                    }
+                    hs.write_u32_le(max_lanes);
                     hs.write_u64_le(lf.active_mask);
                     uint32_t ncount = static_cast<uint32_t>(lf.lanes.size());
                     hs.write_u32_le(ncount);

@@ -1175,18 +1175,18 @@ void test_mcdc_opcodes_roaring_and_boolean() {
     impulse_vm_context_double_vector_set(ctx, h_d2, 0, 200.0);
 
     std::vector<impulse_instruction_t> blend_bc = {
-        // Float blend: R10 = mask ? R1 : R2
-        { OP_VEC_BLEND, 0, 10, static_cast<uint32_t>(1 | (h_f1 << 8) | (h_f2 << 16)) },
+        // Float blend: R10 = mask ? R5 : R6
+        { OP_VEC_BLEND, 0, 10, static_cast<uint32_t>(1 | (5 << 8) | (6 << 16)) },
         // Double blend: R11 = mask ? R3 : R4
         { OP_VEC_BLEND, 0, 11, static_cast<uint32_t>(1 | (3 << 8) | (4 << 16)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[1] = static_cast<uint64_t>(h1); // mask
     state.register_types[1] = TYPE_BITSET_HANDLE;
-    state.registers[h_f1] = static_cast<uint64_t>(h_f1);
-    state.register_types[h_f1] = TYPE_FLOAT_VECTOR;
-    state.registers[h_f2] = static_cast<uint64_t>(h_f2);
-    state.register_types[h_f2] = TYPE_FLOAT_VECTOR;
+    state.registers[5] = static_cast<uint64_t>(h_f1);
+    state.register_types[5] = TYPE_FLOAT_VECTOR;
+    state.registers[6] = static_cast<uint64_t>(h_f2);
+    state.register_types[6] = TYPE_FLOAT_VECTOR;
     state.registers[3] = static_cast<uint64_t>(h_d1);
     state.register_types[3] = TYPE_DOUBLE_VECTOR;
     state.registers[4] = static_cast<uint64_t>(h_d2);

@@ -11,7 +11,7 @@
 #ifndef OP_40_CONTRACT_DEFINED
 #define OP_40_CONTRACT_DEFINED
 #define OP_40_DEFINED_FLAGS        0x00u
-#define OP_40_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#define OP_40_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
 #endif
 
 // Opcode 0x40: OP_CC_AFFOREST
@@ -30,14 +30,14 @@ op_CC_AFFOREST: {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
-    if (vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
+    if (vm_state->register_types[dst] != TYPE_NODE_VECTOR && vm_state->register_types[dst] != TYPE_UINT64_VECTOR) {
         int h_dst = acquire_node_vector(vm_state->query_context);
         if (h_dst < 0) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         vm_state->registers[dst] = h_dst;
-        vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
     }
+    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
     int handle = static_cast<int>(vm_state->registers[dst]);
     auto& comp = vm_state->query_context->node_vectors[handle];

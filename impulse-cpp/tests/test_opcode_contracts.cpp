@@ -25,7 +25,11 @@
 #include <cmath>
 #include <csignal>
 #include <csetjmp>
+#include <cstdio>
+#include <cstdlib>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <new>
 
 static thread_local bool g_track_heap_allocs = false;
@@ -72,6 +76,7 @@ namespace {
 // ============================================================================
 // Crash Guard (SIGSEGV / SIGBUS / SIGILL / SIGFPE recovery for audit)
 // ============================================================================
+#ifndef _WIN32
 static sigjmp_buf g_crash_env;
 static volatile sig_atomic_t g_crash_signal = 0;
 
@@ -101,8 +106,11 @@ struct ScopedCrashHandler {
         sigaction(SIGSEGV, &old_segv, nullptr);
         sigaction(SIGBUS, &old_bus, nullptr);
         sigaction(SIGILL, &old_ill, nullptr);
+        sigaction(SIGFPE, &sa_noop, nullptr);
         sigaction(SIGFPE, &old_fpe, nullptr);
     }
+private:
+    struct sigaction sa_noop{};
 };
 
 #define EXECUTE_WITH_CRASH_GUARD(code_block, crashed_flag) do { \
@@ -120,6 +128,13 @@ struct ScopedCrashHandler {
         sigprocmask(SIG_UNBLOCK, &unblock_mask, nullptr); \
     } \
 } while(0)
+#else
+struct ScopedCrashHandler {};
+#define EXECUTE_WITH_CRASH_GUARD(code_block, crashed_flag) do { \
+    crashed_flag = 0; \
+    code_block; \
+} while(0)
+#endif
 
 struct SafeExecResult {
     impulse_vm_status_t status;
@@ -177,7 +192,11 @@ static void record_check(bool passed,
 // ============================================================================
 // Snapshot Test Harness Setup
 // ============================================================================
+#ifdef _WIN32
+static const char* TEST_SNAP_PATH = "test_impulse_opcode_contracts.imps";
+#else
 static const char* TEST_SNAP_PATH = "/tmp/test_impulse_opcode_contracts.imps";
+#endif
 
 static impulse_snapshot_t* create_test_snapshot() {
     impulse_status_t st = IMPULSE_OK;
@@ -1140,7 +1159,7 @@ int main(int argc, char** argv) {
     }
 
     impulse_snapshot_close(snap);
-    unlink(TEST_SNAP_PATH);
+    std::remove(TEST_SNAP_PATH);
 
     // Print Detailed Failure Report
     std::cout << "\n================================================================================" << std::endl;

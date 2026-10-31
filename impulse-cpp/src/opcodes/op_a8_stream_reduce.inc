@@ -46,6 +46,9 @@
                             if (h_vec >= 0) {
                                 vm_state->registers[globalReg] = static_cast<uint64_t>(h_vec);
                                 vm_state->register_types[globalReg] = TYPE_FLOAT_VECTOR;
+                                if (target_node_bound > 0) {
+                                    vm_state->query_context->float_vector_lengths[h_vec] = target_node_bound;
+                                }
                             }
                         }
                         if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {

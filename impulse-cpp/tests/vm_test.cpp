@@ -1085,7 +1085,7 @@ void test_extra_opcodes() {
         bytecode1.data(), bytecode1.size(), &state1, 0
     );
     assert(status1 == IMPULSE_VM_OK);
-    assert(state1.register_types[1] == TYPE_UINT64_VECTOR);
+    assert(state1.register_types[1] == TYPE_NODE_VECTOR || state1.register_types[1] == TYPE_UINT64_VECTOR);
     int h_comp = static_cast<int>(state1.registers[1]);
     const uint64_t* comp_data = impulse_vm_context_get_node_vector(ctx, h_comp);
     assert(comp_data[0] == comp_data[1]);
