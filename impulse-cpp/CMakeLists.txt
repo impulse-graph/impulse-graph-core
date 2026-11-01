@@ -30,11 +30,42 @@ if(IMPULSE_DISABLE_COMPUTED_GOTO)
     add_compile_definitions(IMPULSE_DISABLE_COMPUTED_GOTO=1)
 endif()
 
-# --- Sanitizer Option ---------------------------------------------------
+# --- Sanitizer Options --------------------------------------------------
+# IMPULSE_SANITIZE        : AddressSanitizer + UndefinedBehaviorSanitizer. UBSan findings are
+#                           fatal (-fno-sanitize-recover=undefined) so they fail ctest.
+# IMPULSE_SANITIZE_THREAD : ThreadSanitizer (mutually exclusive with ASan/UBSan).
+#                           NOTE: the OpenMP paths in src/opcodes/*.inc are guarded by `_OPENMP`
+#                           and are compiled out unless IMPULSE_ENABLE_OPENMP=ON. libomp is not
+#                           TSan-instrumented, so OpenMP+TSan reports false positives from the
+#                           runtime's own barriers; use TSan with OpenMP OFF (default) unless an
+#                           instrumented runtime (e.g. libgomp built with -fsanitize=thread or
+#                           archer) is available.
 option(IMPULSE_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(IMPULSE_SANITIZE_THREAD "Enable ThreadSanitizer (mutually exclusive with IMPULSE_SANITIZE)" OFF)
+option(IMPULSE_ENABLE_OPENMP "Compile ImpulseVM intra-instruction OpenMP parallel paths" OFF)
+if(IMPULSE_SANITIZE AND IMPULSE_SANITIZE_THREAD)
+    message(FATAL_ERROR "IMPULSE_SANITIZE (ASan+UBSan) and IMPULSE_SANITIZE_THREAD (TSan) are mutually exclusive")
+endif()
 if(IMPULSE_SANITIZE)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address,undefined)
+    if(MSVC)
+        # MSVC supports ASan only (/fsanitize=address); UBSan/TSan are not available.
+        add_compile_options(/fsanitize=address)
+    else()
+        add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined
+                            -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address,undefined)
+    endif()
+endif()
+if(IMPULSE_SANITIZE_THREAD)
+    if(MSVC)
+        message(FATAL_ERROR "IMPULSE_SANITIZE_THREAD is not supported with MSVC")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+if(IMPULSE_ENABLE_OPENMP)
+    find_package(OpenMP REQUIRED COMPONENTS CXX)
+    message(STATUS "ImpulseVM OpenMP parallel paths enabled")
 endif()
 
 # --- MC/DC Coverage Option ----------------------------------------------
@@ -83,6 +114,9 @@ target_include_directories(impulse_graph PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(impulse_graph PUBLIC hwy)
+if(IMPULSE_ENABLE_OPENMP)
+    target_link_libraries(impulse_graph PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 # --- Static Library (.a / .lib) ------------------------------------------
 add_library(impulse_graph_static STATIC
@@ -104,6 +138,9 @@ target_include_directories(impulse_graph_static PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(impulse_graph_static PUBLIC hwy)
+if(IMPULSE_ENABLE_OPENMP)
+    target_link_libraries(impulse_graph_static PUBLIC $<BUILD_INTERFACE:OpenMP::OpenMP_CXX>)
+endif()
 
 # --- Install Targets & Exports -------------------------------------------
 install(TARGETS impulse_graph impulse_graph_static
