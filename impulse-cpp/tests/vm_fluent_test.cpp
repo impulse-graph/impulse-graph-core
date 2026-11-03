@@ -251,7 +251,7 @@ static void test_fluent_query_builder_multilane_and_vector_ops() {
     assert(bc[3].opcode == OP_LANE_SET_EDGE_MASK);
     assert(bc[4].opcode == OP_LANE_CSR_WALK);
     assert(bc[5].opcode == OP_LANE_CSC_WALK);
-    assert(bc[5].flags == 1);
+    assert(bc[5].flags == 0x04);  // fixed-point walk: VM lane_walk_common reads FIXPOINT as flags & 0x04
     assert(bc[6].opcode == OP_LANE_PRUNE_MASK);
     assert(bc[7].opcode == OP_LANE_FILTER_QUORUM);
     assert(bc[8].opcode == OP_LANE_REDUCE_AND);
