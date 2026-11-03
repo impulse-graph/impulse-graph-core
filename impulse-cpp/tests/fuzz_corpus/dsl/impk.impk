@@ -1,0 +1,1 @@
+(impk-pipeline (define-query my_q (g:walk-csr edge)))
