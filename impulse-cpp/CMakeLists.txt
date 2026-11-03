@@ -352,6 +352,10 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(kleisli_json_runner tests/kleisli_json_runner.cpp)
     target_link_libraries(kleisli_json_runner PRIVATE impulse_graph_static)
+
+    add_executable(test_multilane_frontend_golden tests/test_multilane_frontend_golden.cpp)
+    target_link_libraries(test_multilane_frontend_golden PRIVATE impulse_graph_static)
+    add_test(NAME test_multilane_frontend_golden COMMAND test_multilane_frontend_golden)
 endif()
 
 # --- Fuzz Targets --------------------------------------------------------
