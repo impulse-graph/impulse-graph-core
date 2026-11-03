@@ -568,14 +568,14 @@ QueryBuilder& QueryBuilder::laneSetEdgeMask(uint16_t pairs_reg, uint16_t relatio
 QueryBuilder& QueryBuilder::laneWalkCsr(uint16_t relation_id, bool fixed_point) {
     uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFFFF) |
                        (static_cast<uint32_t>(relation_id & 0xFFFF) << 16);
-    emit(OP_LANE_CSR_WALK, fixed_point ? 1 : 0, current_reg_, payload);
+    emit(OP_LANE_CSR_WALK, fixed_point ? 0x04 : 0, current_reg_, payload);  // 0x04 = FIXPOINT (VM lane_walk_common)
     return *this;
 }
 
 QueryBuilder& QueryBuilder::laneWalkCsc(uint16_t relation_id, bool fixed_point) {
     uint32_t payload = static_cast<uint32_t>(current_reg_ & 0xFFFF) |
                        (static_cast<uint32_t>(relation_id & 0xFFFF) << 16);
-    emit(OP_LANE_CSC_WALK, fixed_point ? 1 : 0, current_reg_, payload);
+    emit(OP_LANE_CSC_WALK, fixed_point ? 0x04 : 0, current_reg_, payload);  // 0x04 = FIXPOINT (VM lane_walk_common)
     return *this;
 }
 

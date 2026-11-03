@@ -342,7 +342,7 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                 int rel_id = n->physical_rel_id >= 0 ? n->physical_rel_id : 0;
                 impulse_instruction_t inst{};
                 inst.opcode = (n->direction == WalkDirection::FORWARD_CSR) ? OP_LANE_CSR_WALK : OP_LANE_CSC_WALK;
-                inst.flags = n->fixed_point ? 1 : 0;
+                inst.flags = n->fixed_point ? (n->flags != 0 ? n->flags : 0x04) : n->flags;  // 0x04 = FIXPOINT
                 inst.dst_reg = dst_reg;
                 inst.payload = static_cast<uint32_t>(src_reg & 0xFFFF) |
                                (static_cast<uint32_t>(rel_id & 0xFFFF) << 16);
