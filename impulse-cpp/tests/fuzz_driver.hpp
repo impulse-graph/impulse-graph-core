@@ -35,6 +35,7 @@
 
 #if !defined(_WIN32)
 #include <dirent.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -135,11 +136,7 @@ inline void on_signal(int sig) {
 }
 #endif
 }  // namespace detail
-
 }  // namespace impfuzz
-
-// Weak: present when built with a sanitizer runtime (ASan/UBSan/TSan).
-extern "C" void __sanitizer_set_death_callback(void (*)(void)) __attribute__((weak));
 
 namespace impfuzz {
 
@@ -255,9 +252,10 @@ inline int standalone_main(int argc, char** argv, const char* target, std::vecto
     for (const auto& p : corpus_paths) collect_corpus(p, pool);
 
 #if !defined(_WIN32)
-    if (__sanitizer_set_death_callback) {
+    using DeathCbFn = void (*)(void (*)(void));
+    if (auto set_cb = reinterpret_cast<DeathCbFn>(::dlsym(RTLD_DEFAULT, "__sanitizer_set_death_callback"))) {
         // Sanitizer runtimes own SIGSEGV/SIGABRT etc. (they print the report first); hook their death callback.
-        __sanitizer_set_death_callback(detail::save_current_input);
+        set_cb(detail::save_current_input);
     } else {
         for (int sig : {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE}) ::signal(sig, detail::on_signal);
     }

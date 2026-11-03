@@ -6,15 +6,14 @@
  * so it is a valid test in plain builds.
  */
 
-#include "impulse_cel.h"
-#include "impulse_vm.h"
-
+#undef NDEBUG
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <string>
 
-#undef NDEBUG
+#include "impulse_cel.h"
+#include "impulse_vm.h"
 
 static std::shared_ptr<impulse::cel::AstNode> optimize(const char* expr) {
     impulse::cel::Parser p(expr);
@@ -64,6 +63,19 @@ int main() {
         assert(st != IMPULSE_OK);
         st = impulse_compile_query(nullptr, "sqrt(x * )", IMPULSE_LANG_CEL, instrs, 64, &count);
         assert(st != IMPULSE_OK);
+
+        // ImpScheme SExprParser: mismatched closing delimiters (e.g. `]` inside `(...)` or stray `)`)
+        // previously failed to advance `pos` and hung in an infinite loop pushing empty SExpr nodes.
+        for (const char* bad_scm : {
+                 "(pipeline (lane-prune-mask 2 0 0) (lDaG]->(g:Gene)",
+                 "(a ] b)",
+                 "[a ) b]",
+                 ")",
+                 "]",
+             }) {
+            st = impulse_compile_query(nullptr, bad_scm, IMPULSE_LANG_IMPSCM, instrs, 64, &count);
+            assert(st != IMPULSE_OK);
+        }
     }
 
     std::printf("test_robustness_regressions: PASS\n");
