@@ -177,9 +177,116 @@ jobs:
             cd impulse-node && npm install && npm test || true
           fi
 
+  sanitizers:
+    name: Sanitizers (${{ matrix.name }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cpp == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan+ubsan
+            flags: -DIMPULSE_SANITIZE=ON
+            env_opts: ASAN_OPTIONS=detect_leaks=1:abort_on_error=0 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          - name: tsan
+            flags: -DIMPULSE_SANITIZE_THREAD=ON
+            env_opts: TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Configure (${{ matrix.name }})
+        run: |
+          cmake -B build-san -S impulse-cpp \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DIMPULSE_BUILD_EXAMPLES=OFF \
+            -DIMPULSE_BUILD_FUZZ=ON \
+            ${{ matrix.flags }}
+
+      - name: Build
+        run: cmake --build build-san -j"$(nproc)"
+
+      # bench_* targets assert wall-clock regression thresholds that are meaningless under sanitizers.
+      - name: Run Tests under ${{ matrix.name }}
+        run: |
+          env ${{ matrix.env_opts }} ctest --test-dir build-san --output-on-failure --timeout 900 -E '^bench_'
+
+  fuzz-smoke:
+    name: Fuzz Smoke (libFuzzer + ASan/UBSan)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cpp == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Seconds per fuzz target; override with the workflow_dispatch UI by editing this value.
+      FUZZ_SECONDS: 60
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Clang with libFuzzer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-rt-dev
+
+      - name: Configure
+        run: |
+          cmake -B build-fuzz -S impulse-cpp \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DIMPULSE_BUILD_EXAMPLES=OFF -DIMPULSE_BUILD_TESTS=OFF \
+            -DIMPULSE_SANITIZE=ON -DIMPULSE_ENABLE_LIBFUZZER=ON
+
+      - name: Build Fuzz Targets
+        run: |
+          cmake --build build-fuzz -j"$(nproc)" \
+            --target fuzz_snapshot fuzz_dsl_frontends fuzz_cel_parser fuzz_vm_bytecode
+
+      - name: Run Fuzz Targets (${{ env.FUZZ_SECONDS }}s each)
+        run: |
+          mkdir -p fuzz-artifacts
+          status=0
+          for target in fuzz_snapshot fuzz_dsl_frontends fuzz_cel_parser fuzz_vm_bytecode; do
+            work="fuzz-work/${target}"
+            mkdir -p "${work}"
+            case "${target}" in
+              fuzz_dsl_frontends) seed_dir=impulse-cpp/tests/fuzz_corpus/dsl ;;
+              fuzz_cel_parser)    seed_dir=impulse-cpp/tests/fuzz_corpus/cel ;;
+              *)                  seed_dir="" ;;
+            esac
+            # Binary seeds (.imps / bytecode) are generated at runtime by the harness (LLVMFuzzerInitialize)
+            # into the working corpus directory; they are never committed to Git.
+            echo "::group::${target}"
+            IMPULSE_FUZZ_SEED_DIR="${work}" ASAN_OPTIONS=detect_leaks=0 \
+              ./build-fuzz/${target} "${work}" ${seed_dir} \
+                -max_total_time="${FUZZ_SECONDS}" -artifact_prefix=fuzz-artifacts/${target}- \
+                -max_len=16384 -print_final_stats=1 || status=1
+            echo "::endgroup::"
+          done
+          exit ${status}
+
+      - name: Upload Crash Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz-artifacts/
+          if-no-files-found: ignore
+
   ci-gate:
     name: CI Gate / All Checks Passed
-    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-cli-tooling, test-ffi-bindings]
+    needs: [detect-changes, build-cpp-kernel, sanitizers, fuzz-smoke, test-rust-engine, test-cli-tooling, test-ffi-bindings]
     if: always()
     runs-on: ubuntu-latest
     steps:
