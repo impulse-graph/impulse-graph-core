@@ -472,10 +472,23 @@ public:
         if (!expr || curr_.type != TokenType::END_OF_FILE || !curr_.text.empty()) {
             return nullptr;
         }
+        // Sub-expression parse failures yield nullptr children (e.g. `f(1, )`, `sqrt(x * )`);
+        // reject such trees so downstream passes (optimizer / lowering) never dereference them.
+        if (!tree_complete(expr)) {
+            return nullptr;
+        }
         return expr;
     }
 
 private:
+    static bool tree_complete(const std::shared_ptr<AstNode>& node) {
+        if (!node) return false;
+        for (const auto& child : node->children) {
+            if (!tree_complete(child)) return false;
+        }
+        return true;
+    }
+
     Lexer lexer_;
     Token curr_;
 
@@ -1178,7 +1191,7 @@ private:
             }
         } else if (node->text == "-") {
             if (child->kind == AstKind::LITERAL_INT) {
-                return AstNode::make_int(-child->int_val);
+                return AstNode::make_int(static_cast<int64_t>(0 - static_cast<uint64_t>(child->int_val)));
             }
             if (child->kind == AstKind::LITERAL_FLOAT) {
                 return AstNode::make_float(-child->float_val);
@@ -1240,11 +1253,14 @@ private:
         if (left->kind == AstKind::LITERAL_INT && right->kind == AstKind::LITERAL_INT) {
             int64_t a = left->int_val;
             int64_t b = right->int_val;
-            if (op == "+") return AstNode::make_int(a + b);
-            if (op == "-") return AstNode::make_int(a - b);
-            if (op == "*") return AstNode::make_int(a * b);
-            if (op == "/" && b != 0) return AstNode::make_int(a / b);
-            if (op == "%" && b != 0) return AstNode::make_int(a % b);
+            // Integer folding uses two's-complement wraparound (never signed-overflow UB):
+            // INT64_MIN / -1 and INT64_MIN % -1 are the only division traps.
+            const uint64_t ua = static_cast<uint64_t>(a), ub = static_cast<uint64_t>(b);
+            if (op == "+") return AstNode::make_int(static_cast<int64_t>(ua + ub));
+            if (op == "-") return AstNode::make_int(static_cast<int64_t>(ua - ub));
+            if (op == "*") return AstNode::make_int(static_cast<int64_t>(ua * ub));
+            if (op == "/" && b != 0) return AstNode::make_int(b == -1 ? static_cast<int64_t>(0 - ua) : a / b);
+            if (op == "%" && b != 0) return AstNode::make_int(b == -1 ? 0 : a % b);
             if (op == "==") return AstNode::make_bool(a == b);
             if (op == "!=") return AstNode::make_bool(a != b);
             if (op == "<")  return AstNode::make_bool(a < b);

@@ -632,6 +632,9 @@ private:
     };
 
     static void emit_node(const AstPtr& step, CompileContext& ctx, const CompilerOptions& options) {
+        // Malformed ImpScheme (e.g. unresolvable loop condition / let init / set! expression) yields
+        // null AST children; reject with an exception (mapped to an error status by the C API).
+        if (!step) throw std::runtime_error("ImpScheme: unresolvable (null) AST node during emission");
         if (step->kind() == NodeKind::WALK) {
             auto w = std::static_pointer_cast<ScmWalk>(step);
             bool is_first_walk = (ctx.instructions.empty() && !ctx.env.count("frontier") && w->src_reg == 0);

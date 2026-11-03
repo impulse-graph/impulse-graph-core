@@ -123,7 +123,10 @@ static std::shared_ptr<ScmProgram> parse_script_to_ast(const char* script, impul
         }
                         case IMPULSE_LANG_CEL: {
             impulse::cel::Parser p(script_str);
-            auto cel_ast = p.parse_expression();
+            // parse() (not parse_expression()) rejects trailing tokens and trees with null
+            // sub-expressions, which would otherwise yield null ImpScheme steps in the compiler.
+            auto cel_ast = p.parse();
+            if (!cel_ast) throw std::runtime_error("CEL parse error");
             return std::make_shared<ScmProgram>(std::vector<AstPtr>{to_scm_node(cel_ast)});
         }
         case IMPULSE_LANG_IMPSCM:

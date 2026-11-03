@@ -393,6 +393,13 @@ if(IMPULSE_BUILD_FUZZ OR IMPULSE_ENABLE_LIBFUZZER)
     endforeach()
 endif()
 
+# Regression tests for defects found by the sanitizer/fuzz campaign.
+if(IMPULSE_BUILD_TESTS)
+    add_executable(test_robustness_regressions tests/test_robustness_regressions.cpp)
+    target_link_libraries(test_robustness_regressions PRIVATE impulse_graph_static)
+    add_test(NAME test_robustness_regressions COMMAND test_robustness_regressions)
+endif()
+
 # --- Examples ------------------------------------------------------------
 option(IMPULSE_BUILD_EXAMPLES "Build impulse-cpp examples" ON)
 if(IMPULSE_BUILD_EXAMPLES)
