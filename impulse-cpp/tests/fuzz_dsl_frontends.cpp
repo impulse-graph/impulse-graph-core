@@ -21,7 +21,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     std::string script(reinterpret_cast<const char*>(data), size > 4096 ? 4096 : size);
     impulse_instruction_t instrs[256];
     char impas[16384];
+    // Optional triage filter: IMPULSE_FUZZ_DSL_LANG=<0..4> restricts to a single front end.
+    static const int only_lang = [] {
+        const char* e = std::getenv("IMPULSE_FUZZ_DSL_LANG");
+        return e ? std::atoi(e) : -1;
+    }();
     for (int lang = IMPULSE_LANG_IMPSCM; lang <= IMPULSE_LANG_CEL; ++lang) {
+        if (only_lang >= 0 && lang != only_lang) continue;
         for (int use_snap = 0; use_snap < 2; ++use_snap) {
             const impulse_snapshot_t* snap = use_snap ? g_snap : nullptr;
             if (use_snap && !snap) continue;
