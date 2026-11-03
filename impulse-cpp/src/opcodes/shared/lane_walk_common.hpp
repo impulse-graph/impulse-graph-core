@@ -734,12 +734,11 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
         vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
         vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
 
-        if (is_fixpoint) {
-            IMP_VM_SET_ZF(vm_state, !any_changed);
-            IMP_VM_SET_ST(vm_state, !any_changed);
-        } else {
-            IMP_VM_SET_ZF(vm_state, !any_set);
-        }
+        // Spec 6.11.2: ZF = 1 iff every out_lanes[u] == 0 (also for FIXPOINT). The ST flag is owned
+        // exclusively by OP_STABLE_CHECK and must not be modified by lane walks (contracts.json
+        // sets_vm_flags_mask == ZF only).
+        (void)any_changed;
+        IMP_VM_SET_ZF(vm_state, !any_set);
         IMPULSE_ASSERT(vm_state->register_types[dst] == TYPE_LANE_FRONTIER);
     }
 
