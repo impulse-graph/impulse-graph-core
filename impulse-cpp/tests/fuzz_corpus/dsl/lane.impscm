@@ -1,0 +1,1 @@
+(pipeline (vector-ann-search 2 4 0 1) (lane-walk-csr INTERACTS_GiG) (lane-walk-csc BINDS_CbG 1) (lane-prune-mask 2 500 2) (lane-filter-quorum 2) (vector-rerank-dot 2 0 1))

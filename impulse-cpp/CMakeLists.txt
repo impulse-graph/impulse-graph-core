@@ -354,6 +354,41 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(kleisli_json_runner PRIVATE impulse_graph_static)
 endif()
 
+# --- Fuzz Targets --------------------------------------------------------
+# IMPULSE_BUILD_FUZZ      : build fuzz targets with the standalone random-mutation driver
+#                           (tests/fuzz_driver.hpp) and register short ctest smoke runs.
+# IMPULSE_ENABLE_LIBFUZZER: build the same targets with LLVM libFuzzer (-fsanitize=fuzzer,
+#                           requires clang with the libFuzzer runtime; Apple clang does not ship it,
+#                           use Homebrew llvm). No ctest smoke runs are registered in this mode.
+# Seed corpora: tests/fuzz_corpus/<target>/ (text only). Binary seeds (.imps, bytecode) are
+# generated at runtime by the harness: AGENTS.md 3.6 forbids binary blobs in Git.
+option(IMPULSE_BUILD_FUZZ "Build fuzz targets (standalone mutation driver) and ctest smoke runs" OFF)
+option(IMPULSE_ENABLE_LIBFUZZER "Build fuzz targets with LLVM libFuzzer (-fsanitize=fuzzer)" OFF)
+set(IMPULSE_FUZZ_SMOKE_RUNS 1500 CACHE STRING "Mutation iterations per fuzz ctest smoke test")
+if(IMPULSE_BUILD_FUZZ OR IMPULSE_ENABLE_LIBFUZZER)
+    if(MSVC)
+        message(FATAL_ERROR "Fuzz targets are not supported with MSVC")
+    endif()
+    set(IMPULSE_FUZZ_TARGETS fuzz_snapshot fuzz_dsl_frontends fuzz_cel_parser fuzz_vm_bytecode)
+    set(fuzz_corpus_fuzz_snapshot "")
+    set(fuzz_corpus_fuzz_vm_bytecode "")
+    set(fuzz_corpus_fuzz_dsl_frontends ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_corpus/dsl)
+    set(fuzz_corpus_fuzz_cel_parser ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_corpus/cel)
+    foreach(fz ${IMPULSE_FUZZ_TARGETS})
+        add_executable(${fz} tests/${fz}.cpp)
+        target_link_libraries(${fz} PRIVATE impulse_graph_static)
+        target_include_directories(${fz} PRIVATE tests)
+        if(IMPULSE_ENABLE_LIBFUZZER)
+            target_compile_definitions(${fz} PRIVATE IMPULSE_LIBFUZZER_ENABLED=1)
+            target_compile_options(${fz} PRIVATE -fsanitize=fuzzer-no-link)
+            target_link_options(${fz} PRIVATE -fsanitize=fuzzer)
+        else()
+            add_test(NAME ${fz}_smoke
+                     COMMAND ${fz} -runs=${IMPULSE_FUZZ_SMOKE_RUNS} ${fuzz_corpus_${fz}})
+        endif()
+    endforeach()
+endif()
+
 # --- Examples ------------------------------------------------------------
 option(IMPULSE_BUILD_EXAMPLES "Build impulse-cpp examples" ON)
 if(IMPULSE_BUILD_EXAMPLES)
