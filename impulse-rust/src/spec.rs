@@ -147,6 +147,12 @@ impl BaseDataType {
 pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 0;
 pub const IMPULSE_FEAT_CRYPTO_SIGNED: u64 = 1 << 1;
 
+// Section Feature Flags (RelationDirectoryEntry.section_features)
+pub const IMPULSE_SECTION_FEAT_INCLUDE_CSC: u64 = 1 << 0;
+pub const IMP_REL_FEATURE_CSC: u64 = IMPULSE_SECTION_FEAT_INCLUDE_CSC;
+pub const IMP_REL_FEATURE_WEIGHTED: u64 = 1 << 1;
+pub const IMP_REL_FEATURE_VIRTUAL: u64 = 1 << 2;
+
 // Error Codes
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -452,6 +458,9 @@ impl RelationDirectoryEntry {
     }
     pub fn edge_count(&self) -> u64 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.edge_count)) }
+    }
+    pub fn section_features(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.section_features)) }
     }
     pub fn csr_row_off_offset(&self) -> u64 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.csr_row_off_offset)) }

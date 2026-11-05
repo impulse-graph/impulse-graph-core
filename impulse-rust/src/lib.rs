@@ -382,7 +382,8 @@ mod tests {
 
             let q = &vectors[5 * dim..6 * dim];
             let res = reader.vamana_ann_search(entry, q, 5, 24).unwrap();
-            let exact = vamana::brute_force_ann_search(VamanaMetric::Cosine, &vectors, n, dim, q, 5);
+            let exact =
+                vamana::brute_force_ann_search(VamanaMetric::Cosine, &vectors, n, dim, q, 5);
             let (_r1, rk, _ndcg, _mrr) = vamana::evaluate_ann_quality(&res, &exact, 5);
             assert!(
                 rk >= 0.8,
@@ -447,8 +448,11 @@ mod tests {
             assert_eq!(s0, 0.0);
             let (_, _s1, d1) =
                 vamana::eval_bq1_words_row(&slab[row_bytes..2 * row_bytes], &q_words, dim, 1);
-            let (_, exact_d1) =
-                vamana::compute_vector_metric(VamanaMetric::Hamming, &vecs[0..dim], &vecs[dim..2 * dim]);
+            let (_, exact_d1) = vamana::compute_vector_metric(
+                VamanaMetric::Hamming,
+                &vecs[0..dim],
+                &vecs[dim..2 * dim],
+            );
             assert_eq!(d1, exact_d1);
         }
 
@@ -507,5 +511,256 @@ mod tests {
                 assert_eq!(res[0].0, 10);
             }
         }
+    }
+
+    #[test]
+    fn test_csc_rectangular_transposition_and_section_features() {
+        let mut writer = SnapshotWriter::new("__unused_csc.imps");
+        writer.add_domain(0, KeyType::Int32, "SourceDom");
+        writer.set_domain_node_count(0, 5);
+        writer.add_domain(1, KeyType::Int32, "TargetDom");
+        writer.set_domain_node_count(1, 3);
+
+        // Forward CSR: 5 source nodes -> 3 target nodes (0, 1, 2)
+        // Node 0 -> [1, 2]
+        // Node 1 -> [0]
+        // Node 2 -> [1]
+        // Node 3 -> [0, 2]
+        // Node 4 -> [1]
+        let row_offsets = vec![0, 2, 3, 4, 6, 7];
+        let col_indices = vec![1, 2, 0, 1, 0, 2, 1];
+
+        writer.add_relation(0, 1, 5, 7, row_offsets, col_indices);
+        writer.set_relation_name(0, "MAPPING");
+        writer.set_relation_include_csc(0, true);
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+        assert_eq!(reader.relation_count(), 1);
+
+        let rel = &reader.relations()[0];
+        assert_eq!(rel.name, "MAPPING");
+        assert!(rel.has_csc());
+        assert_ne!(
+            rel.section_features & crate::spec::IMPULSE_SECTION_FEAT_INCLUDE_CSC,
+            0
+        );
+
+        // 128-byte alignment verification
+        assert_eq!(rel.csc_row_off_offset % 128, 0);
+        assert_eq!(rel.csc_col_idx_offset % 128, 0);
+
+        // Expected reverse CSC for 3 target nodes:
+        // Target 0 has incoming: 1, 3 (count 2)
+        // Target 1 has incoming: 0, 2, 4 (count 3)
+        // Target 2 has incoming: 0, 3 (count 2)
+        // csc_row_offsets: [0, 2, 5, 7]
+        // csc_col_indices: [1, 3, 0, 2, 4, 0, 3]
+        let csc_row_offs = reader.get_csc_row_offsets(0).unwrap().unwrap();
+        assert_eq!(csc_row_offs, &[0, 2, 5, 7]);
+
+        let csc_col_idxs = reader.get_csc_col_indices(0).unwrap().unwrap();
+        assert_eq!(csc_col_idxs, &[1, 3, 0, 2, 4, 0, 3]);
+    }
+
+    #[test]
+    fn test_sink_domain_node_count_inference_and_relation_sort_remapping() {
+        let mut writer = SnapshotWriter::new("__unused_inference.imps");
+
+        // Domain 0: Outgoing source, node_count = 0 (unspecified)
+        writer.add_domain(0, KeyType::Int32, "User");
+        // Domain 1: Pure sink domain, node_count = 0 (unspecified)
+        writer.add_domain(1, KeyType::Int64, "Item");
+
+        // Add Relation A: Domain 1 -> Domain 0 (src_domain 1, tgt_domain 0)
+        // Row offsets length = 4 (3 nodes: 0, 1, 2)
+        writer.add_relation(1, 0, 0, 0, vec![0, 1, 2, 3], vec![1, 2, 3]);
+        writer.set_relation_name(0, "REVIEWS");
+
+        // Add Relation B: Domain 0 -> Domain 1 (src_domain 0, tgt_domain 1)
+        // Outgoing from Domain 0 has row_offsets length = 6 (5 nodes: 0..4)
+        // Target nodes in Domain 1 are up to ID 19 (so node_count inferred as 20)
+        writer.add_relation(0, 1, 0, 0, vec![0, 1, 2, 3, 4, 5], vec![5, 8, 12, 19, 3]);
+        writer.set_relation_name(1, "PURCHASED");
+
+        // Index 0 bound to initial relation 0 (Relation A: 1 -> 0)
+        writer.add_index(
+            1,
+            0,
+            0,
+            crate::spec::IMP_INDEX_ZONE_MAP,
+            "Rel0_idx",
+            vec![1, 2, 3],
+        );
+        // Index 1 bound to initial relation 1 (Relation B: 0 -> 1)
+        writer.add_index(
+            0,
+            1,
+            0,
+            crate::spec::IMP_INDEX_ZONE_MAP,
+            "Rel1_idx",
+            vec![4, 5, 6],
+        );
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+
+        // 1. Verify node count inference:
+        // Domain 0 ("User"): outgoing has 5 nodes (row_offsets.len() - 1 = 5), incoming has targets up to 3 (max(col)+1 = 4) -> 5
+        let dom0 = reader.domains().iter().find(|d| d.domain_id == 0).unwrap();
+        assert_eq!(dom0.node_count, 5);
+
+        // Domain 1 ("Item"): outgoing has 3 nodes, incoming targets max is 19 -> inferred as 20
+        let dom1 = reader.domains().iter().find(|d| d.domain_id == 1).unwrap();
+        assert_eq!(dom1.node_count, 20);
+
+        // 2. Verify relation sorting: (0, 1) sorts BEFORE (1, 0)
+        let rels = reader.relations();
+        assert_eq!(rels[0].name, "PURCHASED");
+        assert_eq!(rels[0].src_domain_id, 0);
+        assert_eq!(rels[0].tgt_domain_id, 1);
+        assert_eq!(rels[0].relation_id, 0);
+
+        assert_eq!(rels[1].name, "REVIEWS");
+        assert_eq!(rels[1].src_domain_id, 1);
+        assert_eq!(rels[1].tgt_domain_id, 0);
+        assert_eq!(rels[1].relation_id, 1);
+
+        // 3. Verify index relation_id remapping:
+        // Rel0_idx was bound to old relation 0 (REVIEWS), which is now relation 1
+        let idx0 = reader
+            .index_entries()
+            .iter()
+            .find(|i| i.name == "Rel0_idx")
+            .unwrap();
+        assert_eq!(idx0.relation_id, 1);
+
+        // Rel1_idx was bound to old relation 1 (PURCHASED), which is now relation 0
+        let idx1 = reader
+            .index_entries()
+            .iter()
+            .find(|i| i.name == "Rel1_idx")
+            .unwrap();
+        assert_eq!(idx1.relation_id, 0);
+    }
+
+    #[test]
+    fn test_domain_node_attribute_collision_fix() {
+        let mut writer = SnapshotWriter::new("__unused_collision.imps");
+        writer.add_domain(0, KeyType::Int32, "User");
+        writer.set_domain_node_count(0, 3);
+        writer.add_domain(1, KeyType::Int32, "Item");
+        writer.set_domain_node_count(1, 5);
+
+        // Create an edge relation FIRST: User -> Item (src_domain_id = 0)
+        writer.add_relation(0, 1, 3, 2, vec![0, 1, 2, 2], vec![0, 1]);
+        writer.set_relation_name(0, "PURCHASED");
+        writer.add_attribute_to_relation(
+            0,
+            "weight",
+            BaseDataType::Float32 as u8,
+            1,
+            vec![0u8; 8], // 2 edges * 4B
+            None,
+        );
+
+        // Now add a domain node attribute to Domain 0 (User)
+        let mut age_bytes = Vec::new();
+        age_bytes.extend_from_slice(&25i32.to_ne_bytes());
+        age_bytes.extend_from_slice(&30i32.to_ne_bytes());
+        age_bytes.extend_from_slice(&35i32.to_ne_bytes());
+
+        writer.add_attribute_to_domain(0, "age", BaseDataType::Int32 as u8, 1, age_bytes, None);
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+
+        // Relation PURCHASED must NOT have "age"
+        let purchased = reader
+            .relations()
+            .iter()
+            .find(|r| r.name == "PURCHASED")
+            .unwrap();
+        assert_eq!(purchased.attributes.len(), 1);
+        assert_eq!(purchased.attributes[0].name, "weight");
+
+        // Dedicated node relation "User_nodes" must exist and hold "age"
+        let user_nodes = reader
+            .relations()
+            .iter()
+            .find(|r| r.name == "User_nodes")
+            .unwrap();
+        assert_eq!(user_nodes.src_domain_id, 0);
+        assert_eq!(user_nodes.tgt_domain_id, 0);
+        assert_eq!(user_nodes.attributes.len(), 1);
+        assert_eq!(user_nodes.attributes[0].name, "age");
+
+        // Reader get_domain_attribute_data must successfully retrieve "age"
+        let read_age = reader.get_domain_attribute_data(0, "age").unwrap();
+        assert_eq!(read_age.len(), 12);
+        let val0 = i32::from_ne_bytes(read_age[0..4].try_into().unwrap());
+        assert_eq!(val0, 25);
+    }
+
+    #[test]
+    fn test_vamana_candidate_capping_and_cosine_speed_recall() {
+        let n = 128usize;
+        let dim = 32usize;
+        let mut vectors = vec![0.0f32; n * dim];
+        for u in 0..n {
+            let cluster = (u % 8) as usize;
+            let mut norm = 0.0f32;
+            for d in 0..dim {
+                let base = if d / 4 == cluster { 1.5f32 } else { -0.2f32 };
+                let jitter = (((u * 37 + d * 13) % 23) as f32 - 11.0) * 0.03;
+                let v = base + jitter;
+                vectors[u * dim + d] = v;
+                norm += v * v;
+            }
+            norm = norm.sqrt().max(1e-6);
+            for d in 0..dim {
+                vectors[u * dim + d] /= norm;
+            }
+        }
+
+        let cfg = VamanaBuildConfig {
+            max_degree_r: 16,
+            ef_construction: 32,
+            alpha: 1.2,
+            metric: VamanaMetric::Cosine,
+            quant_type: VamanaQuantType::Bq1,
+            seed: 999,
+        };
+
+        // Measure build time and ensure candidate capping keeps build fast and accurate
+        let start_time = std::time::Instant::now();
+        let built =
+            vamana::build_vamana_index_with_threads(0, 0, &vectors, n, dim, &cfg, 2).unwrap();
+        let build_dur = start_time.elapsed();
+        assert!(
+            build_dur.as_secs() < 5,
+            "Vamana build took too long: {:?}",
+            build_dur
+        );
+
+        let mut scratch = vamana::VamanaSearchScratch::new();
+        let q = &vectors[7 * dim..8 * dim];
+        let res = vamana::vamana_ann_search_with_scratch(
+            &built.header,
+            &built.adj_slab,
+            Some(&built.quant_slab),
+            &vectors,
+            q,
+            5,
+            32,
+            &mut scratch,
+        )
+        .unwrap();
+
+        assert_eq!(res.len(), 5);
+        let exact = vamana::brute_force_ann_search(VamanaMetric::Cosine, &vectors, n, dim, q, 5);
+        let (_r1, rk, _ndcg, _mrr) = vamana::evaluate_ann_quality(&res, &exact, 5);
+        assert!(rk >= 0.8, "Recall@5 {} must be >= 0.8", rk);
+        assert_eq!(res[0].0, 7);
     }
 }

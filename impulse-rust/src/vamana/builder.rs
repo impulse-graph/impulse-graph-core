@@ -115,7 +115,6 @@ impl BuildWorkerScratch {
             m_idx,
         );
         self.beam.push((medoid_node_id, m_score, m_dist, false));
-        self.visited_list.push((medoid_node_id, m_score, m_dist));
 
         let mut first_unexpanded = 0usize;
         loop {
@@ -130,7 +129,8 @@ impl BuildWorkerScratch {
             self.beam[pos].3 = true;
             first_unexpanded = pos + 1;
 
-            let (u_id, _u_score, _u_dist, _) = self.beam[pos];
+            let (u_id, u_score, u_dist, _) = self.beam[pos];
+            self.visited_list.push((u_id, u_score, u_dist));
             let u = u_id as usize;
 
             for &nb in adj_graph[u].iter().take(r) {
@@ -147,9 +147,6 @@ impl BuildWorkerScratch {
                         nb_idx,
                     );
                     let cand_key = (nb, s, d);
-                    if max_prune_cands > l_build {
-                        self.visited_list.push(cand_key);
-                    }
 
                     if self.beam.len() == l_build {
                         let last = &self.beam[l_build - 1];
@@ -158,9 +155,6 @@ impl BuildWorkerScratch {
                         }
                     }
 
-                    if max_prune_cands <= l_build {
-                        self.visited_list.push(cand_key);
-                    }
                     let ins = self
                         .beam
                         .binary_search_by(|probe| {
@@ -177,6 +171,14 @@ impl BuildWorkerScratch {
                         }
                     }
                 }
+            }
+        }
+
+        // Per DiskANN Algorithm 1, pass expanded vertices plus closest unexpanded beam vertices
+        // (<= 2 * l_build) to robust_prune, avoiding hundreds of unexpanded fringe vertices.
+        for &(b_id, b_score, b_dist, expanded) in &self.beam {
+            if !expanded {
+                self.visited_list.push((b_id, b_score, b_dist));
             }
         }
 
@@ -253,7 +255,15 @@ pub fn build_vamana_index(
     dimension: usize,
     cfg: &VamanaBuildConfig,
 ) -> Result<BuiltVamanaIndex, String> {
-    build_vamana_index_with_threads(domain_id, vec_attr_id, vectors, node_count, dimension, cfg, 0)
+    build_vamana_index_with_threads(
+        domain_id,
+        vec_attr_id,
+        vectors,
+        node_count,
+        dimension,
+        cfg,
+        0,
+    )
 }
 
 /// Builds a Vamana (`IMP_INDEX_VAMANA_ANN = 8`) index using `num_threads` worker threads
@@ -322,7 +332,7 @@ pub fn build_vamana_index_with_threads(
     let mut centroid = vec![0.0f32; dimension];
     if node_count > 0 {
         for u in 0..node_count {
-            let v = &vectors[u * dimension..(u + 1) * dimension];
+            let v = &work_vectors[u * dimension..(u + 1) * dimension];
             for d in 0..dimension {
                 centroid[d] += v[d];
             }
@@ -333,11 +343,26 @@ pub fn build_vamana_index_with_threads(
         }
     }
 
+    if cfg.metric == VamanaMetric::Cosine {
+        let c_norm_sq = fast_dot_f32(&centroid, &centroid);
+        if c_norm_sq > 1e-12 {
+            let inv_c = 1.0 / c_norm_sq.sqrt();
+            for c in &mut centroid {
+                *c *= inv_c;
+            }
+        }
+    }
+
     let mut medoid_node_id = 0u32;
     let mut best_medoid_dist = f32::INFINITY;
     for u in 0..node_count {
-        let v = &vectors[u * dimension..(u + 1) * dimension];
-        let (_score, dist) = compute_vector_metric(cfg.metric, &centroid, v);
+        let v = &work_vectors[u * dimension..(u + 1) * dimension];
+        let (_score, dist) = if cfg.metric == VamanaMetric::Cosine {
+            let dot = fast_dot_f32(&centroid, v);
+            (dot, 1.0 - dot)
+        } else {
+            compute_vector_metric(cfg.metric, &centroid, v)
+        };
         if dist < best_medoid_dist {
             best_medoid_dist = dist;
             medoid_node_id = u as u32;
@@ -377,11 +402,7 @@ pub fn build_vamana_index_with_threads(
 
     // 4. Two-pass Vamana refinement (Pass 1: alpha = 1.0, Pass 2: alpha = cfg.alpha)
     if node_count > 1 {
-        let effective_threads = if num_threads > 0 {
-            num_threads
-        } else {
-            1
-        };
+        let effective_threads = if num_threads > 0 { num_threads } else { 1 };
 
         let mut scratch = BuildWorkerScratch::new(node_count, l_build, r);
         let mut pruned: Vec<(u32, f32, f32)> = Vec::with_capacity(r);
@@ -886,8 +907,8 @@ pub fn compute_vamana_bfs_order(hdr: &VamanaHeader, adj_slab: &[u8]) -> (Vec<u32
             new_to_old.push(u);
             let row_off = (u as usize) * row_stride;
             if row_off + 4 <= adj_slab.len() {
-                let deg = u32::from_le_bytes(adj_slab[row_off..row_off + 4].try_into().unwrap())
-                    as usize;
+                let deg =
+                    u32::from_le_bytes(adj_slab[row_off..row_off + 4].try_into().unwrap()) as usize;
                 let deg = deg.min(r);
                 for j in 0..deg {
                     let nb_off = row_off + (j + 1) * 4;
