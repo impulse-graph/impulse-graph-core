@@ -167,4 +167,26 @@ Adopt **Google CEL (Common Expression Language)** as the official, unified decla
 - [ ] Replace per-hop `std::collections::HashSet<u64>` allocations and `.sort_unstable()` in `Traversal::to_vec()` (`impulse-rust/src/traversal.rs:89-134`) with a reusable `u64` word bitset tracking `[min_word .. max_word]`.
 - [ ] Update `StepDirection::In` (`impulse-rust/src/traversal.rs:115-127`) to walk Section 6 CSC (`get_csc_col_offsets` / `get_csc_row_indices`) directly in $O(\sum_{v \in F} \text{deg}_{\text{in}}(v))$ instead of scanning all CSR rows in $O(V + E)$.
 
+---
+
+## 6. v1.0 Backlog: Full `impOps` Opcode Reachability (`166 / 166`) & Multi-Lane Frontier Splatting
+
+- [ ] **PR 1 (Tier 3) — Multi-Lane Frontier Splatting (`0xC0` Flags) & High-Level DSL/Fluent Algorithm Surface ([`impulse-graph-core#66`](https://github.com/impulse-graph/impulse-graph-core/issues/66))**:
+  - Implement `FLAG_LANE_SPLAT_BROADCAST` (`0x02`, $\forall u \in F: \text{lanes}[u] = \text{active\_mask}(k)$) and `FLAG_LANE_SPLAT_OFFSET` (`0x04`, batched diagonal splat from bit/element offset) on `OP_LANE_INIT_SEEDS` (`0xC0`) across C++, Java 25, and OCaml.
+  - Expose `Traversal::splatToLanes(k, broadcast)` and `MultiLaneBuilder::fromFrontier(traversal, k, broadcast)`.
+  - Expose graph analytics (`0x46`–`0x4B`, `0x62`–`0x6C`) and subroutine call frames (`0x55`–`0x58`) in `Traversal`, `ImpK`, and `ImpLog`.
+- [ ] **PR 2 (Tier 2) — Operator-Driven Hybrid CEL SIMD Vector Lowering & Full Edge Stream Shader Parity ([`impulse-graph-core#67`](https://github.com/impulse-graph/impulse-graph-core/issues/67))**:
+  - Implement **Option A (Operator-Driven Hybrid Dispatch)** in `ImpOpsBytecodeEmitter`: keep $O(|F|)$ `OP_NODE_FILTER` (`0x14`) / `OP_NODE_FILTER_STR_PREFIX` (`0x15`) for simple scalar equality, and lower range/inequality, compound boolean, two-column, math, null-coalescing, and ternary blend CEL predicates into `OP_LOAD_COLUMN_VECTOR` (`0x80`–`0x82`) + `OP_VEC_MATH_*` (`0x2D`–`0x2F`) + `OP_VEC_CMP_*` (`0x20`–`0x23`) + `OP_MASK_*` (`0x24`–`0x26`) + `OP_VEC_BLEND` (`0x27`).
+  - Expand C++ `emit_stream_expr` in `impulse_bytecode_emitter.cpp` to emit all 31 Edge Stream Shader opcodes (`0xA0`–`0xBF`).
+- [ ] **PR 3 (Tier 1) — Stage 1/2 Optimizer Physical Walk Variants & BRIN Zone Skipping ([`impulse-graph-core#68`](https://github.com/impulse-graph/impulse-graph-core/issues/68))**:
+  - Lower injective walks ($d_{\text{in}} \le 1$) to `OP_CSR_WALK_DIRECT_STORE` (`0x84`), `OP_CSC_WALK_DIRECT_STORE` (`0x87`), `OP_COO_WALK_DIRECT_STORE` (`0x8D`), and `OP_DENSE_WALK_DIRECT_STORE` (`0x95`).
+  - Bind physical walk layouts for `OP_COO_WALK*` (`0x86`, `0x8B`, `0x8C`, `0xA0`), `OP_DENSE_WALK*` (`0x8E`, `0x8F`, `0x94`), `OP_CSR_WALK_DENSE_STREAM` (`0x85`), `OP_CSR_WALK_STATE` (`0x0F`), `OP_CSR_WALK_REDUCE` (`0x17`), `OP_FRONTIER_DIFF` (`0x8A`), and `OP_BRIN_ZONE_SKIP` (`0x83`).
+- [ ] **PR 4 (Tier 4) — 100% `impOps` Opcode Reachability (`166 / 166`) & Automated Coverage Gate ([`impulse-graph-core#69`](https://github.com/impulse-graph/impulse-graph-core/issues/69))**:
+  - Add runtime capability probes (`0x19`–`0x1C`), scratch index/arena ops (`0x1E`–`0x1F`, `0x73`–`0x74`), concurrency (`0x75`), and mock attribute loaders (`0x0B`–`0x0C`) to `QueryBuilder` and `ImpScheme`.
+  - Add `test_opcode_emission_coverage.cpp` enforcing 166/166 opcode reachability in CI.
+- [ ] **Normative Specification, `.impas` Test Vectors & OCaml Reference Engine Parity ([`impulse-graph-spec#11`](https://github.com/impulse-graph/impulse-graph-spec/issues/11), [`impulse-graph-spec#12`](https://github.com/impulse-graph/impulse-graph-spec/issues/12))**:
+  - Update `docs/VM_SPECIFICATION.md` and `test-vectors/vm-impas/` for `OP_LANE_INIT_SEEDS` (`0xC0`) `FLAG_LANE_SPLAT_BROADCAST` (`0x02`) and `FLAG_LANE_SPLAT_OFFSET` (`0x04`).
+  - Implement OCaml Reference Engine parity in `impulse-ocaml` (`lib/vm_multilane.ml`, `lib/eval.ml`, `lib/expr.ml`, `lib/vm_coverage.ml`).
+
+
 

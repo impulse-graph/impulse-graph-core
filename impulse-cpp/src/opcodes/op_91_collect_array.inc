@@ -81,7 +81,24 @@ op_COLLECT_ARRAY: {
         }
     }
 
-    vm_state->registers[dst] = reinterpret_cast<uint64_t>(node_buf.data());
+    int h_dst = -1;
+    if (vm_state->register_types[dst] == TYPE_NODE_VECTOR) {
+        h_dst = static_cast<int>(vm_state->registers[dst]);
+    }
+    if (h_dst < 0 || static_cast<size_t>(h_dst) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->node_vectors_allocated[h_dst]) {
+        h_dst = acquire_node_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    size_t count = node_buf.size();
+    auto& target_vec = vm_state->query_context->node_vectors[h_dst];
+    if (count > target_vec.size()) target_vec.resize(count);
+    if (count > 0) {
+        std::memcpy(target_vec.data(), node_buf.data(), count * sizeof(uint64_t));
+    }
+    vm_state->query_context->node_vector_lengths[h_dst] = count;
+    vm_state->query_context->node_vector_length_explicit[h_dst] = true;
+
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
     if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
