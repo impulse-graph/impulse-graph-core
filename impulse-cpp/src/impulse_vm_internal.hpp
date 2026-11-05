@@ -162,6 +162,7 @@ struct BoundAttributeSlot {
 struct BoundValueMap {
     std::vector<const char*> keys;
     std::vector<float> values;
+    std::vector<std::array<char, 24>> fallback_keys;
 };
 
 // Maximum concurrent bitset and vector handles per VM query context
@@ -598,6 +599,15 @@ inline void bitset_add(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
         size_t word_idx = node_id / 64;
         size_t bit_idx = node_id % 64;
         bs.words[word_idx] |= (1ULL << bit_idx);
+    }
+}
+
+inline void bitset_remove(VmBitSet& bs, uint64_t node_id, size_t max_nodes) {
+    (void)max_nodes;
+    if (node_id < bs.word_count * 64) {
+        size_t word_idx = node_id / 64;
+        size_t bit_idx = node_id % 64;
+        bs.words[word_idx] &= ~(1ULL << bit_idx);
     }
 }
 

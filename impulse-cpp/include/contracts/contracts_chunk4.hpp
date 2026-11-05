@@ -85,9 +85,9 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COO_WALK_STREAM, "OP_COO_WALK_STREAM", "COO Walk Edge Stream",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
 
@@ -96,9 +96,9 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_CSR_WALK_STREAM, "OP_CSR_WALK_STREAM", "CSR Walk Edge Stream",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
 
@@ -107,9 +107,9 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_CSC_WALK_STREAM, "OP_CSC_WALK_STREAM", "CSC Walk Edge Stream",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
 

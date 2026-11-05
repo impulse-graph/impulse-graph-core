@@ -23,16 +23,33 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER));
 
     if (rel >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
 
+    bool src_is_lane = (vm_state->register_types[src] == TYPE_LANE_FRONTIER);
+
     auto& active_sources = vm_state->query_context->scratch_u32_a;
     active_sources.clear();
-    if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
+    if (src_is_lane) {
+        size_t h_src = static_cast<size_t>(vm_state->registers[src]);
+        if (h_src >= VM_MAX_LANE_FRONTIER_HANDLES || h_src >= vm_state->query_context->lane_frontiers_count) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& lf_src = vm_state->query_context->lane_frontiers[h_src];
+        for (size_t w = 0; w < lf_src.active_words.size(); ++w) {
+            uint64_t word = lf_src.active_words[w];
+            while (word) {
+                int bit = std::countr_zero(word);
+                uint64_t u = (w << 6) + bit;
+                word &= word - 1;
+                active_sources.push_back(static_cast<uint32_t>(u));
+            }
+        }
+    } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         active_sources.push_back(static_cast<uint32_t>(vm_state->registers[src]));
     } else if (vm_state->register_types[src] == TYPE_NODE_VECTOR || vm_state->register_types[src] == TYPE_UINT64_VECTOR) {
         const uint64_t* ptr = nullptr;
@@ -58,17 +75,49 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
 
-    int h_dst = -1;
-    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
-        h_dst = static_cast<int>(vm_state->registers[dst]);
-        vm_state->query_context->bitsets[h_dst].clear();
+    int h_dst_bs = -1;
+    int h_dst_lf = -1;
+    if (src_is_lane) {
+        size_t h_src = static_cast<size_t>(vm_state->registers[src]);
+        const auto& lf_src = vm_state->query_context->lane_frontiers[h_src];
+        size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, rel, lf_src.lanes.size());
+        h_dst_lf = acquire_lane_frontier(vm_state->query_context, n_nodes, lf_src.num_lanes);
+        if (h_dst_lf < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        auto& lf_dst = vm_state->query_context->lane_frontiers[h_dst_lf];
+        lf_dst.edge_trip_active_mask = lf_src.edge_trip_active_mask;
+        if (lf_src.edge_trip_active_mask != 0) {
+            for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
+                if (lf_src.edge_trip_active_mask & (1u << r)) {
+                    const auto& s_trip = lf_src.edge_trip_masks[r];
+                    auto& d_trip = lf_dst.edge_trip_masks[r];
+                    d_trip.clear();
+                    d_trip.resize(s_trip.size(), 0ULL);
+                    if (!s_trip.empty()) {
+                        std::memcpy(d_trip.data(), s_trip.data(), s_trip.size() * sizeof(uint64_t));
+                    }
+                }
+            }
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(h_dst_lf);
+        vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
     } else {
-        h_dst = acquire_bitset(vm_state->query_context);
-        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
-        vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+        if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
+            h_dst_bs = static_cast<int>(vm_state->registers[dst]);
+            vm_state->query_context->bitsets[h_dst_bs].clear();
+        } else {
+            h_dst_bs = acquire_bitset(vm_state->query_context);
+            if (h_dst_bs < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            vm_state->registers[dst] = static_cast<uint64_t>(h_dst_bs);
+            vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+        }
     }
-    auto& bs_dst = vm_state->query_context->bitsets[h_dst];
+
+    size_t h_src_lf = src_is_lane ? static_cast<size_t>(vm_state->registers[src]) : 0;
+    const auto* lf_src_ptr = src_is_lane ? &vm_state->query_context->lane_frontiers[h_src_lf] : nullptr;
+    auto* lf_dst_ptr = src_is_lane ? &vm_state->query_context->lane_frontiers[h_dst_lf] : nullptr;
+    auto* bs_dst_ptr = !src_is_lane ? &vm_state->query_context->bitsets[h_dst_bs] : nullptr;
+    const std::vector<uint64_t>* trip_ptr = (src_is_lane && lf_dst_ptr && rel < VM_MAX_REL_SLOTS && (lf_dst_ptr->edge_trip_active_mask & (1u << rel)) != 0)
+        ? &lf_dst_ptr->edge_trip_masks[rel] : nullptr;
 
     bool isCsc = (walk_op == OP_CSC_WALK_STREAM);
     uint64_t walk_node_bound = isCsc
@@ -81,6 +130,9 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
     reduced_reg_masks.resize(mask_cap, 0ULL);
     for (uint32_t u : active_sources) {
         if (u >= walk_node_bound) continue;
+        uint64_t u_lane_mask = src_is_lane ? (lf_src_ptr->lanes[u] & lf_src_ptr->active_mask) : 0ULL;
+        if (src_is_lane && u_lane_mask == 0ULL) continue;
+
         uint64_t start = isCsc ? slot.get_csc_offset(u) : slot.get_csr_offset(u);
         uint64_t end = isCsc ? slot.get_csc_offset(u + 1) : slot.get_csr_offset(u + 1);
 
@@ -88,6 +140,10 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
             uint32_t neighbor = isCsc ? static_cast<uint32_t>(slot.get_csc_target(eIdx)) : static_cast<uint32_t>(slot.get_csr_target(eIdx));
             uint32_t actualSource = isCsc ? neighbor : u;
             uint32_t actualTarget = isCsc ? u : neighbor;
+
+            uint64_t trip = (trip_ptr && eIdx < trip_ptr->size()) ? (*trip_ptr)[eIdx] : 0ULL;
+            uint64_t prop_mask = u_lane_mask & ~trip;
+            if (src_is_lane && prop_mask == 0ULL) continue;
 
             float s_regs[16] = {0.0f};
             bool abort = false;
@@ -148,14 +204,27 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
                 mutPc++;
             }
             if (!abort) {
-                bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
+                if (src_is_lane) {
+                    if (actualTarget < lf_dst_ptr->lanes.size()) {
+                        lf_dst_ptr->lanes[actualTarget] |= prop_mask;
+                        lf_dst_ptr->active_words[actualTarget >> 6] |= (1ULL << (actualTarget & 63));
+                    }
+                } else {
+                    bitset_add(*bs_dst_ptr, actualTarget, vm_state->query_context->max_nodes);
+                }
             }
         }
     }
 
     bool is_empty = true;
-    for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+    if (src_is_lane) {
+        for (size_t i = 0; i < lf_dst_ptr->active_words.size(); ++i) {
+            if (lf_dst_ptr->active_words[i] != 0ULL) { is_empty = false; break; }
+        }
+    } else {
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            if (bs_dst_ptr->words[i] != 0) { is_empty = false; break; }
+        }
     }
     if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
     else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;

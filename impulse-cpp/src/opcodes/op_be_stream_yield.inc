@@ -34,6 +34,13 @@
  */
 #endif
                     case OP_STREAM_YIELD: {
-                        bitset_add(bs_dst, actualTarget, vm_state->query_context->max_nodes);
+                        if (src_is_lane) {
+                            if (actualTarget < lf_dst_ptr->lanes.size()) {
+                                lf_dst_ptr->lanes[actualTarget] |= prop_mask;
+                                lf_dst_ptr->active_words[actualTarget >> 6] |= (1ULL << (actualTarget & 63));
+                            }
+                        } else {
+                            bitset_add(*bs_dst_ptr, actualTarget, vm_state->query_context->max_nodes);
+                        }
                         break;
                     }

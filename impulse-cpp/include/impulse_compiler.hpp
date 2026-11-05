@@ -600,12 +600,16 @@ private:
                 ctx.instructions.push_back(seed_inst);
             }
             impulse_instruction_t inst{};
-            inst.opcode = (w->direction == WalkDirection::FORWARD_CSR) ? OP_CSR_WALK : OP_CSC_WALK;
-            if (w->is_adaptive) {
-                inst.opcode = OP_ADAPTIVE_WALK;
-            } else if (w->predicate) {
-                inst.opcode = OP_CSR_WALK;
+            bool is_stream = !w->shader_steps.empty();
+            uint8_t opcode = (w->direction == WalkDirection::FORWARD_CSR)
+                ? (is_stream ? OP_CSR_WALK_STREAM : OP_CSR_WALK)
+                : (is_stream ? OP_CSC_WALK_STREAM : OP_CSC_WALK);
+            if (w->is_adaptive && !is_stream) {
+                opcode = OP_ADAPTIVE_WALK;
+            } else if (w->predicate && !is_stream) {
+                opcode = OP_CSR_WALK;
             }
+            inst.opcode = opcode;
             // For now, assume it modifies R2 (frontier) and reads from R2, or reads from env
             inst.dst_reg = w->dst_reg; // Default
             if (ctx.env.count("frontier")) {
@@ -621,7 +625,56 @@ private:
             if (options.enable_early_exit && !ctx.env.count("frontier") && !w->inlined_seed) {
                 inst.flags |= IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY;
             }
-            ctx.instructions.push_back(inst);
+
+            if (is_stream) {
+                size_t walk_idx = ctx.instructions.size();
+                ctx.instructions.push_back(inst);
+
+                impulse_instruction_t begin{};
+                begin.opcode = OP_STREAM_FUNC_BEGIN;
+                ctx.instructions.push_back(begin);
+
+                int shader_pc_start = static_cast<int>(ctx.instructions.size());
+                ctx.instructions[walk_idx].flags = static_cast<uint8_t>(shader_pc_start);
+
+                int next_sreg = 0;
+                for (const auto& sstep : w->shader_steps) {
+                    if (sstep->kind() == NodeKind::STREAM_FILTER) {
+                        int reg = next_sreg++;
+                        impulse_instruction_t s_load{};
+                        s_load.opcode = OP_STREAM_LOAD_SRC_ID;
+                        s_load.dst_reg = static_cast<uint16_t>(reg);
+                        ctx.instructions.push_back(s_load);
+
+                        impulse_instruction_t s_filt{};
+                        s_filt.opcode = OP_STREAM_FILTER;
+                        s_filt.dst_reg = static_cast<uint16_t>(reg);
+                        ctx.instructions.push_back(s_filt);
+                    } else if (sstep->kind() == NodeKind::STREAM_PROJECT) {
+                        int reg = next_sreg++;
+                        impulse_instruction_t s_load{};
+                        s_load.opcode = OP_STREAM_LOAD_SRC;
+                        s_load.dst_reg = static_cast<uint16_t>(reg);
+                        ctx.instructions.push_back(s_load);
+
+                        impulse_instruction_t s_proj{};
+                        s_proj.opcode = OP_STREAM_SCATTER_REDUCE;
+                        s_proj.dst_reg = static_cast<uint16_t>(reg);
+                        s_proj.payload = (5 & 0xFFFF) | ((0 & 0xFF) << 16);
+                        ctx.instructions.push_back(s_proj);
+                    }
+                }
+
+                impulse_instruction_t yield_inst{};
+                yield_inst.opcode = OP_STREAM_YIELD;
+                ctx.instructions.push_back(yield_inst);
+
+                impulse_instruction_t end_inst{};
+                end_inst.opcode = OP_STREAM_FUNC_END;
+                ctx.instructions.push_back(end_inst);
+            } else {
+                ctx.instructions.push_back(inst);
+            }
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::WALK_2HOP) {
             auto w2 = std::static_pointer_cast<ScmWalk2Hop>(step);
@@ -649,12 +702,26 @@ private:
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::COLLECT) {
             auto c = std::static_pointer_cast<ScmCollect>(step);
-            impulse_instruction_t inst{};
-            inst.opcode = OP_COLLECT_BITSET;
-            inst.dst_reg = ctx.result_reg;
-            inst.payload = ctx.result_reg;
-            inst.flags = 0;
-            ctx.instructions.push_back(inst);
+            if (c->mode == ScmCollect::Mode::NONE) {
+                // Preserve register, do not emit collect opcode
+            } else {
+                impulse_instruction_t inst{};
+                if (c->mode == ScmCollect::Mode::BITSET) {
+                    inst.opcode = OP_COLLECT_BITSET; // 0x90
+                } else if (c->mode == ScmCollect::Mode::ARRAY || c->mode == ScmCollect::Mode::VECTOR || c->mode == ScmCollect::Mode::LIST) {
+                    inst.opcode = OP_COLLECT_ARRAY;  // 0x91
+                } else if (c->mode == ScmCollect::Mode::COUNT) {
+                    inst.opcode = OP_SET_CARDINALITY; // 0x33
+                } else if (c->mode == ScmCollect::Mode::VALUE_MAP) {
+                    inst.opcode = OP_COLLECT_VALUE_MAP; // 0x93
+                } else {
+                    inst.opcode = OP_COLLECT_BITSET;
+                }
+                inst.dst_reg = ctx.result_reg;
+                inst.payload = ctx.result_reg;
+                inst.flags = 0;
+                ctx.instructions.push_back(inst);
+            }
         } else if (step->kind() == NodeKind::LET) {
             auto let = std::static_pointer_cast<ScmLet>(step);
             for (size_t i = 0; i < let->vars.size(); ++i) {
@@ -840,11 +907,26 @@ private:
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::REDUCE) {
+            auto red = std::static_pointer_cast<ScmReduce>(step);
+            uint8_t opcode = OP_REDUCE;
+            if (red->op_val == ScmReduce::Op::SUM || red->op_val == ScmReduce::Op::COUNT) {
+                opcode = OP_VECTOR_REDUCE_SUM;
+            }
+            int op_id = 0;
+            switch (red->op_val) {
+                case ScmReduce::Op::SUM:
+                case ScmReduce::Op::COUNT: op_id = BINARY_OP_ADD; break;
+                case ScmReduce::Op::MIN: op_id = BINARY_OP_MIN; break;
+                case ScmReduce::Op::MAX: op_id = BINARY_OP_MAX; break;
+                case ScmReduce::Op::ARGMIN: op_id = BINARY_OP_ARGMIN; break;
+                case ScmReduce::Op::ARGMAX: op_id = BINARY_OP_ARGMAX; break;
+                case ScmReduce::Op::FIRST: op_id = 5; break;
+            }
+            uint32_t payload = (static_cast<uint32_t>(op_id) << 16) | (ctx.result_reg & 0xFFFF);
             impulse_instruction_t inst{};
-            inst.opcode = OP_COLLECT_ARRAY;
+            inst.opcode = opcode;
             inst.dst_reg = ctx.result_reg;
-            inst.payload = ctx.result_reg;
-            inst.flags = 0;
+            inst.payload = payload;
             ctx.instructions.push_back(inst);
         } else if (step->kind() == NodeKind::LANE_PRUNE_MASK) {
             auto n = std::static_pointer_cast<ScmLanePruneMask>(step);

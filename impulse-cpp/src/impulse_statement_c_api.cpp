@@ -577,6 +577,65 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
             stmt->columns.push_back(col);
             stmt->row_count = n_copy;
             stmt->total_bytes_written = n_copy * sizeof(float);
+        } else if (ctx && rtype == TYPE_VALUE_MAP) {
+            size_t sz = impulse_vm_context_value_map_size(ctx, static_cast<size_t>(rval));
+            size_t cap_f32 = avail_return_bytes / sizeof(float);
+            size_t n_copy = std::min(sz, cap_f32);
+            float* out_f32 = reinterpret_cast<float*>(return_area);
+            for (size_t i = 0; i < n_copy; ++i) {
+                out_f32[i] = impulse_vm_context_value_map_get_value(ctx, static_cast<size_t>(rval), i);
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_VALUE_MAP);
+            col.element_size = sizeof(float);
+            col.dimension = 1;
+            col.data_ptr = out_f32;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(float);
+        } else if (ctx && rtype == TYPE_DOUBLE_VECTOR) {
+            const double* ptr = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(rval));
+            size_t len = impulse_vm_context_double_vector_size(ctx, static_cast<size_t>(rval));
+            size_t cap_f64 = avail_return_bytes / sizeof(double);
+            size_t n_copy = std::min(len, cap_f64);
+            double* out_f64 = reinterpret_cast<double*>(return_area);
+            if (ptr && n_copy > 0) {
+                std::memcpy(out_f64, ptr, n_copy * sizeof(double));
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_DOUBLE_VECTOR);
+            col.element_size = sizeof(double);
+            col.dimension = 1;
+            col.data_ptr = out_f64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(double);
+        } else if (rtype == TYPE_INT64) {
+            int64_t* out_i64 = reinterpret_cast<int64_t*>(return_area);
+            size_t n_copy = (avail_return_bytes >= sizeof(int64_t)) ? 1 : 0;
+            if (n_copy > 0) {
+                *out_i64 = static_cast<int64_t>(rval);
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_INT64);
+            col.element_size = sizeof(int64_t);
+            col.dimension = 1;
+            col.data_ptr = out_i64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(int64_t);
+        } else if (rtype == TYPE_FLOAT64) {
+            double* out_f64 = reinterpret_cast<double*>(return_area);
+            size_t n_copy = (avail_return_bytes >= sizeof(double)) ? 1 : 0;
+            if (n_copy > 0) {
+                double val = 0.0;
+                std::memcpy(&val, &rval, sizeof(double));
+                *out_f64 = val;
+            }
+            col.type_code = static_cast<uint8_t>(TYPE_FLOAT64);
+            col.element_size = sizeof(double);
+            col.dimension = 1;
+            col.data_ptr = out_f64;
+            stmt->columns.push_back(col);
+            stmt->row_count = n_copy;
+            stmt->total_bytes_written = n_copy * sizeof(double);
         } else {
             uint64_t* result_words = reinterpret_cast<uint64_t*>(return_area);
             size_t n_words = std::min(stmt->words_per_bitset, avail_return_bytes / sizeof(uint64_t));

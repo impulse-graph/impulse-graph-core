@@ -396,6 +396,9 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->string_vectors_allocated[i] = false;
         ctx->value_maps[i].keys.reserve(vec_cap);
         ctx->value_maps[i].values.reserve(vec_cap);
+        if (snapshot) {
+            ctx->value_maps[i].fallback_keys.resize(vec_cap);
+        }
         ctx->value_maps_allocated[i] = false;
     }
 
@@ -603,6 +606,13 @@ const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* c
     return nullptr;
 }
 
+size_t impulse_vm_context_double_vector_size(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle]) {
+        return (ctx->double_vector_lengths[handle] > 0) ? ctx->double_vector_lengths[handle] : ctx->double_vectors[handle].size();
+    }
+    return 0;
+}
+
 int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx) {
     return acquire_bitset(ctx);
 }
@@ -614,6 +624,12 @@ void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle)
 void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id) {
     if (ctx && handle < VM_MAX_BITSET_HANDLES && ctx->bitset_allocated[handle]) {
         bitset_add(ctx->bitsets[handle], node_id, ctx->max_nodes);
+    }
+}
+
+void impulse_vm_context_bitset_remove(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id) {
+    if (ctx && handle < VM_MAX_BITSET_HANDLES && ctx->bitset_allocated[handle]) {
+        bitset_remove(ctx->bitsets[handle], node_id, ctx->max_nodes);
     }
 }
 

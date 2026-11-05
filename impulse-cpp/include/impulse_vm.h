@@ -300,6 +300,8 @@ typedef enum {
     TYPE_LANE_FRONTIER = 0x10
 } impulse_register_type_t;
 
+#define TYPE_FLOAT64 TYPE_DOUBLE
+
 /** @brief Hardware Bit-Sliced Lane Width Tiers */
 typedef enum {
     IMPULSE_LANE_WIDTH_8  = 8,
@@ -383,10 +385,13 @@ IMPULSE_API void impulse_vm_context_reset(impulse_vm_context_t* ctx);
 IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
 IMPULSE_API const uint64_t* impulse_vm_context_get_collected_nodes(const impulse_vm_context_t* ctx, size_t* out_count);
 IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_float_vector_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
+IMPULSE_API size_t impulse_vm_context_double_vector_size(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
+IMPULSE_API void impulse_vm_context_bitset_remove(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
 IMPULSE_API bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
 IMPULSE_API void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count);
 IMPULSE_API uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx);

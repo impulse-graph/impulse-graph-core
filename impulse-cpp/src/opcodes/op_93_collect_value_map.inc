@@ -78,6 +78,18 @@ op_COLLECT_VALUE_MAP: {
             }
         }
 
+        if (!str_ptr && vm_state->query_context->snapshot) {
+            const void* kbytes = nullptr;
+            size_t klen = 0;
+            if (impulse_snapshot_resolve_dense_id(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), &kbytes, &klen) == IMPULSE_OK &&
+                kbytes && klen > 0) {
+                str_ptr = static_cast<const char*>(kbytes);
+            } else if (vmap.keys.size() < vmap.fallback_keys.size()) {
+                char* buf = vmap.fallback_keys[vmap.keys.size()].data();
+                std::snprintf(buf, 24, "%llu", static_cast<unsigned long long>(u));
+                str_ptr = buf;
+            }
+        }
         if (str_ptr) {
             vmap.keys.push_back(str_ptr);
             vmap.values.push_back(val);

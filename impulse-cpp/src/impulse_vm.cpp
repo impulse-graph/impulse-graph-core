@@ -762,7 +762,9 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_CSC_WALK_STREAM:
             case OP_COO_WALK_STREAM:
                 if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
-                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                abstract_types[dst] = (abstract_types[pU16Low] == TYPE_LANE_FRONTIER)
+                    ? TYPE_LANE_FRONTIER
+                    : TYPE_BITSET_HANDLE;
                 break;
 
             case OP_FRONTIER_DIFF:
