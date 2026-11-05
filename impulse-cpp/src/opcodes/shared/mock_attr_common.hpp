@@ -17,15 +17,11 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
     uint16_t src_reg = inst.payload & 0xFF;
     uint16_t mask_reg = (inst.payload >> 8) & 0xFF;
     VALIDATE_REG(src_reg);
-    VALIDATE_REG(mask_reg);
 
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
-    if (!(src_reg == 0 && mask_reg == 0 && vm_state->register_types[0] == TYPE_NULL)) {
+    if (!(src_reg == 0 && (mask_reg == 0 || mask_reg >= 64) && vm_state->register_types[0] == TYPE_NULL)) {
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, IMP_TYPES_NUMERIC_VEC);
-    }
-    if (mask_reg != 0 && !(mask_reg == 63 && vm_state->register_types[63] == TYPE_NULL)) {
-        IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
     }
 
     {

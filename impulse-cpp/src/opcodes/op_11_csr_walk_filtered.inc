@@ -48,7 +48,7 @@ op_CSR_WALK_FILTERED: {
     VALIDATE_REG(filter_reg);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
-    IMPULSE_CHECK_REG_TYPE(vm_state, filter_reg, IMP_TYPE_BIT(TYPE_BITSET_HANDLE));
+    IMPULSE_CHECK_REG_TYPE(vm_state, filter_reg, (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL)));
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];
@@ -70,13 +70,31 @@ op_CSR_WALK_FILTERED: {
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
     
     const uint64_t* filter_words = nullptr;
+    uint64_t scalar_filter = ~0ULL;
+    bool has_filter = false;
     if (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE) {
         int h_filt = static_cast<int>(vm_state->registers[filter_reg]);
-        filter_words = vm_state->query_context->bitsets[h_filt].words;
+        if (h_filt >= 0 && static_cast<size_t>(h_filt) < VM_MAX_BITSET_HANDLES) {
+            filter_words = vm_state->query_context->bitsets[h_filt].words;
+            has_filter = true;
+        }
+    } else if (vm_state->register_types[filter_reg] == TYPE_NODE_ID || vm_state->register_types[filter_reg] == TYPE_INT64) {
+        scalar_filter = vm_state->registers[filter_reg];
+        has_filter = true;
     }
     uint64_t max_nodes = vm_state->query_context->max_nodes;
 
-    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr && filter_words) {
+    auto target_matches = [&](uint64_t target_node) -> bool {
+        if (filter_words) {
+            return (target_node < max_nodes && (filter_words[target_node / 64] & (1ULL << (target_node % 64))));
+        }
+        if (scalar_filter != ~0ULL) {
+            return target_node == scalar_filter;
+        }
+        return false;
+    };
+
+    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             #pragma omp parallel for schedule(dynamic, 64)
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -91,7 +109,7 @@ op_CSR_WALK_FILTERED: {
                             for (uint64_t idx = start; idx < end; ++idx) {
                                 uint64_t target_node = slot.get_csr_target(idx);
                                 if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
-                                    if (target_node < max_nodes && (filter_words[target_node / 64] & (1ULL << (target_node % 64)))) {
+                                    if (target_matches(target_node)) {
                                         bitset_add_atomic(bs_dst, target_node, max_nodes);
                                     }
                                 }
@@ -108,7 +126,7 @@ op_CSR_WALK_FILTERED: {
                 for (uint64_t idx = start; idx < end; ++idx) {
                     uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
-                        if (target_node < max_nodes && (filter_words[target_node / 64] & (1ULL << (target_node % 64)))) {
+                        if (target_matches(target_node)) {
                             bitset_add(bs_dst, target_node, max_nodes);
                         }
                     }

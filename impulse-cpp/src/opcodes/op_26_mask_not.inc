@@ -51,7 +51,9 @@ op_MASK_NOT: {
     size_t words = vm_state->query_context->words_per_bitset;
     size_t node_count = (!vm_state->query_context->slots.empty() && vm_state->query_context->slots[0].node_count > 0)
         ? std::max(vm_state->query_context->slots[0].node_count, vm_state->query_context->slots[0].csc_node_count)
-        : vm_state->query_context->max_nodes;
+        : ((vm_state->query_context->snapshot != nullptr && impulse_snapshot_max_node_count(vm_state->query_context->snapshot) > 0)
+            ? impulse_snapshot_max_node_count(vm_state->query_context->snapshot)
+            : 1024);
     size_t full_words = node_count / 64;
     size_t rem_bits = node_count % 64;
     bool is_empty = true;

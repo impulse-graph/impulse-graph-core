@@ -22,20 +22,9 @@
 // Opcode 0x60: OP_SAMPLE_NEIGHBORS
 op_SAMPLE_NEIGHBORS: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
+    VALIDATE_REG(inst.dst_reg);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_60_ALLOWED_SRC_TYPES);
-
-    int h = acquire_node_vector(vm_state->query_context);
-    if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    vm_state->registers[dst] = static_cast<uint64_t>(h);
-    vm_state->register_types[dst] = TYPE_NODE_VECTOR;
-    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-
+    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
     vm_state->pc++;
     DISPATCH();
 }

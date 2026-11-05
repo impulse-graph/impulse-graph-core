@@ -16,7 +16,7 @@
  *  - Modifies Destination: True
  */
 #define OP_92_DEFINED_FLAGS        0x00u
-#define OP_92_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
+#define OP_92_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_92_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_STRING_VECTOR))
 #endif
 
@@ -100,7 +100,7 @@ op_MAP_DENSE_TO_KEYS: {
                 if (u != ~0ULL && u < max_nodes) add_key(u);
             }
         }
-    } else {
+    } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         uint64_t u = vm_state->registers[src];
         if (u < max_nodes) add_key(u);
     }

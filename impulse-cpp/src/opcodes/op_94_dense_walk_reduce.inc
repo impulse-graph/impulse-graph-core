@@ -30,6 +30,7 @@ op_DENSE_WALK_REDUCE: {
         if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         vm_state->registers[dst] = static_cast<uint64_t>(h);
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        vm_state->query_context->float_vector_lengths[h] = 0;
     }
     vm_state->pc++;
     DISPATCH();

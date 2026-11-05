@@ -44,6 +44,26 @@ op_LANE_INIT_GROUPS: {
         (void)t_nodes;
         (void)t_groups;
 
+        if (t_nodes == TYPE_NULL) {
+            uint32_t num_lanes = std::max<uint32_t>(1u, std::min<uint32_t>(64u, (p_u16_high > 0) ? p_u16_high : 8u));
+            size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, 0, 64);
+            int h_lf = acquire_lane_frontier(vm_state->query_context, n_nodes, num_lanes);
+            if (h_lf < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            auto& lf = vm_state->query_context->lane_frontiers[h_lf];
+            if (n_nodes > 0) {
+                lf.lanes[0] = 1ULL & lf.active_mask;
+                if (lf.lanes[0] != 0ULL) {
+                    lf.active_words[0] |= 1ULL;
+                }
+            }
+            vm_state->registers[dst] = static_cast<uint64_t>(h_lf);
+            vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
+            if (lf.active_mask != 0ULL) vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            else vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+            vm_state->pc++;
+            DISPATCH();
+        }
+
         auto& pair_nodes = vm_state->query_context->scratch_u64_a;
         auto& pair_grps = vm_state->query_context->scratch_u32_a;
         pair_nodes.clear();
@@ -51,13 +71,9 @@ op_LANE_INIT_GROUPS: {
 
         const uint64_t* n_ptr = nullptr;
         size_t n_len = 0;
-        if (t_nodes == TYPE_NULL) {
-            pair_nodes.push_back(0ULL);
-            pair_grps.push_back(0u);
-        } else {
-            if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[nodes_reg], &n_ptr, &n_len)) {
-                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            }
+        if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[nodes_reg], &n_ptr, &n_len)) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
             if (nodes_reg != groups_reg && groups_reg > 0 && (t_groups == TYPE_NODE_VECTOR || t_groups == TYPE_UINT64_VECTOR)) {
                 const uint64_t* g_ptr = nullptr;
                 size_t g_len = 0;
@@ -80,7 +96,6 @@ op_LANE_INIT_GROUPS: {
                     pair_grps.push_back(grp);
                 }
             }
-        }
 
         size_t max_node = 0;
         int max_grp = -1;

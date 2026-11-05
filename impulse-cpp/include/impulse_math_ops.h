@@ -340,7 +340,7 @@ static inline float impulse_math_ternary_f32(uint8_t func_id, float x, float y, 
         case MATH_FUNC_LERP:     return x + z * (y - x);
         case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
         case MATH_FUNC_SAFE_DIV: return (y == 0.0f || isnan(y)) ? z : (x / y);
-        default:                 return x;
+        default:                 return fmaf(x, y, z);
     }
 }
 
@@ -352,7 +352,7 @@ static inline double impulse_math_ternary_f64(uint8_t func_id, double x, double 
         case MATH_FUNC_LERP:     return x + z * (y - x);
         case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
         case MATH_FUNC_SAFE_DIV: return (y == 0.0 || isnan(y)) ? z : (x / y);
-        default:                 return x;
+        default:                 return fma(x, y, z);
     }
 }
 

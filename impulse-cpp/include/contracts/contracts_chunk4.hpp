@@ -18,9 +18,9 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COLLECT_BITSET, "OP_COLLECT_BITSET", "Collect Active Bitset",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE,
+        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FRONTIER_STATE),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE,
+        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FRONTIER_STATE),
         false, false, 0, false, true
     });
 
@@ -29,7 +29,7 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COLLECT_ARRAY, "OP_COLLECT_ARRAY", "Collect Frontier into Array",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE,
+        IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FRONTIER_STATE),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_NODE_VECTOR),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -40,7 +40,7 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_MAP_DENSE_TO_KEYS, "OP_MAP_DENSE_TO_KEYS", "Map Dense IDs to String Keys",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_STRING_VECTOR),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -51,8 +51,8 @@ inline void append_chunk4_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COLLECT_VALUE_MAP, "OP_COLLECT_VALUE_MAP", "Collect Value Map from Nodes and Values",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
-        IMP_TYPES_FLOAT_OR_DBL, IMP_TYPES_NONE,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_VALUE_MAP),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });

@@ -38,7 +38,7 @@ op_NODE_FILTER_STR_PREFIX: {
     VALIDATE_REG(val_reg);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
-    IMPULSE_CHECK_REG_TYPE(vm_state, val_reg, IMP_TYPES_INT_OR_NODE);
+    IMPULSE_CHECK_REG_TYPE(vm_state, val_reg, (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL)));
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {

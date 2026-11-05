@@ -46,9 +46,6 @@ op_MOV: {
                         vm_state->query_context->words_per_bitset * sizeof(uint64_t));
         }
     } else {
-        if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
-            release_bitset(vm_state->query_context, static_cast<int>(vm_state->registers[dst]));
-        }
         vm_state->registers[dst] = vm_state->registers[src];
         vm_state->register_types[dst] = vm_state->register_types[src];
     }

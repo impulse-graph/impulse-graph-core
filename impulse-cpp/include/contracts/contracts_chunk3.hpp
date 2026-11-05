@@ -270,7 +270,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_BRIN_ZONE_SKIP, "OP_BRIN_ZONE_SKIP", "BRIN Zone Page Skipping Filter",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, false, true
     });
@@ -300,7 +300,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COO_WALK, "OP_COO_WALK", "COO Adjacency Matrix Traversal Walk",
         0x00, 0x00, 0x00, 0x00000000u, // rel 0
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -340,7 +340,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_FRONTIER_DIFF, "OP_FRONTIER_DIFF", "Frontier Bitset Difference (curr AND NOT prev)",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE,
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -350,8 +350,8 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COO_WALK_FILTERED, "OP_COO_WALK_FILTERED", "COO Filtered Traversal Walk",
         0x00, 0x00, 0x00, 0x00000000u, // rel 0
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -362,7 +362,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COO_WALK_REDUCE, "OP_COO_WALK_REDUCE", "COO Traversal with Degree Reduction",
         0x00, 0x00, 0x00, 0x00000000u, // rel 0
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT_VECTOR),
         false, false, 0, true, true
     });
@@ -372,7 +372,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_COO_WALK_DIRECT_STORE, "OP_COO_WALK_DIRECT_STORE", "COO Traversal Direct Store into Bitset",
         0x00, 0x00, 0x00, 0x00000000u, // rel 0
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });

@@ -18,8 +18,8 @@
  *  - Modifies Destination: True
  */
 #define OP_93_DEFINED_FLAGS        0x00u
-#define OP_93_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
-#define OP_93_ALLOWED_AUX1_TYPES   (IMP_TYPES_FLOAT_OR_DBL)
+#define OP_93_ALLOWED_SRC_TYPES    (IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_LANE_FRONTIER) | IMP_TYPE_BIT(TYPE_NULL))
+#define OP_93_ALLOWED_AUX1_TYPES   (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_93_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_VALUE_MAP))
 #endif
 
@@ -135,7 +135,7 @@ op_COLLECT_VALUE_MAP: {
                 if (u != ~0ULL && u < max_nodes) add_entry(u);
             }
         }
-    } else {
+    } else if (vm_state->register_types[nodes_reg] == TYPE_NODE_ID || vm_state->register_types[nodes_reg] == TYPE_INT64) {
         uint64_t u = vm_state->registers[nodes_reg];
         if (u < max_nodes) add_entry(u);
     }

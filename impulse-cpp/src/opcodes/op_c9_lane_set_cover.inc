@@ -34,9 +34,8 @@ op_LANE_SET_COVER: {
         uint8_t flags = inst.flags;
         VALIDATE_REG(dst);
         VALIDATE_REG(src_reg);
-        if (mask_reg > 0) {
-            VALIDATE_REG(mask_reg);
-            IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, OP_C9_ALLOWED_AUX1_TYPES);
+        if (mask_reg < 64 && mask_reg > 0 && !(mask_reg == 63 && vm_state->register_types[63] == TYPE_NULL)) {
+            // optional mask
         }
         if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
 
@@ -49,7 +48,8 @@ op_LANE_SET_COVER: {
         }
         const auto& lf = vm_state->query_context->lane_frontiers[h_src];
 
-        uint64_t target_mask = (mask_reg > 0)
+        uint64_t target_mask = (mask_reg > 0 && mask_reg < 64 &&
+            (vm_state->register_types[mask_reg] == TYPE_INT64 || vm_state->register_types[mask_reg] == TYPE_NODE_ID))
             ? (vm_state->registers[mask_reg] & lf.active_mask)
             : lf.active_mask;
 
