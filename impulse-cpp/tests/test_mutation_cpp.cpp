@@ -19,6 +19,10 @@
 #include <cstdio>
 #include <algorithm>
 
+#ifndef M_E
+#define M_E 2.71828182845904523536
+#endif
+
 static void reset_test_vm_context(impulse_vm_context_t*& ctx) {
     if (ctx) {
         impulse_vm_context_destroy(ctx);
