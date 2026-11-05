@@ -69,7 +69,7 @@ op_VXM: {
         mut_slot->csc_node_count = nc;
     }
 
-    size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
+    size_t csc_bound = (slot.node_count > 0) ? slot.node_count : slot.csc_node_count;
     size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
     size_t src_bound = (slot.node_count > 0) ? std::max<size_t>(N, slot.node_count) : vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
