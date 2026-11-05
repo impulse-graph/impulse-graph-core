@@ -16,8 +16,8 @@
 #ifndef OP_8B_CONTRACT_DEFINED
 #define OP_8B_CONTRACT_DEFINED
 #define OP_8B_DEFINED_FLAGS        0x00u
-#define OP_8B_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
-#define OP_8B_ALLOWED_AUX1_TYPES   (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_8B_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
+#define OP_8B_ALLOWED_AUX1_TYPES   (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_8B_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
 #endif
 
@@ -36,6 +36,7 @@ op_COO_WALK_FILTERED: {
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_8B_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, filter_reg, OP_8B_ALLOWED_AUX1_TYPES);
 
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL);
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     uint64_t scalar_src = vm_state->registers[src];
     const uint64_t* src_words = nullptr;
@@ -47,6 +48,7 @@ op_COO_WALK_FILTERED: {
         src_words = vm_state->query_context->bitsets[h].words;
     }
 
+    bool flt_is_null = (vm_state->register_types[filter_reg] == TYPE_NULL);
     bool flt_is_bitset = (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE);
     uint64_t scalar_flt = vm_state->registers[filter_reg];
     const uint64_t* flt_words = nullptr;
@@ -80,7 +82,7 @@ op_COO_WALK_FILTERED: {
                         uint64_t end = slot.get_csr_offset(u + 1);
                         for (uint64_t e = start; e < end; ++e) {
                             uint64_t v = slot.get_csr_target(e);
-                            bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (v == scalar_flt);
+                            bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (!flt_is_null && v == scalar_flt);
                             if (match) {
                                 #pragma omp atomic
                                 bs_dst.words[v >> 6] |= (1ULL << (v & 63));
@@ -88,12 +90,12 @@ op_COO_WALK_FILTERED: {
                         }
                     }
                 }
-            } else if (scalar_src < N) {
+            } else if (!src_is_null && scalar_src < N) {
                 uint64_t start = slot.get_csr_offset(scalar_src);
                 uint64_t end = slot.get_csr_offset(scalar_src + 1);
                 for (uint64_t e = start; e < end; ++e) {
                     uint64_t v = slot.get_csr_target(e);
-                    bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (v == scalar_flt);
+                    bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (!flt_is_null && v == scalar_flt);
                     if (match) {
                         bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
                     }

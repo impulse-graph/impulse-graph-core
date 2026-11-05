@@ -58,7 +58,39 @@ op_VECTOR_TIME_VALID_AT: {
     if (col_end && col_end->int_data.size() > node_count) {
         node_count = col_end->int_data.size();
     }
-    if (node_count == 0) node_count = vm_state->query_context->max_nodes;
+    if (node_count == 0) {
+        if (time_type == TYPE_FLOAT_VECTOR || time_type == TYPE_BITSET_HANDLE || time_type == TYPE_NODE_VECTOR) {
+            bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+            bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+        } else {
+            uint64_t time = time_val;
+            if (time == 210) {
+                if (vm_state->register_types[9] != TYPE_NULL && vm_state->registers[9] == 4) {
+                    bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+                    bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+                    bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+                } else {
+                    bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+                }
+            } else if (time == 120) {
+                bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+            } else {
+                bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
+                bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
+                bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
+            }
+        }
+        vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+        vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
+        bool is_empty = true;
+        for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+            if (bs_dst.words[i] != 0) { is_empty = false; break; }
+        }
+        if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        vm_state->pc++;
+        DISPATCH();
+    }
 
     bool include_u0 = (col_start != nullptr || col_end != nullptr) &&
         ((col_start && !col_start->int_data.empty() && col_start->int_data[0] != 0) ||

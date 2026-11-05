@@ -15,7 +15,7 @@
 #ifndef OP_8C_CONTRACT_DEFINED
 #define OP_8C_CONTRACT_DEFINED
 #define OP_8C_DEFINED_FLAGS        0x00u
-#define OP_8C_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_8C_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_8C_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
 #endif
 
@@ -31,6 +31,7 @@ op_COO_WALK_REDUCE: {
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_8C_ALLOWED_SRC_TYPES);
 
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL);
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     const VmBitSet* bs_src = nullptr;
     uint64_t scalar_src = vm_state->registers[src];
@@ -50,6 +51,9 @@ op_COO_WALK_REDUCE: {
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+    if (src_is_null) {
+        vm_state->query_context->float_vector_lengths[h_dst] = 0;
+    }
 
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
@@ -68,7 +72,7 @@ op_COO_WALK_REDUCE: {
                         }
                     }
                 }
-            } else {
+            } else if (!src_is_null) {
                 size_t u = static_cast<size_t>(scalar_src);
                 if (u < N) {
                     uint64_t start = slot.get_csr_offset(u);

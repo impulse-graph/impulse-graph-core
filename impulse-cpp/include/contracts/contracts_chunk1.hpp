@@ -216,7 +216,7 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         0x80, 0x00, 0x87, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
         IMP_TYPES_SOURCE_SET,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -250,7 +250,7 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         0x00, 0x00, 0x08, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
         IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -262,7 +262,7 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         0x00, 0x00, 0x08, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
         IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
-        IMP_TYPES_INT_OR_NODE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -381,8 +381,8 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VEC_CMP_EQ, "OP_VEC_CMP_EQ", "Vector Elementwise Compare Equal",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -393,8 +393,8 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VEC_CMP_GT, "OP_VEC_CMP_GT", "Vector Elementwise Compare Greater-Than",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -405,8 +405,8 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VEC_CMP_LT, "OP_VEC_CMP_LT", "Vector Elementwise Compare Less-Than",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -417,9 +417,9 @@ inline void append_chunk1_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VEC_CMP_BETWEEN, "OP_VEC_CMP_BETWEEN", "Vector Elementwise Compare Between Range",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::PAYLOAD_BYTE2,
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL),
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL),
-        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });

@@ -50,35 +50,32 @@ op_CSC_WALK_DIRECT_STORE: {
         bool has_csc = (slot.csc_offsets_ptr != nullptr || !slot.dynamic_csc_offsets.empty());
         if (has_csc) {
             size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
-            size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
             if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
-                uint64_t target_u = src_val;
-                #pragma omp parallel for schedule(static)
-                for (size_t v = 0; v < N; ++v) {
+                uint64_t v = src_val;
+                if (v < csc_bound) {
                     uint64_t start = slot.get_csc_offset(v);
                     uint64_t end = slot.get_csc_offset(v + 1);
                     for (uint64_t e = start; e < end; ++e) {
                         uint64_t u = slot.get_csc_target(e);
-                        if (u == target_u) {
-                            #pragma omp atomic
-                            bs_dst.words[v >> 6] |= (1ULL << (v & 63));
-                            break;
-                        }
+                        bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
                 }
             } else if (src_is_bitset) {
                 int h_src = static_cast<int>(src_val);
                 const auto& bs_src = vm_state->query_context->bitsets[h_src];
-                #pragma omp parallel for schedule(static)
-                for (size_t v = 0; v < N; ++v) {
-                    uint64_t start = slot.get_csc_offset(v);
-                    uint64_t end = slot.get_csc_offset(v + 1);
-                    for (uint64_t e = start; e < end; ++e) {
-                        uint64_t u = slot.get_csc_target(e);
-                        if (bs_src.test(u)) {
-                            #pragma omp atomic
-                            bs_dst.words[v >> 6] |= (1ULL << (v & 63));
-                            break;
+                for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                    uint64_t word = bs_src.words[w];
+                    while (word) {
+                        int bit = std::countr_zero(word);
+                        uint64_t v = w * 64 + bit;
+                        word &= word - 1;
+                        if (v < csc_bound) {
+                            uint64_t start = slot.get_csc_offset(v);
+                            uint64_t end = slot.get_csc_offset(v + 1);
+                            for (uint64_t e = start; e < end; ++e) {
+                                uint64_t u = slot.get_csc_target(e);
+                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                            }
                         }
                     }
                 }

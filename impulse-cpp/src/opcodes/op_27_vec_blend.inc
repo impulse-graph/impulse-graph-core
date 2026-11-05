@@ -23,9 +23,9 @@
  */
 #ifndef OP_27_CONTRACT_DEFINED
 #define OP_27_CONTRACT_DEFINED 1
-#define OP_27_ALLOWED_SRC_TYPES  (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
-#define OP_27_ALLOWED_AUX1_TYPES (IMP_TYPES_NUMERIC_VEC)
-#define OP_27_ALLOWED_AUX2_TYPES (IMP_TYPES_NUMERIC_VEC)
+#define OP_27_ALLOWED_SRC_TYPES  (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
+#define OP_27_ALLOWED_AUX1_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
+#define OP_27_ALLOWED_AUX2_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
 #endif
 
 // Opcode 0x27: OP_VEC_BLEND
@@ -44,17 +44,25 @@ op_VEC_BLEND: {
     IMPULSE_CHECK_REG_TYPE(vm_state, src_true, OP_27_ALLOWED_AUX1_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_false, OP_27_ALLOWED_AUX2_TYPES);
 
+    uint8_t type_true = vm_state->register_types[src_true];
+    if (type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR) {
+        // Scalar / non-vector operands: no-op per Java specification
+        vm_state->pc++;
+        DISPATCH();
+    }
+
     int h_mask = static_cast<int>(vm_state->registers[mask_reg]);
     int h_true = static_cast<int>(vm_state->registers[src_true]);
     int h_false = static_cast<int>(vm_state->registers[src_false]);
-    if (h_mask < 0 || h_mask >= static_cast<int>(vm_state->query_context->bitsets.size())) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
-    uint8_t type_true = vm_state->register_types[src_true];
-    const auto& mask_bs = vm_state->query_context->bitsets[h_mask];
+    bool has_mask = (vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE &&
+                     h_mask >= 0 && h_mask < static_cast<int>(vm_state->query_context->bitsets.size()));
     size_t N = vm_state->query_context->max_nodes;
 
     if (type_true == TYPE_DOUBLE_VECTOR) {
+        size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_true] : N;
+        size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_false] : N;
+        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : (len1 > 0 ? len1 : (len2 > 0 ? len2 : N));
+
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -62,13 +70,21 @@ op_VEC_BLEND: {
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
+        vm_state->query_context->double_vector_lengths[h_dst] = active_len;
         double* d = vm_state->query_context->double_vectors[h_dst].data();
-        const double* vt = vm_state->query_context->double_vectors[h_true].data();
-        const double* vf = vm_state->query_context->double_vectors[h_false].data();
-        for (size_t i = 0; i < N; ++i) {
-            d[i] = mask_bs.test(i) ? vt[i] : vf[i];
+        const double* vt = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_true].data() : nullptr;
+        const double* vf = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_false].data() : nullptr;
+        for (size_t i = 0; i < active_len; ++i) {
+            bool bit = has_mask && vm_state->query_context->bitsets[h_mask].test(i);
+            double val1 = (vt && i < len1) ? vt[i] : 0.0;
+            double val2 = (vf && i < len2) ? vf[i] : 0.0;
+            d[i] = bit ? val1 : val2;
         }
     } else {
+        size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_true] : N;
+        size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_false] : N;
+        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : (len1 > 0 ? len1 : (len2 > 0 ? len2 : N));
+
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -76,11 +92,15 @@ op_VEC_BLEND: {
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
+        vm_state->query_context->float_vector_lengths[h_dst] = active_len;
         float* d = vm_state->query_context->float_vectors[h_dst].data();
-        const float* vt = vm_state->query_context->float_vectors[h_true].data();
-        const float* vf = vm_state->query_context->float_vectors[h_false].data();
-        for (size_t i = 0; i < N; ++i) {
-            d[i] = mask_bs.test(i) ? vt[i] : vf[i];
+        const float* vt = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vectors[h_true].data() : nullptr;
+        const float* vf = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vectors[h_false].data() : nullptr;
+        for (size_t i = 0; i < active_len; ++i) {
+            bool bit = has_mask && vm_state->query_context->bitsets[h_mask].test(i);
+            float val1 = (vt && i < len1) ? vt[i] : 0.0f;
+            float val2 = (vf && i < len2) ? vf[i] : 0.0f;
+            d[i] = bit ? val1 : val2;
         }
     }
     vm_state->pc++;

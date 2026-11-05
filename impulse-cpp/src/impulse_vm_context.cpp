@@ -1059,7 +1059,6 @@ int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8
                 size_t handle = static_cast<size_t>(val);
                 if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->float_vectors_allocated[handle]) {
                     size_t len = ctx->float_vector_lengths[handle];
-                    if (len == 0) len = ctx->float_vectors[handle].size();
                     hs.write_u32_le(static_cast<uint32_t>(len));
                     const float* fvec = ctx->float_vectors[handle].data();
                     for (size_t j = 0; j < len; ++j) {
@@ -1074,7 +1073,6 @@ int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8
                 size_t handle = static_cast<size_t>(val);
                 if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->double_vectors_allocated[handle]) {
                     size_t len = ctx->double_vector_lengths[handle];
-                    if (len == 0) len = ctx->double_vectors[handle].size();
                     hs.write_u32_le(static_cast<uint32_t>(len));
                     const double* dvec = ctx->double_vectors[handle].data();
                     for (size_t j = 0; j < len; ++j) {
@@ -1090,7 +1088,6 @@ int impulse_vm_state_hash(const impulse_vm_state_t* state, int32_t status, uint8
                 size_t handle = static_cast<size_t>(val);
                 if (ctx && handle < VM_MAX_VECTOR_HANDLES && ctx->node_vectors_allocated[handle]) {
                     size_t len = ctx->node_vector_lengths[handle];
-                    if (len == 0) len = ctx->node_vectors[handle].size();
                     hs.write_u32_le(static_cast<uint32_t>(len));
                     const uint64_t* nvec = ctx->node_vectors[handle].data();
                     for (size_t j = 0; j < len; ++j) {
