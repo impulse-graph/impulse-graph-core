@@ -29,7 +29,7 @@ class SExprParser {
 
     void skip_whitespace() {
         while (pos < src.size()) {
-            if (std::isspace(src[pos])) {
+            if (std::isspace(static_cast<unsigned char>(src[pos]))) {
                 pos++;
             } else if (src[pos] == ';') {
                 while (pos < src.size() && src[pos] != '\n') pos++;
@@ -40,9 +40,14 @@ class SExprParser {
     }
 
 public:
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
     explicit SExprParser(std::string s) : src(std::move(s)) {}
 
-    SExpr parse() {
+    SExpr parse(size_t depth = 0) {
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("ImpScheme S-expression recursion depth exceeded limit 256");
+        }
         skip_whitespace();
         if (pos >= src.size()) return {};
 
@@ -58,7 +63,7 @@ public:
                     pos++;
                     break;
                 }
-                expr.list.push_back(parse());
+                expr.list.push_back(parse(depth + 1));
             }
             return expr;
         } else if (src[pos] == '"') {
@@ -71,7 +76,7 @@ public:
             return expr;
         } else {
             SExpr expr;
-            while (pos < src.size() && !std::isspace(src[pos]) && src[pos] != '(' && src[pos] != ')' && src[pos] != '[' && src[pos] != ']') {
+            while (pos < src.size() && !std::isspace(static_cast<unsigned char>(src[pos])) && src[pos] != '(' && src[pos] != ')' && src[pos] != '[' && src[pos] != ']') {
                 expr.atom += src[pos++];
             }
             return expr;
@@ -81,10 +86,15 @@ public:
 
 class ImpScmAstBuilder {
 public:
-        static AstPtr build(const SExpr& expr) {
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
+    static AstPtr build(const SExpr& expr, size_t depth = 0) {
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("ImpScheme AST builder recursion depth exceeded limit 256");
+        }
         if (!expr.is_list || expr.list.empty()) {
             if (!expr.is_list && !expr.atom.empty()) {
-                if (std::isdigit(expr.atom[0])) {
+                if (std::isdigit(static_cast<unsigned char>(expr.atom[0]))) {
                     auto lit = std::make_shared<ScmLiteral>();
                     lit->type = ScmLiteral::LitType::INT;
                     lit->int_val = std::stoll(expr.atom);
@@ -102,12 +112,12 @@ public:
             std::vector<AstPtr> steps;
             for (size_t i = 1; i < expr.list.size(); ++i) {
                 if (expr.list[i].is_list && !expr.list[i].list.empty() && expr.list[i].list[0].atom == "define-query") {
-                    return build(expr.list[i]);
+                    return build(expr.list[i], depth + 1);
                 }
                 if (expr.list[i].is_list && !expr.list[i].list.empty() && expr.list[i].list[0].atom == "define-kernel") {
                     continue;
                 }
-                auto step = build(expr.list[i]);
+                auto step = build(expr.list[i], depth + 1);
                 if (step) steps.push_back(step);
             }
             return std::make_shared<ScmProgram>(std::move(steps));
@@ -115,7 +125,7 @@ public:
             if (expr.list.size() > 2) {
                 std::vector<AstPtr> steps;
                 for (size_t i = 2; i < expr.list.size(); ++i) {
-                    auto step = build(expr.list[i]);
+                    auto step = build(expr.list[i], depth + 1);
                     if (step) steps.push_back(step);
                 }
                 return std::make_shared<ScmProgram>(std::move(steps));
@@ -127,21 +137,21 @@ public:
                 for (const auto& bind : bindings.list) {
                     if (bind.is_list && bind.list.size() == 2) {
                         let_node->vars.push_back(bind.list[0].atom);
-                        let_node->inits.push_back(build(bind.list[1]));
+                        let_node->inits.push_back(build(bind.list[1], depth + 1));
                     }
                 }
             }
             for (size_t i = 2; i < expr.list.size(); ++i) {
-                auto step = build(expr.list[i]);
+                auto step = build(expr.list[i], depth + 1);
                 if (step) let_node->body.push_back(step);
             }
             return let_node;
         } else if (head == "loop-while") {
             if (expr.list.size() > 1) {
                 auto loop_node = std::make_shared<ScmLoopWhile>();
-                loop_node->condition = build(expr.list[1]);
+                loop_node->condition = build(expr.list[1], depth + 1);
                 for (size_t i = 2; i < expr.list.size(); ++i) {
-                    auto step = build(expr.list[i]);
+                    auto step = build(expr.list[i], depth + 1);
                     if (step) loop_node->body.push_back(step);
                 }
                 return loop_node;
@@ -149,7 +159,7 @@ public:
         } else if (head == "set!" && expr.list.size() == 3) {
             auto set_node = std::make_shared<ScmSet>();
             set_node->var = expr.list[1].atom;
-            set_node->expr = build(expr.list[2]);
+            set_node->expr = build(expr.list[2], depth + 1);
             return set_node;
         } else if (head == "bitset:empty") {
             auto b = std::make_shared<ScmBitsetInit>();
@@ -171,7 +181,7 @@ public:
         } else if (head == ">" && expr.list.size() == 3) {
             // For (> (bitset:cardinality frontier) 0)
             // Just return the LHS cardinality node since our compiler currently handles this specifically
-            return build(expr.list[1]);
+            return build(expr.list[1], depth + 1);
         } else if (head == "csr-walk" || head == "g:walk-csr" || head == "mxv" || head == "pagerank-step" || head == "cc-afforest" || head == "ewise-add" || head == "ewise-mul" || head == "degree-norm") {
             std::string rel = "edge";
             for (size_t i = 1; i < expr.list.size(); ++i) {
@@ -198,13 +208,13 @@ public:
                 if (head == "set:difference") op->op = ScmSetOp::DIFFERENCE;
                 else if (head == "set:union") op->op = ScmSetOp::UNION;
                 else op->op = ScmSetOp::INTERSECT;
-                op->lhs = build(expr.list[1]);
-                op->rhs = build(expr.list[2]);
+                op->lhs = build(expr.list[1], depth + 1);
+                op->rhs = build(expr.list[2], depth + 1);
                 return op;
             }
         } else if (head == "return" && expr.list.size() == 2) {
             auto r = std::make_shared<ScmReturn>();
-            r->expr = build(expr.list[1]);
+            r->expr = build(expr.list[1], depth + 1);
             return r;
         } else if (head == "csr-walk-2hop" && expr.list.size() >= 3) {
             return std::make_shared<ScmWalk2Hop>(expr.list[1].atom, expr.list[2].atom);
@@ -276,7 +286,7 @@ public:
             for (size_t i = 2; i < expr.list.size(); ++i) {
                 if (expr.list[i].atom == ":csc") dir = WalkDirection::REVERSE_CSC;
                 else if (expr.list[i].is_list) {
-                    auto b = build(expr.list[i]);
+                    auto b = build(expr.list[i], depth + 1);
                     if (b) body.push_back(b);
                 }
             }

@@ -570,6 +570,31 @@ op_GAS_EXHAUSTED:
     return IMPULSE_VM_ERR_GAS_EXHAUSTED;
 }
 
+static inline impulse_vm_status_t classify_opcode(uint8_t op) {
+    if (op == OP_INIT_MOCK_NODE_ATTR || op == OP_INIT_MOCK_EDGE_ATTR) {
+        return IMPULSE_VM_OK;
+    }
+    if ((op >= 0x96 && op <= 0x9F) || op == 0xBF || op >= 0xCC) {
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
+    }
+    if (op == 0x0D || op == 0x28 || op == 0x29 || op == 0x2B || op == 0x2C ||
+        op == 0x3E || op == 0x3F || (op >= 0x4C && op <= 0x4F) ||
+        op == 0x59 || (op >= 0x5D && op <= 0x5F) ||
+        (op >= 0x6D && op <= 0x6F) || (op >= 0x76 && op <= 0x7F)) {
+        return IMPULSE_VM_ERR_RESERVED_OPCODE;
+    }
+    return IMPULSE_VM_OK;
+}
+
+static inline bool is_valid_node_source(uint8_t t) {
+    return t == TYPE_NULL || t == TYPE_INT64 || t == TYPE_NODE_ID ||
+           t == TYPE_BITSET_HANDLE || t == TYPE_NODE_VECTOR || t == TYPE_UINT64_VECTOR;
+}
+
+static inline bool is_valid_lane_frontier(uint8_t t) {
+    return t == TYPE_LANE_FRONTIER;
+}
+
 impulse_vm_status_t impulse_vm_validate(
     const impulse_instruction_t* bytecode,
     size_t instruction_count
@@ -583,9 +608,48 @@ impulse_vm_status_t impulse_vm_validate(
         const auto& inst = bytecode[pc];
         uint8_t opcode = inst.opcode;
         uint16_t dst = inst.dst_reg;
-        uint16_t src = inst.payload & 0xFFFF;
+        uint16_t pU16Low = inst.payload & 0xFFFF;
+        uint16_t pU16High = (inst.payload >> 16) & 0xFFFF;
+        uint8_t pU8_0 = inst.payload & 0xFF;
+        uint8_t pU8_1 = (inst.payload >> 8) & 0xFF;
+        uint8_t pU8_2 = (inst.payload >> 16) & 0xFF;
 
-        if (dst >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+        impulse_vm_status_t cls = classify_opcode(opcode);
+        if (cls != IMPULSE_VM_OK) return cls;
+
+        bool is_stream_sub = ((opcode >= 0xA1 && opcode <= 0xA8) || (opcode >= 0xAB && opcode <= 0xBE));
+        if (is_stream_sub) {
+            if (dst >= 16) return IMPULSE_VM_ERR_INVALID_REGISTER;
+            if ((opcode >= OP_STREAM_MATH_ADD && opcode <= OP_STREAM_MATH_DIV) ||
+                (opcode >= OP_STREAM_MATH_SUB && opcode <= OP_STREAM_MATH_MOD) ||
+                (opcode >= OP_STREAM_CMP_EQ && opcode <= OP_STREAM_LOGIC_OR) ||
+                opcode == OP_STREAM_SELECT) {
+                if (pU16Low >= 16 || pU16High >= 16) return IMPULSE_VM_ERR_INVALID_REGISTER;
+            } else if (opcode == OP_STREAM_MATH_UNARY || opcode == OP_STREAM_LOGIC_NOT) {
+                if (pU16Low >= 16) return IMPULSE_VM_ERR_INVALID_REGISTER;
+            } else if (opcode == OP_STREAM_REDUCE) {
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+            } else if (opcode == OP_STREAM_REDUCE_ARGMIN || opcode == OP_STREAM_REDUCE_ARGMAX) {
+                if (pU16Low >= 64 || pU16High >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+            }
+        } else {
+            if (dst >= 64 && opcode != OP_INIT_MOCK_GRAPH && opcode != OP_INIT_MOCK_NODE_ATTR && opcode != OP_INIT_MOCK_EDGE_ATTR) {
+                return IMPULSE_VM_ERR_INVALID_REGISTER;
+            }
+        }
+
+        if (opcode == OP_JMP || opcode == OP_JZ || opcode == OP_JNZ || opcode == OP_LOOP_DECR) {
+            int32_t offset = static_cast<int32_t>(inst.payload);
+            int64_t target_pc = static_cast<int64_t>(pc) + offset;
+            if (target_pc < 0 || target_pc >= static_cast<int64_t>(instruction_count)) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+        } else if (opcode == OP_CALL) {
+            uint32_t target_pc = inst.payload;
+            if (target_pc >= instruction_count) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+        }
 
         switch (opcode) {
             case OP_NOP:
@@ -594,8 +658,6 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_JZ:
             case OP_JNZ:
             case OP_LOOP_DECR:
-            case OP_STABLE_CHECK:
-            case OP_CALL:
             case OP_RET:
             case OP_THROW:
             case OP_ASSERT:
@@ -606,6 +668,41 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_ASSERT_SCRATCH_BYTES:
             case OP_CREATE_SCRATCH_INDEX:
             case OP_DROP_SCRATCH_INDEX:
+            case OP_CALL:
+            case OP_ENTER_FRAME:
+            case OP_LEAVE_FRAME:
+            case OP_STREAM_FUNC_BEGIN:
+            case OP_STREAM_FUNC_END:
+            case OP_STREAM_LOAD_SRC:
+            case OP_STREAM_LOAD_TGT:
+            case OP_STREAM_LOAD_EDGE:
+            case OP_STREAM_MATH_ADD:
+            case OP_STREAM_MATH_SUB:
+            case OP_STREAM_MATH_MUL:
+            case OP_STREAM_MATH_DIV:
+            case OP_STREAM_MATH_MOD:
+            case OP_STREAM_MATH_UNARY:
+            case OP_STREAM_CMP_EQ:
+            case OP_STREAM_CMP_NEQ:
+            case OP_STREAM_CMP_GT:
+            case OP_STREAM_CMP_LT:
+            case OP_STREAM_LOGIC_AND:
+            case OP_STREAM_LOGIC_OR:
+            case OP_STREAM_LOGIC_NOT:
+            case OP_STREAM_SELECT:
+            case OP_STREAM_FILTER:
+            case OP_STREAM_YIELD:
+            case OP_STREAM_REDUCE:
+            case OP_STREAM_REDUCE_ARGMIN:
+            case OP_STREAM_REDUCE_ARGMAX:
+            case OP_STREAM_LOAD_SRC_ID:
+            case OP_STREAM_LOAD_TGT_ID:
+            case OP_STREAM_LOAD_EDGE_ID:
+            case OP_STREAM_LOAD_CONST:
+                break;
+
+            case OP_STABLE_CHECK:
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
                 break;
 
             case OP_VECTOR_TIME_VALID_AT:
@@ -615,28 +712,47 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_INIT_INPUT_NODE:
                 abstract_types[dst] = TYPE_NODE_ID;
                 break;
+
             case OP_INIT_INPUT_SET:
+            case OP_LOAD_INLINE_SET:
             case OP_MAP_KEYS_TO_DENSE:
-            case OP_ADAPTIVE_WALK:
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
             case OP_CSR_WALK:
             case OP_CSR_WALK_FILTERED:
             case OP_CSC_WALK:
+            case OP_ADAPTIVE_WALK:
+                if (pU16Low >= 64 || !is_valid_node_source(abstract_types[pU16Low])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_CSR_DEGREE:
+            case OP_SET_CARDINALITY:
+                if (pU16Low >= 64 || !is_valid_node_source(abstract_types[pU16Low])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_INT64;
+                break;
+
             case OP_SET_UNION:
             case OP_SET_INTERSECT:
             case OP_SET_DIFFERENCE:
-            case OP_VEC_CMP_EQ:
-            case OP_VEC_CMP_GT:
-            case OP_VEC_CMP_LT:
-            case OP_VEC_CMP_BETWEEN:
-            case OP_MASK_AND:
-            case OP_MASK_OR:
-            case OP_MASK_NOT:
+                if (pU16Low >= 64 || pU16High >= 64 ||
+                    !is_valid_node_source(abstract_types[pU16Low]) ||
+                    !is_valid_node_source(abstract_types[pU16High])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
             case OP_CSR_WALK_DIRECT_STORE:
             case OP_CSR_WALK_DENSE_STREAM:
             case OP_COO_WALK:
             case OP_CSC_WALK_DIRECT_STORE:
             case OP_FIXPOINT_KLEENE_STAR:
-            case OP_FRONTIER_DIFF:
             case OP_COO_WALK_FILTERED:
             case OP_COO_WALK_DIRECT_STORE:
             case OP_DENSE_WALK:
@@ -645,21 +761,44 @@ impulse_vm_status_t impulse_vm_validate(
             case OP_CSR_WALK_STREAM:
             case OP_CSC_WALK_STREAM:
             case OP_COO_WALK_STREAM:
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_FRONTIER_DIFF:
+                if (pU16Low >= 64 || pU16High >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_VEC_CMP_EQ:
+            case OP_VEC_CMP_GT:
+            case OP_VEC_CMP_LT:
+            case OP_VEC_CMP_BETWEEN:
+            case OP_MASK_AND:
+            case OP_MASK_OR:
+                if (pU16Low >= 64 || pU16High >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+
+            case OP_MASK_NOT:
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
                 abstract_types[dst] = TYPE_BITSET_HANDLE;
                 break;
 
             case OP_LOAD_CONST_INT:
-            case OP_CSR_DEGREE:
-            case OP_SET_CARDINALITY:
             case OP_BRIN_ZONE_SKIP:
                 abstract_types[dst] = TYPE_INT64;
                 break;
 
             case OP_LOAD_CONST_FLOAT:
             case OP_VECTOR_REDUCE_SUM:
+                abstract_types[dst] = TYPE_FLOAT;
+                break;
+
             case OP_REDUCE: {
-                uint16_t reduce_op = (inst.payload >> 16) & 0xFFFF;
-                if (opcode == OP_REDUCE && (reduce_op == BINARY_OP_ARGMIN || reduce_op == BINARY_OP_ARGMAX)) {
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                uint16_t reduce_op = pU16High;
+                if (reduce_op == BINARY_OP_ARGMIN || reduce_op == BINARY_OP_ARGMAX) {
                     abstract_types[dst] = TYPE_NODE_ID;
                 } else {
                     abstract_types[dst] = TYPE_FLOAT;
@@ -668,24 +807,49 @@ impulse_vm_status_t impulse_vm_validate(
             }
 
             case OP_LOAD_INLINE_ARRAY:
-            case OP_VEC_MATH_UNARY:
-            case OP_VEC_MATH_BINARY:
-            case OP_VEC_MATH_TERNARY:
             case OP_LOAD_COLUMN_VECTOR:
             case OP_GATHER_NODE_ATTR:
             case OP_GATHER_EDGE_ATTR:
             case OP_COO_WALK_REDUCE:
             case OP_DENSE_WALK_REDUCE:
-            case OP_EWISE_ADD:
-            case OP_EWISE_MULT:
             case OP_MXV:
             case OP_VXM:
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
                 abstract_types[dst] = TYPE_FLOAT_VECTOR;
                 break;
 
-            case OP_MOV:
-                if (src < 64) abstract_types[dst] = abstract_types[src];
+            case OP_EWISE_ADD:
+            case OP_EWISE_MULT:
+            case OP_VEC_MATH_BINARY:
+                if (pU16Low >= 64 || pU16High >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_FLOAT_VECTOR;
                 break;
+
+            case OP_VEC_MATH_UNARY:
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_FLOAT_VECTOR;
+                break;
+
+            case OP_VEC_MATH_TERNARY:
+            case OP_VEC_BLEND:
+                if (pU8_0 >= 64 || pU8_1 >= 64 || pU8_2 >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = TYPE_FLOAT_VECTOR;
+                break;
+
+            case OP_MOV: {
+                uint16_t src = (pU16High != 0) ? pU16High : pU16Low;
+                if (src >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                abstract_types[dst] = abstract_types[src];
+                break;
+            }
+
+            case OP_SWAP_REG: {
+                if (pU16Low >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                uint8_t tmp = abstract_types[dst];
+                abstract_types[dst] = abstract_types[pU16Low];
+                abstract_types[pU16Low] = tmp;
+                break;
+            }
 
             case OP_CLEAR_REG:
                 abstract_types[dst] = TYPE_NULL;
@@ -693,23 +857,46 @@ impulse_vm_status_t impulse_vm_validate(
 
             case OP_LANE_INIT_SEEDS:
             case OP_LANE_INIT_GROUPS:
-            case OP_LANE_SET_EDGE_MASK:
-            case OP_LANE_CSR_WALK:
-            case OP_LANE_CSC_WALK:
-            case OP_LANE_PRUNE_MASK:
                 abstract_types[dst] = TYPE_LANE_FRONTIER;
                 break;
 
-            case OP_LANE_FILTER_QUORUM:
-                abstract_types[dst] = TYPE_BITSET_HANDLE;
+            case OP_LANE_SET_EDGE_MASK:
+            case OP_LANE_PRUNE_MASK:
+                if (pU8_0 >= 64 || !is_valid_lane_frontier(abstract_types[pU8_0])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_LANE_FRONTIER;
                 break;
 
+            case OP_LANE_CSR_WALK:
+            case OP_LANE_CSC_WALK:
+                if (pU16Low >= 64 || !is_valid_lane_frontier(abstract_types[pU16Low])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_LANE_FRONTIER;
+                break;
+
+            case OP_LANE_FILTER_QUORUM: {
+                uint16_t src = (inst.flags & 1) ? pU8_0 : pU16Low;
+                if (src >= 64 || !is_valid_lane_frontier(abstract_types[src])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                abstract_types[dst] = TYPE_BITSET_HANDLE;
+                break;
+            }
+
             case OP_LANE_REDUCE_AND:
+                if (pU16Low >= 64 || !is_valid_lane_frontier(abstract_types[pU16Low])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
                 abstract_types[dst] = TYPE_INT64;
                 break;
 
             case OP_LANE_REDUCE_ATTR: {
-                uint16_t red_op = (inst.payload >> 16) & 0xFFFF;
+                if (pU8_0 >= 64 || !is_valid_lane_frontier(abstract_types[pU8_0])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+                uint16_t red_op = pU16High;
                 abstract_types[dst] = (red_op == BINARY_OP_ARGMIN || red_op == BINARY_OP_ARGMAX)
                     ? TYPE_UINT64_VECTOR
                     : TYPE_FLOAT_VECTOR;
@@ -717,16 +904,30 @@ impulse_vm_status_t impulse_vm_validate(
             }
 
             case OP_LANE_SET_COVER:
+                if (pU8_0 >= 64 || !is_valid_lane_frontier(abstract_types[pU8_0])) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
                 abstract_types[dst] = TYPE_NODE_VECTOR;
                 break;
 
             case OP_VECTOR_ANN_SEARCH:
+                if (pU8_0 >= 64 || abstract_types[pU8_0] != TYPE_FLOAT_VECTOR) {
+                    return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
                 abstract_types[dst] = ((inst.flags & 0x01) != 0)
                     ? TYPE_LANE_FRONTIER
                     : TYPE_BITSET_HANDLE;
                 break;
 
             case OP_VECTOR_RERANK_DOT:
+                if (pU8_0 >= 64 || pU8_1 >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                {
+                    uint8_t t1 = abstract_types[pU8_0];
+                    uint8_t t2 = abstract_types[pU8_1];
+                    if ((t1 != TYPE_BITSET_HANDLE && t1 != TYPE_LANE_FRONTIER) || t2 != TYPE_FLOAT_VECTOR) {
+                        return IMPULSE_VM_ERR_INVALID_REGISTER;
+                    }
+                }
                 abstract_types[dst] = TYPE_FLOAT_VECTOR;
                 break;
 

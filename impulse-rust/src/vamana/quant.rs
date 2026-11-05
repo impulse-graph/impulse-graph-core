@@ -1,8 +1,8 @@
 //! Quantization codecs (`FP16`, `SQ8`, `BQ1`) and fused single-pass Stage-1 routing kernels.
 
+use super::fast_dot_f32;
 use crate::assert as imp_assert;
 use crate::spec::{VamanaHeader, VamanaMetric, VamanaQuantType};
-use super::fast_dot_f32;
 
 /// Decodes an IEEE-754 binary16 (FP16) 16-bit unsigned integer into `f32`.
 /// Fast branchless path handles normal and zero numbers; cold path handles subnormals and Inf/NaN.
@@ -30,7 +30,11 @@ pub fn f32_from_fp16(h: u16) -> f32 {
         let exp32 = (e + 127) as u32;
         (sign << 31) | (exp32 << 23) | (m << 13)
     } else {
-        let frac32 = if frac == 0 { 0 } else { 0x0040_0000 | (frac << 13) };
+        let frac32 = if frac == 0 {
+            0
+        } else {
+            0x0040_0000 | (frac << 13)
+        };
         (sign << 31) | (0xFF << 23) | frac32
     };
     f32::from_bits(bits)
@@ -79,7 +83,6 @@ pub fn fp16_from_f32(f: f32) -> u16 {
     }
 }
 
-
 /// Packs the sign bits (`v >= 0.0`) of `vec[0..dim]` into 64-bit little-endian words.
 #[inline]
 pub fn pack_bq1_query_words(vec: &[f32], dim: usize, out_words: &mut Vec<u64>) {
@@ -95,10 +98,15 @@ pub fn pack_bq1_query_words(vec: &[f32], dim: usize, out_words: &mut Vec<u64>) {
 
 /// Evaluates `BQ1` Hamming distance using 64-bit word XOR + hardware `POPCNT` (`u64::count_ones`).
 #[inline(always)]
-pub fn eval_bq1_words_row(quant_row: &[u8], query_words: &[u64], dim: usize, u: u32) -> (u32, f32, f32) {
+pub fn eval_bq1_words_row(
+    quant_row: &[u8],
+    query_words: &[u64],
+    dim: usize,
+    u: u32,
+) -> (u32, f32, f32) {
     let full_words = dim >> 6;
     let mut ham = 0u32;
-    for w in 0..full_words {
+    for (w, &q_word) in query_words.iter().enumerate().take(full_words) {
         let off = w * 8;
         let v_word = u64::from_le_bytes([
             quant_row[off],
@@ -110,7 +118,7 @@ pub fn eval_bq1_words_row(quant_row: &[u8], query_words: &[u64], dim: usize, u: 
             quant_row[off + 6],
             quant_row[off + 7],
         ]);
-        ham += (query_words[w] ^ v_word).count_ones();
+        ham += (q_word ^ v_word).count_ones();
     }
     let rem_bits = dim & 63;
     if rem_bits != 0 {
@@ -442,10 +450,10 @@ pub(crate) fn eval_fp16_row_fused(
         }
         VamanaMetric::Hamming => {
             let mut ham = 0u32;
-            for d in 0..dim {
+            for (d, &qv) in query_vec.iter().enumerate().take(dim) {
                 let off = d * 2;
                 let h16 = u16::from_le_bytes([row[off], row[off + 1]]);
-                let bq = query_vec[d] >= 0.0;
+                let bq = qv >= 0.0;
                 let bv = (h16 & 0x8000) == 0 || (h16 & 0x7FFF) == 0;
                 if bq != bv {
                     ham += 1;
@@ -481,7 +489,9 @@ pub fn eval_quantized_routing_node(
     let row = &quant_slab[row_off..row_off + row_bytes];
 
     match quant_type {
-        VamanaQuantType::None => Err("eval_quantized_routing_node called with QuantNone".to_string()),
+        VamanaQuantType::None => {
+            Err("eval_quantized_routing_node called with QuantNone".to_string())
+        }
         VamanaQuantType::Bq1 => {
             imp_assert::testcase(401, true);
             let mut q_words = Vec::with_capacity((dim + 63) >> 6);
@@ -492,7 +502,11 @@ pub fn eval_quantized_routing_node(
             imp_assert::testcase(402, true);
             let q_inv_norm = if metric == VamanaMetric::Cosine {
                 let nq = fast_dot_f32(&query_vec[..dim], &query_vec[..dim]);
-                if nq <= 1e-12 { 0.0 } else { 1.0 / nq.sqrt() }
+                if nq <= 1e-12 {
+                    0.0
+                } else {
+                    1.0 / nq.sqrt()
+                }
             } else {
                 1.0
             };
@@ -509,7 +523,11 @@ pub fn eval_quantized_routing_node(
             imp_assert::testcase(403, true);
             let q_inv_norm = if metric == VamanaMetric::Cosine {
                 let nq = fast_dot_f32(&query_vec[..dim], &query_vec[..dim]);
-                if nq <= 1e-12 { 0.0 } else { 1.0 / nq.sqrt() }
+                if nq <= 1e-12 {
+                    0.0
+                } else {
+                    1.0 / nq.sqrt()
+                }
             } else {
                 1.0
             };

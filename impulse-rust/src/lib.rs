@@ -319,7 +319,7 @@ mod tests {
         let dim = 16usize;
         let mut vectors = vec![0.0f32; n * dim];
         for u in 0..n {
-            let cluster = (u % 4) as usize;
+            let cluster = u % 4;
             let mut norm = 0.0f32;
             for d in 0..dim {
                 let base = if d / 4 == cluster { 1.0f32 } else { -0.1f32 };
@@ -708,7 +708,7 @@ mod tests {
         let dim = 32usize;
         let mut vectors = vec![0.0f32; n * dim];
         for u in 0..n {
-            let cluster = (u % 8) as usize;
+            let cluster = u % 8;
             let mut norm = 0.0f32;
             for d in 0..dim {
                 let base = if d / 4 == cluster { 1.5f32 } else { -0.2f32 };
@@ -775,7 +775,9 @@ mod tests {
 
         // 1. Add edge self-relation FIRST: Doc -> Doc (0 -> 0), with edges and edge attribute "weight" (dim = 1)
         // 5 edges: 0->1, 1->2, 2->3, 3->4, 4->0
-        let row_offsets = vec![0u32, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+        let row_offsets = vec![
+            0u32, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        ];
         let col_indices = vec![1u32, 2, 3, 4, 0];
         writer.add_relation(0, 0, n as u64, 5, row_offsets, col_indices);
         writer.set_relation_name(0, "CITES");
@@ -839,13 +841,21 @@ mod tests {
         // 4. Verify relations:
         // CITES should exist with 5 edges and 1 attribute ("weight", dim=1)
         // Doc_nodes should exist with 0 edges and 1 attribute ("embedding", dim=16)
-        let cites = reader.relations().iter().find(|r| r.name == "CITES").unwrap();
+        let cites = reader
+            .relations()
+            .iter()
+            .find(|r| r.name == "CITES")
+            .unwrap();
         assert_eq!(cites.edge_count, 5);
         assert_eq!(cites.attributes.len(), 1);
         assert_eq!(cites.attributes[0].name, "weight");
         assert_eq!(cites.attributes[0].dimension, 1);
 
-        let doc_nodes = reader.relations().iter().find(|r| r.name == "Doc_nodes").unwrap();
+        let doc_nodes = reader
+            .relations()
+            .iter()
+            .find(|r| r.name == "Doc_nodes")
+            .unwrap();
         assert_eq!(doc_nodes.edge_count, 0);
         assert_eq!(doc_nodes.attributes.len(), 1);
         assert_eq!(doc_nodes.attributes[0].name, "embedding");
@@ -870,9 +880,8 @@ mod tests {
         assert_eq!(slice_name.len(), n * dim);
 
         // (c) get_domain_float32_vectors with attr_index = Some(0):
-        let (nc_vecs, dim_vecs, vecs) = reader
-            .get_domain_float32_vectors(0, Some(0), None)
-            .unwrap();
+        let (nc_vecs, dim_vecs, vecs) =
+            reader.get_domain_float32_vectors(0, Some(0), None).unwrap();
         assert_eq!(nc_vecs, n);
         assert_eq!(dim_vecs, dim);
         assert_eq!(vecs.len(), n * dim);
@@ -887,6 +896,9 @@ mod tests {
         let q = &vectors[3 * dim..4 * dim];
         let results = reader.vamana_ann_search(entry, q, 3, 16).unwrap();
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].0, 3, "Exact query vector must match node 3 at rank 0");
+        assert_eq!(
+            results[0].0, 3,
+            "Exact query vector must match node 3 at rank 0"
+        );
     }
 }

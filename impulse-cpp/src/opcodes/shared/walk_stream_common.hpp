@@ -103,6 +103,15 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_walk_stream_common(
                 uint16_t sPayloadLow = sInst.payload & 0xFFFF;
                 uint16_t sPayloadHigh = (sInst.payload >> 16) & 0xFFFF;
 
+                if ((op >= OP_STREAM_MATH_ADD && op <= OP_STREAM_MATH_DIV) ||
+                    (op >= OP_STREAM_MATH_SUB && op <= OP_STREAM_MATH_MOD) ||
+                    (op >= OP_STREAM_CMP_EQ && op <= OP_STREAM_LOGIC_OR) ||
+                    op == OP_STREAM_SELECT) {
+                    if (sPayloadLow >= 16 || sPayloadHigh >= 16) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                } else if (op == OP_STREAM_MATH_UNARY || op == OP_STREAM_LOGIC_NOT) {
+                    if (sPayloadLow >= 16) return IMPULSE_VM_ERR_INVALID_REGISTER;
+                }
+
                 switch (op) {
 
 #include "../op_a1_stream_func_begin.inc"

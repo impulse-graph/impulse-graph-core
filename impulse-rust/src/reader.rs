@@ -481,7 +481,7 @@ impl SnapshotReader {
             };
             if trailer.footer_magic() == IMPULSE_MAGIC {
                 let footer_len = trailer.footer_length() as usize;
-                if footer_len <= slice.len() {
+                if footer_len >= 16 && footer_len <= slice.len() {
                     metadata_offset = (slice.len() - footer_len) as u64;
                     metadata_bytes = (footer_len - 16) as u64;
                 }
@@ -539,8 +539,11 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let start = rel.csr_row_off_offset as usize;
         let bytes = rel.csr_row_off_bytes as usize;
-        if start + bytes > slice.len() {
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
             return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
         }
         let row_offsets =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
@@ -555,8 +558,11 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let start = rel.csr_col_idx_offset as usize;
         let bytes = rel.csr_col_idx_bytes as usize;
-        if start + bytes > slice.len() {
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
             return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
         }
         let col_indices =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
@@ -577,8 +583,11 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let start = rel.csc_row_off_offset as usize;
         let bytes = rel.csc_row_off_bytes as usize;
-        if start + bytes > slice.len() {
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
             return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
         }
         let row_offsets =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
@@ -599,8 +608,11 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let start = rel.csc_col_idx_offset as usize;
         let bytes = rel.csc_col_idx_bytes as usize;
-        if start + bytes > slice.len() {
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
             return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
         }
         let col_indices =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
@@ -655,7 +667,13 @@ impl SnapshotReader {
             crate::assert::check_well_formed(false, "Vamana medoid_node_id out of bounds");
             return Err(ImpulseError::InvalidArgument);
         }
-        let expected_adj_bytes = (n as u64) * ((hdr.max_degree_r as u64) + 1) * 4;
+        let degree_plus_1 = (hdr.max_degree_r as u64)
+            .checked_add(1)
+            .ok_or(ImpulseError::BufferOverflow)?;
+        let expected_adj_bytes = (n as u64)
+            .checked_mul(degree_plus_1)
+            .and_then(|v| v.checked_mul(4))
+            .ok_or(ImpulseError::BufferOverflow)?;
         if !hdr.adj_slab_offset.is_multiple_of(128) {
             crate::assert::check_well_formed(false, "Vamana adj_slab_offset not 128B aligned");
             return Err(ImpulseError::InvalidArgument);
@@ -675,7 +693,10 @@ impl SnapshotReader {
                 );
                 return Err(ImpulseError::InvalidArgument);
             }
-            let q_bytes = n * quant_type.row_bytes(hdr.dimension as usize);
+            let row_bytes = quant_type.row_bytes(hdr.dimension as usize);
+            let q_bytes = n
+                .checked_mul(row_bytes)
+                .ok_or(ImpulseError::BufferOverflow)?;
             if (hdr.quant_code_offset as usize).saturating_add(q_bytes) > slice.len() {
                 crate::assert::check_well_formed(false, "Vamana quantized slab out of bounds");
                 return Err(ImpulseError::BufferOverflow);
@@ -877,8 +898,8 @@ impl SnapshotReader {
         let total_floats = raw.len() / 4;
         let n_nodes = total_floats / dim;
         let mut vecs = Vec::with_capacity(total_floats);
-        for chunk in raw.chunks_exact(4) {
-            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        for &chunk in raw.as_chunks::<4>().0 {
+            vecs.push(f32::from_le_bytes(chunk));
         }
         Ok((n_nodes, dim, vecs))
     }
@@ -967,9 +988,21 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let row_start = rel.csr_row_off_offset as usize;
         let col_start = rel.csr_col_idx_offset as usize;
+        let row_bytes = rel.csr_row_off_bytes as usize;
+        let col_bytes = rel.csr_col_idx_bytes as usize;
 
-        if row_start + rel.csr_row_off_bytes as usize > slice.len()
-            || col_start + rel.csr_col_idx_bytes as usize > slice.len()
+        if row_start
+            .checked_add(row_bytes)
+            .is_none_or(|end| end > slice.len())
+            || col_start
+                .checked_add(col_bytes)
+                .is_none_or(|end| end > slice.len())
+        {
+            return false;
+        }
+
+        if !(slice[row_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
+            || !(slice[col_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
         {
             return false;
         }
@@ -1028,6 +1061,24 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let row_start = rel.csr_row_off_offset as usize;
         let col_start = rel.csr_col_idx_offset as usize;
+        let row_bytes = rel.csr_row_off_bytes as usize;
+        let col_bytes = rel.csr_col_idx_bytes as usize;
+
+        if row_start
+            .checked_add(row_bytes)
+            .is_none_or(|end| end > slice.len())
+            || col_start
+                .checked_add(col_bytes)
+                .is_none_or(|end| end > slice.len())
+        {
+            return Err(ImpulseError::BufferOverflow);
+        }
+
+        if !(slice[row_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
+            || !(slice[col_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
+        {
+            return Err(ImpulseError::InvalidAlignment);
+        }
 
         let row_offsets = unsafe {
             std::slice::from_raw_parts(
@@ -1150,8 +1201,11 @@ impl SnapshotReader {
         let slice = self.mmap.as_slice();
         let start = attr.offsets_offset as usize;
         let bytes = attr.offsets_bytes as usize;
-        if start + bytes > slice.len() {
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
             return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
         }
         let offsets =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
@@ -1201,7 +1255,9 @@ impl SnapshotReader {
                     for (a_idx, a) in r.attributes.iter().enumerate() {
                         if a.name == name {
                             let elem_size = (a.dimension.max(1) as u64)
-                                * (a.base_type().map(|t| t.element_byte_size() as u64).unwrap_or(1));
+                                * (a.base_type()
+                                    .map(|t| t.element_byte_size() as u64)
+                                    .unwrap_or(1));
                             if elem_size > 0 && a.data_bytes == nc * elem_size {
                                 return self.get_attribute_data(r_idx, a_idx);
                             }
@@ -1278,7 +1334,9 @@ impl SnapshotReader {
                     for (a_idx, a) in r.attributes.iter().enumerate() {
                         if a.name == name {
                             let elem_size = (a.dimension.max(1) as u64)
-                                * (a.base_type().map(|t| t.element_byte_size() as u64).unwrap_or(1));
+                                * (a.base_type()
+                                    .map(|t| t.element_byte_size() as u64)
+                                    .unwrap_or(1));
                             if elem_size > 0 && a.data_bytes == nc * elem_size {
                                 return self.get_attribute_offsets(r_idx, a_idx);
                             }

@@ -14,6 +14,40 @@ const char* impulse_get_last_error(void) {
     return g_last_error.c_str();
 }
 
+static inline bool check_alignment(uint64_t offset, uint64_t align) noexcept {
+    if (offset == 0 || align <= 1) return true;
+    return (offset & (align - 1)) == 0;
+}
+
+static inline bool check_section_bounds(uint64_t offset, uint64_t bytes, uint64_t file_size, uint64_t align = 128) noexcept {
+    if (bytes == 0) {
+        if (offset == 0) return true;
+        if (align > 0 && !check_alignment(offset, align)) return false;
+        return offset <= file_size;
+    }
+    if (offset < 4096) return false;
+    if (align > 0 && !check_alignment(offset, align)) return false;
+    if (offset > file_size) return false;
+    if (bytes > file_size - offset) return false;
+    return true;
+}
+
+static inline bool safe_mul(uint64_t a, uint64_t b, uint64_t* out) noexcept {
+#if defined(__has_builtin) && __has_builtin(__builtin_mul_overflow)
+    return !__builtin_mul_overflow(a, b, out);
+#elif defined(__GNUC__) || defined(__clang__)
+    return !__builtin_mul_overflow(a, b, out);
+#else
+    if (a == 0 || b == 0) {
+        *out = 0;
+        return true;
+    }
+    if (a > UINT64_MAX / b) return false;
+    *out = a * b;
+    return true;
+#endif
+}
+
 static std::string resolve_snapshot_path(const char* file_path) {
     if (!file_path || file_path[0] == '\0') return "";
     std::string path_str(file_path);
@@ -217,7 +251,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         } else if ((snap->header.required_features & IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG) && file_size >= 16) {
             impulse_footer_trailer_t trailer;
             std::memcpy(&trailer, raw + file_size - 16, 16);
-            if (trailer.footer_magic == IMPULSE_MAGIC && file_size >= 16 + trailer.footer_length) {
+            if (trailer.footer_magic == IMPULSE_MAGIC && trailer.footer_length >= 16 && trailer.footer_length <= file_size) {
                 dir_offset = file_size - static_cast<size_t>(trailer.footer_length);
             }
         }
@@ -252,9 +286,9 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         cur += string_table_bytes;
 
         IMPULSE_TESTCASE(string_table_bytes == 1);
-        IMPULSE_WELL_FORMED_ASSERT(string_table_bytes >= 1 && string_pool[0] == '\0');
-        if (string_table_bytes == 0 || string_pool[0] != '\0') {
-            g_last_error = "Invalid String Table: string_table_bytes must be >= 1 and string_pool[0] must be '\\0'";
+        IMPULSE_WELL_FORMED_ASSERT(string_table_bytes >= 1 && string_pool[0] == '\0' && string_pool[string_table_bytes - 1] == '\0');
+        if (string_table_bytes == 0 || string_pool[0] != '\0' || string_pool[string_table_bytes - 1] != '\0') {
+            g_last_error = "Invalid String Table: string_table_bytes must be >= 1, string_pool[0] must be '\\0', and must be NUL-terminated";
             if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
             return nullptr;
         }
@@ -357,11 +391,22 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                 cur += sizeof(impulse_attribute_descriptor_t);
             }
 
-            if ((rel_entry.csr_row_off_offset > 0 && rel_entry.csr_row_off_offset % 128 != 0) ||
-                (rel_entry.csr_col_idx_offset > 0 && rel_entry.csr_col_idx_offset % 128 != 0)) {
+            if (!check_alignment(rel_entry.csr_row_off_offset, 128) ||
+                !check_alignment(rel_entry.csr_col_idx_offset, 128) ||
+                !check_alignment(rel_entry.csc_row_off_offset, 128) ||
+                !check_alignment(rel_entry.csc_col_idx_offset, 128)) {
                 g_last_error = "Unaligned section offset (must be 128B aligned)";
                 if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
                 return nullptr;
+            }
+
+            for (uint16_t a = 0; a < attr_count; ++a) {
+                if (!check_alignment(snap->relation_attributes[j][a].data_offset, 128) ||
+                    !check_alignment(snap->relation_attributes[j][a].offsets_offset, 128)) {
+                    g_last_error = "Unaligned attribute offset (must be 128B aligned)";
+                    if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                    return nullptr;
+                }
             }
 
             snap->relations.push_back(rel_entry);
@@ -496,13 +541,181 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         }
     }
 
+    uint64_t req_align = (ver == 9 || ver == 0x0009) ? 128 : 64;
+
+    for (size_t r = 0; r < snap->relations.size(); ++r) {
+        const auto& rel = snap->relations[r];
+        uint64_t src_node_count = rel.node_count;
+        uint64_t tgt_node_count = rel.node_count;
+        if (rel.src_domain_id < snap->domains.size()) {
+            src_node_count = snap->domains[rel.src_domain_id].node_count;
+        }
+        if (rel.tgt_domain_id < snap->domains.size()) {
+            tgt_node_count = snap->domains[rel.tgt_domain_id].node_count;
+        }
+
+        bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
+        bool is_node16 = (rel.node_id_width == 2 || rel.node_id_width == 16);
+        bool is_node64 = (rel.node_id_width == 8 || rel.node_id_width == 64);
+
+        uint64_t edge_width_bytes = is_edge64 ? 8 : 4;
+        uint64_t tgt_node_width_bytes = is_node16 ? 2 : (is_node64 ? 8 : 4);
+        uint64_t src_node_width_bytes = tgt_node_width_bytes;
+
+        // CSR section bounds
+        if (!check_section_bounds(rel.csr_row_off_offset, rel.csr_row_off_bytes, file_size, req_align) ||
+            !check_section_bounds(rel.csr_col_idx_offset, rel.csr_col_idx_bytes, file_size, req_align)) {
+            g_last_error = "CSR section bounds or alignment check failed";
+            if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+
+        if (rel.csr_row_off_offset > 0 || rel.csr_row_off_bytes > 0 ||
+            rel.csr_col_idx_offset > 0 || rel.csr_col_idx_bytes > 0 ||
+            rel.node_count > 0 || rel.edge_count > 0) {
+            uint64_t req_row_bytes = 0;
+            if (!safe_mul(rel.node_count + 1ULL, edge_width_bytes, &req_row_bytes) || rel.csr_row_off_bytes < req_row_bytes) {
+                g_last_error = "CSR row offsets buffer smaller than required minimum byte size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+
+            uint64_t req_col_bytes = 0;
+            if (!safe_mul(rel.edge_count, tgt_node_width_bytes, &req_col_bytes) || rel.csr_col_idx_bytes < req_col_bytes) {
+                g_last_error = "CSR col indices buffer smaller than required minimum byte size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+
+            // Monotonicity of CSR row offsets and col_indices < tgt_node_count
+            if (rel.csr_row_off_offset > 0) {
+                uint64_t prev_off = is_edge64
+                    ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[0]
+                    : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[0];
+                if (prev_off != 0) {
+                    g_last_error = "CSR row_offsets[0] must be 0";
+                    if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                    return nullptr;
+                }
+                for (uint64_t u = 0; u < rel.node_count; ++u) {
+                    uint64_t next_off = is_edge64
+                        ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[u + 1]
+                        : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[u + 1];
+                    if (next_off < prev_off || next_off > rel.edge_count) {
+                        g_last_error = "CSR row_offsets non-monotonic or exceeding edge_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
+                    }
+                    prev_off = next_off;
+                }
+            }
+
+            if (rel.csr_col_idx_offset > 0 && tgt_node_count > 0) {
+                for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                    uint64_t target_val = is_node16
+                        ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[e]
+                        : (is_node64
+                            ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[e]
+                            : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[e]);
+                    if (target_val >= tgt_node_count) {
+                        g_last_error = "CSR target node ID exceeds target domain node_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
+                    }
+                }
+            }
+        }
+
+        // CSC section bounds and monotonicity (if present)
+        if (rel.csc_row_off_bytes > 0 || rel.csc_col_idx_bytes > 0 || rel.csc_row_off_offset > 0 || rel.csc_col_idx_offset > 0) {
+            if (!check_section_bounds(rel.csc_row_off_offset, rel.csc_row_off_bytes, file_size, req_align) ||
+                !check_section_bounds(rel.csc_col_idx_offset, rel.csc_col_idx_bytes, file_size, req_align)) {
+                g_last_error = "CSC section bounds or alignment check failed";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+
+            uint64_t req_csc_row_bytes = 0;
+            if (!safe_mul(tgt_node_count + 1ULL, edge_width_bytes, &req_csc_row_bytes) || rel.csc_row_off_bytes < req_csc_row_bytes) {
+                g_last_error = "CSC row offsets buffer smaller than required minimum byte size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+
+            uint64_t req_csc_col_bytes = 0;
+            if (!safe_mul(rel.edge_count, src_node_width_bytes, &req_csc_col_bytes) || rel.csc_col_idx_bytes < req_csc_col_bytes) {
+                g_last_error = "CSC col indices buffer smaller than required minimum byte size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+
+            if (rel.csc_row_off_offset > 0) {
+                uint64_t prev_off = is_edge64
+                    ? reinterpret_cast<const uint64_t*>(raw + rel.csc_row_off_offset)[0]
+                    : reinterpret_cast<const uint32_t*>(raw + rel.csc_row_off_offset)[0];
+                if (prev_off != 0) {
+                    g_last_error = "CSC row_offsets[0] must be 0";
+                    if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                    return nullptr;
+                }
+                for (uint64_t v = 0; v < tgt_node_count; ++v) {
+                    uint64_t next_off = is_edge64
+                        ? reinterpret_cast<const uint64_t*>(raw + rel.csc_row_off_offset)[v + 1]
+                        : reinterpret_cast<const uint32_t*>(raw + rel.csc_row_off_offset)[v + 1];
+                    if (next_off < prev_off || next_off > rel.edge_count) {
+                        g_last_error = "CSC row_offsets non-monotonic or exceeding edge_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
+                    }
+                    prev_off = next_off;
+                }
+            }
+
+            if (rel.csc_col_idx_offset > 0 && src_node_count > 0) {
+                for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                    uint64_t src_val = is_node16
+                        ? reinterpret_cast<const uint16_t*>(raw + rel.csc_col_idx_offset)[e]
+                        : (is_node64
+                            ? reinterpret_cast<const uint64_t*>(raw + rel.csc_col_idx_offset)[e]
+                            : reinterpret_cast<const uint32_t*>(raw + rel.csc_col_idx_offset)[e]);
+                    if (src_val >= src_node_count) {
+                        g_last_error = "CSC source node ID exceeds source domain node_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
+                    }
+                }
+            }
+        }
+
+        // Validate attribute descriptors
+        if (r < snap->relation_attributes.size()) {
+            for (const auto& attr : snap->relation_attributes[r]) {
+                if (!check_section_bounds(attr.data_offset, attr.data_bytes, file_size, req_align) ||
+                    !check_section_bounds(attr.offsets_offset, attr.offsets_bytes, file_size, req_align)) {
+                    g_last_error = "Attribute section bounds check failed";
+                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                    return nullptr;
+                }
+            }
+        }
+    }
+
+    // Validate index descriptors
+    for (const auto& idx : snap->indexes) {
+        if (!check_section_bounds(idx.data_offset, idx.data_bytes, file_size, req_align)) {
+            g_last_error = "Index section bounds check failed";
+            if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+    }
+
     // Read Footer Block Metadata if available at EOF - 16
     if (file_size >= 16) {
         size_t trailer_pos = file_size - 16;
         impulse_footer_trailer_t trailer;
         std::memcpy(&trailer, raw + trailer_pos, sizeof(trailer));
 
-        if (trailer.footer_magic == IMPULSE_MAGIC && trailer.footer_length <= file_size) {
+        if (trailer.footer_magic == IMPULSE_MAGIC && trailer.footer_length >= 16 && trailer.footer_length <= file_size) {
             size_t meta_offset = file_size - static_cast<size_t>(trailer.footer_length);
             size_t meta_bytes = static_cast<size_t>(trailer.footer_length) - 16;
 
@@ -551,13 +764,6 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
 void impulse_snapshot_close(impulse_snapshot_t* snapshot) {
     if (!snapshot) return;
-    if (snapshot->mmap_ptr && snapshot->file_size > 0) {
-#ifdef _WIN32
-        UnmapViewOfFile(snapshot->mmap_ptr);
-#else
-        ::munmap(snapshot->mmap_ptr, snapshot->file_size);
-#endif
-    }
     delete snapshot;
 }
 
@@ -622,8 +828,10 @@ bool impulse_snapshot_is_reachable(
     if (rel.csr_row_off_offset == 0 || rel.csr_col_idx_offset == 0) return false;
 
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
-    if (rel.csr_row_off_offset + rel.csr_row_off_bytes > snapshot->file_size) return false;
-    if (rel.csr_col_idx_offset + rel.csr_col_idx_bytes > snapshot->file_size) return false;
+    if (!check_section_bounds(rel.csr_row_off_offset, rel.csr_row_off_bytes, snapshot->file_size, 0) ||
+        !check_section_bounds(rel.csr_col_idx_offset, rel.csr_col_idx_bytes, snapshot->file_size, 0)) {
+        return false;
+    }
 
     bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
     bool is_node16 = (rel.node_id_width == 2 || rel.node_id_width == 16);
@@ -979,6 +1187,8 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
                 const char* str_pool = reinterpret_cast<const char*>(iraw + str_offset);
                 const uint8_t* table = iraw + table_offset;
 
+                if (str_bytes == 0 || str_pool[str_bytes - 1] != '\0') return IMPULSE_ERR_INVALID_ARGUMENT;
+
                 for (size_t i = 0; i < key_count; ++i) {
                     uint32_t k_off = 0;
                     uint32_t n_id = 0;
@@ -986,8 +1196,11 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
                     std::memcpy(&n_id, table + (i * 8) + 4, 4);
 
                     if (k_off != 0 && n_id == node_id) {
+                        if (k_off >= str_bytes) return IMPULSE_ERR_INVALID_ARGUMENT;
+                        const void* nul = std::memchr(str_pool + k_off, '\0', str_bytes - k_off);
+                        if (!nul) return IMPULSE_ERR_INVALID_ARGUMENT;
                         *out_key_bytes = str_pool + k_off;
-                        *out_key_len = std::strlen(str_pool + k_off);
+                        *out_key_len = static_cast<const char*>(nul) - (str_pool + k_off);
                         return IMPULSE_OK;
                     }
                 }

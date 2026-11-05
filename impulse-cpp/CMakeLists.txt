@@ -276,6 +276,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_opcode_contracts tests/test_opcode_contracts.cpp)
     target_link_libraries(test_opcode_contracts PRIVATE impulse_graph_static)
     add_test(NAME test_opcode_contracts COMMAND test_opcode_contracts)
+
+    add_executable(test_security_hardening tests/test_security_hardening.cpp)
+    target_link_libraries(test_security_hardening PRIVATE impulse_graph_static)
+    add_test(NAME test_security_hardening COMMAND test_security_hardening)
 endif()
 
 # --- Examples ------------------------------------------------------------

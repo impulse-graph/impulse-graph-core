@@ -56,8 +56,8 @@ impulse_status_t impulse_writer_add_relation(
     rel.src_domain_id = src_domain_id;
     rel.tgt_domain_id = tgt_domain_id;
     rel.encoding_id = encoding_id;
-    rel.node_id_width = 4;
-    rel.edge_index_width = 4;
+    rel.node_id_width = (edge_count > 0 && col_indices_bytes == edge_count * 2) ? 2 : ((edge_count > 0 && col_indices_bytes == edge_count * 8) ? 8 : 4);
+    rel.edge_index_width = (node_count > 0 && row_offsets_bytes == (node_count + 1) * 8) ? 8 : 4;
     rel.node_count = node_count;
     rel.edge_count = edge_count;
     rel.section_features = section_features;

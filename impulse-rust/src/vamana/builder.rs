@@ -85,6 +85,7 @@ impl BuildWorkerScratch {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn greedy_search_build(
         &mut self,
         adj_graph: &[Vec<u32>],
@@ -190,6 +191,7 @@ impl BuildWorkerScratch {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn robust_prune(
         &mut self,
         u: u32,
@@ -470,8 +472,7 @@ pub fn build_vamana_index_with_threads(
                     }
                     is_alpha_pruned[u] = pruned.len() == r;
 
-                    for i in 0..pruned.len() {
-                        let (nb, s_u_nb, d_u_nb) = pruned[i];
+                    for &(nb, s_u_nb, d_u_nb) in &pruned {
                         let nb_usize = nb as usize;
                         if !adj[nb_usize].contains(&u_id) {
                             let cand = (u_id, s_u_nb, d_u_nb);
@@ -492,8 +493,8 @@ pub fn build_vamana_index_with_threads(
                                     .binary_search_by(|probe| compare_cand(probe, &cand))
                                     .unwrap_or_else(|e| e);
                                 let mut shadowed = false;
-                                for k in 0..ins {
-                                    let p_star_idx = adj_scored[nb_usize][k].0 as usize;
+                                for &(p_star_id, _, _) in adj_scored[nb_usize].iter().take(ins) {
+                                    let p_star_idx = p_star_id as usize;
                                     let (_s, dist_pstar_u) = eval_build_pair(
                                         cfg.metric,
                                         work_vectors,
@@ -594,7 +595,7 @@ pub fn build_vamana_index_with_threads(
                     let batch_end = (batch_start + batch_size).min(node_count);
                     let cur_batch_len = batch_end - batch_start;
                     let n_workers = effective_threads.min(cur_batch_len).max(1);
-                    let chunk_len = (cur_batch_len + n_workers - 1) / n_workers;
+                    let chunk_len = cur_batch_len.div_ceil(n_workers);
 
                     // Phase A: Parallel greedy_search_build + robust_prune over immutable `&adj`
                     {
@@ -658,14 +659,14 @@ pub fn build_vamana_index_with_threads(
 
                     // Phase B: Commit forward edges & insert bidirectional back-edges
                     dirty_nodes.clear();
-                    for offset in 0..cur_batch_len {
+                    for (offset, pruned_u) in batch_pruned.iter().enumerate().take(cur_batch_len) {
                         let u = batch_start + offset;
                         let u_id = u as u32;
                         adj[u].clear();
-                        for &entry in &batch_pruned[offset] {
+                        for &entry in pruned_u {
                             adj[u].push(entry.0);
                         }
-                        for &(nb, _, _) in &batch_pruned[offset] {
+                        for &(nb, _, _) in pruned_u {
                             let nb_usize = nb as usize;
                             if !adj[nb_usize].contains(&u_id) {
                                 adj[nb_usize].push(u_id);
@@ -682,7 +683,7 @@ pub fn build_vamana_index_with_threads(
                         let mut overflow_pruned: Vec<Vec<(u32, f32, f32)>> =
                             vec![Vec::with_capacity(r); dirty_nodes.len()];
                         let n_pworkers = effective_threads.min(dirty_nodes.len()).max(1);
-                        let p_chunk_len = (dirty_nodes.len() + n_pworkers - 1) / n_pworkers;
+                        let p_chunk_len = dirty_nodes.len().div_ceil(n_pworkers);
                         let adj_ref = &adj;
                         let dirty_ref = &dirty_nodes;
 
@@ -819,8 +820,8 @@ pub fn permute_vamana_index(
     }
 
     let mut new_adj_slab = vec![0u8; n * row_stride];
-    for new_u in 0..n {
-        let old_u = new_to_old[new_u] as usize;
+    for (new_u, &old_u_u32) in new_to_old.iter().enumerate().take(n) {
+        let old_u = old_u_u32 as usize;
         let old_row_off = old_u * row_stride;
         let new_row_off = new_u * row_stride;
         let deg = u32::from_le_bytes(

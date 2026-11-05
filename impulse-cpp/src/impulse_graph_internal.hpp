@@ -146,6 +146,18 @@ struct impulse_snapshot {
     std::vector<impulse_index_directory_entry_v0_9_t> indexes;
     std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;
+
+    ~impulse_snapshot() {
+        if (mmap_ptr && file_size > 0) {
+#ifdef _WIN32
+            UnmapViewOfFile(mmap_ptr);
+#else
+            ::munmap(mmap_ptr, file_size);
+#endif
+            mmap_ptr = nullptr;
+            file_size = 0;
+        }
+    }
 };
 
 struct impulse_writer_attr {

@@ -432,16 +432,21 @@ enum Precedence {
 
 class Parser {
 public:
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
     explicit Parser(std::string source) : lexer_(std::move(source)) {
         advance();
     }
 
-    std::shared_ptr<AstNode> parse_expression() {
-        return parse_precedence(PREC_ASSIGN);
+    std::shared_ptr<AstNode> parse_expression(size_t depth = 0) {
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("CEL parse recursion depth exceeded limit 256");
+        }
+        return parse_precedence(PREC_ASSIGN, depth);
     }
 
     std::shared_ptr<AstNode> parse() {
-        auto expr = parse_expression();
+        auto expr = parse_expression(0);
         if (!expr || curr_.type != TokenType::END_OF_FILE) {
             return nullptr;
         }
@@ -503,7 +508,10 @@ private:
         }
     }
 
-    std::shared_ptr<AstNode> parse_prefix() {
+    std::shared_ptr<AstNode> parse_prefix(size_t depth = 0) {
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("CEL parse recursion depth exceeded limit 256");
+        }
         Token t = curr_;
         advance();
 
@@ -522,20 +530,20 @@ private:
             case TokenType::MINUS:
             case TokenType::PLUS:
             case TokenType::TILDE: {
-                auto operand = parse_precedence(PREC_UNARY);
+                auto operand = parse_precedence(PREC_UNARY, depth + 1);
                 return AstNode::make_unary(t.text, operand);
             }
             case TokenType::LPAREN: {
-                auto expr = parse_expression();
+                auto expr = parse_expression(depth + 1);
                 match(TokenType::RPAREN);
                 return expr;
             }
             case TokenType::LBRACKET: {
                 std::vector<std::shared_ptr<AstNode>> elements;
                 if (curr_.type != TokenType::RBRACKET) {
-                    elements.push_back(parse_expression());
+                    elements.push_back(parse_expression(depth + 1));
                     while (match(TokenType::COMMA)) {
-                        elements.push_back(parse_expression());
+                        elements.push_back(parse_expression(depth + 1));
                     }
                 }
                 match(TokenType::RBRACKET);
@@ -546,8 +554,11 @@ private:
         }
     }
 
-    std::shared_ptr<AstNode> parse_precedence(Precedence prec) {
-        auto left = parse_prefix();
+    std::shared_ptr<AstNode> parse_precedence(Precedence prec, size_t depth = 0) {
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("CEL parse recursion depth exceeded limit 256");
+        }
+        auto left = parse_prefix(depth + 1);
         if (!left) return nullptr;
 
         while (prec <= get_precedence(curr_.type)) {
@@ -556,9 +567,9 @@ private:
 
             if (op.type == TokenType::QUESTION) {
                 // Ternary conditional ? :
-                auto then_branch = parse_expression();
+                auto then_branch = parse_expression(depth + 1);
                 match(TokenType::COLON);
-                auto else_branch = parse_precedence(PREC_CONDITIONAL);
+                auto else_branch = parse_precedence(PREC_CONDITIONAL, depth + 1);
                 left = AstNode::make_ternary(left, then_branch, else_branch);
             } else if (op.type == TokenType::DOT) {
                 // Field access target.field
@@ -570,9 +581,9 @@ private:
                         std::vector<std::shared_ptr<AstNode>> args;
                         args.push_back(left); // receiver is first arg
                         if (curr_.type != TokenType::RPAREN) {
-                            args.push_back(parse_expression());
+                            args.push_back(parse_expression(depth + 1));
                             while (match(TokenType::COMMA)) {
-                                args.push_back(parse_expression());
+                                args.push_back(parse_expression(depth + 1));
                             }
                         }
                         match(TokenType::RPAREN);
@@ -585,9 +596,9 @@ private:
                 // Function call ident(args)
                 std::vector<std::shared_ptr<AstNode>> args;
                 if (curr_.type != TokenType::RPAREN) {
-                    args.push_back(parse_expression());
+                    args.push_back(parse_expression(depth + 1));
                     while (match(TokenType::COMMA)) {
-                        args.push_back(parse_expression());
+                        args.push_back(parse_expression(depth + 1));
                     }
                 }
                 match(TokenType::RPAREN);
@@ -597,7 +608,7 @@ private:
             } else {
                 // Binary operator
                 auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ ? 0 : 1));
-                auto right = parse_precedence(next_prec);
+                auto right = parse_precedence(next_prec, depth + 1);
                 if (!right) return nullptr;
                 left = AstNode::make_binary(op.text, left, right);
             }
@@ -610,8 +621,13 @@ private:
 // CEL to ImpScheme & impOps Code Generator
 class CelCompiler {
 public:
-    static std::string to_impscheme(const std::shared_ptr<AstNode>& node) {
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
+    static std::string to_impscheme(const std::shared_ptr<AstNode>& node, size_t depth = 0) {
         if (!node) return "()";
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("CelCompiler recursion depth exceeded limit 256");
+        }
         IMPULSE_ASSERT(node != nullptr);
 
         switch (node->kind) {
@@ -631,28 +647,28 @@ public:
             case AstKind::IDENTIFIER:
                 return node->text;
             case AstKind::MEMBER_ACCESS:
-                return "(get-attr " + to_impscheme(node->children[0]) + " \"" + node->text + "\")";
+                return "(get-attr " + to_impscheme(node->children[0], depth + 1) + " \"" + node->text + "\")";
             case AstKind::UNARY_OP:
-                if (node->text == "!") return "(mask-not " + to_impscheme(node->children[0]) + ")";
-                if (node->text == "-") return "(- 0 " + to_impscheme(node->children[0]) + ")";
-                if (node->text == "~") return "(~ " + to_impscheme(node->children[0]) + ")";
-                return to_impscheme(node->children[0]);
+                if (node->text == "!") return "(mask-not " + to_impscheme(node->children[0], depth + 1) + ")";
+                if (node->text == "-") return "(- 0 " + to_impscheme(node->children[0], depth + 1) + ")";
+                if (node->text == "~") return "(~ " + to_impscheme(node->children[0], depth + 1) + ")";
+                return to_impscheme(node->children[0], depth + 1);
             case AstKind::BINARY_OP: {
                 std::string op = node->text;
-                if (op == "&&") return "(mask-and " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
-                if (op == "||") return "(mask-or " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
-                if (op == ">") return "(vec-cmp-gt " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
-                if (op == "<") return "(vec-cmp-lt " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
-                if (op == "==") return "(vec-cmp-eq " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
-                if (op == "!=") return "(mask-not (vec-cmp-eq " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + "))";
-                return "(" + op + " " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + ")";
+                if (op == "&&") return "(mask-and " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
+                if (op == "||") return "(mask-or " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
+                if (op == ">") return "(vec-cmp-gt " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
+                if (op == "<") return "(vec-cmp-lt " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
+                if (op == "==") return "(vec-cmp-eq " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
+                if (op == "!=") return "(mask-not (vec-cmp-eq " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + "))";
+                return "(" + op + " " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + ")";
             }
             case AstKind::TERNARY_OP:
-                return "(vec-blend " + to_impscheme(node->children[0]) + " " + to_impscheme(node->children[1]) + " " + to_impscheme(node->children[2]) + ")";
+                return "(vec-blend " + to_impscheme(node->children[0], depth + 1) + " " + to_impscheme(node->children[1], depth + 1) + " " + to_impscheme(node->children[2], depth + 1) + ")";
             case AstKind::FUNCTION_CALL: {
                 std::string s = "(" + node->text;
                 for (const auto& arg : node->children) {
-                    s += " " + to_impscheme(arg);
+                    s += " " + to_impscheme(arg, depth + 1);
                 }
                 s += ")";
                 return s;
@@ -660,7 +676,7 @@ public:
             case AstKind::LIST_LITERAL: {
                 std::string s = "(list";
                 for (const auto& elem : node->children) {
-                    s += " " + to_impscheme(elem);
+                    s += " " + to_impscheme(elem, depth + 1);
                 }
                 s += ")";
                 return s;
@@ -710,13 +726,18 @@ public:
  */
 class AstOptimizer {
 public:
-    static std::shared_ptr<AstNode> optimize(const std::shared_ptr<AstNode>& node) {
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
+    static std::shared_ptr<AstNode> optimize(const std::shared_ptr<AstNode>& node, size_t depth = 0) {
         if (!node) return nullptr;
+        if (depth > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("AstOptimizer recursion depth exceeded limit 256");
+        }
 
         // 1. Bottom-up recursive optimization of children
         std::vector<std::shared_ptr<AstNode>> folded_children;
         for (const auto& child : node->children) {
-            folded_children.push_back(optimize(child));
+            folded_children.push_back(optimize(child, depth + 1));
         }
 
         auto result = std::make_shared<AstNode>(*node);

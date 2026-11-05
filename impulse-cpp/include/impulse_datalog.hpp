@@ -29,6 +29,8 @@ struct DependencyEdge {
 
 class StratificationValidator {
 public:
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
     static bool validate(const std::vector<DependencyEdge>& edges, std::string& error_msg) {
         std::unordered_set<std::string> predicates;
         std::unordered_map<std::string, std::vector<std::pair<std::string, bool>>> adj;
@@ -41,10 +43,14 @@ public:
 
         std::unordered_set<std::string> in_stack;
         std::vector<std::pair<std::string, bool>> path;
+        std::unordered_set<std::string> memo_safe;
 
         for (const auto& pred : predicates) {
-            if (!dfs_check(pred, adj, in_stack, path, error_msg)) {
-                return false;
+            if (memo_safe.find(pred) == memo_safe.end()) {
+                bool reaches_stack = false;
+                if (!dfs_check(pred, adj, in_stack, path, memo_safe, error_msg, reaches_stack, 0)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -87,16 +93,28 @@ private:
         const std::unordered_map<std::string, std::vector<std::pair<std::string, bool>>>& adj,
         std::unordered_set<std::string>& in_stack,
         std::vector<std::pair<std::string, bool>>& path,
-        std::string& error_msg)
+        std::unordered_set<std::string>& memo_safe,
+        std::string& error_msg,
+        bool& out_reaches_stack,
+        size_t depth = 0)
     {
+        if (depth > MAX_PARSE_DEPTH) {
+            error_msg = "Datalog stratification recursion depth exceeded limit 256";
+            return false;
+        }
+
         in_stack.insert(current);
+        bool reaches_stack = false;
+
         auto it = adj.find(current);
         if (it != adj.end()) {
             for (const auto& edge : it->second) {
                 const std::string& next = edge.first;
                 bool is_negated = edge.second;
                 path.push_back({next, is_negated});
+
                 if (in_stack.find(next) != in_stack.end()) {
+                    reaches_stack = true;
                     auto pos_it = std::find_if(path.begin(), path.end(), [&](const auto& p) { return p.first == next; });
                     if (pos_it != path.end()) {
                         bool has_negation = false;
@@ -108,13 +126,24 @@ private:
                             return false;
                         }
                     }
-                } else {
-                    if (!dfs_check(next, adj, in_stack, path, error_msg)) return false;
+                } else if (memo_safe.find(next) == memo_safe.end()) {
+                    bool child_reaches_stack = false;
+                    if (!dfs_check(next, adj, in_stack, path, memo_safe, error_msg, child_reaches_stack, depth + 1)) {
+                        return false;
+                    }
+                    if (child_reaches_stack) {
+                        reaches_stack = true;
+                    }
                 }
                 path.pop_back();
             }
         }
+
         in_stack.erase(current);
+        out_reaches_stack = reaches_stack;
+        if (!reaches_stack) {
+            memo_safe.insert(current);
+        }
         return true;
     }
 };

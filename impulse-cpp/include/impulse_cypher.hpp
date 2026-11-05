@@ -476,6 +476,18 @@ private:
                 }
             }
 
+            if (min_hops < 0) {
+                throw std::runtime_error("Cypher min_hops must be >= 0");
+            }
+            if (!is_unbounded) {
+                if (max_hops < min_hops) {
+                    throw std::runtime_error("Cypher max_hops cannot be less than min_hops");
+                }
+                if (max_hops > 64) {
+                    throw std::runtime_error("Cypher variable-length path unrolling max_hops exceeds limit of 64");
+                }
+            }
+
             consume(CypherTokenType::RBRACKET, "Expected ']' at end of relationship pattern");
 
             if (!is_forward) {
@@ -563,9 +575,15 @@ private:
         return vals;
     }
 
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
     std::vector<CypherWherePredicate> parse_where_clause() {
         std::vector<CypherWherePredicate> preds;
+        size_t pred_count = 0;
         do {
+            if (++pred_count > MAX_PARSE_DEPTH) {
+                throw std::runtime_error("Cypher WHERE predicate count exceeded limit 256");
+            }
             if (match(CypherTokenType::KW_COUNT)) {
                 consume(CypherTokenType::LPAREN, "Expected '(' after count");
                 std::string var = curr_.lexeme;
@@ -740,7 +758,12 @@ public:
         return compile(query);
     }
 
+    static constexpr size_t MAX_PARSE_DEPTH = 256;
+
     static CompilationResult compile(const CypherQuery& query) {
+        if (query.where_predicates.size() > MAX_PARSE_DEPTH || query.path.steps.size() > MAX_PARSE_DEPTH) {
+            throw std::runtime_error("Cypher query complexity exceeded limit 256");
+        }
         std::vector<AstPtr> steps;
         std::string seed_var = query.path.start_node.variable;
         std::string seed_val_or_param;
@@ -772,6 +795,9 @@ public:
 
         for (const auto& step : query.path.steps) {
             const auto& edge = step.edge;
+            if (edge.max_hops > 64) {
+                throw std::runtime_error("Cypher variable-length path unrolling max_hops exceeds limit of 64");
+            }
             std::vector<std::string> rels = edge.relation_names.empty()
                 ? std::vector<std::string>{edge.relation_name}
                 : edge.relation_names;

@@ -271,9 +271,8 @@ impl SnapshotWriter {
         relation_id: u16,
         mut built: crate::vamana::BuiltVamanaIndex,
     ) {
-        let mut blob = Vec::new();
         // Reserve 128 bytes for header + 64B padding
-        blob.resize(128, 0u8);
+        let mut blob = vec![0u8; 128];
         let adj_rel_off = 128u64;
         built.header.adj_slab_offset = adj_rel_off; // Relative offset; converted to absolute in finalize_to_writer
         built.header.adj_slab_bytes = built.adj_slab.len() as u64;
@@ -346,8 +345,8 @@ impl SnapshotWriter {
                             ));
                         }
                         let mut vecs = Vec::with_capacity(attr.data.len() / 4);
-                        for chunk in attr.data.chunks_exact(4) {
-                            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                        for &chunk in attr.data.as_chunks::<4>().0 {
+                            vecs.push(f32::from_le_bytes(chunk));
                         }
                         found_attr =
                             Some((rel.relation_id, a_idx as u16, attr.dimension.max(1), vecs));
@@ -379,8 +378,8 @@ impl SnapshotWriter {
                                 ));
                             }
                             let mut vecs = Vec::with_capacity(attr.data.len() / 4);
-                            for chunk in attr.data.chunks_exact(4) {
-                                vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                            for &chunk in attr.data.as_chunks::<4>().0 {
+                                vecs.push(f32::from_le_bytes(chunk));
                             }
                             found_attr =
                                 Some((rel.relation_id, a_idx as u16, attr.dimension.max(1), vecs));
@@ -401,7 +400,7 @@ impl SnapshotWriter {
             )
         })?;
         let d = dim as usize;
-        let n = if d > 0 { vectors.len() / d } else { 0 };
+        let n = vectors.len().checked_div(d).unwrap_or(0);
         let built = crate::vamana::build_vamana_index(domain_id, vec_attr_id, &vectors, n, d, cfg)?;
         self.add_built_vamana_index_with_relation(index_name, found_rel_id, built);
         Ok(())
