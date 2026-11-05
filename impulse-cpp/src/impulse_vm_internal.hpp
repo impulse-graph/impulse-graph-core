@@ -195,6 +195,7 @@ struct impulse_vm_context {
 
     std::array<VmBitSet, VM_MAX_BITSET_HANDLES> bitsets;
     std::array<bool, VM_MAX_BITSET_HANDLES> bitset_allocated;
+    size_t bitset_alloc_counter = 0;
 
     // Thread-private workspace bitsets for parallel map/reduce walks
     int max_threads;
@@ -276,6 +277,9 @@ inline int acquire_bitset(impulse_vm_context_t* ctx) {
             IMPULSE_TESTCASE(i == 0);
             IMPULSE_TESTCASE(i == VM_MAX_BITSET_HANDLES - 1);
             ctx->bitset_allocated[i] = true;
+            if (i >= ctx->bitset_alloc_counter) {
+                ctx->bitset_alloc_counter = i + 1;
+            }
             ctx->bitsets[i].clear();
             return static_cast<int>(i);
         }
@@ -536,7 +540,7 @@ inline bool get_node_vector_slice(
         }
         return true;
     }
-    if (!ctx->node_buffer.empty() && reg_val == reinterpret_cast<uint64_t>(ctx->node_buffer.data())) {
+    if (ctx->node_buffer.data() && reg_val == reinterpret_cast<uint64_t>(ctx->node_buffer.data())) {
         *out_ptr = ctx->node_buffer.data();
         *out_len = ctx->node_buffer.size();
         return true;

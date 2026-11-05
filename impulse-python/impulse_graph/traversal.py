@@ -248,103 +248,141 @@ class Traversal:
         qb.collect_bitset()
         return qb.compile()
 
-    def execute(self, start_node: Optional[int] = None) -> List[int]:
+    def execute(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> List[int]:
         """Execute traversal and return list of matching target node IDs."""
-        return self.to_list(start_node=start_node)
+        return self.to_list(start_node=start_node, ctx=ctx, state=state)
 
-    def to_list(self, start_node: Optional[int] = None) -> List[int]:
+    def to_list(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> List[int]:
         """Execute traversal and collect matching target node IDs as a list."""
-        with vm.VmContext(self._snapshot) as ctx:
-            state = vm.VmState()
+        if ctx is None or state is None:
+            own_ctx, own_state = self._snapshot._get_default_vm()
+            if ctx is None:
+                ctx = own_ctx
+            if state is None:
+                state = own_state
+        else:
+            ctx.reset()
+            state.reset()
 
-            if self._all_nodes:
-                bs_in = ctx.acquire_bitset()
-                node_count = self._initial_domain.node_count if self._initial_domain else 0
+        if self._all_nodes:
+            bs_in = ctx.acquire_bitset()
+            node_count = self._initial_domain.node_count if self._initial_domain else 0
+            if node_count == 0:
+                for i in range(self._snapshot.relation_count()):
+                    rel = self._snapshot.get_relation(i)
+                    if (
+                        self._initial_domain
+                        and rel["src_domain_id"] == self._initial_domain.domain_id
+                    ):
+                        node_count = max(node_count, rel["node_count"])
                 if node_count == 0:
-                    for i in range(self._snapshot.relation_count()):
-                        rel = self._snapshot.get_relation(i)
-                        if (
-                            self._initial_domain
-                            and rel["src_domain_id"] == self._initial_domain.domain_id
-                        ):
-                            node_count = max(node_count, rel["node_count"])
-                    if node_count == 0:
-                        node_count = 64
-                ctx.bitset_fill(bs_in, node_count)
-                compiled = self.compile(input_type="none")
-                state.set_register(0, bs_in)
-                state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
-                res = compiled.execute_with_context(ctx, state, 0)
-                ctx.release_bitset(bs_in)
-            elif self._start_nodes is not None and len(self._start_nodes) > 1:
-                bs_in = ctx.acquire_bitset()
-                for nid in self._start_nodes:
-                    ctx.bitset_add(bs_in, int(nid))
-                compiled = self.compile(input_type="none")
-                state.set_register(0, bs_in)
-                state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
-                res = compiled.execute_with_context(ctx, state, 0)
-                ctx.release_bitset(bs_in)
-            else:
-                seed = self._start_node if start_node is None else start_node
-                if self._start_nodes is not None and len(self._start_nodes) == 1:
-                    seed = self._start_nodes[0]
-                compiled = self.compile(input_type="node")
-                res = compiled.execute_with_context(ctx, state, seed)
+                    node_count = 64
+            ctx.bitset_fill(bs_in, node_count)
+            compiled = self.compile(input_type="none")
+            state.set_register(0, bs_in)
+            state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
+            res = compiled.execute_with_context(ctx, state, 0)
+            ctx.release_bitset(bs_in)
+        elif self._start_nodes is not None and len(self._start_nodes) > 1:
+            bs_in = ctx.acquire_bitset()
+            for nid in self._start_nodes:
+                ctx.bitset_add(bs_in, int(nid))
+            compiled = self.compile(input_type="none")
+            state.set_register(0, bs_in)
+            state.set_register_type(0, vm.RegisterType.TYPE_BITSET_HANDLE)
+            res = compiled.execute_with_context(ctx, state, 0)
+            ctx.release_bitset(bs_in)
+        else:
+            seed = self._start_node if start_node is None else start_node
+            if self._start_nodes is not None and len(self._start_nodes) == 1:
+                seed = self._start_nodes[0]
+            compiled = self.compile(input_type="node")
+            res = compiled.execute_with_context(ctx, state, seed)
 
-            if not res.is_ok():
-                return []
+        if not res.is_ok():
+            return []
 
-            handle = res.raw_value
-            # Extract active bits efficiently
-            nodes = []
-            total_nodes = 64
-            for i in range(self._snapshot.relation_count()):
-                rel = self._snapshot.get_relation(i)
-                total_nodes = max(total_nodes, rel["node_count"])
-            num_words = (total_nodes + 63) // 64
-            for w in range(num_words):
-                word = ctx.bitset_get_word(handle, w)
-                if word != 0:
-                    base = w * 64
-                    for b in range(64):
-                        if (word & (1 << b)) != 0:
-                            nodes.append(base + b)
-            ctx.release_bitset(handle)
-            return nodes
+        handle = res.raw_value
+        nodes = [int(nid) for nid in ctx.get_bitset_nodes(handle)]
+        ctx.release_bitset(handle)
+        return nodes
 
-    def to_set(self, start_node: Optional[int] = None) -> Set[int]:
+    def to_set(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> Set[int]:
         """Execute traversal and return set of matching target node IDs."""
-        return set(self.to_list(start_node=start_node))
+        return set(self.to_list(start_node=start_node, ctx=ctx, state=state))
 
-    def to_key_list(self, start_node: Optional[int] = None) -> List[str]:
+    def to_key_list(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> List[str]:
         """Execute traversal and resolve target dense IDs into string keys in active domain."""
-        nodes = self.to_list(start_node=start_node)
+        nodes = self.to_list(start_node=start_node, ctx=ctx, state=state)
         if self._current_domain is not None:
             return [self._current_domain.to_key(nid) for nid in nodes]
         return [str(nid) for nid in nodes]
 
-    def to_key_set(self, start_node: Optional[int] = None) -> Set[str]:
+    def to_key_set(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> Set[str]:
         """Execute traversal and resolve target dense IDs into unique string keys in active domain."""
-        return set(self.to_key_list(start_node=start_node))
+        return set(self.to_key_list(start_node=start_node, ctx=ctx, state=state))
 
-    def count(self, start_node: Optional[int] = None) -> int:
+    def count(
+        self,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> int:
         """Execute traversal and return count of matching target node IDs."""
-        return len(self.to_list(start_node=start_node))
+        return len(self.to_list(start_node=start_node, ctx=ctx, state=state))
 
-    def contains(self, target_node: int, start_node: Optional[int] = None) -> bool:
+    def contains(
+        self,
+        target_node: int,
+        start_node: Optional[int] = None,
+        ctx: Optional[vm.VmContext] = None,
+        state: Optional[vm.VmState] = None,
+    ) -> bool:
         """Test if target_node is reachable via this traversal."""
         seed = self._start_node if start_node is None else start_node
         compiled = self.compile()
 
-        with vm.VmContext(self._snapshot) as ctx:
-            state = vm.VmState()
-            res = compiled.execute_with_context(ctx, state, seed)
-            if not res.is_ok():
-                return False
-            found = res.test_bitset(ctx, target_node)
-            ctx.release_bitset(res.raw_value)
-            return found
+        if ctx is None or state is None:
+            own_ctx, own_state = self._snapshot._get_default_vm()
+            if ctx is None:
+                ctx = own_ctx
+            if state is None:
+                state = own_state
+        else:
+            ctx.reset()
+            state.reset()
+
+        res = compiled.execute_with_context(ctx, state, seed)
+        if not res.is_ok():
+            return False
+        found = res.test_bitset(ctx, target_node)
+        ctx.release_bitset(res.raw_value)
+        return found
 
     def to_impas(self) -> str:
         """Disassemble traversal steps into human-readable ImpAsm (.impas) text assembly."""

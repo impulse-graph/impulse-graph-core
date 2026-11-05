@@ -178,6 +178,15 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         writer->domains[i].name_offset = get_or_add_string(writer->domain_names[i]);
     }
 
+    // Infer domain node counts from registered relations if not explicitly populated
+    for (const auto& rel : writer->relations) {
+        if (rel.src_domain_id < writer->domains.size()) {
+            writer->domains[rel.src_domain_id].node_count = std::max(
+                writer->domains[rel.src_domain_id].node_count, rel.node_count
+            );
+        }
+    }
+
     std::vector<uint8_t> dir_table;
 
     // String Table Header & Pool Blob

@@ -379,7 +379,9 @@ typedef struct IMPULSE_ALIGN(64) {
 // Public Context lifecycle APIs
 IMPULSE_API impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
 IMPULSE_API void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
+IMPULSE_API void impulse_vm_context_reset(impulse_vm_context_t* ctx);
 IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
+IMPULSE_API const uint64_t* impulse_vm_context_get_collected_nodes(const impulse_vm_context_t* ctx, size_t* out_count);
 IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
@@ -388,6 +390,8 @@ IMPULSE_API void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t
 IMPULSE_API bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
 IMPULSE_API void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count);
 IMPULSE_API uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx);
+IMPULSE_API size_t impulse_vm_context_get_bitset_word_count(const impulse_vm_context_t* ctx);
+IMPULSE_API const uint64_t* impulse_vm_context_get_bitset_words(const impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API int impulse_vm_context_acquire_float_vector(impulse_vm_context_t* ctx);
 IMPULSE_API void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t handle);
 IMPULSE_API void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val);

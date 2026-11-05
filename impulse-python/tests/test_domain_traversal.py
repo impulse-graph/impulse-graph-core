@@ -62,10 +62,12 @@ def test_domain_anchor_properties(ecommerce_snapshot):
         user_dom = snap.domain("User")
         assert user_dom.domain_name == "User"
         assert user_dom.domain_id == 0
+        assert user_dom.node_count == 2
 
         prod_dom = snap.domain("Product")
         assert prod_dom.domain_name == "Product"
         assert prod_dom.domain_id == 1
+        assert prod_dom.node_count == 3
 
         brand_dom = snap.domain("Brand")
         assert brand_dom.domain_name == "Brand"
