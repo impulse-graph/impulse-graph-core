@@ -100,6 +100,10 @@ class VmContext:
         if self._native is not None:
             self._native.destroy()
 
+    def reset(self):
+        if self._native is not None:
+            self._native.reset()
+
     def vector_size(self) -> int:
         return self._native.vector_size()
 
@@ -111,6 +115,9 @@ class VmContext:
 
     def get_node_vector(self, handle: int) -> np.ndarray:
         return self._native.get_node_vector(handle)
+
+    def get_collected_nodes(self) -> np.ndarray:
+        return self._native.get_collected_nodes()
 
     def acquire_bitset(self) -> int:
         return self._native.acquire_bitset()
@@ -129,6 +136,9 @@ class VmContext:
 
     def bitset_get_word(self, handle: int, word_idx: int) -> int:
         return self._native.bitset_get_word(handle, word_idx)
+
+    def get_bitset_nodes(self, handle: int) -> List[int]:
+        return self._native.get_bitset_nodes(handle)
 
     def acquire_float_vector(self) -> int:
         return self._native.acquire_float_vector()
@@ -226,6 +236,16 @@ class VmState:
 
     def set_register_type(self, idx: int, type_tag: int):
         self._native.set_register_type(idx, type_tag)
+
+    def reset(self):
+        if hasattr(self._native, "reset"):
+            self._native.reset()
+        else:
+            self.pc = 0
+            self.flags = 0
+            for i in range(64):
+                self.set_register(i, 0)
+                self.set_register_type(i, 0)
 
 
 class QueryResult:

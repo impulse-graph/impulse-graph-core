@@ -92,6 +92,8 @@ class Snapshot:
             raise RuntimeError("_impulse_native extension is not compiled.")
         self._native = _NativeSnapshot(path)
         self._catalog = catalog
+        self._default_ctx = None
+        self._default_state = None
 
     def __enter__(self):
         return self
@@ -104,9 +106,37 @@ class Snapshot:
             raise RuntimeError("Snapshot is closed")
 
     def close(self):
+        if self._default_ctx is not None:
+            self._default_ctx.destroy()
+            self._default_ctx = None
+            self._default_state = None
         if self._native is not None:
             self._native.close()
             self._native = None
+
+    def _get_default_vm(self):
+        self._check_open()
+        if self._default_ctx is None:
+            self._default_ctx = vm.VmContext(self)
+            self._default_state = vm.VmState()
+        else:
+            self._default_ctx.reset()
+            self._default_state.reset()
+        return self._default_ctx, self._default_state
+
+    @property
+    def default_context(self) -> vm.VmContext:
+        self._check_open()
+        if self._default_ctx is None:
+            self._get_default_vm()
+        return self._default_ctx
+
+    @property
+    def default_state(self) -> vm.VmState:
+        self._check_open()
+        if self._default_state is None:
+            self._get_default_vm()
+        return self._default_state
 
     def domain_count(self) -> int:
         self._check_open()
@@ -127,6 +157,7 @@ class Snapshot:
                 self,
                 domain_id=dom_info["domain_id"],
                 domain_name=dom_info["name"],
+                node_count=dom_info.get("node_count", 0),
                 key_type=dom_info["key_type"],
                 catalog=effective_catalog,
             )
@@ -139,6 +170,7 @@ class Snapshot:
                         self,
                         domain_id=dom_info["domain_id"],
                         domain_name=dom_info["name"],
+                        node_count=dom_info.get("node_count", 0),
                         key_type=dom_info["key_type"],
                         catalog=effective_catalog,
                     )
@@ -220,6 +252,56 @@ class Snapshot:
         if shape is not None:
             return arr.reshape(shape)
         return arr
+
+    def get_attribute_offsets_array(
+        self, relation_index: int = 0, attribute_index: int = 0
+    ) -> Optional[np.ndarray]:
+        """Zero-copy memoryview into variable-length attribute offsets uint32 array."""
+        self._check_open()
+        mv = self._native.get_attribute_offsets(relation_index, attribute_index)
+        if mv is None:
+            return None
+        return np.frombuffer(mv, dtype=np.uint32)
+
+    def get_attribute_info(
+        self, relation_index: int = 0, attribute_index: int = 0
+    ) -> dict:
+        """Get attribute type_code, dimension, and byte sizes."""
+        self._check_open()
+        return self._native.get_attribute_info(relation_index, attribute_index)
+
+    def get_string_attribute(
+        self, relation_index: int = 0, attribute_index: int = 0, index: int = 0
+    ) -> str:
+        """Retrieve a single string attribute by index using variable-length offsets."""
+        self._check_open()
+        offsets = self.get_attribute_offsets_array(relation_index, attribute_index)
+        data = self._native.get_attribute_data(relation_index, attribute_index)
+        data_bytes = bytes(data)
+        if offsets is not None:
+            if index + 1 >= len(offsets):
+                raise IndexError(f"Attribute index {index} out of range (max {len(offsets) - 2})")
+            start = int(offsets[index])
+            end = int(offsets[index + 1])
+            return data_bytes[start:end].decode("utf-8", errors="replace")
+        return data_bytes.decode("utf-8", errors="replace")
+
+    def get_string_attributes(
+        self, relation_index: int = 0, attribute_index: int = 0
+    ) -> List[str]:
+        """Retrieve all strings for a variable-length string attribute."""
+        self._check_open()
+        offsets = self.get_attribute_offsets_array(relation_index, attribute_index)
+        data = self._native.get_attribute_data(relation_index, attribute_index)
+        data_bytes = bytes(data)
+        if offsets is not None:
+            res = []
+            for i in range(len(offsets) - 1):
+                start = int(offsets[i])
+                end = int(offsets[i + 1])
+                res.append(data_bytes[start:end].decode("utf-8", errors="replace"))
+            return res
+        return [data_bytes.decode("utf-8", errors="replace")]
 
     def sample_neighbors(
         self,
@@ -448,6 +530,19 @@ class Writer:
             list(row_offsets),
             list(col_indices),
         )
+
+    def add_attribute(
+        self,
+        relation_index: int,
+        name: str,
+        type_code: int,
+        dimension: int,
+        data: Union[bytes, bytearray, np.ndarray],
+        offsets: Optional[Union[bytes, bytearray, np.ndarray]] = None,
+    ):
+        data_bytes = data.tobytes() if isinstance(data, np.ndarray) else data
+        offsets_bytes = offsets.tobytes() if isinstance(offsets, np.ndarray) else offsets
+        self._native.add_attribute(relation_index, name, type_code, dimension, data_bytes, offsets_bytes)
 
     def finalize(self):
         self._native.finalize()

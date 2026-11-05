@@ -11,6 +11,10 @@
 #include <vector>
 #include <stdexcept>
 #include <cstdint>
+#include <cstring>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 namespace py = pybind11;
 
@@ -59,6 +63,7 @@ public:
         py::dict res;
         res["domain_id"] = entry.domain_id;
         res["key_type"] = entry.key_type;
+        res["node_count"] = entry.node_count;
         res["name"] = name ? std::string(name) : "";
         return res;
     }
@@ -154,6 +159,47 @@ public:
             throw std::runtime_error("Attribute buffer not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
         }
         return py::memoryview::from_memory(const_cast<void*>(data), data_bytes, true);
+    }
+
+    py::object get_attribute_offsets(uint16_t relation_index, uint16_t attribute_index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        const void* offsets = nullptr;
+        uint64_t offsets_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
+            snapshot_, relation_index, attribute_index,
+            &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+        );
+        if (st != IMPULSE_OK || !offsets || offsets_bytes == 0) {
+            return py::none();
+        }
+        return py::memoryview::from_memory(const_cast<void*>(offsets), offsets_bytes, true);
+    }
+
+    py::dict get_attribute_info(uint16_t relation_index, uint16_t attribute_index) const {
+        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        const void* offsets = nullptr;
+        uint64_t offsets_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
+            snapshot_, relation_index, attribute_index,
+            &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+        );
+        if (st != IMPULSE_OK) {
+            throw std::runtime_error("Attribute info not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
+        }
+        py::dict res;
+        res["type_code"] = type_code;
+        res["dimension"] = dimension;
+        res["data_bytes"] = data_bytes;
+        res["offsets_bytes"] = offsets_bytes;
+        return res;
     }
 
     py::tuple sample_neighbors(uint16_t relation_index, const std::vector<uint64_t>& nodes, int k_samples, uint64_t seed) const {
@@ -267,6 +313,37 @@ public:
         }
     }
 
+    void add_attribute(
+        uint16_t relation_index,
+        const std::string& name,
+        uint8_t type_code,
+        uint32_t dimension,
+        py::object data,
+        py::object offsets = py::none()
+    ) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        py::buffer_info data_info = py::buffer(data).request();
+        const void* data_ptr = data_info.ptr;
+        uint64_t data_bytes = static_cast<uint64_t>(data_info.size * data_info.itemsize);
+
+        const void* offsets_ptr = nullptr;
+        uint64_t offsets_bytes = 0;
+        py::buffer_info offsets_info;
+        if (!offsets.is_none()) {
+            offsets_info = py::buffer(offsets).request();
+            offsets_ptr = offsets_info.ptr;
+            offsets_bytes = static_cast<uint64_t>(offsets_info.size * offsets_info.itemsize);
+        }
+
+        impulse_status_t status = impulse_writer_add_attribute(
+            writer_, relation_index, name.c_str(), type_code, dimension,
+            data_ptr, data_bytes, offsets_ptr, offsets_bytes
+        );
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to add attribute: " + std::string(impulse_get_last_error()));
+        }
+    }
+
     void finalize() {
         if (!writer_) throw std::runtime_error("Writer is destroyed");
         impulse_status_t status = impulse_writer_finalize(writer_);
@@ -298,6 +375,45 @@ public:
             impulse_vm_context_destroy(ctx_);
             ctx_ = nullptr;
         }
+    }
+
+    void reset() {
+        if (ctx_) {
+            impulse_vm_context_reset(ctx_);
+            for (auto& s : string_storage_) {
+                s.clear();
+            }
+        }
+    }
+
+    std::vector<uint32_t> get_bitset_nodes(uint64_t handle) const {
+        std::vector<uint32_t> out;
+        if (!ctx_ || handle >= 1024) return out;
+        size_t count = impulse_vm_context_get_bitset_word_count(ctx_);
+        const uint64_t* words = impulse_vm_context_get_bitset_words(ctx_, static_cast<size_t>(handle));
+        if (!words) return out;
+        for (size_t i = 0; i < count; ++i) {
+            uint64_t w = words[i];
+            while (w != 0) {
+                unsigned long bit = 0;
+#if defined(_MSC_VER)
+                _BitScanForward64(&bit, w);
+#else
+                bit = __builtin_ctzll(w);
+#endif
+                out.push_back(static_cast<uint32_t>(i * 64 + bit));
+                w &= (w - 1);
+            }
+        }
+        return out;
+    }
+
+    py::array_t<uint64_t> get_collected_nodes() const {
+        if (!ctx_) throw std::runtime_error("Context is destroyed");
+        size_t count = 0;
+        const uint64_t* ptr = impulse_vm_context_get_collected_nodes(ctx_, &count);
+        if (!ptr || count == 0) return py::array_t<uint64_t>(0);
+        return py::array_t<uint64_t>(count, ptr);
     }
 
     impulse_vm_context_t* raw_handle() const { return ctx_; }
@@ -391,7 +507,7 @@ public:
     py::array_t<uint64_t> get_node_vector(size_t handle) const {
         if (!ctx_) throw std::runtime_error("Context is destroyed");
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
-        size_t sz = vector_size();
+        size_t sz = impulse_vm_context_node_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<uint64_t>(0);
         return py::array_t<uint64_t>(sz, ptr);
     }
@@ -588,11 +704,15 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("set_register_type", [](impulse_vm_state_t& self, size_t idx, uint8_t type_tag) {
             if (idx >= 64) throw std::out_of_range("Register index out of bounds [0..63]");
             self.register_types[idx] = type_tag;
+        })
+        .def("reset", [](impulse_vm_state_t& self) {
+            std::memset(&self, 0, sizeof(impulse_vm_state_t));
         });
 
     py::class_<PyImpulseVmContext>(m, "VmContext")
         .def(py::init<const PyImpulseSnapshot*>(), py::arg("snapshot") = nullptr)
         .def("destroy", &PyImpulseVmContext::destroy)
+        .def("reset", &PyImpulseVmContext::reset)
         .def("__enter__", [](PyImpulseVmContext& self) { return &self; })
         .def("__exit__", [](PyImpulseVmContext& self, py::object, py::object, py::object) { self.destroy(); })
         .def("vector_size", &PyImpulseVmContext::vector_size)
@@ -604,6 +724,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("bitset_test", &PyImpulseVmContext::bitset_test, py::arg("handle"), py::arg("node_id"))
         .def("bitset_fill", &PyImpulseVmContext::bitset_fill, py::arg("handle"), py::arg("count"))
         .def("bitset_get_word", &PyImpulseVmContext::bitset_get_word, py::arg("handle"), py::arg("word_idx"))
+        .def("get_bitset_nodes", &PyImpulseVmContext::get_bitset_nodes, py::arg("handle"))
         .def("acquire_float_vector", &PyImpulseVmContext::acquire_float_vector)
         .def("release_float_vector", &PyImpulseVmContext::release_float_vector, py::arg("handle"))
         .def("float_vector_set", &PyImpulseVmContext::float_vector_set, py::arg("handle"), py::arg("index"), py::arg("val"))
@@ -613,6 +734,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("acquire_node_vector", &PyImpulseVmContext::acquire_node_vector)
         .def("release_node_vector", &PyImpulseVmContext::release_node_vector, py::arg("handle"))
         .def("get_node_vector", &PyImpulseVmContext::get_node_vector, py::arg("handle"))
+        .def("get_collected_nodes", &PyImpulseVmContext::get_collected_nodes)
         .def("acquire_string_vector", &PyImpulseVmContext::acquire_string_vector)
         .def("release_string_vector", &PyImpulseVmContext::release_string_vector, py::arg("handle"))
         .def("string_vector_add", &PyImpulseVmContext::string_vector_add, py::arg("handle"), py::arg("str"))
@@ -739,6 +861,8 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("get_csc_row_offsets", &PyImpulseSnapshot::get_csc_row_offsets, py::arg("index"))
         .def("get_csc_col_indices", &PyImpulseSnapshot::get_csc_col_indices, py::arg("index"))
         .def("get_attribute_data", &PyImpulseSnapshot::get_attribute_data, py::arg("relation_index"), py::arg("attribute_index"))
+        .def("get_attribute_offsets", &PyImpulseSnapshot::get_attribute_offsets, py::arg("relation_index"), py::arg("attribute_index"))
+        .def("get_attribute_info", &PyImpulseSnapshot::get_attribute_info, py::arg("relation_index"), py::arg("attribute_index"))
         .def("sample_neighbors", &PyImpulseSnapshot::sample_neighbors,
              py::arg("relation_index"), py::arg("nodes"), py::arg("k_samples"), py::arg("seed") = 42)
         .def("is_reachable", &PyImpulseSnapshot::is_reachable,
@@ -760,6 +884,9 @@ PYBIND11_MODULE(_impulse_native, m) {
              py::arg("src_domain_id"), py::arg("tgt_domain_id"), py::arg("encoding_type"),
              py::arg("node_count"), py::arg("edge_count"), py::arg("section_features"),
              py::arg("row_offsets"), py::arg("col_indices"))
+        .def("add_attribute", &PyImpulseWriter::add_attribute,
+             py::arg("relation_index"), py::arg("name"), py::arg("type_code"),
+             py::arg("dimension"), py::arg("data"), py::arg("offsets") = py::none())
         .def("finalize", &PyImpulseWriter::finalize);
 
     m.def("parse_cel", [](const std::string& expr) -> std::string {

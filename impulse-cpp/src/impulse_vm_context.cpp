@@ -353,13 +353,19 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     IMPULSE_ASSERT(ctx->words_per_bitset > 0);
 
     // Pre-allocate off-heap bitsets in a contiguous memory block
-    ctx->arena_memory = new uint64_t[VM_MAX_BITSET_HANDLES * ctx->words_per_bitset]();
+    ctx->arena_memory = new uint64_t[VM_MAX_BITSET_HANDLES * ctx->words_per_bitset];
     IMPULSE_ASSERT(ctx->arena_memory != nullptr);
     for (size_t i = 0; i < VM_MAX_BITSET_HANDLES; ++i) {
         ctx->bitsets[i].words = ctx->arena_memory + (i * ctx->words_per_bitset);
         ctx->bitsets[i].word_count = ctx->words_per_bitset;
         ctx->bitset_allocated[i] = false;
     }
+    // Lazily initialize/zero initial bitset handles up to bitset_alloc_counter
+    constexpr size_t INITIAL_LAZY_HANDLES = 8;
+    for (size_t i = 0; i < INITIAL_LAZY_HANDLES; ++i) {
+        ctx->bitsets[i].clear();
+    }
+    ctx->bitset_alloc_counter = INITIAL_LAZY_HANDLES;
 
     ctx->private_arena_memory = nullptr;
 #if defined(_OPENMP)
@@ -511,6 +517,65 @@ void impulse_vm_context_destroy(impulse_vm_context_t* ctx) {
         delete[] ctx->arena_memory;
         delete ctx;
     }
+}
+
+void impulse_vm_context_reset(impulse_vm_context_t* ctx) {
+    if (!ctx) return;
+    for (size_t i = 0; i < ctx->bitset_alloc_counter; ++i) {
+        if (ctx->bitset_allocated[i]) {
+            ctx->bitsets[i].clear();
+            ctx->bitset_allocated[i] = false;
+        }
+    }
+    for (size_t i = 0; i < VM_MAX_VECTOR_HANDLES; ++i) {
+        ctx->float_vectors_allocated[i] = false;
+        ctx->float_vector_lengths[i] = 0;
+        ctx->double_vectors_allocated[i] = false;
+        ctx->double_vector_lengths[i] = 0;
+        ctx->node_vectors_allocated[i] = false;
+        ctx->node_vector_lengths[i] = 0;
+        ctx->node_vector_length_explicit[i] = false;
+        if (ctx->string_vectors_allocated[i]) {
+            ctx->string_vectors_allocated[i] = false;
+            ctx->string_vectors[i].clear();
+        }
+        if (ctx->value_maps_allocated[i]) {
+            ctx->value_maps_allocated[i] = false;
+            ctx->value_maps[i].keys.clear();
+            ctx->value_maps[i].values.clear();
+        }
+    }
+    for (size_t i = 0; i < VM_MAX_LANE_FRONTIER_HANDLES; ++i) {
+        ctx->lane_frontiers_allocated[i] = false;
+        ctx->lane_frontiers[i].lanes.clear();
+        ctx->lane_frontiers[i].active_words.clear();
+    }
+    ctx->lane_frontiers_count = 0;
+    ctx->node_buffer.clear();
+    ctx->stack_pointer = 0;
+    ctx->call_stack.fill(0);
+}
+
+const uint64_t* impulse_vm_context_get_collected_nodes(const impulse_vm_context_t* ctx, size_t* out_count) {
+    if (!ctx) {
+        if (out_count) *out_count = 0;
+        return nullptr;
+    }
+    if (out_count) {
+        *out_count = ctx->node_buffer.size();
+    }
+    return ctx->node_buffer.data();
+}
+
+size_t impulse_vm_context_get_bitset_word_count(const impulse_vm_context_t* ctx) {
+    return ctx ? ctx->words_per_bitset : 0;
+}
+
+const uint64_t* impulse_vm_context_get_bitset_words(const impulse_vm_context_t* ctx, size_t handle) {
+    if (ctx && handle < VM_MAX_BITSET_HANDLES) {
+        return ctx->bitsets[handle].words;
+    }
+    return nullptr;
 }
 
 void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel) {
