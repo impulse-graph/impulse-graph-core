@@ -105,7 +105,10 @@ pub fn hexio_write_u64_le(buf: &mut [u8], offset: usize, val: u64) -> Result<(),
 /// the header checksum valid.
 pub fn recompute_header_crc16(buf: &mut [u8]) -> Result<u16, String> {
     if buf.len() < 64 {
-        return Err(format!("Snapshot buffer too small for header ({} < 64)", buf.len()));
+        return Err(format!(
+            "Snapshot buffer too small for header ({} < 64)",
+            buf.len()
+        ));
     }
     let crc = compute_crc16(&buf[0..0x3E]);
     buf[0x3E..0x40].copy_from_slice(&crc.to_le_bytes());
@@ -115,7 +118,10 @@ pub fn recompute_header_crc16(buf: &mut [u8]) -> Result<u16, String> {
 /// Recomputes both the file SHA-256 (zeroing `0x1E..0x40` during hash calculation) and the header CRC-16.
 pub fn recompute_header_hashes(buf: &mut [u8]) -> Result<u16, String> {
     if buf.len() < 64 {
-        return Err(format!("Snapshot buffer too small for header ({} < 64)", buf.len()));
+        return Err(format!(
+            "Snapshot buffer too small for header ({} < 64)",
+            buf.len()
+        ));
     }
     buf[0x1E..0x40].fill(0);
     let sha = compute_sha256(buf);

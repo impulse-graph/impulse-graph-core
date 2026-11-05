@@ -35,7 +35,7 @@ op_INIT_MOCK_GRAPH: {
     if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
-    if (slot_id >= 16) {
+    if (slot_id >= 16 || node_count > 1048576) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     uint64_t req_offsets_bytes = static_cast<uint64_t>(offset_bytes) + (static_cast<uint64_t>(node_count) + 1) * sizeof(uint32_t);
@@ -45,7 +45,15 @@ op_INIT_MOCK_GRAPH: {
 
     {
         const uint32_t* offsets = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
+        if (offsets[0] != 0) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         uint32_t total_edges = offsets[node_count];
+        for (uint32_t u = 0; u < node_count; ++u) {
+            if (offsets[u] > offsets[u + 1] || offsets[u + 1] > total_edges) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+        }
         uint64_t req_total_bytes = req_offsets_bytes + static_cast<uint64_t>(total_edges) * sizeof(uint32_t);
         if (req_total_bytes > vm_state->query_context->inline_data_bytes) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -54,9 +62,15 @@ op_INIT_MOCK_GRAPH: {
 
         uint32_t max_target_id = 0;
         for (uint32_t e = 0; e < total_edges; ++e) {
+            if (targets[e] >= 1048576) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             if (targets[e] > max_target_id) max_target_id = targets[e];
         }
         uint32_t csc_node_count = (total_edges > 0) ? std::max(static_cast<uint32_t>(node_count), max_target_id + 1) : node_count;
+        if (csc_node_count > 1048576) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
 
         auto& slot = vm_state->query_context->slots[slot_id];
         auto& in_degrees = vm_state->query_context->scratch_u32_a;

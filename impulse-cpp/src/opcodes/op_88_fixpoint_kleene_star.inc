@@ -76,6 +76,14 @@ op_FIXPOINT_KLEENE_STAR: {
         bool changed = true;
         size_t max_iter = 1000;
         while (changed && max_iter-- > 0) {
+            if (vm_state->query_context && vm_state->query_context->fuel_enabled) {
+                if (vm_state->query_context->fuel == 0) {
+                    if (h_frontier >= 0) release_bitset(vm_state->query_context, h_frontier);
+                    if (h_next >= 0) release_bitset(vm_state->query_context, h_next);
+                    return IMPULSE_VM_ERR_GAS_EXHAUSTED;
+                }
+                vm_state->query_context->fuel--;
+            }
             next_f.clear();
             changed = false;
 

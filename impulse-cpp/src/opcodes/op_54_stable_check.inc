@@ -41,6 +41,9 @@ op_STABLE_CHECK: {
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
 
     if (src_is_bitset && dst_is_bitset) {
+        if (h_src < 0 || h_src >= VM_MAX_BITSET_HANDLES || h_dst < 0 || h_dst >= VM_MAX_BITSET_HANDLES) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -50,6 +53,9 @@ op_STABLE_CHECK: {
             }
         }
     } else if (!src_is_bitset && dst_is_bitset) {
+        if (h_dst < 0 || h_dst >= VM_MAX_BITSET_HANDLES) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
         const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
         is_subset = bitset_test(bs_dst, scalar_src, vm_state->query_context->max_nodes);
     } else if (!src_is_bitset && !dst_is_bitset) {

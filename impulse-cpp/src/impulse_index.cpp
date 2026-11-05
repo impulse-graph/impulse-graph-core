@@ -186,6 +186,7 @@ impulse_status_t impulse_index_permutation_range_query(
     PermutationHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
+    if (hdr.count > (SIZE_MAX - sizeof(PermutationHeader)) / sizeof(uint32_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
     if (index_size < sizeof(PermutationHeader) + hdr.count * sizeof(uint32_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
 
     const uint32_t* perm = reinterpret_cast<const uint32_t*>(raw + sizeof(PermutationHeader));
@@ -198,9 +199,13 @@ impulse_status_t impulse_index_permutation_range_query(
         float fmin = static_cast<float>(min_val);
         float fmax = static_cast<float>(max_val);
 
-        auto low_it = std::lower_bound(perm, perm + hdr.count, fmin, [data](uint32_t idx, float val) { return data[idx] < val; });
+        auto low_it = std::lower_bound(perm, perm + hdr.count, fmin, [data, count = hdr.count](uint32_t idx, float val) {
+            if (idx >= count) return false;
+            return data[idx] < val;
+        });
         for (auto it = low_it; it != perm + hdr.count; ++it) {
             uint32_t node_id = *it;
+            if (node_id >= hdr.count) continue;
             float val = data[node_id];
             if (val > fmax) break;
             if (matched < max_nodes) out_node_ids[matched] = node_id;
@@ -211,9 +216,13 @@ impulse_status_t impulse_index_permutation_range_query(
         int32_t imin = static_cast<int32_t>(min_val);
         int32_t imax = static_cast<int32_t>(max_val);
 
-        auto low_it = std::lower_bound(perm, perm + hdr.count, imin, [data](uint32_t idx, int32_t val) { return data[idx] < val; });
+        auto low_it = std::lower_bound(perm, perm + hdr.count, imin, [data, count = hdr.count](uint32_t idx, int32_t val) {
+            if (idx >= count) return false;
+            return data[idx] < val;
+        });
         for (auto it = low_it; it != perm + hdr.count; ++it) {
             uint32_t node_id = *it;
+            if (node_id >= hdr.count) continue;
             int32_t val = data[node_id];
             if (val > imax) break;
             if (matched < max_nodes) out_node_ids[matched] = node_id;
@@ -424,17 +433,37 @@ impulse_status_t impulse_index_inverted_bitset_lookup(
     std::memcpy(&hdr, raw, sizeof(hdr));
 
     size_t str_offset = sizeof(InvertedBitsetHeader);
+    if (hdr.string_table_bytes > index_size || str_offset > index_size - hdr.string_table_bytes) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
     size_t entries_offset = str_offset + hdr.string_table_bytes;
 
-    if (index_size < entries_offset + hdr.key_count * sizeof(InvertedBitsetEntry)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (hdr.key_count > (index_size - entries_offset) / sizeof(InvertedBitsetEntry)) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
 
     const InvertedBitsetEntry* entries = reinterpret_cast<const InvertedBitsetEntry*>(raw + entries_offset);
     const char* str_pool = reinterpret_cast<const char*>(raw + str_offset);
 
+    if (hdr.string_table_bytes == 0 || str_pool[hdr.string_table_bytes - 1] != '\0') {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
     for (uint32_t k = 0; k < hdr.key_count; ++k) {
+        if (entries[k].key_string_offset >= hdr.string_table_bytes) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
         const char* key_str = str_pool + entries[k].key_string_offset;
+        const void* nul = std::memchr(key_str, '\0', hdr.string_table_bytes - entries[k].key_string_offset);
+        if (!nul) return IMPULSE_ERR_BUFFER_OVERFLOW;
+
         if (std::strcmp(key_str, query_key) == 0) {
-            if (entries[k].bitset_offset + entries[k].bitset_bytes > index_size) return IMPULSE_ERR_BUFFER_OVERFLOW;
+            if (entries[k].bitset_offset > index_size || entries[k].bitset_bytes > index_size - entries[k].bitset_offset) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            if (hdr.words_per_bitset > SIZE_MAX / 8 || hdr.words_per_bitset * 8 > entries[k].bitset_bytes) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
             *out_words = reinterpret_cast<const uint64_t*>(raw + entries[k].bitset_offset);
             *out_num_words = hdr.words_per_bitset;
             return IMPULSE_OK;
@@ -523,13 +552,24 @@ impulse_status_t impulse_index_minimal_perfect_hash_lookup(
     MphfHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
+    if (hdr.key_count == 0) return IMPULSE_ERR_INVALID_ARGUMENT;
+
     size_t str_offset = sizeof(MphfHeader);
+    if (hdr.string_table_bytes > index_size || str_offset > index_size - hdr.string_table_bytes) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
     size_t table_offset = str_offset + hdr.string_table_bytes;
 
-    if (index_size < table_offset + hdr.key_count * sizeof(MphfEntry)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (hdr.key_count > (index_size - table_offset) / sizeof(MphfEntry)) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
 
     const char* str_pool = reinterpret_cast<const char*>(raw + str_offset);
     const MphfEntry* table = reinterpret_cast<const MphfEntry*>(raw + table_offset);
+
+    if (hdr.string_table_bytes == 0 || str_pool[hdr.string_table_bytes - 1] != '\0') {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
 
     uint64_t h = fnv1a_hash(query_key, hdr.seed);
     size_t slot = h % hdr.key_count;
@@ -537,7 +577,12 @@ impulse_status_t impulse_index_minimal_perfect_hash_lookup(
 
     while (table[slot].key_string_offset != 0 || slot != start_slot) {
         if (table[slot].key_string_offset != 0) {
+            if (table[slot].key_string_offset >= hdr.string_table_bytes) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
             const char* key_str = str_pool + table[slot].key_string_offset;
+            const void* nul = std::memchr(key_str, '\0', hdr.string_table_bytes - table[slot].key_string_offset);
+            if (!nul) return IMPULSE_ERR_BUFFER_OVERFLOW;
             if (std::strcmp(key_str, query_key) == 0) {
                 *out_node_id = table[slot].node_id;
                 return IMPULSE_OK;
@@ -646,6 +691,13 @@ impulse_status_t impulse_index_trigram_search(
     TrigramHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
+    if (hdr.words_per_bitset > SIZE_MAX / sizeof(uint64_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    size_t bitset_bytes = hdr.words_per_bitset * sizeof(uint64_t);
+
+    if (hdr.trigram_count > (index_size - sizeof(TrigramHeader)) / sizeof(TrigramEntry)) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
     if (max_words < hdr.words_per_bitset) return IMPULSE_ERR_BUFFER_OVERFLOW;
     std::memset(out_words, 0xFF, hdr.words_per_bitset * sizeof(uint64_t)); // Start with all 1s
 
@@ -657,6 +709,9 @@ impulse_status_t impulse_index_trigram_search(
 
         for (uint32_t k = 0; k < hdr.trigram_count; ++k) {
             if (std::memcmp(entries[k].trigram, target_tri, 3) == 0) {
+                if (entries[k].bitset_offset > index_size || bitset_bytes > index_size - entries[k].bitset_offset) {
+                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+                }
                 const uint64_t* tri_words = reinterpret_cast<const uint64_t*>(raw + entries[k].bitset_offset);
                 for (size_t w = 0; w < hdr.words_per_bitset; ++w) {
                     out_words[w] &= tri_words[w];

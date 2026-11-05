@@ -61,6 +61,7 @@ thread_local! {
 /// Executes Vamana Greedy Beam Search using a caller-provided reusable `VamanaSearchScratch`.
 /// Eliminates per-query $O(N)$ `visited`/`expanded` heap allocations and uses pre-packed `BQ1`
 /// `u64` words and fused single-pass `SQ8`/`FP16` Stage-1 routing kernels.
+#[allow(clippy::too_many_arguments)]
 pub fn vamana_ann_search_with_scratch(
     hdr: &VamanaHeader,
     adj_slab: &[u8],
@@ -95,7 +96,11 @@ pub fn vamana_ann_search_with_scratch(
     // Precompute query-invariant state once per search
     let query_inv_norm = if metric == VamanaMetric::Cosine {
         let nq = fast_dot_f32(q_slice, q_slice);
-        if nq <= 1e-12 { 0.0 } else { 1.0 / nq.sqrt() }
+        if nq <= 1e-12 {
+            0.0
+        } else {
+            1.0 / nq.sqrt()
+        }
     } else {
         1.0
     };
@@ -318,14 +323,13 @@ pub fn evaluate_ann_quality(
     let exact_top_k: Vec<u32> = exact.iter().take(k_eff).map(|x| x.0).collect();
     let approx_top_k: Vec<u32> = approx.iter().take(k_eff).map(|x| x.0).collect();
 
-    let recall_at_1 = if !approx_top_k.is_empty()
-        && !exact_top_k.is_empty()
-        && approx_top_k[0] == exact_top_k[0]
-    {
-        1.0
-    } else {
-        0.0
-    };
+    let recall_at_1 =
+        if !approx_top_k.is_empty() && !exact_top_k.is_empty() && approx_top_k[0] == exact_top_k[0]
+        {
+            1.0
+        } else {
+            0.0
+        };
 
     let mut hits = 0usize;
     let mut dcg = 0.0f64;

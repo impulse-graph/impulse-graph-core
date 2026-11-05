@@ -41,9 +41,9 @@ impl VamanaBuildConfig {
             if part.is_empty() {
                 continue;
             }
-            let (k, v) = part
-                .split_once('=')
-                .ok_or_else(|| format!("Invalid Vamana parameter '{}' (expected key=value)", part))?;
+            let (k, v) = part.split_once('=').ok_or_else(|| {
+                format!("Invalid Vamana parameter '{}' (expected key=value)", part)
+            })?;
             let k = k.trim().to_ascii_lowercase();
             let v = v.trim().to_ascii_lowercase();
             match k.as_str() {
@@ -109,7 +109,6 @@ pub struct BuiltVamanaIndex {
     pub adj_slab: Vec<u8>,
     pub quant_slab: Vec<u8>,
 }
-
 
 /// 8-way unrolled dot product for auto-vectorization (NEON / AVX2).
 #[inline(always)]
@@ -246,7 +245,6 @@ pub fn compute_vector_metric(metric: VamanaMetric, q: &[f32], v: &[f32]) -> (f32
 pub(crate) fn compare_cand(a: &(u32, f32, f32), b: &(u32, f32, f32)) -> Ordering {
     a.2.total_cmp(&b.2).then_with(|| a.0.cmp(&b.0))
 }
-
 
 pub mod builder;
 pub mod quant;

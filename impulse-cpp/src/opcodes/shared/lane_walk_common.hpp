@@ -288,6 +288,12 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
 
                 int iter = 0;
                 while (has_delta && iter < 1024) {
+                    if (vm_state->query_context && vm_state->query_context->fuel_enabled) {
+                        if (vm_state->query_context->fuel == 0) {
+                            return IMPULSE_VM_ERR_GAS_EXHAUSTED;
+                        }
+                        vm_state->query_context->fuel--;
+                    }
                     has_delta = false;
                     if (!is_csc) {
                         if (slot.offsets_ptr && slot.targets_ptr) {
@@ -468,27 +474,30 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
             } else {
                 step_once(lf_src.lanes, lf_src.active_words, lf_dst.lanes, lf_dst.active_words);
             }
+            return IMPULSE_VM_OK;
         };
 
+        impulse_vm_status_t walk_status = IMPULSE_VM_OK;
         switch (lf_dst.width) {
             case IMPULSE_LANE_WIDTH_8:
                 IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_8);
-                execute_walk_tiered(uint8_t{0});
+                walk_status = execute_walk_tiered(uint8_t{0});
                 break;
             case IMPULSE_LANE_WIDTH_16:
                 IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_16);
-                execute_walk_tiered(uint16_t{0});
+                walk_status = execute_walk_tiered(uint16_t{0});
                 break;
             case IMPULSE_LANE_WIDTH_32:
                 IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_32);
-                execute_walk_tiered(uint32_t{0});
+                walk_status = execute_walk_tiered(uint32_t{0});
                 break;
             case IMPULSE_LANE_WIDTH_64:
             default:
                 IMPULSE_TESTCASE(lf_dst.width == IMPULSE_LANE_WIDTH_64);
-                execute_walk_tiered(uint64_t{0});
+                walk_status = execute_walk_tiered(uint64_t{0});
                 break;
         }
+        if (walk_status != IMPULSE_VM_OK) return walk_status;
 
         bool any_set = false;
         bool any_changed = false;

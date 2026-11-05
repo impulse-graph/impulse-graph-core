@@ -151,7 +151,7 @@ op_VECTOR_ANN_SEARCH: {
             if (v_node_count > 0 && v_medoid_node_id >= v_node_count) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            uint64_t expected_slab_bytes = v_node_count * static_cast<uint64_t>(v_max_degree_r + 1u) * 4ULL;
+            uint64_t expected_slab_bytes = v_node_count * (static_cast<uint64_t>(v_max_degree_r) + 1ULL) * 4ULL;
             if ((v_adj_slab_offset % 128ULL) != 0ULL || v_adj_slab_bytes < expected_slab_bytes) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }

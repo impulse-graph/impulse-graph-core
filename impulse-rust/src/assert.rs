@@ -88,7 +88,10 @@ pub fn check(cond: bool, msg: &str) {
 #[inline]
 pub fn check_well_formed(cond: bool, msg: &str) {
     if !cond && is_never_corrupt() {
-        panic!("IMPULSE_ASSERT_WELL_FORMED failed (NEVER_CORRUPT=1): {}", msg);
+        panic!(
+            "IMPULSE_ASSERT_WELL_FORMED failed (NEVER_CORRUPT=1): {}",
+            msg
+        );
     }
 }
 
