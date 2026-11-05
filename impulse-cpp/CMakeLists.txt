@@ -303,6 +303,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_property_vm tests/test_property_vm.cpp)
     target_link_libraries(test_property_vm PRIVATE impulse_graph_static)
     add_test(NAME test_property_vm COMMAND test_property_vm)
+
+    add_executable(test_issues_49_50_51_52 tests/test_issues_49_50_51_52.cpp)
+    target_link_libraries(test_issues_49_50_51_52 PRIVATE impulse_graph_static)
+    add_test(NAME test_issues_49_50_51_52 COMMAND test_issues_49_50_51_52)
 endif()
 
 # --- Examples ------------------------------------------------------------

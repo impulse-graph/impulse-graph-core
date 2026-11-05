@@ -4,6 +4,7 @@
  */
 
 #include "impulse_vm_fluent_internal.hpp"
+#include "impulse_vm_internal.hpp"
 
 namespace impulse::vm {
 
@@ -12,14 +13,66 @@ MultiLaneResult::MultiLaneResult(const impulse_snapshot_t* snapshot,
                                  uint32_t domain_node_count,
                                  uint32_t lane_count,
                                  std::vector<std::string> lane_keys,
-                                 std::vector<uint64_t> words_per_node)
+                                 std::vector<uint64_t> words_per_node,
+                                 std::vector<float> projected_values,
+                                 bool has_projected_values)
     : snapshot_(snapshot),
       domain_id_(domain_id),
       domain_node_count_(domain_node_count),
       lane_count_(lane_count),
       words_per_lane_((lane_count + 63U) / 64U),
       lane_keys_(std::move(lane_keys)),
-      words_per_node_(std::move(words_per_node)) {}
+      words_per_node_(std::move(words_per_node)),
+      projected_values_(std::move(projected_values)),
+      has_projected_values_(has_projected_values) {}
+
+std::vector<std::pair<uint32_t, float>> MultiLaneResult::nodeValues() const {
+    std::vector<std::pair<uint32_t, float>> out;
+    if (words_per_lane_ == 0 || lane_count_ == 0) return out;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        if (lanePopcountFor(u) > 0) {
+            out.emplace_back(u, valueFor(u));
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<std::string, float>> MultiLaneResult::keyValues() const {
+    std::vector<std::pair<std::string, float>> out;
+    if (words_per_lane_ == 0 || lane_count_ == 0) return out;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        if (lanePopcountFor(u) > 0) {
+            out.emplace_back(resolve_dense_to_key(snapshot_, domain_id_, u), valueFor(u));
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<uint32_t, float>> MultiLaneResult::nodeValuesForLane(uint32_t lane) const {
+    std::vector<std::pair<uint32_t, float>> out;
+    if (lane >= lane_count_ || words_per_lane_ == 0) return out;
+    uint32_t w = lane / 64U;
+    uint32_t b = lane % 64U;
+    uint64_t mask = (1ULL << b);
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        const uint64_t* row = &words_per_node_[static_cast<size_t>(u) * words_per_lane_];
+        if ((row[w] & mask) != 0ULL) {
+            out.emplace_back(u, valueFor(u));
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<uint32_t, float>> MultiLaneResult::nodeValuesWithQuorum(uint32_t min_lanes) const {
+    std::vector<std::pair<uint32_t, float>> out;
+    if (words_per_lane_ == 0 || lane_count_ == 0) return out;
+    for (uint32_t u = 0; u < domain_node_count_; ++u) {
+        if (lanePopcountFor(u) >= min_lanes) {
+            out.emplace_back(u, valueFor(u));
+        }
+    }
+    return out;
+}
 
 uint64_t MultiLaneResult::laneMaskFor(uint32_t node_id) const {
     if (node_id >= domain_node_count_ || words_per_lane_ == 0) return 0ULL;
@@ -419,6 +472,8 @@ MultiLaneResult MultiLaneTraversal::collect() const {
     uint32_t K = static_cast<uint32_t>(seeds_.size());
     uint32_t words_per_lane = (K + 63U) / 64U;
     std::vector<uint64_t> words_per_node(static_cast<size_t>(N) * words_per_lane, 0ULL);
+    std::vector<float> proj_values(N, 0.0f);
+    bool has_projected = false;
 
     if (!snapshot_ || N == 0 || K == 0) {
         return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
@@ -660,24 +715,35 @@ MultiLaneResult MultiLaneTraversal::collect() const {
                 auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
                 for (uint32_t u = 0; u < N; ++u) {
                     uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
-                    if (row[0] == 0ULL) continue;
+                    bool is_active = false;
+                    for (uint32_t w = 0; w < words_per_lane; ++w) {
+                        if (row[w] != 0ULL) { is_active = true; break; }
+                    }
+                    if (!is_active && step.kind != LaneStep::Kind::PROJECT_CEL) continue;
+
+                    std::unordered_map<std::string, double> f_attrs;
+                    std::unordered_map<std::string, int64_t> i_attrs;
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+
                     if (step.kind == LaneStep::Kind::FILTER_CEL) {
-                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row[0])) {
+                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row, words_per_lane, &i_attrs, &f_attrs)) {
                             for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
                         }
                     } else if (step.kind == LaneStep::Kind::PRUNE_WHERE_CEL) {
-                        if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row[0])) {
+                        if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row, words_per_lane, &i_attrs, &f_attrs)) {
                             for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
                         }
                     } else if (step.kind == LaneStep::Kind::PROJECT_CEL) {
-                        row[0] = impulse::cel::CelMultiLaneEvaluator::eval_project_lane(opt_ast, row[0]);
+                        double v = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, row, words_per_lane, &f_attrs, &i_attrs);
+                        proj_values[u] = static_cast<float>(v);
+                        has_projected = true;
                     }
                 }
             }
         }
     }
 
-    return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+    return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node), std::move(proj_values), has_projected);
 }
 
 Traversal MultiLaneTraversal::toQuorumTraversal(uint8_t min_lanes) const {
@@ -701,135 +767,240 @@ std::vector<std::pair<std::string, float>> MultiLaneTraversal::topKKeysWithQuoru
     return collect().topKKeysWithQuorum(min_lanes, k, query_vector, attr_name, metric);
 }
 
-std::vector<double> MultiLaneTraversal::reducePerLane(const std::string& /*node_attribute*/, ReducerOp op) const {
+std::vector<double> MultiLaneTraversal::reducePerLane(const std::string& node_attribute, ReducerOp op) const {
     auto res = collect();
     uint32_t K = res.laneCount();
     uint32_t N = res.domainNodeCount();
     std::vector<double> out(K, 0.0);
     if (K == 0 || N == 0 || !snapshot_) return out;
 
-    const float* attr_f32 = nullptr;
-    uint64_t attr_bytes = 0;
-    if (impulse_snapshot_relation_count(snapshot_) > 0) {
-        const void* raw_data = nullptr;
-        uint8_t tc = 0;
-        uint32_t dim = 0;
-        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
-            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
-            attr_f32 = static_cast<const float*>(raw_data);
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return out;
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    int h_lf = acquire_lane_frontier(ctx, N, K);
+    if (h_lf < 0) {
+        impulse_vm_context_destroy(ctx);
+        return out;
+    }
+    auto& lf = ctx->lane_frontiers[h_lf];
+    lf.num_lanes = K;
+    lf.lanes.assign(N, 0ULL);
+    lf.active_mask = (K >= 64) ? ~0ULL : ((1ULL << K) - 1ULL);
+    lf.active_words.assign((N + 63) / 64, 0ULL);
+    for (uint32_t u = 0; u < N; ++u) {
+        uint64_t mask = res.laneMaskFor(u);
+        lf.lanes[u] = mask;
+        if ((mask & lf.active_mask) != 0ULL) {
+            lf.active_words[u >> 6] |= (1ULL << (u & 63));
         }
     }
-    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
+    state.registers[3] = static_cast<uint64_t>(h_lf);
+    state.register_types[3] = TYPE_LANE_FRONTIER;
 
-    std::vector<uint32_t> counts(K, 0);
-    if (op == ReducerOp::MIN) std::fill(out.begin(), out.end(), 1e30);
-    else if (op == ReducerOp::MAX) std::fill(out.begin(), out.end(), -1e30);
+    uint8_t flags = 0;
+    uint8_t attr_or_reg = 0;
+    if (res.hasProjectedValues() && node_attribute.empty()) {
+        flags = 0x01;
+        int h_fvec = impulse_vm_context_acquire_float_vector(ctx);
+        if (h_fvec >= 0) {
+            for (uint32_t u = 0; u < N; ++u) {
+                impulse_vm_context_float_vector_set(ctx, static_cast<size_t>(h_fvec), u, res.valueFor(u));
+            }
+            state.registers[2] = static_cast<uint64_t>(h_fvec);
+            state.register_types[2] = TYPE_FLOAT_VECTOR;
+            attr_or_reg = 2;
+        }
+    } else {
+        flags = 0x00;
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+    }
 
-    for (uint32_t u = 0; u < N; ++u) {
-        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
-        auto lanes = res.attributionFor(u);
-        for (uint32_t b : lanes) {
-            if (b >= K) continue;
-            counts[b]++;
-            switch (op) {
-                case ReducerOp::SUM:
-                case ReducerOp::AVG:
-                    out[b] += val;
-                    break;
-                case ReducerOp::MIN:
-                    if (val < out[b]) out[b] = val;
-                    break;
-                case ReducerOp::MAX:
-                    if (val > out[b]) out[b] = val;
-                    break;
-                case ReducerOp::COUNT:
-                    out[b] += 1.0;
-                    break;
-                default:
-                    break;
+    uint16_t red_code = BINARY_OP_ADD;
+    if (op == ReducerOp::MIN) red_code = BINARY_OP_MIN;
+    else if (op == ReducerOp::MAX) red_code = BINARY_OP_MAX;
+    else if (op == ReducerOp::COUNT) red_code = 4u;
+    else if (op == ReducerOp::AVG) red_code = BINARY_OP_ADD;
+
+    impulse_instruction_t prog[2] = {
+        {OP_LANE_REDUCE_ATTR, flags, 4, static_cast<uint32_t>(3 | (attr_or_reg << 8) | (red_code << 16))},
+        {OP_HALT, 0, 0, 0}
+    };
+    state.pc = 0;
+    if (impulse_vm_execute(prog, 2, &state, 0) == IMPULSE_VM_OK &&
+        state.register_types[4] == TYPE_FLOAT_VECTOR) {
+        size_t h_out = static_cast<size_t>(state.registers[4]);
+        const float* vals = impulse_vm_context_get_float_vector(ctx, h_out);
+        if (vals) {
+            for (uint32_t b = 0; b < K; ++b) {
+                out[b] = static_cast<double>(vals[b]);
             }
         }
     }
 
-    for (uint32_t b = 0; b < K; ++b) {
-        if (counts[b] == 0 && (op == ReducerOp::MIN || op == ReducerOp::MAX)) {
-            out[b] = 0.0;
-        } else if (op == ReducerOp::AVG && counts[b] > 0) {
-            out[b] /= static_cast<double>(counts[b]);
+    if (op == ReducerOp::AVG) {
+        impulse_instruction_t cnt_prog[2] = {
+            {OP_LANE_REDUCE_ATTR, flags, 5, static_cast<uint32_t>(3 | (attr_or_reg << 8) | (4u << 16))},
+            {OP_HALT, 0, 0, 0}
+        };
+        state.pc = 0;
+        if (impulse_vm_execute(cnt_prog, 2, &state, 0) == IMPULSE_VM_OK &&
+            state.register_types[5] == TYPE_FLOAT_VECTOR) {
+            size_t h_cnt = static_cast<size_t>(state.registers[5]);
+            const float* counts = impulse_vm_context_get_float_vector(ctx, h_cnt);
+            if (counts) {
+                for (uint32_t b = 0; b < K; ++b) {
+                    if (counts[b] > 0.0f) {
+                        out[b] /= static_cast<double>(counts[b]);
+                    }
+                }
+            }
         }
     }
+
+    impulse_vm_context_destroy(ctx);
     return out;
 }
 
-std::vector<int64_t> MultiLaneTraversal::argMinNodesPerLane(const std::string& /*node_attribute*/) const {
+std::vector<int64_t> MultiLaneTraversal::argMinNodesPerLane(const std::string& node_attribute) const {
     auto res = collect();
     uint32_t K = res.laneCount();
     uint32_t N = res.domainNodeCount();
     std::vector<int64_t> best_id(K, -1);
     if (K == 0 || N == 0 || !snapshot_) return best_id;
 
-    const float* attr_f32 = nullptr;
-    uint64_t attr_bytes = 0;
-    if (impulse_snapshot_relation_count(snapshot_) > 0) {
-        const void* raw_data = nullptr;
-        uint8_t tc = 0;
-        uint32_t dim = 0;
-        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
-            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
-            attr_f32 = static_cast<const float*>(raw_data);
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return best_id;
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    int h_lf = acquire_lane_frontier(ctx, N, K);
+    if (h_lf < 0) {
+        impulse_vm_context_destroy(ctx);
+        return best_id;
+    }
+    auto& lf = ctx->lane_frontiers[h_lf];
+    lf.num_lanes = K;
+    lf.lanes.assign(N, 0ULL);
+    lf.active_mask = (K >= 64) ? ~0ULL : ((1ULL << K) - 1ULL);
+    lf.active_words.assign((N + 63) / 64, 0ULL);
+    for (uint32_t u = 0; u < N; ++u) {
+        uint64_t mask = res.laneMaskFor(u);
+        lf.lanes[u] = mask;
+        if ((mask & lf.active_mask) != 0ULL) {
+            lf.active_words[u >> 6] |= (1ULL << (u & 63));
         }
     }
-    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
-    std::vector<double> best_val(K, 1e30);
+    state.registers[3] = static_cast<uint64_t>(h_lf);
+    state.register_types[3] = TYPE_LANE_FRONTIER;
 
-    for (uint32_t u = 0; u < N; ++u) {
-        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
-        auto lanes = res.attributionFor(u);
-        for (uint32_t b : lanes) {
-            if (b < K) {
-                if (best_id[b] == -1 || val < best_val[b] || (val == best_val[b] && static_cast<int64_t>(u) < best_id[b])) {
-                    best_val[b] = val;
-                    best_id[b] = static_cast<int64_t>(u);
-                }
+    uint8_t flags = 0;
+    uint8_t attr_or_reg = 0;
+    if (res.hasProjectedValues() && node_attribute.empty()) {
+        flags = 0x01;
+        int h_fvec = impulse_vm_context_acquire_float_vector(ctx);
+        if (h_fvec >= 0) {
+            for (uint32_t u = 0; u < N; ++u) {
+                impulse_vm_context_float_vector_set(ctx, static_cast<size_t>(h_fvec), u, res.valueFor(u));
+            }
+            state.registers[2] = static_cast<uint64_t>(h_fvec);
+            state.register_types[2] = TYPE_FLOAT_VECTOR;
+            attr_or_reg = 2;
+        }
+    } else {
+        flags = 0x00;
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+    }
+
+    impulse_instruction_t prog[2] = {
+        {OP_LANE_REDUCE_ATTR, flags, 4, static_cast<uint32_t>(3 | (attr_or_reg << 8) | (BINARY_OP_ARGMIN << 16))},
+        {OP_HALT, 0, 0, 0}
+    };
+    state.pc = 0;
+    if (impulse_vm_execute(prog, 2, &state, 0) == IMPULSE_VM_OK &&
+        state.register_types[4] == TYPE_UINT64_VECTOR) {
+        size_t h_out = static_cast<size_t>(state.registers[4]);
+        const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx, h_out);
+        if (ptr) {
+            for (uint32_t b = 0; b < K; ++b) {
+                best_id[b] = (ptr[b] == ~0ULL) ? -1 : static_cast<int64_t>(ptr[b]);
             }
         }
     }
+    impulse_vm_context_destroy(ctx);
     return best_id;
 }
 
-std::vector<int64_t> MultiLaneTraversal::argMaxNodesPerLane(const std::string& /*node_attribute*/) const {
+std::vector<int64_t> MultiLaneTraversal::argMaxNodesPerLane(const std::string& node_attribute) const {
     auto res = collect();
     uint32_t K = res.laneCount();
     uint32_t N = res.domainNodeCount();
     std::vector<int64_t> best_id(K, -1);
     if (K == 0 || N == 0 || !snapshot_) return best_id;
 
-    const float* attr_f32 = nullptr;
-    uint64_t attr_bytes = 0;
-    if (impulse_snapshot_relation_count(snapshot_) > 0) {
-        const void* raw_data = nullptr;
-        uint8_t tc = 0;
-        uint32_t dim = 0;
-        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
-            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
-            attr_f32 = static_cast<const float*>(raw_data);
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return best_id;
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    int h_lf = acquire_lane_frontier(ctx, N, K);
+    if (h_lf < 0) {
+        impulse_vm_context_destroy(ctx);
+        return best_id;
+    }
+    auto& lf = ctx->lane_frontiers[h_lf];
+    lf.num_lanes = K;
+    lf.lanes.assign(N, 0ULL);
+    lf.active_mask = (K >= 64) ? ~0ULL : ((1ULL << K) - 1ULL);
+    lf.active_words.assign((N + 63) / 64, 0ULL);
+    for (uint32_t u = 0; u < N; ++u) {
+        uint64_t mask = res.laneMaskFor(u);
+        lf.lanes[u] = mask;
+        if ((mask & lf.active_mask) != 0ULL) {
+            lf.active_words[u >> 6] |= (1ULL << (u & 63));
         }
     }
-    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
-    std::vector<double> best_val(K, -1e30);
+    state.registers[3] = static_cast<uint64_t>(h_lf);
+    state.register_types[3] = TYPE_LANE_FRONTIER;
 
-    for (uint32_t u = 0; u < N; ++u) {
-        double val = (u < attr_count) ? static_cast<double>(attr_f32[u]) : 0.0;
-        auto lanes = res.attributionFor(u);
-        for (uint32_t b : lanes) {
-            if (b < K) {
-                if (best_id[b] == -1 || val > best_val[b] || (val == best_val[b] && static_cast<int64_t>(u) < best_id[b])) {
-                    best_val[b] = val;
-                    best_id[b] = static_cast<int64_t>(u);
-                }
+    uint8_t flags = 0;
+    uint8_t attr_or_reg = 0;
+    if (res.hasProjectedValues() && node_attribute.empty()) {
+        flags = 0x01;
+        int h_fvec = impulse_vm_context_acquire_float_vector(ctx);
+        if (h_fvec >= 0) {
+            for (uint32_t u = 0; u < N; ++u) {
+                impulse_vm_context_float_vector_set(ctx, static_cast<size_t>(h_fvec), u, res.valueFor(u));
+            }
+            state.registers[2] = static_cast<uint64_t>(h_fvec);
+            state.register_types[2] = TYPE_FLOAT_VECTOR;
+            attr_or_reg = 2;
+        }
+    } else {
+        flags = 0x00;
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+    }
+
+    impulse_instruction_t prog[2] = {
+        {OP_LANE_REDUCE_ATTR, flags, 4, static_cast<uint32_t>(3 | (attr_or_reg << 8) | (BINARY_OP_ARGMAX << 16))},
+        {OP_HALT, 0, 0, 0}
+    };
+    state.pc = 0;
+    if (impulse_vm_execute(prog, 2, &state, 0) == IMPULSE_VM_OK &&
+        state.register_types[4] == TYPE_UINT64_VECTOR) {
+        size_t h_out = static_cast<size_t>(state.registers[4]);
+        const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx, h_out);
+        if (ptr) {
+            for (uint32_t b = 0; b < K; ++b) {
+                best_id[b] = (ptr[b] == ~0ULL) ? -1 : static_cast<int64_t>(ptr[b]);
             }
         }
     }
+    impulse_vm_context_destroy(ctx);
     return best_id;
 }
 

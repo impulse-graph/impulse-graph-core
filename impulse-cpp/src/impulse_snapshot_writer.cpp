@@ -177,6 +177,14 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     for (size_t i = 0; i < writer->domain_names.size(); ++i) {
         writer->domains[i].name_offset = get_or_add_string(writer->domain_names[i]);
     }
+    for (const auto& rel : writer->relations) {
+        for (const auto& attr : rel.attributes) {
+            get_or_add_string(attr.name);
+        }
+    }
+    for (const auto& idx : writer->indexes) {
+        get_or_add_string(idx.index_name);
+    }
 
     // Infer domain node counts from registered relations if not explicitly populated
     for (const auto& rel : writer->relations) {

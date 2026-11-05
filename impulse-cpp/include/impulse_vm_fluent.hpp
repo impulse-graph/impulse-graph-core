@@ -391,7 +391,9 @@ public:
                     uint32_t domain_node_count,
                     uint32_t lane_count,
                     std::vector<std::string> lane_keys,
-                    std::vector<uint64_t> words_per_node);
+                    std::vector<uint64_t> words_per_node,
+                    std::vector<float> projected_values = {},
+                    bool has_projected_values = false);
 
     [[nodiscard]] uint32_t laneCount() const { return lane_count_; }
     [[nodiscard]] uint32_t domainNodeCount() const { return domain_node_count_; }
@@ -401,6 +403,18 @@ public:
     [[nodiscard]] uint32_t lanePopcountFor(uint32_t node_id) const;
     [[nodiscard]] std::vector<uint32_t> attributionFor(uint32_t node_id) const;
     [[nodiscard]] std::vector<std::string> keyAttributionFor(const std::string& node_key) const;
+
+    [[nodiscard]] bool hasProjectedValues() const { return has_projected_values_; }
+    [[nodiscard]] float valueFor(uint32_t node_id) const {
+        if (has_projected_values_ && node_id < projected_values_.size()) {
+            return projected_values_[node_id];
+        }
+        return 0.0f;
+    }
+    [[nodiscard]] std::vector<std::pair<uint32_t, float>> nodeValues() const;
+    [[nodiscard]] std::vector<std::pair<std::string, float>> keyValues() const;
+    [[nodiscard]] std::vector<std::pair<uint32_t, float>> nodeValuesForLane(uint32_t lane) const;
+    [[nodiscard]] std::vector<std::pair<uint32_t, float>> nodeValuesWithQuorum(uint32_t min_lanes) const;
 
     [[nodiscard]] std::vector<uint32_t> nodesWithQuorum(uint32_t min_lanes) const;
     [[nodiscard]] std::vector<std::pair<std::string, uint32_t>> keysWithQuorum(uint32_t min_lanes) const;
@@ -427,6 +441,8 @@ private:
     uint32_t words_per_lane_{0};
     std::vector<std::string> lane_keys_;
     std::vector<uint64_t> words_per_node_;
+    std::vector<float> projected_values_{};
+    bool has_projected_values_{false};
 };
 
 class Traversal {
@@ -480,6 +496,9 @@ public:
     // --- Terminal Collectors ---
     [[nodiscard]] std::vector<uint64_t> collect() const;
     [[nodiscard]] std::vector<std::string> collectKeys() const;
+    [[nodiscard]] std::vector<float> collectStateVector() const;
+    [[nodiscard]] std::vector<std::pair<uint64_t, float>> collectNodeValues() const;
+    [[nodiscard]] std::vector<std::pair<std::string, float>> collectKeyValues() const;
     [[nodiscard]] std::vector<std::pair<uint64_t, float>> topK(size_t k) const;
     [[nodiscard]] std::vector<std::pair<std::string, float>> topKKeys(size_t k) const;
     [[nodiscard]] size_t count() const;

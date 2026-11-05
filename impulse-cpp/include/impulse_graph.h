@@ -389,6 +389,12 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_buffers(
     uint8_t* out_type_code,
     uint32_t* out_dimension
 );
+IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_name(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    const char** out_name
+);
 
 /** @brief Architecture-Independent SIMD Target Name */
 IMPULSE_API const char* impulse_simd_get_target_name(void);

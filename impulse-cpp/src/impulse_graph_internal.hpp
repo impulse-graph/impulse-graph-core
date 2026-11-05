@@ -143,6 +143,7 @@ struct impulse_snapshot {
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
+    std::vector<std::vector<std::string>> relation_attribute_names;
     std::vector<impulse_index_directory_entry_v0_9_t> indexes;
     std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;

@@ -20,6 +20,7 @@
 #include <sstream>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <bit>
 
 namespace impulse {
@@ -714,6 +715,371 @@ public:
         auto it = kMathMap.find(name);
         return it != kMathMap.end() ? it->second : -1;
     }
+
+    /**
+     * @brief Compiles a CEL AST into an Edge Stream Shader instruction sequence.
+     * Encloses instructions with OP_STREAM_FUNC_BEGIN (0xA1) and OP_STREAM_FUNC_END (0xA2).
+     */
+    static bool compile_stream_shader(
+        const std::shared_ptr<AstNode>& expr,
+        std::vector<impulse_instruction_t>& out_shader,
+        uint16_t out_stream_reg = 0,
+        const std::unordered_map<std::string, uint16_t>* attr_name_to_id = nullptr,
+        bool is_filter = false
+    ) {
+        if (!expr) return false;
+
+        out_shader.push_back(impulse_instruction_t{OP_STREAM_FUNC_BEGIN, 0, 0, 0});
+
+        auto emit_stream_impl = [&](auto& self, const std::shared_ptr<AstNode>& node, uint16_t target_reg) -> bool {
+            if (!node || target_reg >= 16) return false;
+
+            switch (node->kind) {
+                case AstKind::LITERAL_FLOAT:
+                case AstKind::LITERAL_INT: {
+                    float f = (node->kind == AstKind::LITERAL_FLOAT)
+                        ? static_cast<float>(node->float_val)
+                        : static_cast<float>(node->int_val);
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &f, sizeof(float));
+                    out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_CONST, 0, target_reg, bits});
+                    return true;
+                }
+                case AstKind::LITERAL_BOOL: {
+                    float f = node->bool_val ? 1.0f : 0.0f;
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &f, sizeof(float));
+                    out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_CONST, 0, target_reg, bits});
+                    return true;
+                }
+                case AstKind::IDENTIFIER: {
+                    if (node->text == "lane") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 2, target_reg, 0});
+                        return true;
+                    }
+                    if (node->text == "id" || node->text == "src_id") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 0, target_reg, 0});
+                        return true;
+                    }
+                    if (node->text == "tgt_id") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_TGT_ID, 0, target_reg, 0});
+                        return true;
+                    }
+                    if (node->text == "edge_id") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_EDGE_ID, 0, target_reg, 0});
+                        return true;
+                    }
+                    uint16_t attr_id = 0;
+                    if (attr_name_to_id) {
+                        auto it = attr_name_to_id->find(node->text);
+                        if (it != attr_name_to_id->end()) attr_id = it->second;
+                    }
+                    out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_EDGE, 0, target_reg, attr_id});
+                    return true;
+                }
+                case AstKind::MEMBER_ACCESS: {
+                    const std::string& field = node->text;
+                    const auto& target = node->children[0];
+                    std::string target_name = (target && target->kind == AstKind::IDENTIFIER) ? target->text : "";
+
+                    if (target_name == "src") {
+                        if (field == "id") {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 0, target_reg, 0});
+                            return true;
+                        }
+                        if (field == "lane") {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 2, target_reg, 0});
+                            return true;
+                        }
+                        if (field == "popcount") {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 1, target_reg, 0});
+                            return true;
+                        }
+                        uint16_t attr_id = 0;
+                        if (attr_name_to_id) {
+                            auto it = attr_name_to_id->find(field);
+                            if (it != attr_name_to_id->end()) attr_id = it->second;
+                        }
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC, 0, target_reg, attr_id});
+                        return true;
+                    }
+                    if (target_name == "tgt") {
+                        if (field == "id") {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_TGT_ID, 0, target_reg, 0});
+                            return true;
+                        }
+                        uint16_t attr_id = 0;
+                        if (attr_name_to_id) {
+                            auto it = attr_name_to_id->find(field);
+                            if (it != attr_name_to_id->end()) attr_id = it->second;
+                        }
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_TGT, 0, target_reg, attr_id});
+                        return true;
+                    }
+                    if (target_name == "edge") {
+                        if (field == "id") {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_EDGE_ID, 0, target_reg, 0});
+                            return true;
+                        }
+                        uint16_t attr_id = 0;
+                        if (attr_name_to_id) {
+                            auto it = attr_name_to_id->find(field);
+                            if (it != attr_name_to_id->end()) attr_id = it->second;
+                        }
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_EDGE, 0, target_reg, attr_id});
+                        return true;
+                    }
+                    uint16_t attr_id = 0;
+                    if (attr_name_to_id) {
+                        auto it = attr_name_to_id->find(field);
+                        if (it != attr_name_to_id->end()) attr_id = it->second;
+                    }
+                    out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_EDGE, 0, target_reg, attr_id});
+                    return true;
+                }
+                case AstKind::UNARY_OP: {
+                    if (node->text == "!") {
+                        uint16_t r0 = (target_reg + 1) % 16;
+                        if (!self(self, node->children[0], r0)) return false;
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOGIC_NOT, 0, target_reg, r0});
+                        return true;
+                    }
+                    if (node->text == "-") {
+                        uint16_t r0 = (target_reg + 1) % 16;
+                        uint16_t rz = (target_reg + 2) % 16;
+                        if (!self(self, node->children[0], r0)) return false;
+                        uint32_t zero_bits = 0;
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_CONST, 0, rz, zero_bits});
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_SUB, 0, target_reg, static_cast<uint32_t>(rz | (r0 << 16))});
+                        return true;
+                    }
+                    return self(self, node->children[0], target_reg);
+                }
+                case AstKind::BINARY_OP: {
+                    const std::string& op = node->text;
+                    uint16_t r0 = (target_reg + 1) % 16;
+                    uint16_t r1 = (target_reg + 2) % 16;
+                    if (!self(self, node->children[0], r0)) return false;
+                    if (!self(self, node->children[1], r1)) return false;
+                    uint32_t payload = static_cast<uint32_t>(r0 | (r1 << 16));
+
+                    if (op == "+") out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_ADD, 0, target_reg, payload});
+                    else if (op == "-") out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_SUB, 0, target_reg, payload});
+                    else if (op == "*") out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_MUL, 0, target_reg, payload});
+                    else if (op == "/") out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_DIV, 0, target_reg, payload});
+                    else if (op == "%") out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_MOD, 0, target_reg, payload});
+                    else if (op == "==") out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_EQ, 0, target_reg, payload});
+                    else if (op == "!=") out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_NEQ, 0, target_reg, payload});
+                    else if (op == ">") out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_GT, 0, target_reg, payload});
+                    else if (op == "<") out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_LT, 0, target_reg, payload});
+                    else if (op == ">=") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_LT, 0, target_reg, payload});
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOGIC_NOT, 0, target_reg, target_reg});
+                    } else if (op == "<=") {
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_CMP_GT, 0, target_reg, payload});
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_LOGIC_NOT, 0, target_reg, target_reg});
+                    } else if (op == "&&") out_shader.push_back(impulse_instruction_t{OP_STREAM_LOGIC_AND, 0, target_reg, payload});
+                    else if (op == "||") out_shader.push_back(impulse_instruction_t{OP_STREAM_LOGIC_OR, 0, target_reg, payload});
+                    else return false;
+                    return true;
+                }
+                case AstKind::TERNARY_OP: {
+                    uint16_t r_cond = (target_reg + 1) % 16;
+                    uint16_t r_true = (target_reg + 2) % 16;
+                    if (!self(self, node->children[0], r_cond)) return false;
+                    if (!self(self, node->children[2], target_reg)) return false;
+                    if (!self(self, node->children[1], r_true)) return false;
+                    out_shader.push_back(impulse_instruction_t{OP_STREAM_SELECT, 0, target_reg, static_cast<uint32_t>(r_cond | (r_true << 16))});
+                    return true;
+                }
+                case AstKind::FUNCTION_CALL: {
+                    const std::string& fn = node->text;
+                    if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
+                        const auto& arg = node->children[0];
+                        if (arg->text == "lane" || (arg->kind == AstKind::MEMBER_ACCESS && arg->text == "lane")) {
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_LOAD_SRC_ID, 1, target_reg, 0});
+                            return true;
+                        }
+                    }
+                    if (fn == "sum" || fn == "min" || fn == "max") {
+                        if (!node->children.empty()) {
+                            uint16_t r_val = (target_reg + 1) % 16;
+                            if (!self(self, node->children[0], r_val)) return false;
+                            uint16_t monoid = (fn == "sum") ? 0 : ((fn == "max") ? 1 : 2);
+                            out_shader.push_back(impulse_instruction_t{OP_STREAM_REDUCE, 0, r_val, static_cast<uint32_t>(target_reg | (monoid << 16))});
+                            return true;
+                        }
+                    }
+                    if (fn == "argmin" || fn == "argmax") {
+                        if (!node->children.empty()) {
+                            uint16_t r_val = (target_reg + 1) % 16;
+                            if (!self(self, node->children[0], r_val)) return false;
+                            uint8_t opc = (fn == "argmin") ? OP_STREAM_REDUCE_ARGMIN : OP_STREAM_REDUCE_ARGMAX;
+                            out_shader.push_back(impulse_instruction_t{opc, 0, r_val, static_cast<uint32_t>(target_reg | ((target_reg + 1) << 16))});
+                            return true;
+                        }
+                    }
+                    int func_id = resolve_math_func(fn);
+                    if (func_id > 0 && !node->children.empty()) {
+                        uint16_t r0 = (target_reg + 1) % 16;
+                        if (!self(self, node->children[0], r0)) return false;
+                        out_shader.push_back(impulse_instruction_t{OP_STREAM_MATH_UNARY, 0, target_reg, static_cast<uint32_t>(r0 | (static_cast<uint32_t>(func_id) << 16))});
+                        return true;
+                    }
+                    return false;
+                }
+                default:
+                    return false;
+            }
+        };
+
+        if (!emit_stream_impl(emit_stream_impl, expr, out_stream_reg)) {
+            return false;
+        }
+
+        if (is_filter) {
+            out_shader.push_back(impulse_instruction_t{OP_STREAM_FILTER, 0, out_stream_reg, 0});
+        }
+
+        out_shader.push_back(impulse_instruction_t{OP_STREAM_FUNC_END, 0, 0, 0});
+        return true;
+    }
+
+    /**
+     * @brief Compiles an in-domain node CEL projection into VM instructions operating on vector registers.
+     */
+    static bool compile_node_vector_expr(
+        const std::shared_ptr<AstNode>& expr,
+        std::vector<impulse_instruction_t>& out_instructions,
+        uint16_t out_reg,
+        uint16_t& next_temp_reg,
+        const std::unordered_map<std::string, uint16_t>* attr_name_to_id = nullptr,
+        uint16_t domain_id = 0
+    ) {
+        if (!expr) return false;
+
+        auto emit_vec_impl = [&](auto& self, const std::shared_ptr<AstNode>& node, uint16_t target_reg) -> bool {
+            if (!node || target_reg >= 64) return false;
+
+            switch (node->kind) {
+                case AstKind::LITERAL_FLOAT:
+                case AstKind::LITERAL_INT: {
+                    float f = (node->kind == AstKind::LITERAL_FLOAT)
+                        ? static_cast<float>(node->float_val)
+                        : static_cast<float>(node->int_val);
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &f, sizeof(float));
+                    out_instructions.push_back(impulse_instruction_t{OP_LOAD_CONST_FLOAT, 0, target_reg, bits});
+                    return true;
+                }
+                case AstKind::IDENTIFIER:
+                case AstKind::MEMBER_ACCESS: {
+                    std::string attr_name = node->text;
+                    uint16_t attr_idx = 0;
+                    if (attr_name_to_id) {
+                        auto it = attr_name_to_id->find(attr_name);
+                        if (it != attr_name_to_id->end()) attr_idx = it->second;
+                    }
+                    uint32_t payload = static_cast<uint32_t>(domain_id) | (static_cast<uint32_t>(attr_idx) << 16);
+                    out_instructions.push_back(impulse_instruction_t{OP_LOAD_COLUMN_VECTOR, 0, target_reg, payload});
+                    return true;
+                }
+                case AstKind::UNARY_OP: {
+                    if (node->text == "-") {
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r_child = next_temp_reg++;
+                        if (!self(self, node->children[0], r_child)) return false;
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r_zero = next_temp_reg++;
+                        uint32_t zbits = 0;
+                        out_instructions.push_back(impulse_instruction_t{OP_LOAD_CONST_FLOAT, 0, r_zero, zbits});
+                        uint32_t payload = static_cast<uint32_t>(r_zero) | (static_cast<uint32_t>(r_child) << 8) | (1u << 16);
+                        out_instructions.push_back(impulse_instruction_t{OP_VEC_MATH_BINARY, 0, target_reg, payload});
+                        return true;
+                    }
+                    return self(self, node->children[0], target_reg);
+                }
+                case AstKind::BINARY_OP: {
+                    const std::string& op = node->text;
+                    if (next_temp_reg >= 64) return false;
+                    uint16_t r0 = next_temp_reg++;
+                    if (!self(self, node->children[0], r0)) return false;
+                    if (next_temp_reg >= 64) return false;
+                    uint16_t r1 = next_temp_reg++;
+                    if (!self(self, node->children[1], r1)) return false;
+
+                    uint8_t func_id = 0;
+                    if (op == "+") func_id = 0;
+                    else if (op == "-") func_id = 1;
+                    else if (op == "*") func_id = 2;
+                    else if (op == "/") func_id = 3;
+                    else if (op == "%") func_id = MATH_FUNC_FMOD;
+                    else func_id = 0;
+
+                    uint32_t payload = static_cast<uint32_t>(r0) | (static_cast<uint32_t>(r1) << 8) | (static_cast<uint32_t>(func_id) << 16);
+                    out_instructions.push_back(impulse_instruction_t{OP_VEC_MATH_BINARY, 0, target_reg, payload});
+                    return true;
+                }
+                case AstKind::FUNCTION_CALL: {
+                    int func_id = resolve_math_func(node->text);
+                    if (func_id <= 0) return false;
+                    if (node->children.size() == 1) {
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r0 = next_temp_reg++;
+                        if (!self(self, node->children[0], r0)) return false;
+                        uint32_t payload = static_cast<uint32_t>(r0) | (static_cast<uint32_t>(func_id) << 8);
+                        out_instructions.push_back(impulse_instruction_t{OP_VEC_MATH_UNARY, 0, target_reg, payload});
+                        return true;
+                    }
+                    if (node->children.size() == 2) {
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r0 = next_temp_reg++;
+                        if (!self(self, node->children[0], r0)) return false;
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r1 = next_temp_reg++;
+                        if (!self(self, node->children[1], r1)) return false;
+                        uint32_t payload = static_cast<uint32_t>(r0) | (static_cast<uint32_t>(r1) << 8) | (static_cast<uint32_t>(func_id) << 16);
+                        out_instructions.push_back(impulse_instruction_t{OP_VEC_MATH_BINARY, 0, target_reg, payload});
+                        return true;
+                    }
+                    if (node->children.size() == 3) {
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r0 = next_temp_reg++;
+                        if (!self(self, node->children[0], r0)) return false;
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r1 = next_temp_reg++;
+                        if (!self(self, node->children[1], r1)) return false;
+                        if (next_temp_reg >= 64) return false;
+                        uint16_t r2 = next_temp_reg++;
+                        if (!self(self, node->children[2], r2)) return false;
+                        uint32_t payload = static_cast<uint32_t>(r0) | (static_cast<uint32_t>(r1) << 8) | (static_cast<uint32_t>(r2) << 16) | (static_cast<uint32_t>(func_id) << 24);
+                        out_instructions.push_back(impulse_instruction_t{OP_VEC_MATH_TERNARY, 0, target_reg, payload});
+                        return true;
+                    }
+                    return false;
+                }
+                case AstKind::TERNARY_OP: {
+                    if (next_temp_reg >= 64) return false;
+                    uint16_t r_cond = next_temp_reg++;
+                    if (!self(self, node->children[0], r_cond)) return false;
+                    if (next_temp_reg >= 64) return false;
+                    uint16_t r_true = next_temp_reg++;
+                    if (!self(self, node->children[1], r_true)) return false;
+                    if (next_temp_reg >= 64) return false;
+                    uint16_t r_false = next_temp_reg++;
+                    if (!self(self, node->children[2], r_false)) return false;
+
+                    uint32_t payload = static_cast<uint32_t>(r_cond) | (static_cast<uint32_t>(r_true) << 8) | (static_cast<uint32_t>(r_false) << 16);
+                    out_instructions.push_back(impulse_instruction_t{OP_VEC_BLEND, 0, target_reg, payload});
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        };
+
+        return emit_vec_impl(emit_vec_impl, expr, out_reg);
+    }
 };
 
 /**
@@ -975,168 +1341,307 @@ private:
 class CelMultiLaneEvaluator {
 public:
     using AttrMap = std::unordered_map<std::string, int64_t>;
+    using FloatAttrMap = std::unordered_map<std::string, double>;
 
-    static int64_t eval_int(const std::shared_ptr<AstNode>& node,
-                            uint64_t lane_mask,
-                            const AttrMap* node_attrs = nullptr) {
-        if (!node) return 0;
+    // -----------------------------------------------------------------------
+    // eval_double (Primary numeric & floating-point evaluator)
+    // -----------------------------------------------------------------------
+    static double eval_double(const std::shared_ptr<AstNode>& node,
+                              const uint64_t* lane_words,
+                              size_t num_words,
+                              const FloatAttrMap* float_attrs = nullptr,
+                              const AttrMap* int_attrs = nullptr) {
+        if (!node) return 0.0;
         switch (node->kind) {
-            case AstKind::LITERAL_INT:
-                return node->int_val;
             case AstKind::LITERAL_FLOAT:
-                return static_cast<int64_t>(node->float_val);
+                return node->float_val;
+            case AstKind::LITERAL_INT:
+                return static_cast<double>(node->int_val);
             case AstKind::LITERAL_BOOL:
-                return node->bool_val ? 1 : 0;
-            case AstKind::IDENTIFIER: {
-                if (node->text == "lane") return static_cast<int64_t>(lane_mask);
-                if (node_attrs) {
-                    auto it = node_attrs->find(node->text);
-                    if (it != node_attrs->end()) return it->second;
-                }
-                return 0;
-            }
+                return node->bool_val ? 1.0 : 0.0;
+            case AstKind::IDENTIFIER:
             case AstKind::MEMBER_ACCESS: {
-                if (node->text == "lane") return static_cast<int64_t>(lane_mask);
-                if (node_attrs) {
-                    auto it = node_attrs->find(node->text);
-                    if (it != node_attrs->end()) return it->second;
+                if (node->text == "lane") {
+                    return static_cast<double>((lane_words && num_words > 0) ? lane_words[0] : 0ULL);
                 }
-                return 0;
+                if (float_attrs) {
+                    auto it = float_attrs->find(node->text);
+                    if (it != float_attrs->end()) return it->second;
+                }
+                if (int_attrs) {
+                    auto it = int_attrs->find(node->text);
+                    if (it != int_attrs->end()) return static_cast<double>(it->second);
+                }
+                return 0.0;
             }
             case AstKind::UNARY_OP: {
-                int64_t v = eval_int(node->children[0], lane_mask, node_attrs);
+                if (node->text == "!") {
+                    return eval_bool(node->children[0], lane_words, num_words, int_attrs, float_attrs) ? 0.0 : 1.0;
+                }
+                double v = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
                 if (node->text == "-") return -v;
-                if (node->text == "~") return ~v;
-                if (node->text == "!") return eval_bool(node->children[0], lane_mask, node_attrs) ? 0 : 1;
+                if (node->text == "~") return static_cast<double>(~static_cast<int64_t>(v));
                 return v;
             }
             case AstKind::TERNARY_OP: {
-                bool c = eval_bool(node->children[0], lane_mask, node_attrs);
-                return eval_int(c ? node->children[1] : node->children[2], lane_mask, node_attrs);
+                bool c = eval_bool(node->children[0], lane_words, num_words, int_attrs, float_attrs);
+                return eval_double(c ? node->children[1] : node->children[2], lane_words, num_words, float_attrs, int_attrs);
             }
             case AstKind::BINARY_OP: {
                 const std::string& op = node->text;
                 if (op == "=") {
-                    return eval_int(node->children[1], lane_mask, node_attrs);
+                    return eval_double(node->children[1], lane_words, num_words, float_attrs, int_attrs);
+                }
+                if (op == "in") {
+                    return eval_bool(node, lane_words, num_words, int_attrs, float_attrs) ? 1.0 : 0.0;
                 }
                 if (op == "&&" || op == "||" || op == "==" || op == "!=" ||
                     op == "<" || op == "<=" || op == ">" || op == ">=") {
-                    return eval_bool(node, lane_mask, node_attrs) ? 1 : 0;
+                    return eval_bool(node, lane_words, num_words, int_attrs, float_attrs) ? 1.0 : 0.0;
                 }
-                int64_t a = eval_int(node->children[0], lane_mask, node_attrs);
-                int64_t b = eval_int(node->children[1], lane_mask, node_attrs);
+                double a = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
+                double b = eval_double(node->children[1], lane_words, num_words, float_attrs, int_attrs);
                 if (op == "+") return a + b;
                 if (op == "-") return a - b;
                 if (op == "*") return a * b;
-                if (op == "/") return (b != 0) ? (a / b) : 0;
-                if (op == "%") return (b != 0) ? (a % b) : 0;
-                if (op == "&") return a & b;
-                if (op == "|") return a | b;
-                if (op == "^") return a ^ b;
-                if (op == "<<") return (b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) << b);
-                if (op == ">>") return (b < 0 || b >= 64) ? 0 : (a >> b);
-                if (op == ">>>") return (b < 0 || b >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a) >> b);
-                return 0;
+                if (op == "/") return (b != 0.0 && !std::isnan(b)) ? (a / b) : 0.0;
+                if (op == "%") return (b != 0.0) ? std::fmod(a, b) : 0.0;
+                // Bitwise binary operators
+                int64_t ia = static_cast<int64_t>(a);
+                int64_t ib = static_cast<int64_t>(b);
+                if (op == "&") return static_cast<double>(ia & ib);
+                if (op == "|") return static_cast<double>(ia | ib);
+                if (op == "^") return static_cast<double>(ia ^ ib);
+                if (op == "<<") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : (static_cast<uint64_t>(ia) << ib));
+                if (op == ">>") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : (ia >> ib));
+                if (op == ">>>") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(ia) >> ib));
+                return 0.0;
             }
             case AstKind::FUNCTION_CALL: {
                 const std::string& fn = node->text;
                 if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
-                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    return static_cast<int64_t>(std::popcount(v));
+                    if (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane")) {
+                        size_t total = 0;
+                        for (size_t w = 0; w < num_words; ++w) total += std::popcount(lane_words[w]);
+                        return static_cast<double>(total);
+                    }
+                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    return static_cast<double>(std::popcount(v));
                 }
                 if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
-                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    return (v == 0ULL) ? -1LL : static_cast<int64_t>(std::countr_zero(v));
+                    if (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane")) {
+                        for (size_t w = 0; w < num_words; ++w) {
+                            if (lane_words[w] != 0ULL) {
+                                return static_cast<double>(w * 64 + std::countr_zero(lane_words[w]));
+                            }
+                        }
+                        return -1.0;
+                    }
+                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    return (v == 0ULL) ? -1.0 : static_cast<double>(std::countr_zero(v));
                 }
                 if (fn == "last_lane" && !node->children.empty()) {
-                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    return (v == 0ULL) ? -1LL : static_cast<int64_t>(63 - std::countl_zero(v));
+                    if (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane")) {
+                        for (size_t w = num_words; w > 0; --w) {
+                            if (lane_words[w - 1] != 0ULL) {
+                                return static_cast<double>((w - 1) * 64 + 63 - std::countl_zero(lane_words[w - 1]));
+                            }
+                        }
+                        return -1.0;
+                    }
+                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    return (v == 0ULL) ? -1.0 : static_cast<double>(63 - std::countl_zero(v));
                 }
                 if (fn == "clz" && !node->children.empty()) {
-                    uint64_t v = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    return (v == 0ULL) ? 64LL : static_cast<int64_t>(std::countl_zero(v));
+                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    return (v == 0ULL) ? 64.0 : static_cast<double>(std::countl_zero(v));
                 }
                 if (fn == "has_any" || fn == "has_all" || fn == "has_none" || fn == "has_lane") {
-                    return eval_bool(node, lane_mask, node_attrs) ? 1 : 0;
+                    return eval_bool(node, lane_words, num_words, int_attrs, float_attrs) ? 1.0 : 0.0;
                 }
-                return 0;
+
+                // 48-Function Vector Math Catalog Dispatch
+                int func_id = CelCompiler::resolve_math_func(fn);
+                if (func_id > 0) {
+                    if (node->children.size() == 1) {
+                        double a = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
+                        return impulse_math_unary_f64(static_cast<uint8_t>(func_id), a);
+                    }
+                    if (node->children.size() == 2) {
+                        double a = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
+                        double b = eval_double(node->children[1], lane_words, num_words, float_attrs, int_attrs);
+                        return impulse_math_binary_f64(static_cast<uint8_t>(func_id), a, b);
+                    }
+                    if (node->children.size() == 3) {
+                        double a = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
+                        double b = eval_double(node->children[1], lane_words, num_words, float_attrs, int_attrs);
+                        double c = eval_double(node->children[2], lane_words, num_words, float_attrs, int_attrs);
+                        return impulse_math_ternary_f64(static_cast<uint8_t>(func_id), a, b, c);
+                    }
+                }
+                return 0.0;
             }
             default:
-                return 0;
+                return 0.0;
         }
     }
 
+    static double eval_double(const std::shared_ptr<AstNode>& node,
+                              uint64_t lane_mask,
+                              const FloatAttrMap* float_attrs = nullptr,
+                              const AttrMap* int_attrs = nullptr) {
+        return eval_double(node, &lane_mask, 1, float_attrs, int_attrs);
+    }
+
+    // -----------------------------------------------------------------------
+    // eval_int
+    // -----------------------------------------------------------------------
+    static int64_t eval_int(const std::shared_ptr<AstNode>& node,
+                            const uint64_t* lane_words,
+                            size_t num_words,
+                            const AttrMap* node_attrs = nullptr,
+                            const FloatAttrMap* float_attrs = nullptr) {
+        return static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
+    }
+
+    static int64_t eval_int(const std::shared_ptr<AstNode>& node,
+                            uint64_t lane_mask,
+                            const AttrMap* node_attrs = nullptr,
+                            const FloatAttrMap* float_attrs = nullptr) {
+        return static_cast<int64_t>(eval_double(node, &lane_mask, 1, float_attrs, node_attrs));
+    }
+
+    // -----------------------------------------------------------------------
+    // eval_bool
+    // -----------------------------------------------------------------------
     static bool eval_bool(const std::shared_ptr<AstNode>& node,
-                          uint64_t lane_mask,
-                          const AttrMap* node_attrs = nullptr) {
+                          const uint64_t* lane_words,
+                          size_t num_words,
+                          const AttrMap* node_attrs = nullptr,
+                          const FloatAttrMap* float_attrs = nullptr) {
         if (!node) return false;
         switch (node->kind) {
             case AstKind::LITERAL_BOOL:
                 return node->bool_val;
             case AstKind::LITERAL_INT:
                 return node->int_val != 0;
+            case AstKind::LITERAL_FLOAT:
+                return node->float_val != 0.0;
             case AstKind::UNARY_OP:
-                if (node->text == "!") return !eval_bool(node->children[0], lane_mask, node_attrs);
-                return eval_int(node, lane_mask, node_attrs) != 0;
+                if (node->text == "!") return !eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
             case AstKind::TERNARY_OP:
-                return eval_bool(eval_bool(node->children[0], lane_mask, node_attrs)
+                return eval_bool(eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs)
                                      ? node->children[1]
                                      : node->children[2],
-                                 lane_mask, node_attrs);
+                                 lane_words, num_words, node_attrs, float_attrs);
             case AstKind::BINARY_OP: {
                 const std::string& op = node->text;
                 if (op == "&&") {
-                    return eval_bool(node->children[0], lane_mask, node_attrs) &&
-                           eval_bool(node->children[1], lane_mask, node_attrs);
+                    return eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs) &&
+                           eval_bool(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                 }
                 if (op == "||") {
-                    return eval_bool(node->children[0], lane_mask, node_attrs) ||
-                           eval_bool(node->children[1], lane_mask, node_attrs);
+                    return eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs) ||
+                           eval_bool(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                 }
-                int64_t a = eval_int(node->children[0], lane_mask, node_attrs);
-                int64_t b = eval_int(node->children[1], lane_mask, node_attrs);
-                if (op == "==") return a == b;
-                if (op == "!=") return a != b;
+                if (op == "in") {
+                    double val = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
+                    const auto& rhs = node->children[1];
+                    if (rhs && rhs->kind == AstKind::LIST_LITERAL) {
+                        for (const auto& elem : rhs->children) {
+                            double elem_val = eval_double(elem, lane_words, num_words, float_attrs, node_attrs);
+                            if (std::abs(val - elem_val) < 1e-9) return true;
+                        }
+                        return false;
+                    }
+                    return false;
+                }
+                double a = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
+                double b = eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs);
+                if (op == "==") return std::abs(a - b) < 1e-9;
+                if (op == "!=") return std::abs(a - b) >= 1e-9;
                 if (op == "<")  return a < b;
                 if (op == "<=") return a <= b;
                 if (op == ">")  return a > b;
                 if (op == ">=") return a >= b;
-                return eval_int(node, lane_mask, node_attrs) != 0;
+                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
             }
             case AstKind::FUNCTION_CALL: {
                 const std::string& fn = node->text;
-                if (fn == "has_any" && node->children.size() >= 2) {
-                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    uint64_t req = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                if (fn == "has_any" && !node->children.empty()) {
+                    if (node->children.size() == 1 ||
+                        node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane")) {
+                        if (node->children.size() >= 2) {
+                            uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                            return ((lane_words && num_words > 0 ? lane_words[0] : 0ULL) & req) != 0ULL;
+                        }
+                        for (size_t w = 0; w < num_words; ++w) {
+                            if (lane_words[w] != 0ULL) return true;
+                        }
+                        return false;
+                    }
+                    uint64_t m = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
+                    uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
                     return (m & req) != 0ULL;
                 }
                 if (fn == "has_all" && node->children.size() >= 2) {
-                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    uint64_t req = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                    uint64_t m = (node->children[0]->text == "lane") ? (lane_words && num_words > 0 ? lane_words[0] : 0ULL)
+                                                                     : static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
+                    uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
                     return (m & req) == req;
                 }
                 if (fn == "has_none" && node->children.size() >= 2) {
-                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    uint64_t forbid = static_cast<uint64_t>(eval_int(node->children[1], lane_mask, node_attrs));
+                    uint64_t m = (node->children[0]->text == "lane") ? (lane_words && num_words > 0 ? lane_words[0] : 0ULL)
+                                                                     : static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
+                    uint64_t forbid = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
                     return (m & forbid) == 0ULL;
                 }
                 if (fn == "has_lane" && node->children.size() >= 2) {
-                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_mask, node_attrs));
-                    int64_t idx = eval_int(node->children[1], lane_mask, node_attrs);
-                    if (idx < 0 || idx >= 64) return false;
-                    return ((m >> idx) & 1ULL) != 0ULL;
+                    int64_t idx = static_cast<int64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                    if (idx < 0) return false;
+                    size_t w = static_cast<size_t>(idx) / 64;
+                    size_t b = static_cast<size_t>(idx) % 64;
+                    if (w < num_words) {
+                        return ((lane_words[w] >> b) & 1ULL) != 0ULL;
+                    }
+                    return false;
                 }
-                return eval_int(node, lane_mask, node_attrs) != 0;
+                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
             }
             default:
-                return eval_int(node, lane_mask, node_attrs) != 0;
+                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
         }
     }
 
+    static bool eval_bool(const std::shared_ptr<AstNode>& node,
+                          uint64_t lane_mask,
+                          const AttrMap* node_attrs = nullptr,
+                          const FloatAttrMap* float_attrs = nullptr) {
+        return eval_bool(node, &lane_mask, 1, node_attrs, float_attrs);
+    }
+
+    // -----------------------------------------------------------------------
+    // eval_project_lane
+    // -----------------------------------------------------------------------
     static uint64_t eval_project_lane(const std::shared_ptr<AstNode>& node,
                                       uint64_t lane_mask,
-                                      const AttrMap* node_attrs = nullptr) {
-        return static_cast<uint64_t>(eval_int(node, lane_mask, node_attrs));
+                                      const AttrMap* node_attrs = nullptr,
+                                      const FloatAttrMap* float_attrs = nullptr) {
+        return static_cast<uint64_t>(eval_int(node, lane_mask, node_attrs, float_attrs));
+    }
+
+    static void eval_project_lanes(const std::shared_ptr<AstNode>& node,
+                                   uint64_t* lane_words,
+                                   size_t num_words,
+                                   const AttrMap* node_attrs = nullptr,
+                                   const FloatAttrMap* float_attrs = nullptr) {
+        if (!lane_words || num_words == 0) return;
+        lane_words[0] = static_cast<uint64_t>(eval_int(node, lane_words, num_words, node_attrs, float_attrs));
     }
 };
 

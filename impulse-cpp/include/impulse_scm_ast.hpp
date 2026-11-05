@@ -645,20 +645,43 @@ public:
 // ---------------------------------------------------------------------------
 class ScmCollect : public ImpScmNode {
 public:
-    enum class OutputType { BITSET, COUNT, SCALAR, VECTOR, LIST };
-    OutputType output_type{OutputType::BITSET};
+    enum class Mode { BITSET, ARRAY, COUNT, VALUE_MAP, NONE, SCALAR, VECTOR, LIST };
+    using OutputType = Mode;
+    Mode mode{Mode::BITSET};
+    OutputType& output_type = mode;
     uint16_t target_reg{0};
 
     static std::shared_ptr<ScmCollect> bitset(uint16_t reg = 0) {
         auto n = std::make_shared<ScmCollect>();
-        n->output_type = OutputType::BITSET;
+        n->mode = Mode::BITSET;
+        n->target_reg = reg;
+        return n;
+    }
+
+    static std::shared_ptr<ScmCollect> array(uint16_t reg = 0) {
+        auto n = std::make_shared<ScmCollect>();
+        n->mode = Mode::ARRAY;
         n->target_reg = reg;
         return n;
     }
 
     static std::shared_ptr<ScmCollect> count(uint16_t reg = 0) {
         auto n = std::make_shared<ScmCollect>();
-        n->output_type = OutputType::COUNT;
+        n->mode = Mode::COUNT;
+        n->target_reg = reg;
+        return n;
+    }
+
+    static std::shared_ptr<ScmCollect> value_map(uint16_t reg = 0) {
+        auto n = std::make_shared<ScmCollect>();
+        n->mode = Mode::VALUE_MAP;
+        n->target_reg = reg;
+        return n;
+    }
+
+    static std::shared_ptr<ScmCollect> none(uint16_t reg = 0) {
+        auto n = std::make_shared<ScmCollect>();
+        n->mode = Mode::NONE;
         n->target_reg = reg;
         return n;
     }
@@ -666,12 +689,15 @@ public:
     [[nodiscard]] NodeKind kind() const override { return NodeKind::COLLECT; }
 
     [[nodiscard]] std::string to_scm_string() const override {
-        switch (output_type) {
-            case OutputType::BITSET: return "(collect-bitset)";
-            case OutputType::COUNT: return "(collect-count)";
-            case OutputType::SCALAR: return "(collect-scalar)";
-            case OutputType::VECTOR: return "(collect-vector)";
-            case OutputType::LIST: return "(collect-list)";
+        switch (mode) {
+            case Mode::BITSET: return "(collect-bitset)";
+            case Mode::ARRAY: return "(collect-array)";
+            case Mode::COUNT: return "(collect-count)";
+            case Mode::VALUE_MAP: return "(collect-value-map)";
+            case Mode::NONE: return "(collect-none)";
+            case Mode::SCALAR: return "(collect-scalar)";
+            case Mode::VECTOR: return "(collect-vector)";
+            case Mode::LIST: return "(collect-list)";
         }
         return "(collect)";
     }

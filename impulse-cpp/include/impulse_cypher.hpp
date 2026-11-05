@@ -311,7 +311,10 @@ struct CypherWherePredicate {
 
 struct CypherReturnProjection {
     std::string variable;
+    std::string attr_name;
+    enum class AggOp { NONE, COUNT, SUM, MIN, MAX, ARGMIN, ARGMAX } agg_op{AggOp::NONE};
     bool is_count{false};
+    bool is_attr{false};
 };
 
 struct CypherOrderByClause {
@@ -715,17 +718,63 @@ private:
             consume(CypherTokenType::LPAREN, "Expected '(' after 'count'");
             std::string var = curr_.lexeme;
             consume(CypherTokenType::IDENTIFIER, "Expected variable name inside count(...)");
+            std::string attr;
+            if (match(CypherTokenType::DOT)) {
+                attr = curr_.lexeme;
+                consume(CypherTokenType::IDENTIFIER, "Expected attribute name after '.'");
+            }
             consume(CypherTokenType::RPAREN, "Expected ')' after variable inside count(...)");
-            return {var, true};
+            CypherReturnProjection proj;
+            proj.variable = var;
+            proj.attr_name = attr;
+            proj.agg_op = CypherReturnProjection::AggOp::COUNT;
+            proj.is_count = true;
+            return proj;
+        }
+
+        std::string fn_name = curr_.lexeme;
+        std::string fn_lower = to_lower_str(fn_name);
+        if (fn_lower == "sum" || fn_lower == "min" || fn_lower == "max" ||
+            fn_lower == "argmin" || fn_lower == "argmax") {
+            advance();
+            consume(CypherTokenType::LPAREN, "Expected '(' after aggregate function");
+            std::string var = curr_.lexeme;
+            consume(CypherTokenType::IDENTIFIER, "Expected variable name in aggregate function");
+            std::string attr;
+            if (match(CypherTokenType::DOT)) {
+                attr = curr_.lexeme;
+                consume(CypherTokenType::IDENTIFIER, "Expected attribute name after '.'");
+            }
+            consume(CypherTokenType::RPAREN, "Expected ')' after aggregate argument");
+            CypherReturnProjection proj;
+            proj.variable = var;
+            proj.attr_name = attr;
+            if (fn_lower == "sum") proj.agg_op = CypherReturnProjection::AggOp::SUM;
+            else if (fn_lower == "min") proj.agg_op = CypherReturnProjection::AggOp::MIN;
+            else if (fn_lower == "max") proj.agg_op = CypherReturnProjection::AggOp::MAX;
+            else if (fn_lower == "argmin") proj.agg_op = CypherReturnProjection::AggOp::ARGMIN;
+            else if (fn_lower == "argmax") proj.agg_op = CypherReturnProjection::AggOp::ARGMAX;
+            return proj;
         }
 
         if (curr_.type == CypherTokenType::IDENTIFIER) {
             std::string var = curr_.lexeme;
             advance();
-            return {var, false};
+            std::string attr;
+            bool is_attr = false;
+            if (match(CypherTokenType::DOT)) {
+                attr = curr_.lexeme;
+                consume(CypherTokenType::IDENTIFIER, "Expected attribute name after '.'");
+                is_attr = true;
+            }
+            CypherReturnProjection proj;
+            proj.variable = var;
+            proj.attr_name = attr;
+            proj.is_attr = is_attr;
+            return proj;
         }
 
-        throw std::runtime_error("Expected return target variable or count(var), got: " + curr_.lexeme);
+        throw std::runtime_error("Expected return target variable, attribute, or aggregate, got: " + curr_.lexeme);
     }
 
     void advance() { curr_ = lexer_.next_token(); }
@@ -852,12 +901,43 @@ public:
             steps.push_back(std::make_shared<ScmLaneFilterQuorum>(quorum_k, 0xFF));
         }
 
-        if (query.order_by.active && (!query.order_by.query_vector.empty() || !query.order_by.query_param.empty())) {
+        bool terminal_rerank = query.order_by.active && (!query.order_by.query_vector.empty() || !query.order_by.query_param.empty());
+        if (terminal_rerank) {
             steps.push_back(std::make_shared<ScmVectorRerankDot>(2, 0, query.order_by.metric));
         }
 
-        if (query.projection.is_count) {
+        if (query.projection.agg_op != CypherReturnProjection::AggOp::NONE &&
+            query.projection.agg_op != CypherReturnProjection::AggOp::COUNT) {
+            if (multi_lane_mode) {
+                uint8_t red_code = 0;
+                switch (query.projection.agg_op) {
+                    case CypherReturnProjection::AggOp::SUM: red_code = 0; break;
+                    case CypherReturnProjection::AggOp::MIN: red_code = 2; break;
+                    case CypherReturnProjection::AggOp::MAX: red_code = 3; break;
+                    case CypherReturnProjection::AggOp::ARGMIN: red_code = 6; break;
+                    case CypherReturnProjection::AggOp::ARGMAX: red_code = 7; break;
+                    default: break;
+                }
+                steps.push_back(std::make_shared<ScmLaneReduceAttr>(0, red_code));
+            } else {
+                ScmReduce::Op rop = ScmReduce::Op::SUM;
+                switch (query.projection.agg_op) {
+                    case CypherReturnProjection::AggOp::SUM: rop = ScmReduce::Op::SUM; break;
+                    case CypherReturnProjection::AggOp::MIN: rop = ScmReduce::Op::MIN; break;
+                    case CypherReturnProjection::AggOp::MAX: rop = ScmReduce::Op::MAX; break;
+                    case CypherReturnProjection::AggOp::ARGMIN: rop = ScmReduce::Op::ARGMIN; break;
+                    case CypherReturnProjection::AggOp::ARGMAX: rop = ScmReduce::Op::ARGMAX; break;
+                    default: break;
+                }
+                steps.push_back(std::make_shared<ScmReduce>(rop));
+            }
+            steps.push_back(ScmCollect::none());
+        } else if (query.projection.is_count) {
             steps.push_back(ScmCollect::count());
+        } else if (terminal_rerank) {
+            steps.push_back(ScmCollect::none());
+        } else if (query.projection.is_attr) {
+            steps.push_back(ScmCollect::array());
         } else {
             steps.push_back(ScmCollect::bitset());
         }

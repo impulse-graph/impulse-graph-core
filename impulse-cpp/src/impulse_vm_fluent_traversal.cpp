@@ -388,6 +388,9 @@ std::vector<uint64_t> Traversal::collect() const {
     if (all_nodes_ || seeds_.empty()) {
         state.pc = 0;
         impulse_vm_execute(init_prog.data(), init_prog.size(), &state, 0);
+        if (all_nodes_ && state.register_types[0] == TYPE_BITSET_HANDLE) {
+            impulse_vm_context_bitset_fill(ctx, state.registers[0], max_n);
+        }
     } else {
         // Union all seeds into R0 via VM
         state.pc = 0;
@@ -540,6 +543,43 @@ std::vector<uint64_t> Traversal::collect() const {
             };
             state.pc = 0;
             impulse_vm_execute(insts, 2, &state, 0);
+        } else if (step.kind == Step::Kind::FILTER_CEL) {
+            impulse::cel::Parser p(step.str1);
+            auto ast = p.parse_expression();
+            if (ast && state.register_types[0] == TYPE_BITSET_HANDLE) {
+                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+                uint64_t handle = state.registers[0];
+                for (uint32_t u = 0; u < max_n; ++u) {
+                    if (impulse_vm_context_bitset_test(ctx, handle, u)) {
+                        std::unordered_map<std::string, double> f_attrs;
+                        std::unordered_map<std::string, int64_t> i_attrs;
+                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, &i_attrs, &f_attrs)) {
+                            impulse_vm_context_bitset_remove(ctx, handle, u);
+                        }
+                    }
+                }
+            }
+        } else if (step.kind == Step::Kind::PROJECT_CEL) {
+            impulse::cel::Parser p(step.str1);
+            auto ast = p.parse_expression();
+            if (ast && state.register_types[0] == TYPE_BITSET_HANDLE) {
+                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+                uint64_t handle = state.registers[0];
+                for (uint32_t u = 0; u < max_n; ++u) {
+                    if (impulse_vm_context_bitset_test(ctx, handle, u)) {
+                        std::unordered_map<std::string, double> f_attrs;
+                        std::unordered_map<std::string, int64_t> i_attrs;
+                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                        double v = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
+                        if (opt_ast->kind == impulse::cel::AstKind::BINARY_OP &&
+                            (opt_ast->text == "==" || opt_ast->text == "!=" || opt_ast->text == "<" ||
+                             opt_ast->text == "<=" || opt_ast->text == ">" || opt_ast->text == ">=") && v == 0.0) {
+                            impulse_vm_context_bitset_remove(ctx, handle, u);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -576,22 +616,30 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
     uint32_t max_n = get_domain_node_count(snapshot_, current_domain_id_);
     std::vector<float> state_vec(max_n, 0.0f);
 
-    const float* attr_f32 = nullptr;
-    uint64_t attr_bytes = 0;
-    if (snapshot_ && impulse_snapshot_relation_count(snapshot_) > 0) {
-        const void* raw_data = nullptr;
-        uint8_t tc = 0;
-        uint32_t dim = 0;
-        if (impulse_snapshot_get_attribute_buffers(snapshot_, 0, 0, &raw_data, &attr_bytes, nullptr, nullptr, &tc, &dim) == IMPULSE_OK &&
-            raw_data != nullptr && tc == IMPULSE_ATTR_TYPE_FLOAT32) {
-            attr_f32 = static_cast<const float*>(raw_data);
+    const float* default_attr_f32 = nullptr;
+    uint64_t default_attr_bytes = 0;
+    uint8_t default_tc = 0;
+    uint32_t default_dim = 0;
+    const void* raw_default = nullptr;
+    if (resolve_named_attribute_buffer(snapshot_, "", &raw_default, &default_attr_bytes, &default_tc, &default_dim) &&
+        raw_default && ((default_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (default_tc & 0x7F) == 0x05)) {
+        default_attr_f32 = static_cast<const float*>(raw_default);
+    }
+    size_t default_count = default_attr_f32 ? (default_attr_bytes / sizeof(float)) : 0;
+
+    bool has_explicit_state_step = false;
+    for (const auto& s : steps_) {
+        if (s.kind == Step::Kind::MUL_ATTR || s.kind == Step::Kind::DIV_ATTR ||
+            s.kind == Step::Kind::SCALE_STATE || s.kind == Step::Kind::PROJECT_CEL ||
+            s.kind == Step::Kind::RERANK) {
+            has_explicit_state_step = true;
+            break;
         }
     }
-    size_t attr_count = attr_f32 ? (attr_bytes / sizeof(float)) : 0;
 
     for (uint64_t u : active) {
         if (u < max_n) {
-            state_vec[u] = (u < attr_count) ? attr_f32[u] : 1.0f;
+            state_vec[u] = (!has_explicit_state_step && u < default_count) ? default_attr_f32[u] : 1.0f;
         }
     }
 
@@ -600,13 +648,75 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
             for (uint64_t u : active) {
                 if (u < max_n) state_vec[u] *= step.f32_arg;
             }
-        } else if (step.kind == Step::Kind::MUL_ATTR && attr_f32) {
-            for (uint64_t u : active) {
-                if (u < max_n && u < attr_count) state_vec[u] *= attr_f32[u];
+        } else if (step.kind == Step::Kind::MUL_ATTR) {
+            const void* raw_mul = nullptr;
+            uint64_t m_bytes = 0;
+            uint8_t m_tc = 0;
+            uint32_t m_dim = 0;
+            const float* m_f32 = nullptr;
+            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_mul, &m_bytes, &m_tc, &m_dim) &&
+                raw_mul && ((m_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (m_tc & 0x7F) == 0x05)) {
+                m_f32 = static_cast<const float*>(raw_mul);
+            } else {
+                m_f32 = default_attr_f32;
+                m_bytes = default_attr_bytes;
             }
-        } else if (step.kind == Step::Kind::DIV_ATTR && attr_f32) {
-            for (uint64_t u : active) {
-                if (u < max_n && u < attr_count && attr_f32[u] != 0.0f) state_vec[u] /= attr_f32[u];
+            size_t m_count = m_f32 ? (m_bytes / sizeof(float)) : 0;
+            if (m_f32) {
+                for (uint64_t u : active) {
+                    if (u < max_n && u < m_count) state_vec[u] *= m_f32[u];
+                }
+            }
+        } else if (step.kind == Step::Kind::DIV_ATTR) {
+            const void* raw_div = nullptr;
+            uint64_t d_bytes = 0;
+            uint8_t d_tc = 0;
+            uint32_t d_dim = 0;
+            const float* d_f32 = nullptr;
+            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_div, &d_bytes, &d_tc, &d_dim) &&
+                raw_div && ((d_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (d_tc & 0x7F) == 0x05)) {
+                d_f32 = static_cast<const float*>(raw_div);
+            } else {
+                d_f32 = default_attr_f32;
+                d_bytes = default_attr_bytes;
+            }
+            size_t d_count = d_f32 ? (d_bytes / sizeof(float)) : 0;
+            if (d_f32) {
+                for (uint64_t u : active) {
+                    if (u < max_n && u < d_count && d_f32[u] != 0.0f) state_vec[u] /= d_f32[u];
+                }
+            }
+        } else if (step.kind == Step::Kind::FILTER_CEL) {
+            impulse::cel::Parser p(step.str1);
+            auto ast = p.parse_expression();
+            if (ast) {
+                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+                std::vector<uint64_t> new_active;
+                for (uint64_t u : active) {
+                    std::unordered_map<std::string, double> f_attrs;
+                    std::unordered_map<std::string, int64_t> i_attrs;
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                    if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, &i_attrs, &f_attrs)) {
+                        new_active.push_back(u);
+                    } else {
+                        if (u < max_n) state_vec[u] = 0.0f;
+                    }
+                }
+                active = std::move(new_active);
+                if (out_active_nodes) *out_active_nodes = active;
+            }
+        } else if (step.kind == Step::Kind::PROJECT_CEL) {
+            impulse::cel::Parser p(step.str1);
+            auto ast = p.parse_expression();
+            if (ast) {
+                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+                for (uint64_t u : active) {
+                    std::unordered_map<std::string, double> f_attrs;
+                    std::unordered_map<std::string, int64_t> i_attrs;
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                    double val = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
+                    if (u < max_n) state_vec[u] = static_cast<float>(val);
+                }
             }
         } else if (step.kind == Step::Kind::RERANK && snapshot_ && !step.float_vec.empty() && !active.empty()) {
             uint16_t aid = resolve_attr_or_index_id(snapshot_, step.str1);
@@ -655,6 +765,77 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
         }
     }
     return state_vec;
+}
+
+std::vector<float> Traversal::collectStateVector() const {
+    return evaluateStateVector();
+}
+
+std::vector<std::pair<uint64_t, float>> Traversal::collectNodeValues() const {
+    std::vector<uint64_t> active;
+    auto svec = evaluateStateVector(&active);
+    std::vector<std::pair<uint64_t, float>> out;
+    out.reserve(active.size());
+    for (uint64_t u : active) {
+        float val = (u < svec.size()) ? svec[u] : 0.0f;
+        out.emplace_back(u, val);
+    }
+    return out;
+}
+
+std::vector<std::pair<std::string, float>> Traversal::collectKeyValues() const {
+    std::vector<uint64_t> active;
+    auto svec = evaluateStateVector(&active);
+    std::vector<std::pair<std::string, float>> out;
+    if (active.empty() || !snapshot_) return out;
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (!ctx) return out;
+
+    impulse_vm_state_t state{};
+    state.query_context = ctx;
+
+    impulse_instruction_t init0[2] = {{OP_INIT_INPUT_NODE, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
+    state.pc = 0;
+    impulse_vm_execute(init0, 2, &state, active[0]);
+    for (size_t i = 1; i < active.size(); ++i) {
+        impulse_instruction_t add_u[3] = {
+            {OP_INIT_INPUT_NODE, 0, 3, 0},
+            {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
+            {OP_HALT, 0, 0, 0}
+        };
+        state.pc = 0;
+        impulse_vm_execute(add_u, 3, &state, active[i]);
+    }
+
+    int h_fvec = impulse_vm_context_acquire_float_vector(ctx);
+    if (h_fvec >= 0) {
+        for (uint64_t u : active) {
+            float val = (u < svec.size()) ? svec[u] : 0.0f;
+            impulse_vm_context_float_vector_set(ctx, static_cast<size_t>(h_fvec), u, val);
+        }
+        state.registers[1] = static_cast<uint64_t>(h_fvec);
+        state.register_types[1] = TYPE_FLOAT_VECTOR;
+
+        impulse_instruction_t vmap_prog[2] = {
+            {OP_COLLECT_VALUE_MAP, 0, 2, static_cast<uint32_t>(0 | (1 << 8) | (current_domain_id_ << 16))},
+            {OP_HALT, 0, 0, 0}
+        };
+        state.pc = 0;
+        if (impulse_vm_execute(vmap_prog, 2, &state, 0) == IMPULSE_VM_OK &&
+            state.register_types[2] == TYPE_VALUE_MAP) {
+            size_t h_vmap = static_cast<size_t>(state.registers[2]);
+            size_t sz = impulse_vm_context_value_map_size(ctx, h_vmap);
+            out.reserve(sz);
+            for (size_t i = 0; i < sz; ++i) {
+                const char* k = impulse_vm_context_value_map_get_key(ctx, h_vmap, i);
+                float v = impulse_vm_context_value_map_get_value(ctx, h_vmap, i);
+                out.emplace_back(k ? k : "", v);
+            }
+        }
+    }
+    impulse_vm_context_destroy(ctx);
+    return out;
 }
 
 std::vector<std::pair<uint64_t, float>> Traversal::topK(size_t k) const {

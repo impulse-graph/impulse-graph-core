@@ -369,6 +369,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         uint16_t rel_count = snap->header.relation_count;
         snap->relations.reserve(rel_count);
         snap->relation_attributes.resize(rel_count);
+        snap->relation_attribute_names.resize(rel_count);
 
         for (uint16_t j = 0; j < rel_count; ++j) {
             if (cur + sizeof(impulse_relation_directory_entry_t) > file_size) {
@@ -382,12 +383,17 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
             uint16_t attr_count = rel_entry.attr_count;
             snap->relation_attributes[j].resize(attr_count);
+            snap->relation_attribute_names[j].resize(attr_count);
             for (uint16_t a = 0; a < attr_count; ++a) {
                 if (cur + sizeof(impulse_attribute_descriptor_t) > file_size) {
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
                 }
                 std::memcpy(&snap->relation_attributes[j][a], raw + cur, sizeof(impulse_attribute_descriptor_t));
+                std::string aname;
+                if (validate_and_get_string(snap->relation_attributes[j][a].name_offset, aname) == IMPULSE_OK) {
+                    snap->relation_attribute_names[j][a] = aname;
+                }
                 cur += sizeof(impulse_attribute_descriptor_t);
             }
 
@@ -1072,6 +1078,23 @@ impulse_status_t impulse_snapshot_get_attribute_buffers(
     if (out_offsets_bytes) *out_offsets_bytes = attr.offsets_bytes;
     if (out_type_code) *out_type_code = attr.type_code;
     if (out_dimension) *out_dimension = attr.dimension;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_get_attribute_name(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    const char** out_name
+) {
+    if (!snapshot || !out_name || relation_index >= snapshot->relation_attribute_names.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& names = snapshot->relation_attribute_names[relation_index];
+    if (attribute_index >= names.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    *out_name = names[attribute_index].c_str();
     return IMPULSE_OK;
 }
 

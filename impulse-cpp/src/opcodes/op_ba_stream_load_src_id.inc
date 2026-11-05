@@ -33,4 +33,13 @@
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
 #endif
-                    case OP_STREAM_LOAD_SRC_ID: s_regs[sDst] = static_cast<float>(actualSource); break;
+                    case OP_STREAM_LOAD_SRC_ID: {
+                        if (sInst.flags == 1) {
+                            s_regs[sDst] = static_cast<float>(std::popcount(u_lane_mask));
+                        } else if (sInst.flags == 2) {
+                            s_regs[sDst] = static_cast<float>(u_lane_mask);
+                        } else {
+                            s_regs[sDst] = static_cast<float>(actualSource);
+                        }
+                        break;
+                    }
