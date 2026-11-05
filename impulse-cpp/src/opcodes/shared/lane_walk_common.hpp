@@ -540,8 +540,6 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
         } else {
             if (!any_set) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
             else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-            if (!any_changed) vm_state->flags |= IMPULSE_VM_FLAG_ST;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ST;
         }
     }
 

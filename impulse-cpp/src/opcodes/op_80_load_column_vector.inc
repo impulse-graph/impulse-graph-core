@@ -38,16 +38,25 @@ op_LOAD_COLUMN_VECTOR: {
     }
     int h_dst = static_cast<int>(vm_state->registers[dst]);
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
+    size_t loaded_len = 0;
 
     if (domain_or_rel < vm_state->query_context->attribute_slots.size() &&
         attr_idx < vm_state->query_context->attribute_slots[domain_or_rel].size()) {
         const auto& slot = vm_state->query_context->attribute_slots[domain_or_rel][attr_idx];
         if (slot.data_ptr) {
             const float* src_attr = static_cast<const float*>(slot.data_ptr);
-            size_t copy_n = std::min(N, (size_t)(slot.data_bytes / sizeof(float)));
-            std::memcpy(dst_vec, src_attr, copy_n * sizeof(float));
+            loaded_len = std::min(N, (size_t)(slot.data_bytes / sizeof(float)));
+            std::memcpy(dst_vec, src_attr, loaded_len * sizeof(float));
+        }
+    } else {
+        const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, attr_idx);
+        if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, domain_or_rel);
+        if (ma_ptr && !ma_ptr->float_data.empty()) {
+            loaded_len = std::min(N, ma_ptr->float_data.size());
+            std::memcpy(dst_vec, ma_ptr->float_data.data(), loaded_len * sizeof(float));
         }
     }
+    vm_state->query_context->float_vector_lengths[h_dst] = loaded_len;
     vm_state->pc++;
     DISPATCH();
 }

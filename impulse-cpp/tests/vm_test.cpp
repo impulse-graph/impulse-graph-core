@@ -301,7 +301,7 @@ void test_bitset_operations() {
     assert(state.register_types[63] == TYPE_NODE_VECTOR);
 
     // Retrieve contiguous array
-    const uint64_t* results = reinterpret_cast<const uint64_t*>(state.registers[63]);
+    const uint64_t* results = impulse_vm_context_get_node_vector(ctx, state.registers[63]);
     assert(results != nullptr);
     // There should be exactly 1 element in node_buffer: 10
     assert(impulse_vm_context_get_vector_size(ctx) == 1);
@@ -400,7 +400,7 @@ void test_rbac_traversal() {
     assert(status1 == IMPULSE_VM_OK);
     assert(state1.register_types[63] == TYPE_NODE_VECTOR);
     assert(impulse_vm_context_get_vector_size(ctx) == 1);
-    const uint64_t* res1 = reinterpret_cast<const uint64_t*>(state1.registers[63]);
+    const uint64_t* res1 = impulse_vm_context_get_node_vector(ctx, state1.registers[63]);
     assert(res1 != nullptr && res1[0] == 5); // Read Permission (node ID 5)
 
     // --- PROGRAM 2: Transitive closure loop using OP_STABLE_CHECK ---
@@ -437,7 +437,7 @@ void test_rbac_traversal() {
     assert(status2 == IMPULSE_VM_OK);
     assert(state2.register_types[63] == TYPE_NODE_VECTOR);
     size_t size2 = impulse_vm_context_get_vector_size(ctx);
-    const uint64_t* res2 = reinterpret_cast<const uint64_t*>(state2.registers[63]);
+    const uint64_t* res2 = impulse_vm_context_get_node_vector(ctx, state2.registers[63]);
     assert(size2 == 3); // Read (5), Write (6), Delete (7)
     assert(res2 != nullptr);
     std::vector<uint64_t> actual_perms(res2, res2 + size2);

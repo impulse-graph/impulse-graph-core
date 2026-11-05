@@ -163,7 +163,7 @@ static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
     switch (func_id) {
         case MATH_FUNC_ABS:        return fabsf(x);
         case MATH_FUNC_SQRT:       return sqrtf(x);
-        case MATH_FUNC_RSQRT:      return 1.0f / sqrtf(x);
+        case MATH_FUNC_RSQRT:      return (float)(1.0 / sqrt((double)x));
         case MATH_FUNC_CBRT:       return cbrtf(x);
         case MATH_FUNC_EXP:        return expf(x);
         case MATH_FUNC_EXP2:       return exp2f(x);
