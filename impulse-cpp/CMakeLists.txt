@@ -44,6 +44,12 @@ if(IMPULSE_ENABLE_MCDC_COVERAGE)
     add_link_options(-fprofile-instr-generate)
 endif()
 
+# --- LibFuzzer Option ---------------------------------------------------
+option(IMPULSE_ENABLE_LIBFUZZER "Build fuzz targets with LLVM libFuzzer (-fsanitize=fuzzer)" OFF)
+if(IMPULSE_ENABLE_LIBFUZZER)
+    add_compile_definitions(IMPULSE_LIBFUZZER_ENABLED=1)
+endif()
+
 # --- Dependencies: Google Highway --------------------------------------
 include(FetchContent)
 FetchContent_Declare(
@@ -280,6 +286,23 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_security_hardening tests/test_security_hardening.cpp)
     target_link_libraries(test_security_hardening PRIVATE impulse_graph_static)
     add_test(NAME test_security_hardening COMMAND test_security_hardening)
+
+    # --- Mutation, Pairwise & Property-Based Verification Targets ---
+    add_executable(test_mutation_cpp tests/test_mutation_cpp.cpp)
+    target_link_libraries(test_mutation_cpp PRIVATE impulse_graph_static)
+    add_test(NAME test_mutation_cpp COMMAND test_mutation_cpp)
+
+    add_executable(test_pairwise_cpp tests/test_pairwise_cpp.cpp)
+    target_link_libraries(test_pairwise_cpp PRIVATE impulse_graph_static)
+    add_test(NAME test_pairwise_cpp COMMAND test_pairwise_cpp)
+
+    add_executable(test_property_snapshot tests/test_property_snapshot.cpp)
+    target_link_libraries(test_property_snapshot PRIVATE impulse_graph_static)
+    add_test(NAME test_property_snapshot COMMAND test_property_snapshot)
+
+    add_executable(test_property_vm tests/test_property_vm.cpp)
+    target_link_libraries(test_property_vm PRIVATE impulse_graph_static)
+    add_test(NAME test_property_vm COMMAND test_property_vm)
 endif()
 
 # --- Examples ------------------------------------------------------------
