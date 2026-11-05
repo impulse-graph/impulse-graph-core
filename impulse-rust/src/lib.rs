@@ -763,4 +763,130 @@ mod tests {
         assert!(rk >= 0.8, "Recall@5 {} must be >= 0.8", rk);
         assert_eq!(res[0].0, 7);
     }
+
+    #[test]
+    fn test_self_relation_with_edge_weights_and_domain_vector_attribute() {
+        let mut writer = SnapshotWriter::new("__unused_carrier_test.imps");
+        let n = 20usize;
+        let dim = 16usize;
+
+        writer.add_domain(0, KeyType::Int32, "Doc");
+        writer.set_domain_node_count(0, n as u64);
+
+        // 1. Add edge self-relation FIRST: Doc -> Doc (0 -> 0), with edges and edge attribute "weight" (dim = 1)
+        // 5 edges: 0->1, 1->2, 2->3, 3->4, 4->0
+        let row_offsets = vec![0u32, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+        let col_indices = vec![1u32, 2, 3, 4, 0];
+        writer.add_relation(0, 0, n as u64, 5, row_offsets, col_indices);
+        writer.set_relation_name(0, "CITES");
+
+        let mut weight_bytes = Vec::new();
+        for w in [1.5f32, 2.5, 3.5, 4.5, 5.5] {
+            weight_bytes.extend_from_slice(&w.to_le_bytes());
+        }
+        writer.add_attribute_to_relation(
+            0,
+            "weight",
+            BaseDataType::Float32 as u8,
+            1, // scalar
+            weight_bytes,
+            None,
+        );
+
+        // 2. Add domain node vector attribute on Domain 0: "embedding" (Float32, dim = 16)
+        let mut vectors = vec![0.0f32; n * dim];
+        for u in 0..n {
+            let mut norm = 0.0f32;
+            for d in 0..dim {
+                let v = ((u * 17 + d * 31) % 97) as f32 / 100.0;
+                vectors[u * dim + d] = v;
+                norm += v * v;
+            }
+            norm = norm.sqrt().max(1e-6);
+            for d in 0..dim {
+                vectors[u * dim + d] /= norm;
+            }
+        }
+        let mut emb_bytes = Vec::with_capacity(vectors.len() * 4);
+        for &f in &vectors {
+            emb_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        writer.add_attribute_to_domain(
+            0,
+            "embedding",
+            BaseDataType::Float32 as u8,
+            dim as u32,
+            emb_bytes,
+            None,
+        );
+
+        // 3. Add Vamana index on Domain 0 "embedding"
+        let cfg = VamanaBuildConfig {
+            max_degree_r: 8,
+            ef_construction: 16,
+            alpha: 1.2,
+            metric: VamanaMetric::Cosine,
+            quant_type: VamanaQuantType::None,
+            seed: 1234,
+        };
+        writer
+            .add_vamana_index(0, "embedding", "Doc_embedding_vamana", &cfg)
+            .unwrap();
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+
+        // 4. Verify relations:
+        // CITES should exist with 5 edges and 1 attribute ("weight", dim=1)
+        // Doc_nodes should exist with 0 edges and 1 attribute ("embedding", dim=16)
+        let cites = reader.relations().iter().find(|r| r.name == "CITES").unwrap();
+        assert_eq!(cites.edge_count, 5);
+        assert_eq!(cites.attributes.len(), 1);
+        assert_eq!(cites.attributes[0].name, "weight");
+        assert_eq!(cites.attributes[0].dimension, 1);
+
+        let doc_nodes = reader.relations().iter().find(|r| r.name == "Doc_nodes").unwrap();
+        assert_eq!(doc_nodes.edge_count, 0);
+        assert_eq!(doc_nodes.attributes.len(), 1);
+        assert_eq!(doc_nodes.attributes[0].name, "embedding");
+        assert_eq!(doc_nodes.attributes[0].dimension, 16);
+
+        // 5. Verify reader domain attribute accessors pick Doc_nodes instead of CITES
+        // (a) get_domain_float32_slice with attr_index = Some(0):
+        // Prior to the fix, this picked CITES attribute 0 ("weight", dim=1)!
+        let (node_count, out_dim, slice) = reader
+            .get_domain_float32_slice(0, Some(0), None)
+            .expect("Must resolve domain vector attribute from Doc_nodes carrier relation");
+        assert_eq!(node_count, n);
+        assert_eq!(out_dim, dim);
+        assert_eq!(slice.len(), n * dim);
+
+        // (b) get_domain_float32_slice by attr_name:
+        let (nc_name, dim_name, slice_name) = reader
+            .get_domain_float32_slice(0, None, Some("embedding"))
+            .unwrap();
+        assert_eq!(nc_name, n);
+        assert_eq!(dim_name, dim);
+        assert_eq!(slice_name.len(), n * dim);
+
+        // (c) get_domain_float32_vectors with attr_index = Some(0):
+        let (nc_vecs, dim_vecs, vecs) = reader
+            .get_domain_float32_vectors(0, Some(0), None)
+            .unwrap();
+        assert_eq!(nc_vecs, n);
+        assert_eq!(dim_vecs, dim);
+        assert_eq!(vecs.len(), n * dim);
+
+        // (d) get_domain_attribute_data:
+        let emb_data = reader.get_domain_attribute_data(0, "embedding").unwrap();
+        assert_eq!(emb_data.len(), n * dim * 4);
+
+        // 6. Verify Vamana ANN search works through the reader
+        assert_eq!(reader.index_entries().len(), 1);
+        let entry = &reader.index_entries()[0];
+        let q = &vectors[3 * dim..4 * dim];
+        let results = reader.vamana_ann_search(entry, q, 3, 16).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0, 3, "Exact query vector must match node 3 at rank 0");
+    }
 }
