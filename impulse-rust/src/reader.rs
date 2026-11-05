@@ -53,6 +53,12 @@ pub struct AttributeInfo {
     pub offsets_bytes: u64,
 }
 
+impl AttributeInfo {
+    pub fn base_type(&self) -> Option<BaseDataType> {
+        BaseDataType::from_u8(self.type_code)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct IndexEntryInfo {
     pub index_id: u32,
@@ -732,40 +738,149 @@ impl SnapshotReader {
     }
 
     /// Reads a domain's Float32 vector attribute (`[node_count, dimension]`) by `attr_index` or `attr_name`.
+    /// Locates the appropriate relation and attribute index for a domain's Float32 vector attribute.
+    /// Prioritizes:
+    /// 1. Explicit `relation_hint` matching `r.relation_id`.
+    /// 2. Dedicated node carrier relation (`src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes"))`).
+    /// 3. Any carrier relation with `src == domain_id && (edge_count == 0 || name.ends_with("_nodes"))`.
+    /// 4. Any relation where `data_bytes == node_count * dim * 4` (matching domain node count).
+    /// 5. Any self-relation (`src == tgt == domain_id`).
+    /// 6. Fallback to any relation with `src_domain_id == domain_id`.
+    fn find_domain_float32_attribute(
+        &self,
+        domain_id: u16,
+        relation_hint: Option<u16>,
+        attr_index: Option<u16>,
+        attr_name: Option<&str>,
+    ) -> Result<(usize, usize), ImpulseError> {
+        let dom_node_count = self
+            .domains
+            .iter()
+            .find(|d| d.domain_id == domain_id)
+            .map(|d| d.node_count);
+
+        let match_attr_in_rel = |r_idx: usize| -> Option<usize> {
+            let r = &self.relations[r_idx];
+            for (a_idx, a) in r.attributes.iter().enumerate() {
+                let base_t = a.type_code & IMPULSE_TYPE_MASK;
+                if base_t != 6 {
+                    continue;
+                }
+                let matched = if let Some(name) = attr_name {
+                    a.name == name
+                } else if let Some(target_idx) = attr_index {
+                    a_idx == target_idx as usize
+                } else {
+                    a.dimension > 1
+                };
+                if matched {
+                    return Some(a_idx);
+                }
+            }
+            None
+        };
+
+        // Pass 1: Explicit relation_hint matches
+        if let Some(rel_id) = relation_hint {
+            if rel_id != 0xFFFF {
+                if let Some(r_idx) = self.relations.iter().position(|r| r.relation_id == rel_id) {
+                    if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                        return Ok((r_idx, a_idx));
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Dedicated node carrier relation (src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes")))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id
+                && r.tgt_domain_id == domain_id
+                && (r.edge_count == 0 || r.name.ends_with("_nodes"))
+            {
+                if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                    return Ok((r_idx, a_idx));
+                }
+            }
+        }
+
+        // Pass 3: Any node carrier relation with src_domain_id == domain_id && (edge_count == 0 || name.ends_with("_nodes"))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && (r.edge_count == 0 || r.name.ends_with("_nodes")) {
+                if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                    return Ok((r_idx, a_idx));
+                }
+            }
+        }
+
+        // Pass 4: Any relation where data_bytes == node_count * dim * 4 (matching domain node count)
+        if let Some(nc) = dom_node_count {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id {
+                    if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                        let a = &r.attributes[a_idx];
+                        let expected_bytes = nc * (a.dimension.max(1) as u64) * 4;
+                        if a.data_bytes == expected_bytes {
+                            return Ok((r_idx, a_idx));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 5: Any self-relation (src == tgt == domain_id)
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
+                if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                    return Ok((r_idx, a_idx));
+                }
+            }
+        }
+
+        // Pass 6: Fallback to any relation with src_domain_id == domain_id
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id {
+                if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                    return Ok((r_idx, a_idx));
+                }
+            }
+        }
+
+        Err(ImpulseError::NotFound)
+    }
+
+    /// Reads a domain's Float32 vector attribute (`[node_count, dimension]`) by `attr_index` or `attr_name`.
     pub fn get_domain_float32_vectors(
         &self,
         domain_id: u16,
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, Vec<f32>), ImpulseError> {
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id {
-                for (a_idx, a) in r.attributes.iter().enumerate() {
-                    let matched = if let Some(name) = attr_name {
-                        a.name == name
-                    } else if let Some(target_idx) = attr_index {
-                        a_idx == target_idx as usize
-                    } else {
-                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
-                    };
-                    if matched {
-                        let raw = self.get_attribute_data(r_idx, a_idx)?;
-                        let dim = a.dimension.max(1) as usize;
-                        if !raw.len().is_multiple_of(4) {
-                            return Err(ImpulseError::InvalidArgument);
-                        }
-                        let total_floats = raw.len() / 4;
-                        let n_nodes = total_floats / dim;
-                        let mut vecs = Vec::with_capacity(total_floats);
-                        for chunk in raw.chunks_exact(4) {
-                            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
-                        }
-                        return Ok((n_nodes, dim, vecs));
-                    }
-                }
-            }
+        self.get_domain_float32_vectors_with_relation(domain_id, None, attr_index, attr_name)
+    }
+
+    /// Reads a domain's Float32 vector attribute with an optional relation binding hint.
+    pub fn get_domain_float32_vectors_with_relation(
+        &self,
+        domain_id: u16,
+        relation_hint: Option<u16>,
+        attr_index: Option<u16>,
+        attr_name: Option<&str>,
+    ) -> Result<(usize, usize, Vec<f32>), ImpulseError> {
+        let (r_idx, a_idx) =
+            self.find_domain_float32_attribute(domain_id, relation_hint, attr_index, attr_name)?;
+        let a = &self.relations[r_idx].attributes[a_idx];
+        let raw = self.get_attribute_data(r_idx, a_idx)?;
+        let dim = a.dimension.max(1) as usize;
+        if !raw.len().is_multiple_of(4) {
+            return Err(ImpulseError::InvalidArgument);
         }
-        Err(ImpulseError::NotFound)
+        let total_floats = raw.len() / 4;
+        let n_nodes = total_floats / dim;
+        let mut vecs = Vec::with_capacity(total_floats);
+        for chunk in raw.chunks_exact(4) {
+            vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        Ok((n_nodes, dim, vecs))
     }
 
     /// Zero-copy slice view over a domain's Float32 vector attribute (`[node_count, dimension]`) when 4-byte aligned.
@@ -775,64 +890,29 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, &[f32]), ImpulseError> {
-        // First prioritize dedicated node relations (src_domain_id == tgt_domain_id)
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
-                for (a_idx, a) in r.attributes.iter().enumerate() {
-                    let matched = if let Some(name) = attr_name {
-                        a.name == name
-                    } else if let Some(target_idx) = attr_index {
-                        a_idx == target_idx as usize
-                    } else {
-                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
-                    };
-                    if matched {
-                        let raw = self.get_attribute_data(r_idx, a_idx)?;
-                        let dim = a.dimension.max(1) as usize;
-                        if !raw.len().is_multiple_of(4)
-                            || !(raw.as_ptr() as usize).is_multiple_of(4)
-                        {
-                            return Err(ImpulseError::InvalidAlignment);
-                        }
-                        let total_floats = raw.len() / 4;
-                        let n_nodes = total_floats / dim;
-                        let slice = unsafe {
-                            std::slice::from_raw_parts(raw.as_ptr() as *const f32, total_floats)
-                        };
-                        return Ok((n_nodes, dim, slice));
-                    }
-                }
-            }
+        self.get_domain_float32_slice_with_relation(domain_id, None, attr_index, attr_name)
+    }
+
+    /// Zero-copy slice view over a domain's Float32 vector attribute with an optional relation binding hint.
+    pub fn get_domain_float32_slice_with_relation(
+        &self,
+        domain_id: u16,
+        relation_hint: Option<u16>,
+        attr_index: Option<u16>,
+        attr_name: Option<&str>,
+    ) -> Result<(usize, usize, &[f32]), ImpulseError> {
+        let (r_idx, a_idx) =
+            self.find_domain_float32_attribute(domain_id, relation_hint, attr_index, attr_name)?;
+        let a = &self.relations[r_idx].attributes[a_idx];
+        let raw = self.get_attribute_data(r_idx, a_idx)?;
+        let dim = a.dimension.max(1) as usize;
+        if !raw.len().is_multiple_of(4) || !(raw.as_ptr() as usize).is_multiple_of(4) {
+            return Err(ImpulseError::InvalidAlignment);
         }
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id {
-                for (a_idx, a) in r.attributes.iter().enumerate() {
-                    let matched = if let Some(name) = attr_name {
-                        a.name == name
-                    } else if let Some(target_idx) = attr_index {
-                        a_idx == target_idx as usize
-                    } else {
-                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
-                    };
-                    if matched {
-                        let raw = self.get_attribute_data(r_idx, a_idx)?;
-                        let dim = a.dimension.max(1) as usize;
-                        if !raw.len().is_multiple_of(4)
-                            || !(raw.as_ptr() as usize).is_multiple_of(4)
-                        {
-                            return Err(ImpulseError::InvalidAlignment);
-                        }
-                        let total_floats = raw.len() / 4;
-                        let n_nodes = total_floats / dim;
-                        let slice = unsafe {
-                            std::slice::from_raw_parts(raw.as_ptr() as *const f32, total_floats)
-                        };
-                        return Ok((n_nodes, dim, slice));
-                    }
-                }
-            }
-        }
-        Err(ImpulseError::NotFound)
+        let total_floats = raw.len() / 4;
+        let n_nodes = total_floats / dim;
+        let slice = unsafe { std::slice::from_raw_parts(raw.as_ptr() as *const f32, total_floats) };
+        Ok((n_nodes, dim, slice))
     }
 
     /// Executes two-stage quantized Vamana ANN beam search + full-precision Float32 reranking on `entry`.
@@ -846,16 +926,28 @@ impl SnapshotReader {
         let hdr = self.parse_vamana_header(entry)?;
         let adj_slab = self.get_vamana_adj_slab(&hdr)?;
         let quant_slab = self.get_vamana_quant_slab(&hdr)?;
-        if let Ok((_n, _d, vec_slice)) =
-            self.get_domain_float32_slice(hdr.domain_id, Some(hdr.vec_attr_id), None)
-        {
+        let rel_hint = if entry.relation_id != 0xFFFF {
+            Some(entry.relation_id)
+        } else {
+            None
+        };
+        if let Ok((_n, _d, vec_slice)) = self.get_domain_float32_slice_with_relation(
+            hdr.domain_id,
+            rel_hint,
+            Some(hdr.vec_attr_id),
+            None,
+        ) {
             return crate::vamana::vamana_ann_search(
                 &hdr, adj_slab, quant_slab, vec_slice, query_vec, top_k, ef_search,
             )
             .map_err(|_| ImpulseError::InvalidArgument);
         }
-        let (_n, _d, vectors) =
-            self.get_domain_float32_vectors(hdr.domain_id, Some(hdr.vec_attr_id), None)?;
+        let (_n, _d, vectors) = self.get_domain_float32_vectors_with_relation(
+            hdr.domain_id,
+            rel_hint,
+            Some(hdr.vec_attr_id),
+            None,
+        )?;
         crate::vamana::vamana_ann_search(
             &hdr, adj_slab, quant_slab, &vectors, query_vec, top_k, ef_search,
         )
@@ -1071,7 +1163,55 @@ impl SnapshotReader {
         domain_id: u16,
         name: &str,
     ) -> Result<&[u8], ImpulseError> {
-        // Prioritize dedicated node relations (src_domain_id == tgt_domain_id)
+        let dom_node_count = self
+            .domains
+            .iter()
+            .find(|d| d.domain_id == domain_id)
+            .map(|d| d.node_count);
+
+        // Pass 1: Dedicated node carrier relation (src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes")))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id
+                && r.tgt_domain_id == domain_id
+                && (r.edge_count == 0 || r.name.ends_with("_nodes"))
+            {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_data(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Any carrier relation with src == domain_id && (edge_count == 0 || name.ends_with("_nodes"))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && (r.edge_count == 0 || r.name.ends_with("_nodes")) {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_data(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Any relation where data_bytes == node_count * dim * elem_size
+        if let Some(nc) = dom_node_count {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id {
+                    for (a_idx, a) in r.attributes.iter().enumerate() {
+                        if a.name == name {
+                            let elem_size = (a.dimension.max(1) as u64)
+                                * (a.base_type().map(|t| t.element_byte_size() as u64).unwrap_or(1));
+                            if elem_size > 0 && a.data_bytes == nc * elem_size {
+                                return self.get_attribute_data(r_idx, a_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 4: Any self-relation (src == tgt == domain_id)
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -1081,6 +1221,8 @@ impl SnapshotReader {
                 }
             }
         }
+
+        // Pass 5: Fallback to any relation with src_domain_id == domain_id
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -1098,7 +1240,55 @@ impl SnapshotReader {
         domain_id: u16,
         name: &str,
     ) -> Result<Option<&[u32]>, ImpulseError> {
-        // Prioritize dedicated node relations (src_domain_id == tgt_domain_id)
+        let dom_node_count = self
+            .domains
+            .iter()
+            .find(|d| d.domain_id == domain_id)
+            .map(|d| d.node_count);
+
+        // Pass 1: Dedicated node carrier relation (src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes")))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id
+                && r.tgt_domain_id == domain_id
+                && (r.edge_count == 0 || r.name.ends_with("_nodes"))
+            {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_offsets(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Any carrier relation with src == domain_id && (edge_count == 0 || name.ends_with("_nodes"))
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && (r.edge_count == 0 || r.name.ends_with("_nodes")) {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_offsets(r_idx, a_idx);
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Any relation where data_bytes == node_count * dim * elem_size
+        if let Some(nc) = dom_node_count {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id {
+                    for (a_idx, a) in r.attributes.iter().enumerate() {
+                        if a.name == name {
+                            let elem_size = (a.dimension.max(1) as u64)
+                                * (a.base_type().map(|t| t.element_byte_size() as u64).unwrap_or(1));
+                            if elem_size > 0 && a.data_bytes == nc * elem_size {
+                                return self.get_attribute_offsets(r_idx, a_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 4: Any self-relation (src == tgt == domain_id)
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -1108,6 +1298,8 @@ impl SnapshotReader {
                 }
             }
         }
+
+        // Pass 5: Fallback to any relation with src_domain_id == domain_id
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
