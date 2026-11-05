@@ -185,11 +185,22 @@ impl SnapshotWriter {
         data: Vec<u8>,
         offsets: Option<Vec<u32>>,
     ) {
-        let rel_idx = if let Some(idx) = self
-            .relations
+        let dom_name = self
+            .domains
             .iter()
-            .position(|r| r.src_domain_id == domain_id)
-        {
+            .find(|d| d.domain_id == domain_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| format!("Domain_{}", domain_id));
+        let node_rel_name = format!("{}_nodes", dom_name);
+
+        let rel_idx = if let Some(idx) = self.relations.iter().position(|r| {
+            r.src_domain_id == domain_id
+                && r.tgt_domain_id == domain_id
+                && (r.name == node_rel_name || (r.edge_count == 0 && r.col_indices.is_empty()))
+        }) {
+            if self.relations[idx].name.is_empty() {
+                self.relations[idx].name = node_rel_name;
+            }
             idx
         } else {
             let node_count = self
@@ -209,13 +220,7 @@ impl SnapshotWriter {
                 col_indices,
             );
             let new_idx = self.relations.len() - 1;
-            let dom_name = self
-                .domains
-                .iter()
-                .find(|d| d.domain_id == domain_id)
-                .map(|d| d.name.clone())
-                .unwrap_or_else(|| format!("Domain_{}", domain_id));
-            self.set_relation_name(new_idx, &format!("{}_nodes", dom_name));
+            self.set_relation_name(new_idx, &node_rel_name);
             new_idx
         };
         self.add_attribute_to_relation(rel_idx, name, type_code, dimension, data, offsets);
@@ -250,12 +255,22 @@ impl SnapshotWriter {
     }
 
     /// Registers a pre-built `BuiltVamanaIndex` (`IMP_INDEX_VAMANA_ANN = 8`) in Section 2.6.
+    pub fn add_built_vamana_index(&mut self, name: &str, built: crate::vamana::BuiltVamanaIndex) {
+        self.add_built_vamana_index_with_relation(name, 0xFFFF, built);
+    }
+
+    /// Registers a pre-built `BuiltVamanaIndex` (`IMP_INDEX_VAMANA_ANN = 8`) bound to a relation in Section 2.6.
     /// Layout inside `idx.data` (which starts at a 128-byte aligned `idx.data_offset`):
     /// - `0..64`: `VamanaHeader`
     /// - `64..128`: zero padding
     /// - `128..128 + adj_slab.len()`: `adj_slab` (128-byte aligned!)
     /// - `quant_rel_off..quant_rel_off + quant_slab.len()`: `quant_slab` (128-byte aligned!)
-    pub fn add_built_vamana_index(&mut self, name: &str, mut built: crate::vamana::BuiltVamanaIndex) {
+    pub fn add_built_vamana_index_with_relation(
+        &mut self,
+        name: &str,
+        relation_id: u16,
+        mut built: crate::vamana::BuiltVamanaIndex,
+    ) {
         let mut blob = Vec::new();
         // Reserve 128 bytes for header + 64B padding
         blob.resize(128, 0u8);
@@ -283,7 +298,7 @@ impl SnapshotWriter {
 
         self.add_index(
             built.header.domain_id,
-            0xFFFF,
+            relation_id,
             built.header.vec_attr_id,
             IMP_INDEX_VAMANA_ANN,
             name,
@@ -299,9 +314,21 @@ impl SnapshotWriter {
         index_name: &str,
         cfg: &crate::vamana::VamanaBuildConfig,
     ) -> Result<(), String> {
-        let mut found_attr: Option<(u16, u32, Vec<f32>)> = None;
+        let mut found_attr: Option<(u16, u16, u32, Vec<f32>)> = None;
+        let dom_name = self
+            .domains
+            .iter()
+            .find(|d| d.domain_id == domain_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_default();
+        let node_rel_name = format!("{}_nodes", dom_name);
+
+        // Search relations for this domain. Prioritize dedicated node relation if available
         for rel in &self.relations {
-            if rel.src_domain_id == domain_id {
+            if rel.src_domain_id == domain_id
+                && (rel.name == node_rel_name
+                    || (rel.tgt_domain_id == domain_id && rel.edge_count == 0))
+            {
                 for (a_idx, attr) in rel.attributes.iter().enumerate() {
                     if attr.name == attr_name {
                         let base_t = attr.type_code & IMPULSE_TYPE_MASK;
@@ -322,7 +349,8 @@ impl SnapshotWriter {
                         for chunk in attr.data.chunks_exact(4) {
                             vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
                         }
-                        found_attr = Some((a_idx as u16, attr.dimension.max(1), vecs));
+                        found_attr =
+                            Some((rel.relation_id, a_idx as u16, attr.dimension.max(1), vecs));
                         break;
                     }
                 }
@@ -331,8 +359,42 @@ impl SnapshotWriter {
                 break;
             }
         }
+        if found_attr.is_none() {
+            for rel in &self.relations {
+                if rel.src_domain_id == domain_id {
+                    for (a_idx, attr) in rel.attributes.iter().enumerate() {
+                        if attr.name == attr_name {
+                            let base_t = attr.type_code & IMPULSE_TYPE_MASK;
+                            if base_t != 6 {
+                                return Err(format!(
+                                    "Attribute '{}' on domain {} is not Float32 (type_code=0x{:02X})",
+                                    attr_name, domain_id, attr.type_code
+                                ));
+                            }
+                            if !attr.data.len().is_multiple_of(4) {
+                                return Err(format!(
+                                    "Attribute '{}' byte length {} is not a multiple of 4",
+                                    attr_name,
+                                    attr.data.len()
+                                ));
+                            }
+                            let mut vecs = Vec::with_capacity(attr.data.len() / 4);
+                            for chunk in attr.data.chunks_exact(4) {
+                                vecs.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                            }
+                            found_attr =
+                                Some((rel.relation_id, a_idx as u16, attr.dimension.max(1), vecs));
+                            break;
+                        }
+                    }
+                }
+                if found_attr.is_some() {
+                    break;
+                }
+            }
+        }
 
-        let (vec_attr_id, dim, vectors) = found_attr.ok_or_else(|| {
+        let (found_rel_id, vec_attr_id, dim, vectors) = found_attr.ok_or_else(|| {
             format!(
                 "Vector attribute '{}' not found on domain {}",
                 attr_name, domain_id
@@ -340,9 +402,8 @@ impl SnapshotWriter {
         })?;
         let d = dim as usize;
         let n = if d > 0 { vectors.len() / d } else { 0 };
-        let built =
-            crate::vamana::build_vamana_index(domain_id, vec_attr_id, &vectors, n, d, cfg)?;
-        self.add_built_vamana_index(index_name, built);
+        let built = crate::vamana::build_vamana_index(domain_id, vec_attr_id, &vectors, n, d, cfg)?;
+        self.add_built_vamana_index_with_relation(index_name, found_rel_id, built);
         Ok(())
     }
 
@@ -353,19 +414,61 @@ impl SnapshotWriter {
                 .cmp(&b.src_domain_id)
                 .then_with(|| a.tgt_domain_id.cmp(&b.tgt_domain_id))
         });
+        let mut old_to_new_rel_id = std::collections::HashMap::new();
         for (idx, rel) in self.relations.iter_mut().enumerate() {
-            rel.relation_id = idx as u16;
+            let old_id = rel.relation_id;
+            let new_id = idx as u16;
+            rel.relation_id = new_id;
+            old_to_new_rel_id.insert(old_id, new_id);
         }
 
-        // Infer domain node_count from relations if 0
-        for rel in &self.relations {
-            if let Some(dom) = self
-                .domains
-                .iter_mut()
-                .find(|d| d.domain_id == rel.src_domain_id)
-            {
-                if dom.node_count < rel.node_count {
-                    dom.node_count = rel.node_count;
+        // Remap relation_id on registered secondary/Vamana indices
+        for idx in &mut self.indexes {
+            if idx.relation_id != 0xFFFF {
+                if let Some(&new_id) = old_to_new_rel_id.get(&idx.relation_id) {
+                    idx.relation_id = new_id;
+                }
+            }
+        }
+
+        // Infer domain node_count when 0 from both outgoing relations (row_offsets.len() - 1 where src_domain_id == d.domain_id)
+        // and incoming relations (max(col_indices) + 1 where tgt_domain_id == d.domain_id).
+        for dom in &mut self.domains {
+            if dom.node_count == 0 {
+                let mut inferred = 0u64;
+                for rel in &self.relations {
+                    if rel.src_domain_id == dom.domain_id {
+                        let out_count = if rel.row_offsets.len() > 1 {
+                            (rel.row_offsets.len() - 1) as u64
+                        } else {
+                            rel.node_count
+                        };
+                        inferred = inferred.max(out_count);
+                    }
+                    if rel.tgt_domain_id == dom.domain_id {
+                        if let Some(&max_tgt) = rel.col_indices.iter().max() {
+                            inferred = inferred.max((max_tgt as u64) + 1);
+                        }
+                    }
+                }
+                dom.node_count = inferred;
+            }
+        }
+
+        // Update dedicated node relation count if created before domain count was known
+        for dom in &self.domains {
+            let node_rel_name = format!("{}_nodes", dom.name);
+            for rel in &mut self.relations {
+                if rel.src_domain_id == dom.domain_id
+                    && rel.tgt_domain_id == dom.domain_id
+                    && rel.name == node_rel_name
+                    && rel.node_count == 0
+                    && dom.node_count > 0
+                {
+                    rel.node_count = dom.node_count;
+                    if rel.row_offsets.len() != (dom.node_count + 1) as usize {
+                        rel.row_offsets = vec![0u32; (dom.node_count + 1) as usize];
+                    }
                 }
             }
         }
@@ -495,22 +598,37 @@ impl SnapshotWriter {
                     .iter()
                     .find(|d| d.domain_id == rel.tgt_domain_id)
                     .map(|d| d.node_count)
-                    .unwrap_or(rel.node_count) as usize;
-                let src_n = rel.node_count as usize;
+                    .filter(|&c| c > 0)
+                    .unwrap_or_else(|| {
+                        rel.col_indices
+                            .iter()
+                            .copied()
+                            .max()
+                            .map(|m| (m as u64) + 1)
+                            .unwrap_or(rel.node_count)
+                    }) as usize;
+                let src_n = if rel.node_count > 0 {
+                    rel.node_count as usize
+                } else {
+                    rel.row_offsets.len().saturating_sub(1)
+                };
+                let num_edges = rel.col_indices.len();
                 let mut csc_row_offsets = vec![0u32; tgt_node_count + 1];
                 for &v in &rel.col_indices {
-                    if (v as usize) < tgt_node_count {
-                        csc_row_offsets[(v as usize) + 1] += 1;
+                    let v_idx = v as usize;
+                    if v_idx < tgt_node_count {
+                        csc_row_offsets[v_idx + 1] += 1;
                     }
                 }
                 for v in 0..tgt_node_count {
                     csc_row_offsets[v + 1] += csc_row_offsets[v];
                 }
                 let mut write_heads = csc_row_offsets.clone();
-                let mut csc_col_indices = vec![0u32; rel.col_indices.len()];
-                for u in 0..src_n.min(rel.row_offsets.len().saturating_sub(1)) {
+                let mut csc_col_indices = vec![0u32; num_edges];
+                let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
+                for u in 0..max_u {
                     let start = rel.row_offsets[u] as usize;
-                    let end = (rel.row_offsets[u + 1] as usize).min(rel.col_indices.len());
+                    let end = (rel.row_offsets[u + 1] as usize).min(num_edges);
                     for &v in &rel.col_indices[start..end] {
                         let v_idx = v as usize;
                         if v_idx < tgt_node_count {
@@ -609,7 +727,11 @@ impl SnapshotWriter {
                 name_offset: rel_name_off,
                 node_count: rel.node_count,
                 edge_count: rel.edge_count,
-                section_features: 0,
+                section_features: if rel.include_csc {
+                    IMPULSE_SECTION_FEAT_INCLUDE_CSC
+                } else {
+                    0
+                },
                 csr_row_off_offset: rel.csr_row_off_offset,
                 csr_row_off_bytes: rel.csr_row_off_bytes,
                 csr_col_idx_offset: rel.csr_col_idx_offset,

@@ -23,6 +23,7 @@ pub struct RelationInfo {
     pub name: String,
     pub node_count: u64,
     pub edge_count: u64,
+    pub section_features: u64,
     pub csr_row_off_offset: u64,
     pub csr_row_off_bytes: u64,
     pub csr_col_idx_offset: u64,
@@ -32,6 +33,13 @@ pub struct RelationInfo {
     pub csc_col_idx_offset: u64,
     pub csc_col_idx_bytes: u64,
     pub attributes: Vec<AttributeInfo>,
+}
+
+impl RelationInfo {
+    pub fn has_csc(&self) -> bool {
+        (self.section_features & crate::spec::IMPULSE_SECTION_FEAT_INCLUDE_CSC) != 0
+            || self.csc_row_off_bytes > 0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -311,6 +319,7 @@ impl SnapshotReader {
                     name: rel_name,
                     node_count: rel_entry.node_count(),
                     edge_count: rel_entry.edge_count(),
+                    section_features: rel_entry.section_features(),
                     csr_row_off_offset: rel_entry.csr_row_off_offset(),
                     csr_row_off_bytes: rel_entry.csr_row_off_bytes(),
                     csr_col_idx_offset: rel_entry.csr_col_idx_offset(),
@@ -443,6 +452,7 @@ impl SnapshotReader {
                     name: String::new(),
                     node_count: node_cnt,
                     edge_count: edge_cnt,
+                    section_features: 0,
                     csr_row_off_offset: csr_row_off,
                     csr_row_off_bytes: csr_row_bytes,
                     csr_col_idx_offset: csr_col_idx,
@@ -592,7 +602,10 @@ impl SnapshotReader {
     }
 
     /// Parses and validates a 64-byte `VamanaHeader` (`IMP_INDEX_VAMANA_ANN = 8`) at `entry.data_offset`.
-    pub fn parse_vamana_header(&self, entry: &IndexEntryInfo) -> Result<VamanaHeader, ImpulseError> {
+    pub fn parse_vamana_header(
+        &self,
+        entry: &IndexEntryInfo,
+    ) -> Result<VamanaHeader, ImpulseError> {
         if entry.index_type != IMP_INDEX_VAMANA_ANN {
             return Err(ImpulseError::InvalidArgument);
         }
@@ -606,7 +619,8 @@ impl SnapshotReader {
             crate::assert::check_well_formed(false, "Vamana header offset is not 128-byte aligned");
             return Err(ImpulseError::InvalidArgument);
         }
-        let hdr = unsafe { std::ptr::read_unaligned(slice[hdr_off..].as_ptr() as *const VamanaHeader) };
+        let hdr =
+            unsafe { std::ptr::read_unaligned(slice[hdr_off..].as_ptr() as *const VamanaHeader) };
         if hdr.magic != VAMANA_MAGIC {
             crate::assert::check_well_formed(false, "Vamana header magic mismatch");
             return Err(ImpulseError::InvalidMagic);
@@ -624,7 +638,10 @@ impl SnapshotReader {
             return Err(ImpulseError::InvalidArgument);
         };
         if hdr.dimension == 0 || hdr.max_degree_r == 0 {
-            crate::assert::check_well_formed(false, "Vamana dimension and max_degree_r must be > 0");
+            crate::assert::check_well_formed(
+                false,
+                "Vamana dimension and max_degree_r must be > 0",
+            );
             return Err(ImpulseError::InvalidArgument);
         }
         let n = hdr.node_count as usize;
@@ -646,7 +663,10 @@ impl SnapshotReader {
         }
         if hdr.quant_code_offset > 0 {
             if !hdr.quant_code_offset.is_multiple_of(128) {
-                crate::assert::check_well_formed(false, "Vamana quant_code_offset not 128B aligned");
+                crate::assert::check_well_formed(
+                    false,
+                    "Vamana quant_code_offset not 128B aligned",
+                );
                 return Err(ImpulseError::InvalidArgument);
             }
             let q_bytes = n * quant_type.row_bytes(hdr.dimension as usize);
@@ -664,8 +684,8 @@ impl SnapshotReader {
             || {
                 for u in 0..n {
                     let row_off = adj_base + u * row_stride;
-                    let deg =
-                        u32::from_le_bytes(slice[row_off..row_off + 4].try_into().unwrap()) as usize;
+                    let deg = u32::from_le_bytes(slice[row_off..row_off + 4].try_into().unwrap())
+                        as usize;
                     if deg > r_max {
                         return false;
                     }
@@ -696,10 +716,7 @@ impl SnapshotReader {
         Ok(&slice[start..start + bytes])
     }
 
-    pub fn get_vamana_quant_slab(
-        &self,
-        hdr: &VamanaHeader,
-    ) -> Result<Option<&[u8]>, ImpulseError> {
+    pub fn get_vamana_quant_slab(&self, hdr: &VamanaHeader) -> Result<Option<&[u8]>, ImpulseError> {
         let quant_type =
             VamanaQuantType::from_u8(hdr.quant_type).ok_or(ImpulseError::InvalidArgument)?;
         if quant_type == VamanaQuantType::None || hdr.quant_code_offset == 0 {
@@ -758,6 +775,35 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, &[f32]), ImpulseError> {
+        // First prioritize dedicated node relations (src_domain_id == tgt_domain_id)
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    let matched = if let Some(name) = attr_name {
+                        a.name == name
+                    } else if let Some(target_idx) = attr_index {
+                        a_idx == target_idx as usize
+                    } else {
+                        a.dimension > 1 && (a.type_code & IMPULSE_TYPE_MASK) == 6
+                    };
+                    if matched {
+                        let raw = self.get_attribute_data(r_idx, a_idx)?;
+                        let dim = a.dimension.max(1) as usize;
+                        if !raw.len().is_multiple_of(4)
+                            || !(raw.as_ptr() as usize).is_multiple_of(4)
+                        {
+                            return Err(ImpulseError::InvalidAlignment);
+                        }
+                        let total_floats = raw.len() / 4;
+                        let n_nodes = total_floats / dim;
+                        let slice = unsafe {
+                            std::slice::from_raw_parts(raw.as_ptr() as *const f32, total_floats)
+                        };
+                        return Ok((n_nodes, dim, slice));
+                    }
+                }
+            }
+        }
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -804,26 +850,14 @@ impl SnapshotReader {
             self.get_domain_float32_slice(hdr.domain_id, Some(hdr.vec_attr_id), None)
         {
             return crate::vamana::vamana_ann_search(
-                &hdr,
-                adj_slab,
-                quant_slab,
-                vec_slice,
-                query_vec,
-                top_k,
-                ef_search,
+                &hdr, adj_slab, quant_slab, vec_slice, query_vec, top_k, ef_search,
             )
             .map_err(|_| ImpulseError::InvalidArgument);
         }
         let (_n, _d, vectors) =
             self.get_domain_float32_vectors(hdr.domain_id, Some(hdr.vec_attr_id), None)?;
         crate::vamana::vamana_ann_search(
-            &hdr,
-            adj_slab,
-            quant_slab,
-            &vectors,
-            query_vec,
-            top_k,
-            ef_search,
+            &hdr, adj_slab, quant_slab, &vectors, query_vec, top_k, ef_search,
         )
         .map_err(|_| ImpulseError::InvalidArgument)
     }
@@ -1037,6 +1071,16 @@ impl SnapshotReader {
         domain_id: u16,
         name: &str,
     ) -> Result<&[u8], ImpulseError> {
+        // Prioritize dedicated node relations (src_domain_id == tgt_domain_id)
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_data(r_idx, a_idx);
+                    }
+                }
+            }
+        }
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
@@ -1054,6 +1098,16 @@ impl SnapshotReader {
         domain_id: u16,
         name: &str,
     ) -> Result<Option<&[u32]>, ImpulseError> {
+        // Prioritize dedicated node relations (src_domain_id == tgt_domain_id)
+        for (r_idx, r) in self.relations.iter().enumerate() {
+            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
+                for (a_idx, a) in r.attributes.iter().enumerate() {
+                    if a.name == name {
+                        return self.get_attribute_offsets(r_idx, a_idx);
+                    }
+                }
+            }
+        }
         for (r_idx, r) in self.relations.iter().enumerate() {
             if r.src_domain_id == domain_id {
                 for (a_idx, a) in r.attributes.iter().enumerate() {
