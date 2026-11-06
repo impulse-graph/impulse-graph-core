@@ -49,6 +49,36 @@
                         } else if (attr_id < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attr_id]) {
                             const auto& vec = vm_state->query_context->float_vectors[attr_id];
                             s_regs[sDst] = (actualSource < vec.size()) ? vec[actualSource] : 0.0f;
+                        } else if (rel < vm_state->query_context->attribute_slots.size() &&
+                                   attr_id < vm_state->query_context->attribute_slots[rel].size()) {
+                            const auto& aslot = vm_state->query_context->attribute_slots[rel][attr_id];
+                            uint8_t base_tc = aslot.type_code & 0x7F;
+                            bool is_null = (aslot.type_code & 0x80) != 0;
+                            size_t elem_sz = (base_tc == 7) ? sizeof(double) : sizeof(float);
+                            size_t bm_bytes = (is_null && aslot.data_bytes > 128) ? 128 : 0;
+                            if (aslot.data_ptr && aslot.data_bytes > bm_bytes) {
+                                const uint8_t* raw_b = static_cast<const uint8_t*>(aslot.data_ptr);
+                                size_t cnt = (aslot.data_bytes - bm_bytes) / elem_sz;
+                                if (actualSource < cnt) {
+                                    if (is_null && (((raw_b[actualSource >> 3] >> (actualSource & 7)) & 1U) == 0U)) {
+                                        s_regs[sDst] = std::numeric_limits<float>::quiet_NaN();
+                                    } else if (base_tc == 7) {
+                                        s_regs[sDst] = static_cast<float>(reinterpret_cast<const double*>(raw_b + bm_bytes)[actualSource]);
+                                    } else if (base_tc == 6) {
+                                        s_regs[sDst] = reinterpret_cast<const float*>(raw_b + bm_bytes)[actualSource];
+                                    } else if (base_tc == 3) {
+                                        s_regs[sDst] = static_cast<float>(reinterpret_cast<const int32_t*>(raw_b + bm_bytes)[actualSource]);
+                                    } else if (base_tc == 4) {
+                                        s_regs[sDst] = static_cast<float>(reinterpret_cast<const int64_t*>(raw_b + bm_bytes)[actualSource]);
+                                    } else {
+                                        s_regs[sDst] = 0.0f;
+                                    }
+                                } else {
+                                    s_regs[sDst] = 0.0f;
+                                }
+                            } else {
+                                s_regs[sDst] = 0.0f;
+                            }
                         } else {
                             s_regs[sDst] = 0.0f;
                         }

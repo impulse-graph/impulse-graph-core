@@ -37,7 +37,7 @@ struct CompilerOptions {
     bool enable_tracing{false};
     uint32_t disabled_passes_mask{0};
 
-    double fused_2hop_max_multiplicity_threshold{1.5};
+    double fused_2hop_max_multiplicity_threshold{2.0};
     size_t simd_predicate_eval_min_degree_threshold{64};
 
     static CompilerOptions default_options() {
@@ -757,6 +757,10 @@ public:
     NodeKind kind() const override { return NodeKind::VAR_REF; }
     std::string to_scm_string() const override { return var; }
 };
+
+#ifdef DIFFERENCE
+#undef DIFFERENCE
+#endif
 
 class ScmSetOp : public ImpScmNode {
 public:

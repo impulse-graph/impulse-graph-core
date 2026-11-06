@@ -368,6 +368,7 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
         uint16_t rel_count = snap->header.relation_count;
         snap->relations.reserve(rel_count);
+        snap->relation_names.reserve(rel_count);
         snap->relation_attributes.resize(rel_count);
         snap->relation_attribute_names.resize(rel_count);
 
@@ -380,6 +381,10 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             impulse_relation_directory_entry_t rel_entry;
             std::memcpy(&rel_entry, raw + cur, sizeof(rel_entry));
             cur += sizeof(rel_entry);
+
+            std::string rname;
+            validate_and_get_string(rel_entry.name_offset, rname);
+            snap->relation_names.push_back(rname);
 
             uint16_t attr_count = rel_entry.attr_count;
             snap->relation_attributes[j].resize(attr_count);
@@ -1121,7 +1126,13 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     } else {
         *out_csc_targets = nullptr;
     }
-    if (out_csc_row_count) *out_csc_row_count = rel.node_count;
+    uint8_t ew = (rel.edge_index_width == 8 || rel.edge_index_width == 64) ? 8 : 4;
+    uint64_t csc_rows = (rel.csc_row_off_bytes >= ew)
+        ? ((rel.csc_row_off_bytes / ew) - 1)
+        : ((rel.tgt_domain_id < snapshot->domains.size() && snapshot->domains[rel.tgt_domain_id].node_count > 0)
+            ? snapshot->domains[rel.tgt_domain_id].node_count
+            : rel.node_count);
+    if (out_csc_row_count) *out_csc_row_count = csc_rows;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
     return IMPULSE_OK;
 }
@@ -1143,7 +1154,13 @@ impulse_status_t impulse_snapshot_get_relation_csc_raw_buffers(
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
     *out_csc_offsets = (rel.csc_row_off_offset > 0) ? (raw + rel.csc_row_off_offset) : nullptr;
     *out_csc_targets = (rel.csc_col_idx_offset > 0) ? (raw + rel.csc_col_idx_offset) : nullptr;
-    if (out_csc_row_count) *out_csc_row_count = rel.node_count;
+    uint8_t ew = (rel.edge_index_width == 8 || rel.edge_index_width == 64) ? 8 : 4;
+    uint64_t csc_rows = (rel.csc_row_off_bytes >= ew)
+        ? ((rel.csc_row_off_bytes / ew) - 1)
+        : ((rel.tgt_domain_id < snapshot->domains.size() && snapshot->domains[rel.tgt_domain_id].node_count > 0)
+            ? snapshot->domains[rel.tgt_domain_id].node_count
+            : rel.node_count);
+    if (out_csc_row_count) *out_csc_row_count = csc_rows;
     if (out_csc_edge_count) *out_csc_edge_count = rel.edge_count;
     if (out_node_id_width) *out_node_id_width = rel.node_id_width ? rel.node_id_width : 4;
     if (out_edge_index_width) *out_edge_index_width = rel.edge_index_width ? rel.edge_index_width : 4;

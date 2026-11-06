@@ -150,6 +150,12 @@ impl SnapshotWriter {
         }
     }
 
+    pub fn set_relation_encoding(&mut self, relation_index: usize, encoding_id: u8) {
+        if relation_index < self.relations.len() {
+            self.relations[relation_index].encoding_id = encoding_id;
+        }
+    }
+
     pub fn add_attribute_to_relation(
         &mut self,
         relation_index: usize,
@@ -715,6 +721,19 @@ impl SnapshotWriter {
         // Now serialize Relation Directory Table entries into dir_table_bytes
         for (rel_idx, rel) in self.relations.iter().enumerate() {
             let rel_name_off = rel_name_offsets[rel_idx];
+            let mut sec_features: u64 = 0;
+            if rel.csr_row_off_offset > 0 {
+                sec_features |= 0x01;
+            }
+            if rel.csc_row_off_offset > 0 || rel.include_csc {
+                sec_features |= IMPULSE_SECTION_FEAT_INCLUDE_CSC;
+            }
+            if !rel.attributes.is_empty() {
+                sec_features |= 0x04;
+            }
+            if rel.encoding_id == 3 {
+                sec_features |= 0x08;
+            }
             let rel_entry = RelationDirectoryEntry {
                 relation_id: rel.relation_id,
                 src_domain_id: rel.src_domain_id,
@@ -726,11 +745,7 @@ impl SnapshotWriter {
                 name_offset: rel_name_off,
                 node_count: rel.node_count,
                 edge_count: rel.edge_count,
-                section_features: if rel.include_csc {
-                    IMPULSE_SECTION_FEAT_INCLUDE_CSC
-                } else {
-                    0
-                },
+                section_features: sec_features,
                 csr_row_off_offset: rel.csr_row_off_offset,
                 csr_row_off_bytes: rel.csr_row_off_bytes,
                 csr_col_idx_offset: rel.csr_col_idx_offset,

@@ -108,7 +108,7 @@ public:
         }
         const auto& head = expr.list[0].atom;
 
-        if (head == "impk-pipeline" || head == "pipeline" || head == "query" || head == "module") {
+        if (head == "program" || head == "impk-pipeline" || head == "pipeline" || head == "query" || head == "module") {
             std::vector<AstPtr> steps;
             for (size_t i = 1; i < expr.list.size(); ++i) {
                 if (expr.list[i].is_list && !expr.list[i].list.empty() && expr.list[i].list[0].atom == "define-query") {
@@ -202,6 +202,8 @@ public:
             return ScmWalk::reverse(rel);
         } else if (head == "collect-bitset") {
             return ScmCollect::bitset();
+        } else if (head == "collect-count") {
+            return ScmCollect::count();
         } else if (head == "set:difference" || head == "set:union" || head == "set:intersect") {
             if (expr.list.size() == 3) {
                 auto op = std::make_shared<ScmSetOp>();

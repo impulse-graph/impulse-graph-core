@@ -7,6 +7,7 @@
 #define IMPULSE_VM_FLUENT_INTERNAL_HPP
 
 #include "impulse_vm_fluent.hpp"
+#include "impulse_graph_internal.hpp"
 #include "impulse_assert.h"
 #include "impulse_compiler.hpp"
 #include "impulse_cypher.hpp"
@@ -46,6 +47,11 @@ inline uint16_t resolve_domain_id_by_name(const impulse_snapshot_t* snap, const 
 
 inline uint16_t resolve_relation_id_by_name(const impulse_snapshot_t* snap, uint16_t /*domain_id*/, const std::string& rel_name) {
     if (!snap) return 0;
+    for (size_t i = 0; i < snap->relation_names.size(); ++i) {
+        if (!snap->relation_names[i].empty() && snap->relation_names[i] == rel_name) {
+            return static_cast<uint16_t>(i);
+        }
+    }
     if (rel_name.rfind("rel_", 0) == 0) {
         return static_cast<uint16_t>(std::stoul(rel_name.substr(4)));
     }
@@ -59,8 +65,40 @@ inline uint16_t resolve_relation_id_by_name(const impulse_snapshot_t* snap, uint
     return 0;
 }
 
+inline bool resolve_domain_attribute(
+    const impulse_snapshot_t* snap,
+    uint16_t domain_id,
+    const std::string& attr_name,
+    uint16_t* out_rel_id,
+    uint16_t* out_attr_id,
+    uint8_t* out_type_code
+) {
+    if (!snap || attr_name.empty()) return false;
+    std::string clean_name = attr_name;
+    auto dot_pos = clean_name.rfind('.');
+    if (dot_pos != std::string::npos) {
+        clean_name = clean_name.substr(dot_pos + 1);
+    }
+    for (size_t r = 0; r < snap->relations.size(); ++r) {
+        if (snap->relations[r].src_domain_id == domain_id && r < snap->relation_attribute_names.size()) {
+            for (size_t a = 0; a < snap->relation_attribute_names[r].size(); ++a) {
+                if (snap->relation_attribute_names[r][a] == clean_name) {
+                    if (out_rel_id) *out_rel_id = static_cast<uint16_t>(r);
+                    if (out_attr_id) *out_attr_id = static_cast<uint16_t>(a);
+                    if (out_type_code) *out_type_code = snap->relation_attributes[r][a].type_code;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 inline uint32_t get_domain_node_count(const impulse_snapshot_t* snap, uint16_t domain_id) {
     if (!snap) return 0;
+    if (domain_id < snap->domains.size() && snap->domains[domain_id].node_count > 0) {
+        return static_cast<uint32_t>(snap->domains[domain_id].node_count);
+    }
     uint16_t rel_count = impulse_snapshot_relation_count(snap);
     uint64_t max_n = 0;
     for (uint16_t r = 0; r < rel_count; ++r) {

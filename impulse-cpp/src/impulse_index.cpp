@@ -572,24 +572,21 @@ impulse_status_t impulse_index_minimal_perfect_hash_lookup(
     }
 
     uint64_t h = fnv1a_hash(query_key, hdr.seed);
-    size_t slot = h % hdr.key_count;
-    size_t start_slot = slot;
+    size_t start_slot = h % hdr.key_count;
 
-    while (table[slot].key_string_offset != 0 || slot != start_slot) {
-        if (table[slot].key_string_offset != 0) {
-            if (table[slot].key_string_offset >= hdr.string_table_bytes) {
-                return IMPULSE_ERR_BUFFER_OVERFLOW;
-            }
-            const char* key_str = str_pool + table[slot].key_string_offset;
-            const void* nul = std::memchr(key_str, '\0', hdr.string_table_bytes - table[slot].key_string_offset);
-            if (!nul) return IMPULSE_ERR_BUFFER_OVERFLOW;
-            if (std::strcmp(key_str, query_key) == 0) {
-                *out_node_id = table[slot].node_id;
-                return IMPULSE_OK;
-            }
+    for (uint64_t step = 0; step < hdr.key_count; ++step) {
+        size_t slot = (start_slot + step) % hdr.key_count;
+        if (table[slot].key_string_offset == 0) break;
+        if (table[slot].key_string_offset >= hdr.string_table_bytes) {
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
         }
-        slot = (slot + 1) % hdr.key_count;
-        if (slot == start_slot) break;
+        const char* key_str = str_pool + table[slot].key_string_offset;
+        const void* nul = std::memchr(key_str, '\0', hdr.string_table_bytes - table[slot].key_string_offset);
+        if (!nul) return IMPULSE_ERR_BUFFER_OVERFLOW;
+        if (std::strcmp(key_str, query_key) == 0) {
+            *out_node_id = table[slot].node_id;
+            return IMPULSE_OK;
+        }
     }
 
     return IMPULSE_ERR_INVALID_ARGUMENT;
