@@ -345,7 +345,7 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         max_nodes = impulse_snapshot_max_node_count(snapshot);
     }
     if (max_nodes == 0) {
-        max_nodes = 1024 * 1024; // Default fallback for tests
+        max_nodes = 1024; // Default fallback for tests
     }
     ctx->max_nodes = max_nodes;
     uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);

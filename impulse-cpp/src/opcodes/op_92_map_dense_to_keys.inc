@@ -56,8 +56,6 @@ op_MAP_DENSE_TO_KEYS: {
             if (str_ptr) {
                 svec.push_back(str_ptr);
             }
-        } else {
-            svec.push_back("mock_key");
         }
     };
 

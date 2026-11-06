@@ -31,6 +31,9 @@ op_KCORE_DECOMPOSITION: {
     IMPULSE_CHECK_REG_TYPE(vm_state, r_src, OP_68_ALLOWED_SRC_TYPES);
 
     uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
+    if (rel_id == 0 && vm_state->register_types[r_src] == TYPE_NULL && r_src > 0) {
+        rel_id = r_src;
+    }
     size_t n = 0;
     const BoundRelationSlot* slot_ptr = nullptr;
     if (rel_id < vm_state->query_context->slots.size()) {

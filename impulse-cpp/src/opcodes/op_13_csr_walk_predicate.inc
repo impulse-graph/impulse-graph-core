@@ -37,6 +37,9 @@ op_CSR_WALK_PREDICATE: {
         vm_state->pc++;
     } else {
         rel = (inst.payload >> 16) & 0xFFFF;
+        if (rel == 0 && ((inst.payload >> 8) & 0xFF) != 0) {
+            rel = (inst.payload >> 8) & 0xFF;
+        }
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
