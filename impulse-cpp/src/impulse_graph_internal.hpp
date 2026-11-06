@@ -28,8 +28,25 @@
 #include <vector>
 
 #ifdef _WIN32
-  #define WIN32_LEAN_AND_MEAN
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
   #include <windows.h>
+  #ifdef IN
+    #undef IN
+  #endif
+  #ifdef OUT
+    #undef OUT
+  #endif
+  #ifdef DIFFERENCE
+    #undef DIFFERENCE
+  #endif
+  #ifdef ERROR
+    #undef ERROR
+  #endif
 #else
   #include <fcntl.h>
   #include <sys/mman.h>
@@ -142,6 +159,7 @@ struct impulse_snapshot {
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
     std::vector<impulse_relation_directory_entry_t> relations;
+    std::vector<std::string> relation_names;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
     std::vector<std::vector<std::string>> relation_attribute_names;
     std::vector<impulse_index_directory_entry_v0_9_t> indexes;

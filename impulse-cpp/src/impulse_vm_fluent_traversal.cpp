@@ -385,12 +385,18 @@ std::vector<uint64_t> Traversal::collect() const {
     }
     init_prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
 
-    if (all_nodes_ || seeds_.empty()) {
+    if (all_nodes_) {
+        size_t max_snap_nodes = std::max<size_t>(impulse_snapshot_max_node_count(snapshot_), 65536ULL);
+        size_t word_cnt = (max_snap_nodes + 63) / 64;
+        std::vector<uint64_t> all_words(word_cnt, 0ULL);
+        for (uint32_t u = 0; u < max_n; ++u) {
+            all_words[u / 64] |= (1ULL << (u % 64));
+        }
+        state.pc = 0;
+        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, reinterpret_cast<uint64_t>(all_words.data()));
+    } else if (seeds_.empty()) {
         state.pc = 0;
         impulse_vm_execute(init_prog.data(), init_prog.size(), &state, 0);
-        if (all_nodes_ && state.register_types[0] == TYPE_BITSET_HANDLE) {
-            impulse_vm_context_bitset_fill(ctx, state.registers[0], max_n);
-        }
     } else {
         // Union all seeds into R0 via VM
         state.pc = 0;
@@ -544,18 +550,60 @@ std::vector<uint64_t> Traversal::collect() const {
             state.pc = 0;
             impulse_vm_execute(insts, 2, &state, 0);
         } else if (step.kind == Step::Kind::FILTER_CEL) {
-            impulse::cel::Parser p(step.str1);
-            auto ast = p.parse_expression();
-            if (ast && state.register_types[0] == TYPE_BITSET_HANDLE) {
-                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
-                uint64_t handle = state.registers[0];
-                for (uint32_t u = 0; u < max_n; ++u) {
-                    if (impulse_vm_context_bitset_test(ctx, handle, u)) {
-                        std::unordered_map<std::string, double> f_attrs;
-                        std::unordered_map<std::string, int64_t> i_attrs;
-                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
-                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, &i_attrs, &f_attrs)) {
-                            impulse_vm_context_bitset_remove(ctx, handle, u);
+            impulse::cel::Parser parser(step.str1);
+            auto ast = parser.parse_expression();
+            if (ast) {
+                auto opt = impulse::cel::AstOptimizer::optimize(ast);
+                bool handled_by_vm = false;
+                if (opt->kind == impulse::cel::AstKind::BINARY_OP && opt->children.size() == 2) {
+                    const auto& lhs = opt->children[0];
+                    const auto& rhs = opt->children[1];
+                    const std::string& op = opt->text;
+                    std::string attr_name = lhs->text;
+                    uint16_t a_rel = 0, a_idx = 0;
+                    uint8_t a_tc = 0;
+                    if (resolve_domain_attribute(snapshot_, current_domain_id_, attr_name, &a_rel, &a_idx, &a_tc)) {
+                        uint8_t base_tc = a_tc & 0x7Fu;
+                        double rhs_val = (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT)
+                            ? rhs->float_val
+                            : static_cast<double>(rhs->int_val);
+                        if (base_tc == 0x07u) {
+                            state.registers[2] = std::bit_cast<uint64_t>(rhs_val);
+                            state.register_types[2] = TYPE_DOUBLE;
+                        } else if (base_tc == 0x06u) {
+                            float fval = static_cast<float>(rhs_val);
+                            uint32_t fbits = 0;
+                            std::memcpy(&fbits, &fval, sizeof(float));
+                            state.registers[2] = fbits;
+                            state.register_types[2] = TYPE_FLOAT;
+                        } else {
+                            state.registers[2] = static_cast<uint64_t>(static_cast<int64_t>(rhs_val));
+                            state.register_types[2] = TYPE_INT64;
+                        }
+                        uint8_t cmp_op = OP_VEC_CMP_EQ;
+                        if (op == ">") cmp_op = OP_VEC_CMP_GT;
+                        else if (op == "<") cmp_op = OP_VEC_CMP_LT;
+                        impulse_instruction_t f_insts[4] = {
+                            {OP_LOAD_COLUMN_VECTOR, 0, 1, static_cast<uint32_t>(a_rel | (static_cast<uint32_t>(a_idx) << 16))},
+                            {cmp_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))},
+                            {OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
+                            {OP_HALT, 0, 0, 0}
+                        };
+                        state.pc = 0;
+                        impulse_vm_execute(f_insts, 4, &state, 0);
+                        handled_by_vm = true;
+                    }
+                }
+                if (!handled_by_vm && state.register_types[0] == TYPE_BITSET_HANDLE) {
+                    uint64_t handle = state.registers[0];
+                    for (uint32_t u = 0; u < max_n; ++u) {
+                        if (impulse_vm_context_bitset_test(ctx, handle, u)) {
+                            std::unordered_map<std::string, double> f_attrs;
+                            std::unordered_map<std::string, int64_t> i_attrs;
+                            populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                            if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt, 1ULL, &i_attrs, &f_attrs)) {
+                                impulse_vm_context_bitset_remove(ctx, handle, u);
+                            }
                         }
                     }
                 }

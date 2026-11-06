@@ -44,6 +44,16 @@ op_MXV: {
     bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
     int h_src = static_cast<int>(vm_state->registers[src_vec]);
 
+    const float* edge_weights_f32 = nullptr;
+    if (rel < vm_state->query_context->attribute_slots.size() &&
+        !vm_state->query_context->attribute_slots[rel].empty()) {
+        const auto& a0 = vm_state->query_context->attribute_slots[rel][0];
+        if ((a0.type_code & 0x7F) == 6 && a0.data_ptr != nullptr &&
+            slot.edge_count > 0 && a0.data_bytes == slot.edge_count * sizeof(float)) {
+            edge_weights_f32 = static_cast<const float*>(a0.data_ptr);
+        }
+    }
+
     if (is_double) {
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR && dst != src_vec) {
@@ -80,7 +90,8 @@ op_MXV: {
                     double min_val = std::numeric_limits<double>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csr_target(i);
-                        if (v < target_bound) min_val = std::min(min_val, src_data[v] + 1.0);
+                        double w = edge_weights_f32 ? static_cast<double>(edge_weights_f32[i]) : 1.0;
+                        if (v < target_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {
@@ -143,7 +154,8 @@ op_MXV: {
                     float min_val = std::numeric_limits<float>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csr_target(i);
-                        if (v < target_bound) min_val = std::min(min_val, src_data[v] + 1.0f);
+                        float w = edge_weights_f32 ? edge_weights_f32[i] : 1.0f;
+                        if (v < target_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {

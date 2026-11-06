@@ -521,7 +521,8 @@ private:
         }
 
         if (match(CypherTokenType::COLON)) {
-            if (curr_.type == CypherTokenType::IDENTIFIER) {
+            if (curr_.type == CypherTokenType::IDENTIFIER ||
+                (curr_.type >= CypherTokenType::KW_MATCH && curr_.type <= CypherTokenType::KW_LIMIT)) {
                 label = curr_.lexeme;
                 advance();
             }

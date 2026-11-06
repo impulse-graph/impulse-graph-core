@@ -69,11 +69,34 @@ op_VXM: {
         mut_slot->csc_node_count = nc;
     }
 
-    size_t csc_bound = (slot.node_count > 0) ? slot.node_count : slot.csc_node_count;
+    size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
     size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
     size_t src_bound = (slot.node_count > 0) ? std::max<size_t>(N, slot.node_count) : vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR);
     int h_src = static_cast<int>(vm_state->registers[src_vec]);
+
+    const float* edge_weights_f32 = nullptr;
+    if (rel < vm_state->query_context->attribute_slots.size() &&
+        !vm_state->query_context->attribute_slots[rel].empty()) {
+        const auto& a0 = vm_state->query_context->attribute_slots[rel][0];
+        if ((a0.type_code & 0x7F) == 6 && a0.data_ptr != nullptr &&
+            slot.edge_count > 0 && a0.data_bytes == slot.edge_count * sizeof(float)) {
+            edge_weights_f32 = static_cast<const float*>(a0.data_ptr);
+        }
+    }
+    auto lookup_csc_edge_weight = [&](uint64_t src_u, uint64_t tgt_v) -> float {
+        if (!edge_weights_f32 || !slot.offsets_ptr || !slot.targets_ptr || src_u >= slot.node_count) {
+            return 1.0f;
+        }
+        uint64_t cs = slot.get_csr_offset(src_u);
+        uint64_t ce = slot.get_csr_offset(src_u + 1);
+        for (uint64_t e = cs; e < ce; ++e) {
+            if (slot.get_csr_target(e) == tgt_v) {
+                return edge_weights_f32[e];
+            }
+        }
+        return 1.0f;
+    };
 
     if (is_double) {
         int h_dst = -1;
@@ -111,7 +134,8 @@ op_VXM: {
                     double min_val = std::numeric_limits<double>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + 1.0);
+                        double w = static_cast<double>(lookup_csc_edge_weight(v, u));
+                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {
@@ -173,7 +197,8 @@ op_VXM: {
                     float min_val = std::numeric_limits<float>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + 1.0f);
+                        float w = lookup_csc_edge_weight(v, u);
+                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {

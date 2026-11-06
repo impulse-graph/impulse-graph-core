@@ -283,7 +283,11 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.name_offset = get_or_add_string("");
         entry.node_count = rel.node_count;
         entry.edge_count = rel.edge_count;
-        entry.section_features = rel.section_features;
+        uint64_t sec_feats = rel.section_features;
+        if (csr_row_off_offset > 0) sec_feats |= 0x01ULL;
+        if (!rel.attributes.empty()) sec_feats |= 0x04ULL;
+        if (rel.encoding_id == 3) sec_feats |= 0x08ULL;
+        entry.section_features = sec_feats;
         entry.csr_row_off_offset = csr_row_off_offset;
         entry.csr_row_off_bytes = csr_row_off_bytes;
         entry.csr_col_idx_offset = csr_col_idx_offset;

@@ -472,6 +472,43 @@ private:
         return std::make_shared<ScmProgram>(std::move(opt_steps));
     }
 
+    static AstPtr alloc_set_branch(const AstPtr& branch, uint16_t input_reg, uint16_t& next_temp_reg, uint16_t& out_res_reg) {
+        if (!branch) {
+            out_res_reg = input_reg;
+            return nullptr;
+        }
+        if (branch->kind() == NodeKind::WALK) {
+            auto w = std::make_shared<ScmWalk>(*std::static_pointer_cast<ScmWalk>(branch));
+            w->src_reg = input_reg;
+            w->dst_reg = next_temp_reg++;
+            out_res_reg = w->dst_reg;
+            return w;
+        }
+        if (branch->kind() == NodeKind::PROGRAM) {
+            auto sub = std::static_pointer_cast<ScmProgram>(branch);
+            std::vector<AstPtr> sub_steps;
+            uint16_t cur = input_reg;
+            for (const auto& s : sub->steps) {
+                uint16_t step_res = cur;
+                sub_steps.push_back(alloc_set_branch(s, cur, next_temp_reg, step_res));
+                cur = step_res;
+            }
+            out_res_reg = cur;
+            return std::make_shared<ScmProgram>(std::move(sub_steps));
+        }
+        if (branch->kind() == NodeKind::SET_OP) {
+            auto so = std::make_shared<ScmSetOp>(*std::static_pointer_cast<ScmSetOp>(branch));
+            uint16_t lhs_res = input_reg;
+            uint16_t rhs_res = input_reg;
+            so->lhs = alloc_set_branch(so->lhs, input_reg, next_temp_reg, lhs_res);
+            so->rhs = alloc_set_branch(so->rhs, input_reg, next_temp_reg, rhs_res);
+            out_res_reg = lhs_res;
+            return so;
+        }
+        out_res_reg = input_reg;
+        return branch;
+    }
+
     static AstPtr pass_register_allocation(const AstPtr& root, const CompilerOptions& options) {
         auto prog = std::static_pointer_cast<ScmProgram>(root);
         std::vector<AstPtr> alloc_steps;
@@ -567,6 +604,11 @@ private:
                 fp->dst_reg = options.enable_register_ping_pong ? ((current_reg == 0) ? 1 : 0) : static_cast<uint16_t>(idx + 1);
                 current_reg = fp->dst_reg;
                 alloc_steps.push_back(fp);
+            } else if (step->kind() == NodeKind::SET_OP) {
+                uint16_t next_temp_reg = std::max<uint16_t>(1, static_cast<uint16_t>(current_reg + 1));
+                uint16_t set_res = current_reg;
+                alloc_steps.push_back(alloc_set_branch(step, current_reg, next_temp_reg, set_res));
+                current_reg = set_res;
             } else {
                 alloc_steps.push_back(step);
             }
@@ -717,10 +759,15 @@ private:
                 } else {
                     inst.opcode = OP_COLLECT_BITSET;
                 }
-                inst.dst_reg = ctx.result_reg;
-                inst.payload = ctx.result_reg;
+                uint16_t src_reg = ctx.result_reg;
+                uint16_t dst_reg = (c->mode == ScmCollect::Mode::COUNT)
+                    ? static_cast<uint16_t>((src_reg == 0) ? 1 : 0)
+                    : src_reg;
+                inst.dst_reg = dst_reg;
+                inst.payload = src_reg;
                 inst.flags = 0;
                 ctx.instructions.push_back(inst);
+                ctx.result_reg = dst_reg;
             }
         } else if (step->kind() == NodeKind::LET) {
             auto let = std::static_pointer_cast<ScmLet>(step);
@@ -782,16 +829,6 @@ private:
             emit_node(set_op->lhs, ctx, options);
             uint16_t lhs_reg = ctx.result_reg;
 
-            uint16_t saved_lhs = std::max<uint16_t>(ctx.next_reg, 2);
-            ctx.next_reg = saved_lhs + 1;
-            if (lhs_reg != saved_lhs) {
-                impulse_instruction_t save_mov{};
-                save_mov.opcode = OP_MOV;
-                save_mov.dst_reg = saved_lhs;
-                save_mov.payload = lhs_reg;
-                ctx.instructions.push_back(save_mov);
-            }
-
             if (set_op->rhs && set_op->rhs->kind() == NodeKind::WALK) {
                 auto rhs_w = std::make_shared<ScmWalk>(*std::static_pointer_cast<ScmWalk>(set_op->rhs));
                 if (rhs_w->src_reg == 0 && options.enable_seed_inlining) {
@@ -808,9 +845,10 @@ private:
             else if (set_op->op == ScmSetOp::DIFFERENCE) inst.opcode = OP_SET_DIFFERENCE;
             else inst.opcode = OP_SET_INTERSECT;
 
-            ctx.result_reg = saved_lhs;
+            ctx.result_reg = lhs_reg;
             inst.dst_reg = ctx.result_reg;
-            inst.payload = rhs_reg;
+            inst.payload = static_cast<uint32_t>(lhs_reg & 0xFFFF) |
+                           (static_cast<uint32_t>(rhs_reg & 0xFFFF) << 16);
             ctx.instructions.push_back(inst);
         } else if (step->kind() == NodeKind::PROGRAM) {
             auto sub = std::static_pointer_cast<ScmProgram>(step);
@@ -869,11 +907,32 @@ private:
             ctx.instructions.push_back(inst);
         } else if (step->kind() == NodeKind::LANE_INIT_SEEDS) {
             auto n = std::static_pointer_cast<ScmLaneInitSeeds>(step);
+            if (!n->inline_seeds.empty()) {
+                for (uint64_t seed_id : n->inline_seeds) {
+                    impulse_instruction_t load_inst{};
+                    load_inst.opcode = OP_LOAD_CONST_INT;
+                    load_inst.dst_reg = 62;
+                    load_inst.payload = static_cast<uint32_t>(seed_id);
+                    ctx.instructions.push_back(load_inst);
+
+                    impulse_instruction_t union_inst{};
+                    union_inst.opcode = OP_SET_UNION;
+                    union_inst.dst_reg = n->seed_reg;
+                    union_inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF) | (62U << 16);
+                    ctx.instructions.push_back(union_inst);
+                }
+            }
             impulse_instruction_t inst{};
             inst.opcode = OP_LANE_INIT_SEEDS;
-            inst.flags = n->width_flag;
-            inst.dst_reg = n->dst_reg;
-            inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF);
+            if (n->inline_seeds.empty() && n->seed_reg == 0 && n->width_flag == 0) {
+                inst.flags = 1;
+                inst.dst_reg = n->dst_reg;
+                inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF) | (3U << 16);
+            } else {
+                inst.flags = n->width_flag;
+                inst.dst_reg = n->dst_reg;
+                inst.payload = static_cast<uint32_t>(n->seed_reg & 0xFFFF);
+            }
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::LANE_INIT_GROUPS) {
@@ -944,7 +1003,7 @@ private:
             impulse_instruction_t inst{};
             inst.opcode = OP_LANE_FILTER_QUORUM;
             inst.dst_reg = n->dst_reg;
-            if (n->mask_reg > 0) {
+            if (n->mask_reg > 0 && n->mask_reg != 0xFF) {
                 inst.flags = 1;
                 inst.payload = static_cast<uint32_t>(n->src_reg & 0xFF) |
                                (static_cast<uint32_t>(n->min_quorum & 0xFF) << 8) |
@@ -977,6 +1036,13 @@ private:
             ctx.result_reg = inst.dst_reg;
         } else if (step->kind() == NodeKind::LANE_SET_COVER) {
             auto n = std::static_pointer_cast<ScmLaneSetCover>(step);
+            if (n->mask_reg > 0 && n->mask_reg < 64) {
+                impulse_instruction_t load_mask{};
+                load_mask.opcode = OP_LOAD_CONST_INT;
+                load_mask.dst_reg = n->mask_reg;
+                load_mask.payload = static_cast<uint32_t>(n->mask_reg);
+                ctx.instructions.push_back(load_mask);
+            }
             impulse_instruction_t inst{};
             inst.opcode = OP_LANE_SET_COVER;
             inst.flags = n->mode;

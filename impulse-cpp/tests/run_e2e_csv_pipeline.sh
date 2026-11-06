@@ -63,5 +63,35 @@ echo "[Build] Compiling test_e2e_csv_pipeline.cpp -> ${OUT_BIN} ..."
     -pthread \
     -o "${OUT_BIN}"
 
+# Locate E2E CSV suite manifest and impulse-graph CLI binary
+SUITE_DIR="${IMPULSE_E2E_SUITE_DIR:-}"
+if [[ -z "${SUITE_DIR}" ]]; then
+    for cand in \
+        "${IMPULSE_CPP_DIR}/../../impulse-graph-spec/test-fixtures/e2e-csv-suite" \
+        "/Users/jesse/impulse/.worktrees/e2e-suite/impulse-graph-spec/test-fixtures/e2e-csv-suite" \
+        "/Users/jesse/impulse/impulse-graph-spec/test-fixtures/e2e-csv-suite"; do
+        if [[ -f "${cand}/manifest.json" ]]; then
+            SUITE_DIR="${cand}"
+            break
+        fi
+    done
+fi
+
+CLI_BIN="${IMPULSE_CLI_BIN:-}"
+if [[ -z "${CLI_BIN}" || ! -x "${CLI_BIN}" ]]; then
+    for cand in \
+        "${IMPULSE_CPP_DIR}/../../impulse-graph-tooling/target/release/impulse-graph" \
+        "/Users/jesse/impulse/.worktrees/e2e-suite/impulse-graph-tooling/target/release/impulse-graph" \
+        "/Users/jesse/impulse/impulse-graph-tooling/target/release/impulse-graph"; do
+        if [[ -x "${cand}" ]]; then
+            CLI_BIN="${cand}"
+            break
+        fi
+    done
+fi
+
+echo "[Build Snapshot] ${CLI_BIN} build --manifest ${SUITE_DIR}/manifest.json --output ${TMP_IMPS}"
+"${CLI_BIN}" build --manifest "${SUITE_DIR}/manifest.json" --output "${TMP_IMPS}"
+
 echo "[Run] Executing ${OUT_BIN} ..."
 "${OUT_BIN}"
