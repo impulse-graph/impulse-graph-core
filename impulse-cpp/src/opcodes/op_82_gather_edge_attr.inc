@@ -62,9 +62,7 @@ op_GATHER_EDGE_ATTR: {
     if (ma_ptr) {
         const auto& ma = *ma_ptr;
         size_t len = ma.float_data.size();
-        if (len > 0) {
-            vm_state->query_context->float_vector_lengths[h_dst] = len;
-        }
+        vm_state->query_context->float_vector_lengths[h_dst] = len;
         size_t limit = (len > 0) ? len : N;
         for (size_t i = 0; i < limit; ++i) {
             bool in_frontier = front_is_bs ? vm_state->query_context->bitsets[h_front].test(i) : true;
@@ -75,24 +73,25 @@ op_GATHER_EDGE_ATTR: {
             }
         }
     } else if (domain < vm_state->query_context->attribute_slots.size() &&
-        attr_idx < vm_state->query_context->attribute_slots[domain].size()) {
+        attr_idx < vm_state->query_context->attribute_slots[domain].size() &&
+        vm_state->query_context->attribute_slots[domain][attr_idx].data_ptr) {
         const auto& slot = vm_state->query_context->attribute_slots[domain][attr_idx];
-        if (slot.data_ptr) {
-            const float* src_attr = static_cast<const float*>(slot.data_ptr);
-            size_t attr_n = std::min(N, static_cast<size_t>(slot.data_bytes / sizeof(float)));
-            vm_state->query_context->float_vector_lengths[h_dst] = attr_n;
-            if (front_is_bs) {
-                const auto& bs = vm_state->query_context->bitsets[h_front];
-                #pragma omp parallel for schedule(static)
-                for (size_t i = 0; i < attr_n; ++i) {
-                    dst_vec[i] = bs.test(i) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
-                }
-            } else {
-                for (size_t i = 0; i < attr_n; ++i) {
-                    dst_vec[i] = (i == front_scalar) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
-                }
+        const float* src_attr = static_cast<const float*>(slot.data_ptr);
+        size_t attr_n = std::min(N, static_cast<size_t>(slot.data_bytes / sizeof(float)));
+        vm_state->query_context->float_vector_lengths[h_dst] = attr_n;
+        if (front_is_bs) {
+            const auto& bs = vm_state->query_context->bitsets[h_front];
+            #pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < attr_n; ++i) {
+                dst_vec[i] = bs.test(i) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
+            }
+        } else {
+            for (size_t i = 0; i < attr_n; ++i) {
+                dst_vec[i] = (i == front_scalar) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
             }
         }
+    } else {
+        vm_state->query_context->float_vector_lengths[h_dst] = 0;
     }
     vm_state->pc++;
     DISPATCH();

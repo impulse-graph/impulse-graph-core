@@ -109,6 +109,10 @@ op_INIT_MOCK_GRAPH: {
         slot.offsets_ptr = offsets;
         slot.targets_ptr = targets;
 
+        if (slot_id != 0 && vm_state->query_context->slots[0].offsets_ptr == nullptr) {
+            vm_state->query_context->slots[0] = slot;
+        }
+
         uint64_t max_slot_nodes = std::max(slot.node_count, slot.csc_node_count);
         if (max_slot_nodes > vm_state->query_context->max_nodes) {
             vm_state->query_context->max_nodes = max_slot_nodes;

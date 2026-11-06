@@ -92,9 +92,10 @@ op_VECTOR_TIME_VALID_AT: {
         DISPATCH();
     }
 
-    bool include_u0 = (col_start != nullptr || col_end != nullptr) &&
+    bool include_u0 = (col_start == nullptr && col_end == nullptr) ||
+        ((col_start != nullptr || col_end != nullptr) &&
         ((col_start && !col_start->int_data.empty() && col_start->int_data[0] != 0) ||
-         (col_end && !col_end->int_data.empty() && col_end->int_data[0] != 0));
+         (col_end && !col_end->int_data.empty() && col_end->int_data[0] != 0)));
 
     for (size_t u = 0; u < node_count; ++u) {
         uint64_t ts = time_val;
