@@ -1,0 +1,24 @@
+/====================================================================
+/ Algorithm: Jaccard Similarity Coefficient
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/link_prediction/similarity_test.cu
+/ cuGraph API: cugraph::jaccard_coefficients(handle, graph_view, ...)
+/
+/ Summary:
+/ Computes Jaccard Similarity between pairs of nodes (u, v):
+/   J(u, v) = |N(u) \cap N(v)| / |N(u) \cup N(v)|
+/           = intersection_count / (deg(u) + deg(v) - intersection_count)
+/====================================================================
+
+fn jaccard_similarity(g, u, v) {
+    neighbors_u: g.neighbors(u)
+    neighbors_v: g.neighbors(v)
+    
+    intersection: count (neighbors_u & neighbors_v)
+    union_cnt: (count neighbors_u) + (count neighbors_v) - intersection
+    
+    if union_cnt == 0 {
+        return 0.0
+    }
+    
+    return intersection / union_cnt
+}

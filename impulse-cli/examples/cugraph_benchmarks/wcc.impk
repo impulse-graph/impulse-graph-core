@@ -1,0 +1,26 @@
+/====================================================================
+/ Algorithm: Weakly Connected Components (WCC / Label Propagation)
+/ Original cuGraph Implementation: cugraph/cpp/src/components/weakly_connected_components.cu
+/ cuGraph API: cugraph::weakly_connected_components(handle, graph_view, components, ...)
+/
+/ Summary:
+/ Computes component labels for all nodes in an undirected graph such that
+/ nodes in the same connected subgraph share the same minimum node ID label.
+/
+/ GraphBLAS Semiring Formulation:
+/   L^(k+1) = min(L^(k), A^T \otimes_{min, min} L^(k))
+/   Iterates until no component labels change (fixpoint reached).
+/====================================================================
+
+fn weakly_connected_components(g) {
+    labels: g.nodes                              / Initialize labels: [0, 1, 2, ..., N-1]
+    
+    until[changed == 0] {
+        neighbor_min: g @[labels; minmin]        / Min-Min Semiring SpMV
+        new_labels: labels min neighbor_min      / Element-wise minimum
+        changed: sum (new_labels != labels)      / Count nodes that updated
+        labels: new_labels                       / Vector assignment
+    }
+    
+    return labels
+}

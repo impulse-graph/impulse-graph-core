@@ -1,0 +1,21 @@
+//====================================================================
+// Algorithm: ReBAC Relationship-Based Authorization & Transitive Closure
+// Original cuGraph Equivalent: Transitive closure / Reachability queries
+//
+// Summary:
+// Computes fine-grained authorization access across multi-hop group ownership
+// hierarchies and document permissions using declarative Datalog rules.
+//====================================================================
+
+.decl member(User, Group)
+.decl group_parent(Group, ParentGroup)
+.decl can_view(User, Document)
+
+// Rule 1: Direct group membership base case
+member(U, G) :- direct_member(U, G).
+
+// Rule 2: Transitive group membership (hierarchical parents)
+member(U, G2) :- member(U, G1), group_parent(G1, G2).
+
+// Rule 3: Document viewer authorization rule
+can_view(U, D) :- member(U, G), doc_viewer(G, D), !revoked(U).

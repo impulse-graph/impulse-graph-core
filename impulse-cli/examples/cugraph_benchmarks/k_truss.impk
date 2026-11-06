@@ -1,0 +1,23 @@
+/====================================================================
+/ Algorithm: K-Truss Subgraph Decomposition
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/community/k_truss_test.cpp
+/ cuGraph API: cugraph::k_truss(handle, graph_view, k, ...)
+/
+/ Summary:
+/ A K-Truss is a maximal connected subgraph where every edge is part of at least
+/ (k - 2) triangles. Iteratively prunes edges with triangle count < (k - 2).
+/====================================================================
+
+fn k_truss(g, k) {
+    active_edges: g.edges
+    threshold: k - 2
+    
+    until[pruned == 0] {
+        tri_counts: g.triangle_counts_filtered(active_edges)
+        to_prune: active_edges & (tri_counts < threshold)
+        pruned: count to_prune
+        active_edges: active_edges &~ to_prune
+    }
+
+    return active_edges
+}

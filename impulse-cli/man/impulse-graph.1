@@ -1,0 +1,51 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH impulse-graph 1  "impulse-graph 2.4.0" 
+.SH NAME
+impulse\-graph \- Impulse Graph Engine Developer Utilities & Layout Optimizer Suite (Spec v2.4)
+.SH SYNOPSIS
+\fBimpulse\-graph\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Official CLI utility for inspecting, validating, compiling, optimizing, signing, comparing, and exporting zero\-copy Impulse Graph binary snapshot files (.imps).
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+impulse\-graph\-inspect(1)
+Inspect binary snapshot header, section directory, domain catalogs, and topology metadata
+.TP
+impulse\-graph\-validate(1)
+Validate binary snapshot file against Spec v2.4 normative requirements
+.TP
+impulse\-graph\-compile(1)
+Compile edge list CSV/TSV/JSON\-L data into zero\-copy binary snapshot (.imps)
+.TP
+impulse\-graph\-optimize(1)
+Heavy offline snapshot layout optimizer (RCM graph reordering, vector encodings, section stripping)
+.TP
+impulse\-graph\-keygen(1)
+Generate Ed25519 keypairs for snapshot signature verification
+.TP
+impulse\-graph\-sign(1)
+Sign a binary snapshot using Ed25519 private key
+.TP
+impulse\-graph\-verify(1)
+Verify Ed25519 signature on a binary snapshot
+.TP
+impulse\-graph\-diff(1)
+Compare structural topology and schema differences between two binary snapshots
+.TP
+impulse\-graph\-export(1)
+Export binary snapshot file (.imps) back to CSV/TSV edge lists
+.TP
+impulse\-graph\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v2.4.0
+.SH AUTHORS
+Impulse Graph Engine Contributors

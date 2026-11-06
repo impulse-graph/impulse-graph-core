@@ -1,0 +1,24 @@
+/====================================================================
+/ Algorithm: Random Walk with Restart (RWR / Node2Vec)
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/sampling/sg_random_walks_test.cpp
+/ cuGraph API: cugraph::random_walks(handle, graph_view, start_vertices, walk_length, ...)
+/
+/ Summary:
+/ Generates random walk paths starting from seed vertices for embedding
+/ learning (Node2Vec, DeepWalk) or structural graph exploration.
+/====================================================================
+
+fn random_walks(g, seed_nodes, walk_length, restart_prob) {
+    current: bitset seed_nodes
+    paths: []
+
+    for step in 0..walk_length {
+        next_step: g.sample_random_neighbor(current)
+        paths.append(next_step)
+        
+        / Apply restart probability
+        current: (random_float() < restart_prob) ? (bitset seed_nodes) : next_step
+    }
+
+    return paths
+}

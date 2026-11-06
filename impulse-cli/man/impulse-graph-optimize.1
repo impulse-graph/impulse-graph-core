@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH optimize 1  "optimize " 
+.SH NAME
+optimize \- Heavy offline snapshot layout optimizer (RCM graph reordering, vector encodings, section stripping)
+.SH SYNOPSIS
+\fBoptimize\fR <\fB\-i\fR|\fB\-\-input\fR> <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-rcm\fR] [\fB\-\-encoding\fR] [\fB\-\-strip\-mappings\fR] [\fB\-\-strip\-properties\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Heavy offline snapshot layout optimizer (RCM graph reordering, vector encodings, section stripping)
+.SH OPTIONS
+.TP
+\fB\-i\fR, \fB\-\-input\fR \fI<INPUT>\fR
+Input binary snapshot (.imps)
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output optimized snapshot destination (.imps)
+.TP
+\fB\-\-rcm\fR
+Apply Reverse Cuthill\-McKee (RCM) bandwidth reduction and cache\-line reordering
+.TP
+\fB\-\-encoding\fR \fI<ENCODING>\fR
+Target CSR column encoding (raw_uint32, delta_vbyte, simdcomp, sliced_ellpack)
+.TP
+\fB\-\-strip\-mappings\fR
+Strip string ID mapping catalog for minimal runtime binary footprint
+.TP
+\fB\-\-strip\-properties\fR
+Strip DTO property payload blocks
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

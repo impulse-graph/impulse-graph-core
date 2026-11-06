@@ -1,0 +1,6 @@
+fn reachability(g, start, target) {
+    frontier: bitset start
+    visited: bitset start
+    frontier: (g @[frontier; "FOLLOWS"]) &~ visited
+    return true
+}

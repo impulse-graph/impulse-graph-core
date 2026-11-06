@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH validate 1  "validate " 
+.SH NAME
+validate \- Validate binary snapshot file against Spec v2.4 normative requirements
+.SH SYNOPSIS
+\fBvalidate\fR [\fB\-\-strict\-alignment\fR] [\fB\-p\fR|\fB\-\-public\-key\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISNAPSHOT\fR> 
+.SH DESCRIPTION
+Validate binary snapshot file against Spec v2.4 normative requirements
+.SH OPTIONS
+.TP
+\fB\-\-strict\-alignment\fR
+Verify 128\-byte hardware alignment rules strictly
+.TP
+\fB\-p\fR, \fB\-\-public\-key\fR \fI<PUBLIC_KEY>\fR
+Optional public key file to verify Ed25519 signature
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISNAPSHOT\fR>
+Path to binary snapshot file (.imps)

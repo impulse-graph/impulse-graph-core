@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH export 1  "export " 
+.SH NAME
+export \- Export binary snapshot file (.imps) back to CSV/TSV edge lists
+.SH SYNOPSIS
+\fBexport\fR <\fB\-o\fR|\fB\-\-out\-dir\fR> [\fB\-f\fR|\fB\-\-format\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISNAPSHOT\fR> 
+.SH DESCRIPTION
+Export binary snapshot file (.imps) back to CSV/TSV edge lists
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-out\-dir\fR \fI<OUTDIR>\fR
+Output directory for exported edge files
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: tsv]
+Export format (tsv, csv, jsonl)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISNAPSHOT\fR>
+Input binary snapshot file (.imps)

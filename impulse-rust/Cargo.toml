@@ -6,7 +6,7 @@ description = "Impulse Graph Engine Core Crate (Spec v0.9.0)"
 license = "MIT OR Apache-2.0"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 # Zero third-party dependencies per AGENTS.md §3.2

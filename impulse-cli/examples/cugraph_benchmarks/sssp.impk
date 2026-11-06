@@ -1,0 +1,28 @@
+/====================================================================
+/ Algorithm: Single Source Shortest Path (SSSP / Dijkstra - Min-Plus Semiring)
+/ Original cuGraph Implementation: cugraph/cpp/src/traversal/sssp.cu
+/ cuGraph API: cugraph::sssp(handle, graph_view, edge_weight_view, distances, predecessors, source_vertex, ...)
+/
+/ Summary:
+/ Computes the shortest distance from a single source vertex to all other
+/ reachable vertices in a weighted graph.
+/
+/ GraphBLAS Min-Plus Semiring Formulation:
+/   d^(k+1) = d^(k) \min (W^T \otimes_{min, plus} d^(k))
+/   Iterates until distances stabilize across all nodes.
+/====================================================================
+
+fn sssp(g, source) {
+    n: g.node_count
+    dist: vector(n, INF)                         / Distances initialized to infinity
+    dist[source]: 0.0
+    
+    until[changed == 0] {
+        incoming_min: g @[dist; min+]            / SpMV over Min-Plus Semiring
+        new_dist: dist min incoming_min          / Element-wise minimum update
+        changed: sum (new_dist != dist)          / Convergence check
+        dist: new_dist
+    }
+
+    return dist
+}

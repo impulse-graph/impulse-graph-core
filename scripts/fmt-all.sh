@@ -4,8 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=========================================="
-echo " Formatting all impulse-graph-core bindings"
+echo " Formatting all impulse-graph-core components"
 echo "=========================================="
+
+if [ -f "${ROOT_DIR}/impulse-cli/scripts/fmt-rust.sh" ]; then
+    echo "--- impulse-cli ---"
+    "${ROOT_DIR}/impulse-cli/scripts/fmt-rust.sh"
+fi
 
 if [ -f "${ROOT_DIR}/impulse-go/scripts/fmt-go.sh" ]; then
     echo "--- impulse-go ---"
@@ -28,5 +33,5 @@ if [ -f "${ROOT_DIR}/impulse-dotnet/scripts/fmt-csharp.sh" ]; then
 fi
 
 echo "=========================================="
-echo " All bindings formatted successfully!"
+echo " All components formatted successfully!"
 echo "=========================================="

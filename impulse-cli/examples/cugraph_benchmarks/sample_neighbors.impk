@@ -1,0 +1,22 @@
+/====================================================================
+/ Algorithm: GNN Neighbor Sampling (cuGraph-PyG / cuGraph-GNN)
+/ Original cuGraph Implementation: cugraph/cpp/src/sampling/sample_neighbors.cu
+/ cuGraph API: cugraph::sample_neighbors(handle, graph_view, seed_vertices, fanout, ...)
+/
+/ Summary:
+/ Performs uniform or biased multi-hop neighborhood sampling for Graph Neural Network
+/ mini-batch training (PyTorch Geometric / DGL).
+/====================================================================
+
+fn sample_neighbors(g, seed_nodes, fanout_per_hop) {
+    current_layer: bitset seed_nodes
+    sampled_edges: []
+
+    for fanout in fanout_per_hop {
+        next_layer: g @[current_layer; "FOLLOWS"] / Sample fanout neighbors
+        sampled_edges.append(next_layer)
+        current_layer: next_layer
+    }
+
+    return sampled_edges
+}

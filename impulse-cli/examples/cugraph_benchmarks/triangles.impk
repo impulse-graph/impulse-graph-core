@@ -1,0 +1,19 @@
+/====================================================================
+/ Algorithm: Triangle Counting (Sandia GraphBLAS Algorithm)
+/ Original cuGraph Implementation: cugraph/cpp/src/community/triangle_count.cu
+/ cuGraph API: cugraph::triangle_count(handle, graph_view, ...)
+/
+/ Summary:
+/ Computes the total number of triangles (3-cycles) in an undirected graph.
+/
+/ GraphBLAS Matrix Formulation:
+/   C = (L \otimes_{plus, times} L) \land L
+/   T = sum(C)
+/   where L is the lower-triangular adjacency matrix of the graph.
+/====================================================================
+
+fn count_triangles(g) {
+    L: g.tril                                    / Extract lower-triangular matrix (u > v)
+    C: (L @[L; +*]) & L                          / SpGEMM product masked by L
+    return sum C                                 / Reduce matrix sum -> total triangle count
+}

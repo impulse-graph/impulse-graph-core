@@ -1,0 +1,20 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH compile 1  "compile " 
+.SH NAME
+compile \- Compile edge list Parquet/CSV/TSV/JSON\-L data into zero\-copy binary snapshot (.imps) or stdout stream
+.SH SYNOPSIS
+\fBcompile\fR <\fB\-m\fR|\fB\-\-manifest\fR> <\fB\-o\fR|\fB\-\-output\fR> [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Compile edge list Parquet/CSV/TSV/JSON\-L data into zero\-copy binary snapshot (.imps) or stdout stream
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-manifest\fR \fI<MANIFEST>\fR
+Path to JSON compiler manifest file
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output binary snapshot destination path (.imps or '-' for stdout)
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

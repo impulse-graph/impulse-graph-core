@@ -121,16 +121,8 @@ jobs:
             runner: windows-latest
 
     steps:
-      - name: Checkout Core Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          path: impulse-graph-core
-
-      - name: Checkout Tooling Repository
-        uses: actions/checkout@v4
-        with:
-          repository: impulse-graph/impulse-graph-tooling
-          path: impulse-graph-tooling
 
       - name: Disable Git link.exe on Windows
         if: runner.os == 'Windows'
@@ -148,7 +140,7 @@ jobs:
       - name: Build Standalone CLI Binary
         shell: bash
         run: |
-          cd impulse-graph-tooling
+          cd impulse-cli
           cargo build --release
 
       - name: Package Distributable CLI Archive
@@ -162,12 +154,12 @@ jobs:
           mkdir -p "$CLI_DIST" dist
 
           if [ "${{ matrix.target.os }}" == "windows" ]; then
-            cp impulse-graph-tooling/target/release/impulse-graph.exe "$CLI_DIST/impulse-graph.exe"
-            cp impulse-graph-tooling/target/release/impulse-graph.exe "$CLI_DIST/impulse.exe"
+            cp impulse-cli/target/release/impulse-graph.exe "$CLI_DIST/impulse-graph.exe"
+            cp impulse-cli/target/release/impulse-graph.exe "$CLI_DIST/impulse.exe"
             7z a "dist/${CLI_DIST}.zip" "$CLI_DIST"
           else
-            cp impulse-graph-tooling/target/release/impulse-graph "$CLI_DIST/impulse-graph"
-            cp impulse-graph-tooling/target/release/impulse-graph "$CLI_DIST/impulse"
+            cp impulse-cli/target/release/impulse-graph "$CLI_DIST/impulse-graph"
+            cp impulse-cli/target/release/impulse-graph "$CLI_DIST/impulse"
             chmod +x "$CLI_DIST/impulse-graph" "$CLI_DIST/impulse"
             tar -czvf "dist/${CLI_DIST}.tar.gz" "$CLI_DIST"
           fi

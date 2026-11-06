@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH inspect 1  "inspect " 
+.SH NAME
+inspect \- Inspect binary snapshot header, section directory, domain catalogs, and topology metadata
+.SH SYNOPSIS
+\fBinspect\fR [\fB\-f\fR|\fB\-\-format\fR] [\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISNAPSHOT\fR> 
+.SH DESCRIPTION
+Inspect binary snapshot header, section directory, domain catalogs, and topology metadata
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-format\fR \fI<FORMAT>\fR [default: text]
+Output format (text, json)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose detail dumping (including offset tables and encoding feature bitmaps)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISNAPSHOT\fR>
+Path to binary snapshot file (.imps)

@@ -37,7 +37,7 @@ The ecosystem is partitioned into specialized repositories located at `~/impulse
 
 | Repository Name | Role & Description | Primary Tech Stack | Primary Directory |
 | :--- | :--- | :--- | :--- |
-| **`impulse-graph-core`** | **Core Engine Kernel & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel, Rust core engine crate (`impulse-rust`), and multi-language FFI bindings (Python, C#, Go, Node.js). | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
+| **`impulse-graph-core`** | **Core Engine Kernel & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel, Rust core engine crate (`impulse-rust`), CLI tooling suite (`impulse-cli`), and multi-language FFI bindings (Python, C#, Go, Node.js). | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
 | **`impulse-graph-spec`** | **Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.9.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc36`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
 | **`impulse-graph-java`** | **Java 25 FFM Core Engine**. Standalone Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`). | Java 25 (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
 | **`impulse-graph-tooling`** | **Developer Utilities & ImpVM Suite**. Contains `impulse assemble`, `impulse disassemble`, `impulse run`, `impulse compile`, `impulse inspect`, and `impulse opt`. | C++20, Rust, Go, CMake | `~/impulse/impulse-graph-tooling/` |
@@ -74,7 +74,7 @@ When modifying or implementing code across any repository in `~/impulse/`, enfor
 * **Impulse VM Architecture**: Register-based opcode Virtual Machine (`ImpulseVM`) executing `impOps` bytecode instructions (`OP_CSR_WALK`, `OP_CSC_WALK`, `OP_MXV`, `OP_CC_AFFOREST`, `OP_COLLECT_BITSET`) with OpenMP intra-instruction parallelization and Java 25 `MethodHandle` JIT combinators.
 
 ### 3.5 Distributables & Standalone Packaging Guidelines
-* **Static Core Engine Linking**: All `impulse-graph-tooling` executables (`impulse-opt`, `impulse-compile`, `impulse-inspect`, `impulse-run`) MUST statically embed the core Impulse Graph C-ABI kernel (`libimpulse_graph_static.a` / `.lib`) when building release distributables (`.deb`, `.rpm`, `.msi`, `.pkg`, `tar.gz`).
+* **Static Core Engine Linking**: All `impulse-cli` executables (`impulse-opt`, `impulse-compile`, `impulse-inspect`, `impulse-run`) MUST statically embed the core Impulse Graph C-ABI kernel (`libimpulse_graph_static.a` / `.lib`) when building release distributables (`.deb`, `.rpm`, `.msi`, `.pkg`, `tar.gz`).
 * **Linux C Runtime (`glibc` vs `musl`)**: Release packages (`.deb`, `.rpm`) target `glibc >= 2.28` for standard Linux distros. Portable container tarballs target `musl-libc` fully static (`-static`) for zero-dependency execution in `scratch` / Alpine containers.
 * **macOS Distribution (`.pkg` / Homebrew)**: Embeds static engine kernel; links system `libc++.dylib` and `libSystem.B.dylib` (guaranteed on macOS 11.0+).
 * **Windows Packaging (`.msi` / `.zip`)**: Built with MSVC `/MT` (Static C++ Runtime `LIBCMT.lib`) to eliminate Visual C++ Redistributable runtime installer requirements.

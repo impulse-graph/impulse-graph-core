@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH verify 1  "verify " 
+.SH NAME
+verify \- Verify Ed25519 signature on a binary snapshot
+.SH SYNOPSIS
+\fBverify\fR <\fB\-k\fR|\fB\-\-key\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fISNAPSHOT\fR> 
+.SH DESCRIPTION
+Verify Ed25519 signature on a binary snapshot
+.SH OPTIONS
+.TP
+\fB\-k\fR, \fB\-\-key\fR \fI<KEY>\fR
+Path to Ed25519 public key file (hex/pem)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISNAPSHOT\fR>
+Target binary snapshot file (.imps)

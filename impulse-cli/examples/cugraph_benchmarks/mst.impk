@@ -1,0 +1,23 @@
+/====================================================================
+/ Algorithm: Minimum Spanning Tree (MST - Boruvka / Kruskal Algorithm)
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/tree/mst_test.cu
+/ cuGraph API: cugraph::minimum_spanning_tree(handle, graph_view, edge_weight_view, ...)
+/
+/ Summary:
+/ Computes the minimum spanning tree of a weighted connected graph by
+/ finding a subset of edges that connects all vertices with minimum total weight.
+/====================================================================
+
+fn minimum_spanning_tree(g) {
+    components: g.nodes                          / Initial components = node IDs
+    mst_edges: []
+    
+    until[component_count <= 1] {
+        min_edges: g.min_outgoing_edges(components)   / Find min weight edge per component
+        mst_edges.append(min_edges)
+        components: merge_components(components, min_edges)
+        component_count: count_unique(components)
+    }
+
+    return mst_edges
+}

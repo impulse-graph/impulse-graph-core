@@ -1,0 +1,22 @@
+/====================================================================
+/ Algorithm: K-Core Decomposition
+/ Original cuGraph Implementation: cugraph/cpp/src/cores/k_core.cu
+/ cuGraph API: cugraph::k_core(handle, graph_view, k, ...)
+/
+/ Summary:
+/ Computes the maximal subgraph where all vertices have degree >= k.
+/ Iteratively prunes vertices with current degree < k until fixpoint.
+/====================================================================
+
+fn k_core(g, k) {
+    active: bitset g.nodes
+    
+    until[pruned == 0] {
+        degrees: g.degrees_filtered(active)      / Degrees of active subgraph
+        to_prune: active & (degrees < k)         / Find active nodes with degree < k
+        pruned: count to_prune
+        active: active &~ to_prune               / Remove pruned nodes
+    }
+
+    return active
+}

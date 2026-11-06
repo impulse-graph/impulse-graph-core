@@ -1,0 +1,34 @@
+/====================================================================
+/ Algorithm: PageRank Centrality
+/ Original cuGraph Implementation: cugraph/cpp/src/centrality/pagerank.cu
+/ cuGraph API: cugraph::pagerank(handle, graph_view, edge_weight_view, ...)
+/
+/ Summary:
+/ PageRank measures the structural importance of nodes in a graph.
+/ It computes a probability distribution p where p[u] represents the
+/ likelihood of a random surfer arriving at node u.
+/
+/ Mathematical Formulation:
+/   p^(k+1) = (A^T \otimes_{plus, times} (p^(k) / out_deg)) * damping + (1 - damping) / N
+/   Iterates until L1 residual delta < epsilon or max_iters reached.
+/====================================================================
+
+fn pagerank(g, damping, max_iters, epsilon) {
+    n: g.node_count
+    p: vector(n, 1.0 / n)                    / Uniform initial probability vector
+    deg: g.out_degrees                       / Out-degree vector
+    teleport: (1.0 - damping) / n
+    iter: 0
+
+    until[(iter >= max_iters) | (delta < epsilon)] {
+        norm_p: p / deg                      / Out-degree normalization
+        incoming: g @[norm_p; +*]            / SpMV over Plus-Times Semiring
+        next_p: (incoming * damping) + teleport
+        
+        delta: sum abs(next_p - p)           / L1 residual convergence check
+        p: next_p
+        iter+: 1
+    }
+
+    return p
+}

@@ -1,0 +1,4 @@
+.decl member(User, Group)
+.decl can_view(User, Document)
+
+can_view(U, D) :- member(U, G), group_parent(G, D), !visited(G).

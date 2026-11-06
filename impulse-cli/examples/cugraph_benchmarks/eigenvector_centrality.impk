@@ -1,0 +1,30 @@
+/====================================================================
+/ Algorithm: Eigenvector Centrality
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/centrality/eigenvector_centrality_test.cpp
+/ cuGraph API: cugraph::eigenvector_centrality(handle, graph_view, ...)
+/
+/ Summary:
+/ Computes Eigenvector Centrality using Power Iteration over the adjacency matrix.
+/ Nodes acquire high centrality if they are connected to other high-centrality nodes.
+/
+/ Mathematical Formulation:
+/   x^(k+1) = A^T \otimes_{plus, times} x^(k)
+/   x^(k+1) = x^(k+1) / ||x^(k+1)||_2 (L2 Normalization)
+/====================================================================
+
+fn eigenvector_centrality(g, max_iters, epsilon) {
+    n: g.node_count
+    x: vector(n, 1.0 / sqrt(n))
+    iter: 0
+
+    until[(iter >= max_iters) | (delta < epsilon)] {
+        next_x: g @[x; +*]                        / SpMV Power Iteration
+        next_x: next_x / l2_norm(next_x)          / L2 Normalize
+        
+        delta: sum abs(next_x - x)
+        x: next_x
+        iter+: 1
+    }
+
+    return x
+}

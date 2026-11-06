@@ -1,0 +1,23 @@
+/====================================================================
+/ Algorithm: Cosine Similarity Coefficient
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/link_prediction/similarity_test.cu
+/ cuGraph API: cugraph::cosine_similarity_coefficients(handle, graph_view, ...)
+/
+/ Summary:
+/ Computes Cosine Similarity between neighbor vectors of nodes u and v:
+/   Cosine(u, v) = |N(u) \cap N(v)| / (\sqrt{|N(u)|} * \sqrt{|N(v)|})
+/====================================================================
+
+fn cosine_similarity(g, u, v) {
+    neighbors_u: g.neighbors(u)
+    neighbors_v: g.neighbors(v)
+    
+    intersection: count (neighbors_u & neighbors_v)
+    denom: sqrt(count neighbors_u) * sqrt(count neighbors_v)
+    
+    if denom == 0.0 {
+        return 0.0
+    }
+    
+    return intersection / denom
+}

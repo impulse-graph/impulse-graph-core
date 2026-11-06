@@ -63,7 +63,7 @@ with Snapshot("hetionet.v09.imps") as graph:
 
 ### 4. Building Your Own Snapshots
 
-To compile your own datasets into `.imps` files, install the [Impulse CLI tooling](https://github.com/impulse-graph/impulse-graph-tooling):
+To compile your own datasets into `.imps` files, use the Impulse CLI (`impulse-cli`):
 
 ```bash
 # Install the CLI
@@ -391,7 +391,7 @@ Comparison against other graph engines on the same dataset:
 | :--- | :--- |
 | **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc36`) |
 | **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
-| **[impulse-graph-tooling](https://github.com/impulse-graph/impulse-graph-tooling)** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
+| **impulse-cli** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
 | **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs PyG, NetworkX, MATPOWER |
 | **[impulse-website](https://github.com/impulse-graph/impulse-website)** | Documentation portal ([docs.impulsegraph.io](https://docs.impulsegraph.io)) |
 
