@@ -1,0 +1,17 @@
+{
+  "version": "0.9.0",
+  "domains": [
+    { "id": 0, "name": "User", "key_type": "string" },
+    { "id": 1, "name": "Group", "key_type": "string" },
+    { "id": 2, "name": "Document", "key_type": "string" },
+    { "id": 3, "name": "Vertex", "key_type": "string" },
+    { "id": 4, "name": "TaskNode", "key_type": "string" }
+  ],
+  "relations": [
+    { "src_domain": 0, "tgt_domain": 1, "encoding": "raw_uint32", "file": "rebac_members.tsv" },
+    { "src_domain": 1, "tgt_domain": 1, "encoding": "raw_uint32", "file": "group_parents.tsv" },
+    { "src_domain": 1, "tgt_domain": 2, "encoding": "raw_uint32", "file": "doc_viewers.tsv" },
+    { "src_domain": 3, "tgt_domain": 3, "encoding": "raw_uint32", "file": "vertex_follows.tsv" },
+    { "src_domain": 3, "tgt_domain": 4, "encoding": "raw_uint32", "file": "vertex_depends.tsv" }
+  ]
+}

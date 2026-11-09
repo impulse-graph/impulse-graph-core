@@ -1,0 +1,9 @@
+{
+  "version": "0.9.0",
+  "domains": [
+    { "id": 0, "name": "Vertex", "key_type": "string" }
+  ],
+  "relations": [
+    { "src_domain": 0, "tgt_domain": 0, "encoding": "raw_uint32", "file": "clique_edges.tsv" }
+  ]
+}
