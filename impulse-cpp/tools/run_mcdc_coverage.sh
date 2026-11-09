@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CPP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SPEC_DIR="$(cd "${CPP_DIR}/../../impulse-graph-spec" && pwd)"
+SPEC_DIR="$(cd "${CPP_DIR}/../spec" && pwd)"
 BUILD_DIR="${CPP_DIR}/build-mcdc"
 PROFILE_DIR="${BUILD_DIR}/profiles"
 REPORT_DIR="${BUILD_DIR}/coverage_report"
