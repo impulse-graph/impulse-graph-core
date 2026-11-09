@@ -4,8 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=========================================="
-echo " Checking all impulse-graph-core bindings"
+echo " Checking all impulse-graph-core components"
 echo "=========================================="
+
+if [ -f "${ROOT_DIR}/impulse-cli/scripts/check-rust.sh" ]; then
+    echo "--- impulse-cli ---"
+    "${ROOT_DIR}/impulse-cli/scripts/check-rust.sh"
+fi
 
 if [ -f "${ROOT_DIR}/impulse-go/scripts/check-go.sh" ]; then
     echo "--- impulse-go ---"
@@ -28,5 +33,5 @@ if [ -f "${ROOT_DIR}/impulse-dotnet/scripts/check-csharp.sh" ]; then
 fi
 
 echo "=========================================="
-echo " All bindings check passed cleanly!"
+echo " All components check passed cleanly!"
 echo "=========================================="

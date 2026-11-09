@@ -1,0 +1,37 @@
+/====================================================================
+/ Algorithm: HITS (Hubs and Authorities)
+/ Original cuGraph Implementation: cugraph/cpp/src/link_analysis/hits.cu
+/ cuGraph API: cugraph::hits(handle, graph_view, hubs, authorities, ...)
+/
+/ Summary:
+/ Computes Hub and Authority scores for directed graphs.
+/ Authorities are nodes linked to by many good Hubs.
+/ Hubs are nodes that link to many good Authorities.
+/
+/ Matrix Formulation:
+/   a^(k+1) = A^T \otimes_{plus, times} h^(k)
+/   h^(k+1) = A   \otimes_{plus, times} a^(k+1)
+/   L2 normalize a and h vectors after each step.
+/====================================================================
+
+fn hits(g, max_iters, epsilon) {
+    n: g.node_count
+    h: vector(n, 1.0 / sqrt(n))
+    a: vector(n, 1.0 / sqrt(n))
+    iter: 0
+
+    until[(iter >= max_iters) | (delta < epsilon)] {
+        new_a: g @[h; +*]                        / Authority update: A^T * h
+        new_a: new_a / l2_norm(new_a)             / L2 normalize
+        
+        new_h: g.csc @[new_a; +*]                 / Hub update: A * a
+        new_h: new_h / l2_norm(new_h)             / L2 normalize
+        
+        delta: sum abs(new_a - a) + sum abs(new_h - h)
+        a: new_a
+        h: new_h
+        iter+: 1
+    }
+
+    return (h, a)
+}

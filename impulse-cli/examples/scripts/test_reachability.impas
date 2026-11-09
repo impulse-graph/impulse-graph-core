@@ -1,0 +1,8 @@
+; Reachability test query
+.domain "user" = 0
+.relation "REL_0" = 0
+
+0x00: OP_INIT_INPUT_NODE  R0, 0
+0x01: OP_CSR_WALK         R4, R0, REL_0   ; Walk relation 0 from R0
+0x02: OP_COLLECT_BITSET   R63, R4         ; Collect active set in R63
+0x03: OP_HALT

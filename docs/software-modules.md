@@ -43,13 +43,13 @@ Per `AGENTS.md`, the Impulse Graph Engine ecosystem is partitioned into speciali
 ├── impulse-graph-core/         # C++20 Zero-Copy Kernel, Rust Crate & Polyglot FFI Bindings
 │   ├── impulse-cpp/            # C++20 Native Engine Kernel (libimpulse_graph) & In-Kernel Compiler
 │   ├── impulse-rust/           # Rust Native Engine Kernel & Crates.io crate
+│   ├── impulse-cli/            # Developer CLI Suite (assemble, disassemble, compile, inspect, run, opt)
 │   ├── impulse-python/         # Python C-ABI bindings & PyTorch zero-copy mmap tensors
 │   ├── impulse-node/           # Node.js / Bun N-API C-ABI native bindings
 │   ├── impulse-go/             # Go CGo C-ABI bindings
 │   └── impulse-dotnet/         # .NET 9 P/Invoke C-ABI bindings
 ├── impulse-graph-spec/         # Normative Binary Snapshot Specification & Test Vectors (tc01..tc36)
 ├── impulse-graph-java/         # Standalone Java 25 FFM Core Engine & MethodHandle JIT
-├── impulse-graph-tooling/      # Developer CLI Suite (assemble, disassemble, compile, inspect, run, opt)
 ├── impulse-platform/           # Enterprise Cloud Infrastructure (Spring Boot, gRPC, Kafka WAL, RocksDB)
 ├── impulse-benchmarks/         # Reproducible Performance Benchmarks (Neo4j, PyG, NetworkX, JMH)
 ├── impulse-website/            # Documentation Portal (docs.impulsegraph.io)

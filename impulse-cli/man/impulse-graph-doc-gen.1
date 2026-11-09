@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH doc-gen 1  "doc-gen " 
+.SH NAME
+doc\-gen \- Automatically generate Roff man pages and website CLI Markdown documentation off clap definitions
+.SH SYNOPSIS
+\fBdoc\-gen\fR [\fB\-m\fR|\fB\-\-man\-dir\fR] [\fB\-w\fR|\fB\-\-website\-md\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Automatically generate Roff man pages and website CLI Markdown documentation off clap definitions
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-man\-dir\fR \fI<MAN_DIR>\fR [default: man]
+Destination directory for generated Roff man pages (e.g., man/man1)
+.TP
+\fB\-w\fR, \fB\-\-website\-md\fR \fI<WEBSITE_MD>\fR
+Optional destination path for MkDocs website CLI markdown reference file
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

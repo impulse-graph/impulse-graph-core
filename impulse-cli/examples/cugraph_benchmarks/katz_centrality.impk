@@ -1,0 +1,30 @@
+/====================================================================
+/ Algorithm: Katz Centrality
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/centrality/katz_centrality_test.cpp
+/ cuGraph API: cugraph::katz_centrality(handle, graph_view, alpha, beta, ...)
+/
+/ Summary:
+/ Katz centrality measures node influence by taking into account the total
+/ number of walks between node pairs, attenuated by attenuation factor alpha.
+/
+/ Mathematical Formulation:
+/   x^(k+1) = \alpha (A^T \otimes_{plus, times} x^(k)) + \beta
+/   Iterates until L1 norm delta < tolerance or max_iters reached.
+/====================================================================
+
+fn katz_centrality(g, alpha, beta, max_iters, epsilon) {
+    n: g.node_count
+    x: vector(n, 1.0 / n)
+    iter: 0
+
+    until[(iter >= max_iters) | (delta < epsilon)] {
+        incoming: g @[x; +*]                     / SpMV over Plus-Times Semiring
+        next_x: (incoming * alpha) + beta         / FMA transform
+        
+        delta: sum abs(next_x - x)               / Convergence check
+        x: next_x
+        iter+: 1
+    }
+
+    return x
+}

@@ -1,0 +1,6 @@
+;; Reachability Traversal Script in ImpScheme (.impscm)
+(define-query (reachability-step [g : graph] [start : node])
+  (let ([frontier (bitset:from start)]
+        [visited (bitset:from start)])
+    (set! frontier (bitset:and-not (g:walk-csr g frontier "FOLLOWS") visited))
+    (return #t)))

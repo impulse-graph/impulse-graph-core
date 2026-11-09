@@ -1,0 +1,16 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH keygen 1  "keygen " 
+.SH NAME
+keygen \- Generate Ed25519 keypairs for snapshot signature verification
+.SH SYNOPSIS
+\fBkeygen\fR [\fB\-o\fR|\fB\-\-out\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Generate Ed25519 keypairs for snapshot signature verification
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR [default: impulse_key]
+Destination directory or file path prefix for generated keypair
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

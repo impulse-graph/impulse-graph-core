@@ -1,0 +1,32 @@
+/====================================================================
+/ Algorithm: Betweenness Centrality (Brandes' Algorithm)
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/centrality/betweenness_centrality_test.cpp
+/ cuGraph API: cugraph::betweenness_centrality(handle, graph_view, ...)
+/
+/ Summary:
+/ Measures the extent to which a vertex lies on shortest paths between other vertices.
+/ Computes forward BFS path counts sigma and backward dependency accumulation delta.
+/====================================================================
+
+fn betweenness_centrality(g, sources) {
+    bc: vector(g.node_count, 0.0)
+
+    for s in sources {
+        / 1. Forward BFS pass to compute distance d and path count sigma
+        (stack, d, sigma): forward_bfs(g, s)
+        
+        / 2. Backward accumulation pass to compute dependencies delta
+        delta: vector(g.node_count, 0.0)
+        while not_empty stack {
+            w: stack.pop()
+            for v in parents(w) {
+                delta[v]+: (sigma[v] / sigma[w]) * (1.0 + delta[w])
+            }
+            if w != s {
+                bc[w]+: delta[w]
+            }
+        }
+    }
+
+    return bc
+}

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH sign 1  "sign " 
+.SH NAME
+sign \- Sign a binary snapshot using Ed25519 private key
+.SH SYNOPSIS
+\fBsign\fR <\fB\-k\fR|\fB\-\-key\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fISNAPSHOT\fR> 
+.SH DESCRIPTION
+Sign a binary snapshot using Ed25519 private key
+.SH OPTIONS
+.TP
+\fB\-k\fR, \fB\-\-key\fR \fI<KEY>\fR
+Path to Ed25519 private key file (hex/pem)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fISNAPSHOT\fR>
+Target binary snapshot file (.imps)

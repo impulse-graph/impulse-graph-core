@@ -1,0 +1,17 @@
+pub mod assemble;
+pub mod bench_vector;
+pub mod compile;
+pub mod crypto;
+pub mod diff;
+pub mod disassemble;
+pub mod docgen;
+pub mod export;
+pub mod generate;
+pub mod inspect;
+pub mod merge;
+pub mod optimize;
+pub mod run;
+pub mod safetensors;
+pub mod script_compile;
+pub mod stats;
+pub mod validate;

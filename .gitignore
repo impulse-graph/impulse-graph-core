@@ -4,6 +4,9 @@ Thumbs.db
 
 # IDE & Editor Settings
 *.json
+!impulse-cli/tests/fixtures/*.json
+!impulse-node/package*.json
+!impulse-node/tsconfig.json
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -47,6 +50,8 @@ cmake-build-*/
 
 # Go
 bin/
+!impulse-cli/src/bin/
+!impulse-cli/src/bin/**
 
 # Python & AI/ML
 __pycache__/

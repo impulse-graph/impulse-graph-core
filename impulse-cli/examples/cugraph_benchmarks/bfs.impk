@@ -1,0 +1,31 @@
+/====================================================================
+/ Algorithm: Breadth-First Search (BFS) Distance Level Discovery
+/ Original cuGraph Implementation: cugraph/cpp/src/traversal/bfs.cu
+/ cuGraph API: cugraph::bfs(handle, graph_view, distances, predecessors, sources, ...)
+/
+/ Summary:
+/ BFS computes the unweighted shortest path distance from a set of source
+/ nodes to all reachable nodes in the graph.
+/
+/ Vector/Bitset Formulation:
+/   frontier_(k+1) = (A^T \otimes_{or, and} frontier_k) \ visited_k
+/   levels[frontier_(k+1)] = k + 1
+/====================================================================
+
+fn bfs(g, start_node) {
+    frontier: bitset start_node                  / Initial root frontier
+    visited:  bitset start_node                  / Track visited node bitset
+    levels:   vector(g.node_count, -1)           / Distance array initialized to -1
+    levels[start_node]: 0
+    d: 1
+
+    until[empty frontier] {
+        next_f: (g @[frontier; "FOLLOWS"]) &~ visited   / 1-hop CSR walk & bitset diff
+        levels[next_f]: d                              / Masked level assignment
+        visited: visited | next_f                      / Bitset union
+        frontier: next_f                               / Advance frontier
+        d+: 1
+    }
+
+    return levels
+}

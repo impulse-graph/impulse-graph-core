@@ -1,0 +1,24 @@
+/====================================================================
+/ Algorithm: Topological Sort (Kahn's Algorithm for DAGs)
+/ Original cuGraph C++ Test Reference: cugraph/cpp/tests/dag/topological_sort_test.cpp
+/ cuGraph API: cugraph::topological_sort(handle, graph_view, ...)
+/
+/ Summary:
+/ Computes a linear ordering of vertices for a Directed Acyclic Graph (DAG)
+/ such that for every directed edge u -> v, u comes before v.
+/====================================================================
+
+fn topological_sort(g) {
+    in_degrees: g.in_degrees                     / In-degree vector
+    zero_in_deg: bitset (in_degrees == 0)        / Root frontier with 0 in-degree
+    sorted_order: []
+
+    until[empty zero_in_deg] {
+        sorted_order.append(zero_in_deg)
+        next_frontier: g @[zero_in_deg; "DEPENDS_ON"]
+        in_degrees[next_frontier]-: 1
+        zero_in_deg: bitset (in_degrees == 0) &~ bitset(sorted_order)
+    }
+
+    return sorted_order
+}

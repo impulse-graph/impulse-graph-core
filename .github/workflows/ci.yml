@@ -18,6 +18,7 @@ jobs:
     outputs:
       cpp: ${{ steps.filter.outputs.cpp }}
       rust: ${{ steps.filter.outputs.rust }}
+      cli: ${{ steps.filter.outputs.cli }}
       ffi: ${{ steps.filter.outputs.ffi }}
     steps:
       - name: Checkout Code
@@ -32,6 +33,11 @@ jobs:
               - '.github/workflows/**'
               - 'CMakeLists.txt'
             rust:
+              - 'impulse-rust/**'
+              - 'impulse-cpp/**'
+              - '.github/workflows/**'
+            cli:
+              - 'impulse-cli/**'
               - 'impulse-rust/**'
               - 'impulse-cpp/**'
               - '.github/workflows/**'
@@ -78,6 +84,42 @@ jobs:
         run: |
           cd impulse-rust
           cargo test --all-targets --verbose
+
+  test-cli-tooling:
+    name: Test CLI Tooling (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cli == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC Toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rustfmt & Clippy (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd impulse-cli
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Build & Test CLI Tooling
+        run: |
+          cd impulse-cli
+          cargo build --release
+          cargo test --verbose
 
   test-ffi-bindings:
     name: Test Multi-Language FFI Bindings
@@ -128,7 +170,7 @@ jobs:
 
   ci-gate:
     name: CI Gate / All Checks Passed
-    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings]
+    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-cli-tooling, test-ffi-bindings]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -140,25 +182,3 @@ jobs:
             exit 1
           fi
           echo "✅ CI Gate Passed: All upstream checks passed or were safely skipped by path filters."
-
-  dispatch-downstream:
-    name: Trigger Downstream Ecosystem Builds
-    needs: [detect-changes, build-cpp-kernel, test-rust-engine, test-ffi-bindings, ci-gate]
-    runs-on: ubuntu-latest
-    if: |
-      github.ref == 'refs/heads/main' && 
-      github.event_name == 'push' && 
-      (needs.detect-changes.outputs.cpp == 'true' || 
-       needs.detect-changes.outputs.rust == 'true' || 
-       needs.detect-changes.outputs.ffi == 'true')
-    env:
-      PAT_SECRET: ${{ secrets.ORGANIZATION_PAT }}
-    steps:
-      - name: Trigger Downstream Repositories
-        if: env.PAT_SECRET != ''
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.ORGANIZATION_PAT }}
-          repository: impulse-graph/impulse-graph-tooling
-          event-type: core-updated
-          client-payload: '{"ref": "${{ github.sha }}"}'
