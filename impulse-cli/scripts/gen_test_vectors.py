@@ -4,7 +4,8 @@ import json
 import struct
 import hashlib
 
-from pathlib import Path`r`nSPEC_VECTORS_DIR = os.environ.get("SPEC_VECTORS_DIR") or str((Path(__file__).resolve().parent.parent.parent.parent / "impulse-graph-spec" / "test-vectors"))
+from pathlib import Path
+SPEC_VECTORS_DIR = os.environ.get("SPEC_VECTORS_DIR") or str((Path(__file__).resolve().parent.parent.parent / "spec" / "test-vectors"))
 
 def crc16(data: bytes) -> int:
     crc = 0xFFFF

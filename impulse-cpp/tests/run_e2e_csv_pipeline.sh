@@ -67,9 +67,8 @@ echo "[Build] Compiling test_e2e_csv_pipeline.cpp -> ${OUT_BIN} ..."
 SUITE_DIR="${IMPULSE_E2E_SUITE_DIR:-}"
 if [[ -z "${SUITE_DIR}" ]]; then
     for cand in \
-        "${IMPULSE_CPP_DIR}/../../impulse-graph-spec/test-fixtures/e2e-csv-suite" \
-        "/Users/jesse/impulse/.worktrees/e2e-suite/impulse-graph-spec/test-fixtures/e2e-csv-suite" \
-        "/Users/jesse/impulse/impulse-graph-spec/test-fixtures/e2e-csv-suite"; do
+        "${IMPULSE_CPP_DIR}/../spec/test-fixtures/e2e-csv-suite" \
+        "${IMPULSE_CPP_DIR}/../../impulse-graph-spec/test-fixtures/e2e-csv-suite"; do
         if [[ -f "${cand}/manifest.json" ]]; then
             SUITE_DIR="${cand}"
             break
@@ -80,9 +79,8 @@ fi
 CLI_BIN="${IMPULSE_CLI_BIN:-}"
 if [[ -z "${CLI_BIN}" || ! -x "${CLI_BIN}" ]]; then
     for cand in \
-        "${IMPULSE_CPP_DIR}/../../impulse-graph-tooling/target/release/impulse-graph" \
-        "/Users/jesse/impulse/.worktrees/e2e-suite/impulse-graph-tooling/target/release/impulse-graph" \
-        "/Users/jesse/impulse/impulse-graph-tooling/target/release/impulse-graph"; do
+        "${IMPULSE_CPP_DIR}/../impulse-cli/target/release/impulse-graph" \
+        "${IMPULSE_CPP_DIR}/../impulse-cli/target/debug/impulse-graph"; do
         if [[ -x "${cand}" ]]; then
             CLI_BIN="${cand}"
             break

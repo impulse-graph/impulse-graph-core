@@ -38,12 +38,20 @@ static std::string read_file_string(const fs::path& p) {
 }
 
 static void test_all_30_spec_v0_9_test_vectors() {
-    fs::path spec_dir("/Users/jesse/impulse/impulse-graph-spec/test-vectors");
-    if (!fs::exists(spec_dir)) {
-        spec_dir = "../../impulse-graph-spec/test-vectors";
+    fs::path spec_dir;
+    for (const auto& cand : {
+             fs::path("spec/test-vectors"),
+             fs::path("../spec/test-vectors"),
+             fs::path("../../spec/test-vectors"),
+             fs::path("../../impulse-graph-spec/test-vectors")
+         }) {
+        if (fs::exists(cand)) {
+            spec_dir = cand;
+            break;
+        }
     }
-    if (!fs::exists(spec_dir)) {
-        std::cout << "[SKIP] test-vectors directory not found at " << spec_dir << "\n";
+    if (spec_dir.empty() || !fs::exists(spec_dir)) {
+        std::cout << "[SKIP] test-vectors directory not found\n";
         return;
     }
 

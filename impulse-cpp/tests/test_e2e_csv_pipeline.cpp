@@ -89,11 +89,12 @@ std::string read_text_file(const fs::path& p) {
 
 fs::path locate_e2e_suite_dir() {
     const std::vector<fs::path> candidates = {
+        "spec/test-fixtures/e2e-csv-suite",
+        "../spec/test-fixtures/e2e-csv-suite",
+        "../../spec/test-fixtures/e2e-csv-suite",
         "../impulse-graph-spec/test-fixtures/e2e-csv-suite",
         "../../impulse-graph-spec/test-fixtures/e2e-csv-suite",
-        "../../../impulse-graph-spec/test-fixtures/e2e-csv-suite",
-        "/Users/jesse/impulse/.worktrees/e2e-suite/impulse-graph-spec/test-fixtures/e2e-csv-suite",
-        "/Users/jesse/impulse/impulse-graph-spec/test-fixtures/e2e-csv-suite"
+        "../../../impulse-graph-spec/test-fixtures/e2e-csv-suite"
     };
     for (const auto& c : candidates) {
         if (fs::exists(c / "manifest.json")) {
