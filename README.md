@@ -389,9 +389,11 @@ Comparison against other graph engines on the same dataset:
 
 | Repository | Description |
 | :--- | :--- |
-| **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc36`) |
+| **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc37`, `vm-impas/`) — mounted at [`spec/`](./spec/) |
 | **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
-| **impulse-cli** | CLI utilities: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
+| **[`impulse-cli`](./impulse-cli/)** | Standalone CLI utilities inside this repository: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
+| **[impulse-ocaml](https://github.com/impulse-graph/impulse-ocaml)** | Normative OCaml reference engine & formal `ImpulseVM` bytecode oracle |
+| **[impulse-verification](https://github.com/impulse-graph/impulse-verification)** | Four-way polyglot validation suite (`four_way_validation.py`) & contract-guided differential fuzzer |
 | **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs PyG, NetworkX, MATPOWER |
 | **[impulse-website](https://github.com/impulse-graph/impulse-website)** | Documentation portal ([docs.impulsegraph.io](https://docs.impulsegraph.io)) |
 
@@ -427,9 +429,15 @@ All SDKs resolve snapshot paths in order: exact path / CWD → `$IMPULSEGRAPH_DA
 > **Pre-release Source Builds**: During pre-release, building from source is required across all native components.
 
 ```bash
+# Clone with pinned spec/ submodule
+git clone --recurse-submodules https://github.com/impulse-graph/impulse-graph-core.git
+
 # C++ kernel
 cd impulse-cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j8
 ctest --test-dir build --output-on-failure
+
+# CLI tooling
+cd impulse-cli && cargo build --release && cargo test
 
 # Python
 cd impulse-python && pip install -e . && python -m unittest discover tests

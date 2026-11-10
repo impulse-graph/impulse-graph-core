@@ -37,10 +37,11 @@ The ecosystem is partitioned into specialized repositories located at `~/impulse
 
 | Repository Name | Role & Description | Primary Tech Stack | Primary Directory |
 | :--- | :--- | :--- | :--- |
-| **`impulse-graph-core`** | **Core Engine Kernel & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel, Rust core engine crate (`impulse-rust`), CLI tooling suite (`impulse-cli`), and multi-language FFI bindings (Python, C#, Go, Node.js). | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
-| **`impulse-graph-spec`** | **Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.9.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc36`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
-| **`impulse-graph-java`** | **Java 25 FFM Core Engine**. Standalone Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`). | Java 25 (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
-| **`impulse-graph-tooling`** | **Developer Utilities & ImpVM Suite**. Contains `impulse assemble`, `impulse disassemble`, `impulse run`, `impulse compile`, `impulse inspect`, and `impulse opt`. | C++20, Rust, Go, CMake | `~/impulse/impulse-graph-tooling/` |
+| **`impulse-graph-spec`** | **Layer 0 — Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.9.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc37`, `vm-impas/`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
+| **`impulse-graph-core`** | **Layer 1 — Core Engine Kernel, CLI Tooling & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel (`impulse-cpp`), Rust core engine crate (`impulse-rust`), CLI tooling suite (`impulse-cli`), multi-language FFI bindings (Python, C#, Go, Node.js), and pinned `spec/` submodule. | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
+| **`impulse-graph-java`** | **Layer 1 — Java 25 FFM Core Engine**. Standalone Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`), and pinned `spec/` submodule. | Java 25 (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
+| **`impulse-ocaml`** | **Layer 1 — Normative Reference Engine & Formal Oracle**. Pure functional OCaml reference implementation of the `ImpulseVM` ISA and `ICTX` v1 deterministic state hash, with pinned `spec/` submodule. | OCaml, Dune | `~/impulse/impulse-ocaml/` |
+| **`impulse-verification`** | **Layer 2 — Polyglot Verification & Differential Fuzzing Suite**. Four-way polyglot validation suite (`tools/four_way_validation.py`), contract-guided differential fuzzer (`tools/fuzz_vm_contracts.py`), and cross-compiler parity harness, with pinned `spec/` submodule. | Python, Java | `~/impulse/impulse-verification/` |
 | **`impulse-benchmarks`** | **Performance & Macro Benchmark Suite**. Reproducible benchmark harnesses comparing Impulse Graph against Neo4j, NetworkX, PyTorch Geometric, MATPOWER, and OpenFGA. | Java (JMH), C++ (Google Bench), Python | `~/impulse/impulse-benchmarks/` |
 | **`impulse-website`** | **Documentation Portal & Landing Page**. Official documentation site (`docs.impulsegraph.io`) built with Material for MkDocs. | Markdown, MkDocs Material, YAML | `~/impulse/impulse-website/` |
 | **`impulse-platform`** | **Enterprise Cloud Infrastructure**. Standalone Spring Boot gRPC server, Kafka WAL ingestion, GCS/S3 cloud snapshot sync, Kubernetes leader election, and RocksDB local persistence. | Java 25, Spring Boot, K8s, Kafka | `~/impulse/impulse-platform/` |
@@ -196,9 +197,15 @@ mvn clean test
 cat docs/FORMAT_SPECIFICATION.md
 ```
 
-### Developer Tools (`~/impulse/impulse-graph-tooling/`)
+### Developer CLI Tools (`~/impulse/impulse-graph-core/impulse-cli/`)
 ```bash
-cmake -B build && cmake --build build
+cargo build --release
+./target/release/impulse-graph inspect --file snapshot.imps
+```
+
+### Four-Way Polyglot VM Validation Suite (`~/impulse/impulse-verification/`)
+```bash
+python3 impulse-verification/tools/four_way_validation.py
 ```
 
 ### Documentation Site (`~/impulse/impulse-website/`)

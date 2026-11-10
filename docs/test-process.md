@@ -126,10 +126,20 @@ cd impulse-rust
 cargo test
 ```
 
-### Spec VM Assembly Test Runner (`impulse-graph-spec`)
+### CLI Tooling (`impulse-cli`)
 ```bash
-cd impulse-graph-spec
-python3 tools/run_vm_asm_suite.py
+cd impulse-cli
+cargo test
+```
+
+### Spec VM Assembly Test Runner (`spec/`)
+```bash
+python3 spec/tools/run_vm_asm_suite.py
+```
+
+### Four-Way Polyglot Validation (`impulse-verification`)
+```bash
+python3 ../impulse-verification/tools/four_way_validation.py
 ```
 
 ### Python Bindings (`impulse-python`)
