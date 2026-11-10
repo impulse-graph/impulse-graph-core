@@ -1,8 +1,8 @@
-# Impulse Graph Tooling (`impulse-graph-tooling`)
+# Impulse Graph CLI (`impulse-cli`)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../LICENSE)
 
-Unified developer utilities, dataset snapshot builder, DSL compiler suite, layout optimizer, synthetic graph data generator, and execution runtime for the **Impulse Graph Engine** (Spec v0.9.0).
+Unified developer utilities, dataset snapshot builder, DSL compiler suite, layout optimizer, synthetic graph data generator, and execution runtime for the **Impulse Graph Engine** (`impulse-graph-core/impulse-cli/`, Spec v0.9.0).
 
 - **Canonical Binary**: `impulse-graph`
 - **Symlink / CLI Alias**: `impulse`
