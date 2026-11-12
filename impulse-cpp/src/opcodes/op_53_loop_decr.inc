@@ -13,36 +13,34 @@
 #define OP_53_CONTRACT_DEFINED
 #define OP_53_DEFINED_FLAGS        0x00u
 #define OP_53_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_INT64))
+#define OP_53_COV_SITE_ID          1u
 #endif
 
 // Opcode 0x53: OP_LOOP_DECR
 op_LOOP_DECR: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    VALIDATE_REG(dst);
+    const uint16_t dst = IMP_INST_DST(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+
     int64_t val = static_cast<int64_t>(vm_state->registers[dst]);
     val--;
     vm_state->registers[dst] = static_cast<uint64_t>(val);
     vm_state->register_types[dst] = TYPE_INT64;
-    if (val == 0) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
-    bool taken = (val > 0);
+    IMP_VM_SET_ZF(vm_state, val == 0);
+
+    const bool taken = (val > 0);
     IMPULSE_TESTCASE(taken);
     IMPULSE_TESTCASE(val == 0);
-    if (IMPULSE_UNLIKELY(g_vm_branch_cov_fast)) {
-        impulse_vm_branch_coverage_record(static_cast<uint32_t>(vm_state->pc), OP_LOOP_DECR, 1u,
-                                          IMPULSE_COV_KIND_TWO_WAY, IMPULSE_COV_BOTH,
-                                          taken ? 0u : 1u);
-    }
+    IMPULSE_TESTCASE(val < 0);
+    IMP_VM_COV_BRANCH(vm_state, OP_LOOP_DECR, OP_53_COV_SITE_ID, taken);
     if (taken) {
-        int32_t offset = static_cast<int32_t>(inst.payload);
+        const int32_t offset = IMP_INST_PAYLOAD_I32(inst);
+        IMPULSE_TESTCASE(offset < 0);
         vm_state->pc += offset;
     } else {
         vm_state->pc++;
     }
     DISPATCH();
 }
-

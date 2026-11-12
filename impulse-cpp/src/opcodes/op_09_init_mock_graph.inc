@@ -23,22 +23,31 @@
  */
 #ifndef OP_09_CONTRACT_DEFINED
 #define OP_09_CONTRACT_DEFINED 1
+#define OP_09_MAX_REL_SLOTS   16u
+#define OP_09_MAX_MOCK_NODES  1048576u
 #endif
 
 // Opcode 0x09: OP_INIT_MOCK_GRAPH
 op_INIT_MOCK_GRAPH: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];
-    uint16_t slot_id = inst.dst_reg;
-    uint16_t offset_bytes = inst.payload & 0xFFFF;
-    uint16_t node_count = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t slot_id = IMP_INST_DST(inst);
+    const uint16_t offset_bytes = IMP_INST_LOW16(inst);
+    const uint16_t node_count = IMP_INST_HIGH16(inst);
 
-    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_TESTCASE(vm_state->query_context->inline_data_ptr == nullptr);
+    if (!vm_state->query_context->inline_data_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
-    if (slot_id >= 16 || node_count > 1048576) {
+    if (slot_id >= OP_09_MAX_REL_SLOTS || slot_id >= vm_state->query_context->slots.size()) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
-    uint64_t req_offsets_bytes = static_cast<uint64_t>(offset_bytes) + (static_cast<uint64_t>(node_count) + 1) * sizeof(uint32_t);
+    IMPULSE_ASSERT(slot_id < vm_state->query_context->slots.size());
+    IMPULSE_TESTCASE(slot_id == 0u);
+    IMPULSE_TESTCASE(node_count == 0u);
+
+    uint64_t req_offsets_bytes = static_cast<uint64_t>(offset_bytes) + (static_cast<uint64_t>(node_count) + 1ULL) * sizeof(uint32_t);
     if (req_offsets_bytes > vm_state->query_context->inline_data_bytes) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
@@ -49,6 +58,7 @@ op_INIT_MOCK_GRAPH: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         uint32_t total_edges = offsets[node_count];
+        IMPULSE_TESTCASE(total_edges == 0u);
         for (uint32_t u = 0; u < node_count; ++u) {
             if (offsets[u] > offsets[u + 1] || offsets[u + 1] > total_edges) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -62,13 +72,13 @@ op_INIT_MOCK_GRAPH: {
 
         uint32_t max_target_id = 0;
         for (uint32_t e = 0; e < total_edges; ++e) {
-            if (targets[e] >= 1048576) {
+            if (targets[e] >= OP_09_MAX_MOCK_NODES) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
             if (targets[e] > max_target_id) max_target_id = targets[e];
         }
-        uint32_t csc_node_count = (total_edges > 0) ? std::max(static_cast<uint32_t>(node_count), max_target_id + 1) : node_count;
-        if (csc_node_count > 1048576) {
+        uint32_t csc_node_count = (total_edges > 0) ? std::max(static_cast<uint32_t>(node_count), max_target_id + 1u) : static_cast<uint32_t>(node_count);
+        if (csc_node_count > OP_09_MAX_MOCK_NODES) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
 
@@ -85,6 +95,7 @@ op_INIT_MOCK_GRAPH: {
         for (uint32_t i = 0; i < csc_node_count; ++i) {
             slot.dynamic_csc_offsets[i + 1] = slot.dynamic_csc_offsets[i] + in_degrees[i];
         }
+        IMPULSE_ASSERT(slot.dynamic_csc_offsets[csc_node_count] == total_edges);
 
         slot.dynamic_csc_targets.clear();
         slot.dynamic_csc_targets.resize(total_edges, 0);
@@ -95,6 +106,7 @@ op_INIT_MOCK_GRAPH: {
         for (uint32_t u = 0; u < node_count; ++u) {
             uint32_t start = offsets[u];
             uint32_t end = offsets[u + 1];
+            IMPULSE_ASSERT(start <= end);
             for (uint32_t e = start; e < end; ++e) {
                 uint32_t v = targets[e];
                 slot.dynamic_csc_targets[cur_pos[v]++] = u;

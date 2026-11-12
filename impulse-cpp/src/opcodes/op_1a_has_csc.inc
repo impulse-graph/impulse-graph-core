@@ -23,27 +23,29 @@
  */
 #ifndef OP_1A_CONTRACT_DEFINED
 #define OP_1A_CONTRACT_DEFINED 1
+#define OP_1A_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x1A: OP_HAS_CSC
 op_HAS_CSC: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t rel = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t rel = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
     bool present = false;
+    IMPULSE_TESTCASE(rel >= vm_state->query_context->slots.size());
     if (rel < vm_state->query_context->slots.size()) {
         const auto& slot = vm_state->query_context->slots[rel];
         present = (slot.csc_offsets_ptr != nullptr && slot.csc_targets_ptr != nullptr);
     }
 
-    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->registers[dst] = present ? 1u : 0u;
     vm_state->register_types[dst] = TYPE_INT64;
-
-    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, !present);
 
     vm_state->pc++;
     DISPATCH();

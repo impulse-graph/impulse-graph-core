@@ -10,23 +10,25 @@
  */
 #ifndef OP_40_CONTRACT_DEFINED
 #define OP_40_CONTRACT_DEFINED
-#define OP_40_DEFINED_FLAGS        0x00u
-#define OP_40_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
+#define OP_40_DEFINED_FLAGS          0x00u
+#define OP_40_NEIGHBOR_SAMPLE_ROUNDS 2u
+#define OP_40_OUTPUT_DST_TYPES       (IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR))
 #endif
 
 // Opcode 0x40: OP_CC_AFFOREST
 op_CC_AFFOREST: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t rel = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t rel = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    if (rel >= vm_state->query_context->slots.size()) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+    IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
     if (!slot.offsets_ptr || !slot.targets_ptr) {
+        IMPULSE_TESTCASE(true);
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
@@ -40,12 +42,14 @@ op_CC_AFFOREST: {
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
     int handle = static_cast<int>(vm_state->registers[dst]);
+    IMPULSE_ASSERT(handle >= 0 && static_cast<size_t>(handle) < vm_state->query_context->node_vectors.size());
     auto& comp = vm_state->query_context->node_vectors[handle];
     size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
     size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;
     if (slot.csc_node_count > N) N = slot.csc_node_count;
     N = std::min(N, comp.size());
     vm_state->query_context->node_vector_lengths[handle] = N;
+    IMPULSE_TESTCASE(N == 0);
 
 #if defined(_OPENMP)
     #pragma omp parallel for schedule(static)
@@ -88,7 +92,7 @@ op_CC_AFFOREST: {
         }
     };
 
-    for (size_t r = 0; r < 2; ++r) {
+    for (size_t r = 0; r < OP_40_NEIGHBOR_SAMPLE_ROUNDS; ++r) {
 #if defined(_OPENMP)
         #pragma omp parallel for schedule(static, 2048)
 #endif
@@ -96,6 +100,7 @@ op_CC_AFFOREST: {
             if (u < slot.node_count) {
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end = slot.get_csr_offset(u + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 uint64_t deg = end - start;
                 if (r < deg) {
                     uint64_t v = slot.get_csr_target(start + r);
@@ -114,6 +119,7 @@ op_CC_AFFOREST: {
         if (u < slot.node_count) {
             uint64_t start = slot.get_csr_offset(u);
             uint64_t end = slot.get_csr_offset(u + 1);
+            IMPULSE_WELL_FORMED_ASSERT(start <= end);
             uint64_t deg = end - start;
             for (uint64_t i = 0; i < deg; ++i) {
                 uint64_t v = slot.get_csr_target(start + i);
@@ -131,7 +137,7 @@ op_CC_AFFOREST: {
         comp[u] = find_root_u64(u, comp);
     }
 
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

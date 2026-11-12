@@ -19,6 +19,7 @@
 #ifndef OP_38_CONTRACT_DEFINED
 #define OP_38_CONTRACT_DEFINED
 #define OP_38_DEFINED_FLAGS        0x01u
+#define OP_38_MODE_IMM_FACTOR      0u
 #define OP_38_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_DOUBLE))
 #define OP_38_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR))
 #endif
@@ -26,16 +27,21 @@
 // Opcode 0x38: OP_FLOAT_VECTOR_SCALE
 op_FLOAT_VECTOR_SCALE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
     float factor = 1.0f;
-    if (inst.flags == 0) {
-        factor = reinterpret_cast<const float&>(inst.payload);
+    IMPULSE_TESTCASE(IMP_INST_FLAGS(inst) == OP_38_MODE_IMM_FACTOR);
+    if (IMP_INST_FLAGS(inst) == OP_38_MODE_IMM_FACTOR) {
+        uint32_t raw_payload = IMP_INST_PAYLOAD_U32(inst);
+        std::memcpy(&factor, &raw_payload, sizeof(float));
     } else {
-        uint16_t src_reg = inst.payload & 0xFFFF;
+        const uint16_t src_reg = IMP_INST_LOW16(inst);
         VALIDATE_REG(src_reg);
+        IMPULSE_ASSERT(src_reg < IMP_VM_GPR_COUNT);
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_38_ALLOWED_SRC_TYPES);
         if (vm_state->register_types[src_reg] == TYPE_FLOAT) {
             factor = reinterpret_cast<const float&>(vm_state->registers[src_reg]);
@@ -45,6 +51,7 @@ op_FLOAT_VECTOR_SCALE: {
             factor = static_cast<float>(static_cast<int64_t>(vm_state->registers[src_reg]));
         }
     }
+    IMPULSE_TESTCASE(factor == 0.0f);
 
     int handle = static_cast<int>(vm_state->registers[dst]);
     if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 && handle < static_cast<int>(vm_state->query_context->float_vectors.size())) {

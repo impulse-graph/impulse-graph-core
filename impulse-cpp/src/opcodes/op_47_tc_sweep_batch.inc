@@ -15,7 +15,10 @@
 // Opcode 0x47: OP_TC_SWEEP_BATCH
 op_TC_SWEEP_BATCH: {
     const auto& inst = bytecode[vm_state->pc];
-    VALIDATE_REG(inst.dst_reg);
+    const uint16_t dst = IMP_INST_DST(inst);
+    VALIDATE_REG(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(dst == 0u);
     vm_state->pc++;
     DISPATCH();
 }

@@ -30,15 +30,19 @@
 // Opcode 0x24: OP_MASK_AND
 op_MASK_AND: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFF;
-    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_U8_0(inst);
+    const uint16_t src2 = IMP_INST_U8_1(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_24_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_24_ALLOWED_AUX1_TYPES);
+    IMPULSE_TESTCASE(src1 == src2);
+    IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
     int h1 = static_cast<int>(vm_state->registers[src1]);
     int h2 = static_cast<int>(vm_state->registers[src2]);
@@ -48,7 +52,8 @@ op_MASK_AND: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        vm_state->registers[dst] = h_dst;
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
+        vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -61,8 +66,7 @@ op_MASK_AND: {
         bs_dst.words[w] = val;
         if (val != 0) is_empty = false;
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
     vm_state->pc++;
     DISPATCH();
 }

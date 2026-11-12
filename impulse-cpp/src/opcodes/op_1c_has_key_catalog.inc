@@ -23,25 +23,26 @@
  */
 #ifndef OP_1C_CONTRACT_DEFINED
 #define OP_1C_CONTRACT_DEFINED 1
+#define OP_1C_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x1C: OP_HAS_KEY_CATALOG
 op_HAS_KEY_CATALOG: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t domain_id = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t domain_id = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
 
     bool present = true;
+    IMPULSE_TESTCASE(vm_state->query_context == nullptr);
     if (vm_state->query_context && domain_id < vm_state->query_context->string_vectors.size()) {
         present = !vm_state->query_context->string_vectors[domain_id].empty();
     }
 
-    vm_state->registers[dst] = present ? 1 : 0;
+    vm_state->registers[dst] = present ? 1u : 0u;
     vm_state->register_types[dst] = TYPE_INT64;
-
-    if (!present) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, !present);
 
     vm_state->pc++;
     DISPATCH();

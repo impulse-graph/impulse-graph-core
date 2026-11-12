@@ -32,20 +32,26 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_BF_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_SCATTER_REDUCE: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
                         float val = s_regs[sDst];
                         uint16_t attrId = sPayloadLow;
                         uint16_t monoid = sPayloadHigh;
-                        if (attrId < vm_state->query_context->float_vectors.size() && vm_state->query_context->float_vectors_allocated[attrId]) {
+                        const bool has_vec = (attrId < vm_state->query_context->float_vectors.size() &&
+                                              vm_state->query_context->float_vectors_allocated[attrId]);
+                        IMPULSE_TESTCASE(has_vec);
+                        if (has_vec) {
                             auto& vec = vm_state->query_context->float_vectors[attrId];
                             if (actualTarget < vec.size()) {
                                 float current = vec[actualTarget];
                                 float next = current;
+                                IMPULSE_TESTCASE(monoid != IMP_STREAM_MONOID_SUM);
                                 switch (monoid) {
-                                    case 0: next = current + val; break;
-                                    case 1: next = std::max(current, val); break;
-                                    case 2: next = std::min(current, val); break;
+                                    case IMP_STREAM_MONOID_SUM: next = current + val; break;
+                                    case IMP_STREAM_MONOID_MAX: next = std::max(current, val); break;
+                                    case IMP_STREAM_MONOID_MIN: next = std::min(current, val); break;
                                 }
                                 vec[actualTarget] = next;
                             }

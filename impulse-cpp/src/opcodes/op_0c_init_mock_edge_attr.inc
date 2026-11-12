@@ -23,11 +23,14 @@
  */
 #ifndef OP_0C_CONTRACT_DEFINED
 #define OP_0C_CONTRACT_DEFINED 1
+#define OP_0C_IS_NODE_ATTR false
 #endif
 
 // Opcode 0x0C: OP_INIT_MOCK_EDGE_ATTR
 op_INIT_MOCK_EDGE_ATTR: {
-    impulse_vm_status_t st = execute_init_mock_attr<false>(bytecode, vm_state);
+    IMPULSE_ASSERT(vm_state != nullptr);
+    impulse_vm_status_t st = execute_init_mock_attr<OP_0C_IS_NODE_ATTR>(bytecode, vm_state);
+    IMPULSE_TESTCASE(st != IMPULSE_VM_OK);
     if (st != IMPULSE_VM_OK) return st;
     vm_state->pc++;
     DISPATCH();

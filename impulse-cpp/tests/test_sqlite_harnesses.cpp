@@ -6,14 +6,19 @@
  *        3. Deterministic Countdown Fault-Injection Sweep (SQLite test_malloc.c + fault.c)
  *        4. Bytecode-Level Branch Coverage Verification (SQLite VdbeCoverage / test_vdbecov.c)
  *        5. Differential Optimizer Fuzzing across IMPULSE_OPT_* Masks (SQLite test/optfuzz.c)
+ *        6. Opcode Macro & IMPULSE_TESTCASE Dual-Direction Boundary Sweep (SQLite testcase() stats)
  */
 
 #include "impulse_assert.h"
+#include "impulse_opcode_macros.h"
 #include "impulse_hexio.h"
 #include "impulse_graph.h"
 #include "impulse_vm.h"
 #include "impulse_compiler.hpp"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -239,7 +244,7 @@ static void test_srcck1_static_side_effect_scanner() {
         for (const auto& entry : fs::recursive_directory_iterator(dir)) {
             if (!entry.is_regular_file()) continue;
             auto ext = entry.path().extension().string();
-            if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".c") continue;
+            if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".c" && ext != ".inc") continue;
 
             std::ifstream ifs(entry.path());
             std::stringstream buffer;
@@ -695,6 +700,146 @@ static void test_differential_optimizer_fuzzing() {
     printf("  [PASS] test_differential_optimizer_fuzzing\n\n");
 }
 
+// ============================================================================
+// 6. Opcode Macro & IMPULSE_TESTCASE Dual-Direction Boundary Sweep
+// ============================================================================
+
+static void test_opcode_macro_and_testcase_boundary_sweep() {
+    printf("--- [Harness 6] Opcode Macro & IMPULSE_TESTCASE Dual-Direction Boundary Sweep ---\n");
+
+    // 1. Unit-verify impulse_opcode_macros.h bit-unpacking & alignment helpers
+    static_assert(IMP_U32_BYTE0(0xAABBCCDDu) == 0xDDu, "IMP_U32_BYTE0");
+    static_assert(IMP_U32_BYTE1(0xAABBCCDDu) == 0xCCu, "IMP_U32_BYTE1");
+    static_assert(IMP_U32_BYTE2(0xAABBCCDDu) == 0xBBu, "IMP_U32_BYTE2");
+    static_assert(IMP_U32_BYTE3(0xAABBCCDDu) == 0xAAu, "IMP_U32_BYTE3");
+    static_assert(IMP_U32_LOW16(0xAABBCCDDu) == 0xCCDDu, "IMP_U32_LOW16");
+    static_assert(IMP_U32_HIGH16(0xAABBCCDDu) == 0xAABBu, "IMP_U32_HIGH16");
+    static_assert(IMP_PACK_U16X2(0xCCDDu, 0xAABBu) == 0xAABBCCDDu, "IMP_PACK_U16X2");
+    static_assert(IMP_WORD_INDEX(0) == 0u, "IMP_WORD_INDEX(0)");
+    static_assert(IMP_WORD_INDEX(63) == 0u, "IMP_WORD_INDEX(63)");
+    static_assert(IMP_WORD_INDEX(64) == 1u, "IMP_WORD_INDEX(64)");
+    static_assert(IMP_LANE_MASK_FOR_COUNT(0u) == 0ULL, "IMP_LANE_MASK_FOR_COUNT(0)");
+    static_assert(IMP_LANE_MASK_FOR_COUNT(64u) == IMP_ALL_LANES_MASK64, "IMP_LANE_MASK_FOR_COUNT(64)");
+    static_assert(IMP_VALIDITY_PADDED_BYTES(0) == 0ULL, "IMP_VALIDITY_PADDED_BYTES(0)");
+    static_assert(IMP_VALIDITY_PADDED_BYTES(1) == 128ULL, "IMP_VALIDITY_PADDED_BYTES(1)");
+    static_assert(IMP_VALIDITY_PADDED_BYTES(1024) == 128ULL, "IMP_VALIDITY_PADDED_BYTES(1024)");
+    static_assert(IMP_VALIDITY_PADDED_BYTES(1025) == 256ULL, "IMP_VALIDITY_PADDED_BYTES(1025)");
+    static_assert(IMP_ATTR_IS_NULLABLE(0x86u), "IMP_ATTR_IS_NULLABLE");
+    static_assert(IMP_ATTR_BASE_TYPE(0x86u) == IMP_TYPE_CODE_FLOAT32, "IMP_ATTR_BASE_TYPE");
+
+    // 2. Build a multi-relation snapshot with CSR, CSC, and nullable + non-nullable attributes
+    const char* snap_path = "test_opcode_sweep.imps";
+    {
+        impulse_writer_t* w = impulse_writer_create(snap_path, 0);
+        assert(w != nullptr);
+        assert(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Bus") == IMPULSE_OK);
+
+        // 4 nodes: 0->{1,2}, 1->{2}, 2->{}, 3->{0}  (node 2 has out-degree 0 to hit empty-neighbor boundary!)
+        uint32_t offsets[5] = {0, 2, 3, 3, 4};
+        uint32_t targets[4] = {1, 2, 2, 0};
+        assert(impulse_writer_add_relation(w, 0, 0, IMPULSE_ENC_RAW, 4, 4, IMP_REL_FEATURE_INCLUDE_CSC,
+                                           offsets, sizeof(offsets),
+                                           targets, sizeof(targets)) == IMPULSE_OK);
+        float weights[4] = {1.5f, -2.0f, 0.0f, 4.25f};
+        assert(impulse_writer_add_attribute(w, 0, "weight", IMP_TYPE_CODE_FLOAT32, 1,
+                                            weights, sizeof(weights), nullptr, 0) == IMPULSE_OK);
+        assert(impulse_writer_finalize(w) == IMPULSE_OK);
+        impulse_writer_destroy(w);
+    }
+
+    impulse_test_control(IMPULSE_TESTCTRL_NEVER_CORRUPT, 1);
+    impulse_test_control(IMPULSE_TESTCTRL_TESTCASE_STATS, 0); // reset & enable testcase() counters
+
+    impulse_status_t open_st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(snap_path, &open_st);
+    assert(snap != nullptr && open_st == IMPULSE_OK);
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+    assert(ctx != nullptr);
+
+    // 3. Negative boundary probes: null context, out-of-range GPR (R64), boundary GPR (R63), out-of-range relation slot
+    {
+        impulse_vm_state_t null_ctx_state{};
+        null_ctx_state.query_context = nullptr;
+        impulse_instruction_t need_ctx_prog[] = {
+            {OP_CSR_WALK, 0, 1, IMP_PACK_U16X2(0u, 0u)},
+            {OP_HALT, 0, 0, 0u}
+        };
+        assert(impulse_vm_execute(need_ctx_prog, 2, &null_ctx_state, 0) == IMPULSE_VM_ERR_NULL_SNAPSHOT);
+
+        impulse_vm_state_t bad_reg_state{};
+        bad_reg_state.query_context = ctx;
+        impulse_instruction_t bad_dst_prog[] = {
+            {OP_LOAD_CONST_INT, 0, 64, 1u}, // dst == 64 (exact IMP_VALIDATE_GPR boundary!)
+            {OP_HALT, 0, 0, 0u}
+        };
+        assert(impulse_vm_execute(bad_dst_prog, 2, &bad_reg_state, 0) == IMPULSE_VM_ERR_INVALID_REGISTER);
+
+        impulse_vm_state_t max_reg_state{};
+        max_reg_state.query_context = ctx;
+        impulse_instruction_t max_dst_prog[] = {
+            {OP_LOAD_CONST_INT, 0, 63, 42u}, // dst == 63 (valid upper GPR boundary!)
+            {OP_HALT, 0, 63, 0u}
+        };
+        assert(impulse_vm_execute(max_dst_prog, 2, &max_reg_state, 0) == IMPULSE_VM_OK);
+        assert(max_reg_state.registers[63] == 42ULL);
+
+        impulse_vm_state_t bad_rel_state{};
+        bad_rel_state.query_context = ctx;
+        impulse_instruction_t bad_rel_prog[] = {
+            {OP_INIT_INPUT_NODE, 0, 0, 0u},
+            {OP_CSR_WALK, 0, 1, IMP_PACK_U16X2(0u, 1u)}, // rel == slots.size() (1) -> exact OOB boundary!
+            {OP_HALT, 0, 1, 0u}
+        };
+        assert(impulse_vm_execute(bad_rel_prog, 3, &bad_rel_state, 0) == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+    }
+
+    // 4. Positive dual-direction sweep across CSR/CSC walks (non-empty seed=0 AND empty seed=2),
+    //    set algebra, vector math, register movement/swap, and bitset collection
+    for (uint64_t seed : {0ULL, 2ULL}) {
+        impulse_vm_context_reset(ctx);
+        impulse_vm_state_t st{};
+        st.query_context = ctx;
+        impulse_instruction_t sweep_prog[] = {
+            {OP_INIT_INPUT_NODE, 0, 0, 0u},
+            {OP_CSR_WALK,        0, 1, IMP_PACK_U16X2(0u, 0u)},
+            {OP_CSC_WALK,        0, 2, IMP_PACK_U16X2(0u, 0u)},
+            {OP_SET_UNION,       0, 3, IMP_PACK_U16X2(1u, 2u)},
+            {OP_SET_INTERSECT,   0, 4, IMP_PACK_U16X2(1u, 2u)},
+            {OP_SET_DIFFERENCE,  0, 5, IMP_PACK_U16X2(3u, 4u)},
+            {OP_FRONTIER_DIFF,   0, 5, IMP_PACK_U8X4(3u, 4u, 0u, 0u)},
+            {OP_SET_CARDINALITY, 0, 6, 1u}, // seed=0 -> non-zero (ZF=0), seed=2 -> 0 (ZF=1)!
+            {OP_LOAD_CONST_FLOAT,0, 7, 0xC0800000u}, // -4.0f
+            {OP_VEC_MATH_UNARY,  0, 8, IMP_PACK_U8X4(7u, 1u, 0u, 0u)}, // abs(-4.0f) = 4.0f
+            {OP_VEC_MATH_BINARY, 0, 9, IMP_PACK_U8X4(8u, 8u, 0u, 0u)}, // 4.0f + 4.0f = 8.0f
+            {OP_MOV,             0, 10, 9u},
+            {OP_SWAP_REG,        0, 9, 10u},
+            {OP_COLLECT_BITSET,  0, 6, 3u},
+            {OP_HALT,            0, 6, 0u}
+        };
+        assert(impulse_vm_execute(sweep_prog, sizeof(sweep_prog) / sizeof(sweep_prog[0]), &st, seed) == IMPULSE_VM_OK);
+    }
+
+    uint64_t tc_hits = 0;
+    uint32_t tc_sites = 0;
+    uint32_t tc_both = 0;
+    impulse_test_control(IMPULSE_TESTCTRL_TESTCASE_STATS, 1, &tc_hits, &tc_sites, &tc_both);
+    impulse_test_control(IMPULSE_TESTCTRL_TESTCASE_STATS, 2); // disable testcase() recording
+    impulse_test_control(IMPULSE_TESTCTRL_NEVER_CORRUPT, 0);
+
+    impulse_vm_context_destroy(ctx);
+    impulse_snapshot_close(snap);
+    std::remove(snap_path);
+
+    printf("  IMPULSE_TESTCASE stats: total_true_hits=%llu, distinct_sites=%u, dual_direction_sites=%u.\n",
+           (unsigned long long)tc_hits, tc_sites, tc_both);
+#if IMPULSE_TESTCASE_ACTIVE
+    assert(tc_hits > 0);
+    assert(tc_sites >= 15);
+    assert(tc_both >= 4);
+#endif
+    printf("  [PASS] test_opcode_macro_and_testcase_boundary_sweep\n\n");
+}
+
 int main() {
     printf("=========================================================================\n");
     printf("       IMPULSE GRAPH C++ SQLITE-STYLE VERIFICATION HARNESS SUITE         \n");
@@ -705,6 +850,7 @@ int main() {
     test_deterministic_fault_injection_sweep();
     test_vm_bytecode_branch_coverage();
     test_differential_optimizer_fuzzing();
+    test_opcode_macro_and_testcase_boundary_sweep();
 
     printf("=========================================================================\n");
     printf("            ALL SQLITE-STYLE C++ VERIFICATION HARNESSES PASSED!          \n");

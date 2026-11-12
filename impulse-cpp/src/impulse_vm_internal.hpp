@@ -8,6 +8,7 @@
 
 #include "impulse_vm.h"
 #include "impulse_assert.h"
+#include "impulse_opcode_macros.h"
 #include "impulse_graph.h"
 #include "impulse_simd.h"
 #include <array>
@@ -53,10 +54,7 @@
   #define IMPULSE_VM_FORCE_INLINE inline
 #endif
 
-#define VALIDATE_REG(r) \
-    do { \
-        if ((r) >= 64) return IMPULSE_VM_ERR_INVALID_REGISTER; \
-    } while(0)
+#define VALIDATE_REG(r) IMP_VALIDATE_GPR(r)
 
 extern int g_vm_branch_cov_fast;
 
@@ -72,21 +70,21 @@ struct VmBitSet {
     }
 
     inline void set(size_t bit_idx) {
-        if (words && (bit_idx >> 6) < word_count) {
-            words[bit_idx >> 6] |= (1ULL << (bit_idx & 63));
+        if (words && IMP_WORD_INDEX(bit_idx) < word_count) {
+            words[IMP_WORD_INDEX(bit_idx)] |= IMP_BIT_MASK64(bit_idx);
         }
     }
 
     inline bool test(size_t bit_idx) const {
-        if (words && (bit_idx >> 6) < word_count) {
-            return (words[bit_idx >> 6] & (1ULL << (bit_idx & 63))) != 0;
+        if (words && IMP_WORD_INDEX(bit_idx) < word_count) {
+            return (words[IMP_WORD_INDEX(bit_idx)] & IMP_BIT_MASK64(bit_idx)) != 0;
         }
         return false;
     }
 
     inline void reset(size_t bit_idx) {
-        if (words && (bit_idx >> 6) < word_count) {
-            words[bit_idx >> 6] &= ~(1ULL << (bit_idx & 63));
+        if (words && IMP_WORD_INDEX(bit_idx) < word_count) {
+            words[IMP_WORD_INDEX(bit_idx)] &= ~IMP_BIT_MASK64(bit_idx);
         }
     }
 };
@@ -117,15 +115,15 @@ struct BoundRelationSlot {
     std::vector<uint32_t> dynamic_csc_targets;
 
     inline uint64_t csr_sentinel() const {
-        if (node_id_width == 2 || node_id_width == 16) return 0xFFFFULL;
-        if (node_id_width == 8 || node_id_width == 64) return UINT64_MAX;
-        return 0xFFFFFFFFULL;
+        if (node_id_width == 2 || node_id_width == 16) return IMP_SENTINEL_U16;
+        if (node_id_width == 8 || node_id_width == 64) return IMP_SENTINEL_U64;
+        return IMP_SENTINEL_U32;
     }
 
     inline uint64_t csc_sentinel() const {
-        if (csc_node_id_width == 2 || csc_node_id_width == 16) return 0xFFFFULL;
-        if (csc_node_id_width == 8 || csc_node_id_width == 64) return UINT64_MAX;
-        return 0xFFFFFFFFULL;
+        if (csc_node_id_width == 2 || csc_node_id_width == 16) return IMP_SENTINEL_U16;
+        if (csc_node_id_width == 8 || csc_node_id_width == 64) return IMP_SENTINEL_U64;
+        return IMP_SENTINEL_U32;
     }
 
     inline uint64_t get_raw_coo_src(uint64_t edge_idx) const {

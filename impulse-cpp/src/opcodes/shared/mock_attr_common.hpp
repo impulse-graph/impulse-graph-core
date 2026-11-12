@@ -6,6 +6,7 @@
 #define IMPULSE_VM_MOCK_ATTR_COMMON_HPP
 
 #include "../../impulse_vm_internal.hpp"
+#include "impulse_opcode_macros.h"
 
 template <bool IsNodeAttr>
 IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
@@ -13,14 +14,19 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
     impulse_vm_state_t* vm_state
 ) {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t attr_id = inst.dst_reg;
-    uint16_t src_reg = inst.payload & 0xFF;
-    uint16_t mask_reg = (inst.payload >> 8) & 0xFF;
-    VALIDATE_REG(src_reg);
+    uint16_t attr_id = IMP_INST_DST(inst);
+    uint16_t src_reg = IMP_INST_U8_0(inst);
+    uint16_t mask_reg = IMP_INST_U8_1(inst);
+    IMP_VALIDATE_GPR(src_reg);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    if (!(src_reg == 0 && (mask_reg == 0 || mask_reg >= 64) && vm_state->register_types[0] == TYPE_NULL)) {
+    const bool is_clear_null_r0 = (src_reg == 0u &&
+                                   (mask_reg == 0u || mask_reg >= IMP_VM_GPR_COUNT) &&
+                                   vm_state->register_types[0] == TYPE_NULL);
+    IMPULSE_TESTCASE(is_clear_null_r0);
+    if (!is_clear_null_r0) {
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, IMP_TYPES_NUMERIC_VEC);
     }
 
@@ -28,6 +34,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
         auto* ma_ptr = IsNodeAttr
             ? upsert_mock_node_attr(vm_state->query_context, attr_id)
             : upsert_mock_edge_attr(vm_state->query_context, attr_id);
+        IMPULSE_ASSERT(ma_ptr != nullptr);
         auto& mock_attr = *ma_ptr;
         mock_attr.float_data.clear();
         mock_attr.int_data.clear();
@@ -49,6 +56,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
                     len = (slot_bound > 0) ? std::min(len, slot_bound) : std::min<size_t>(len, VM_MOCK_INIT_CAP);
                 }
                 len = std::min<size_t>(len, VM_MOCK_INIT_CAP);
+                IMPULSE_TESTCASE(len == 0);
+                IMPULSE_TESTCASE(len == VM_MOCK_INIT_CAP);
                 mock_attr.float_data.resize(len, 0.0f);
                 mock_attr.int_data.resize(len, 0ULL);
                 if (len > 0) {
@@ -67,10 +76,12 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
                 size_t len = vm_state->query_context->node_vector_lengths[h];
                 if (len == 0 || len > vec.size()) len = vec.size();
                 len = std::min<size_t>(len, VM_MOCK_INIT_CAP);
+                IMPULSE_TESTCASE(len == 0);
                 mock_attr.int_data.resize(len, 0ULL);
                 if (len > 0) {
                     std::memcpy(mock_attr.int_data.data(), vec.data(), len * sizeof(uint64_t));
                 }
+                IMPULSE_TESTCASE(vm_state->query_context->float_vectors_allocated[h]);
                 if (vm_state->query_context->float_vectors_allocated[h]) {
                     const auto& fvec = vm_state->query_context->float_vectors[h];
                     size_t flen = std::min<size_t>(len, fvec.size());
@@ -81,7 +92,10 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
                 }
             }
         }
-        if (mask_reg < 64 && vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE) {
+        const bool has_valid_mask_reg = (mask_reg < IMP_VM_GPR_COUNT &&
+                                         vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE);
+        IMPULSE_TESTCASE(has_valid_mask_reg);
+        if (has_valid_mask_reg) {
             int h_mask = static_cast<int>(vm_state->registers[mask_reg]);
             if (h_mask >= 0 && static_cast<size_t>(h_mask) < VM_MAX_BITSET_HANDLES && vm_state->query_context->bitset_allocated[h_mask]) {
                 mock_attr.has_mask = true;

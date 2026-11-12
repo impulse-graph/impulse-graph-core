@@ -21,18 +21,23 @@
 
 // Opcode 0x69: OP_MOTIF_MATCH_3
 op_MOTIF_MATCH_3: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_69_ALLOWED_SRC_TYPES);
+    IMPULSE_TESTCASE(dst == src);
+    IMPULSE_TESTCASE(IMP_INST_HIGH16(inst) != 0u);
 
-    vm_state->registers[dst] = 0;
+    vm_state->registers[dst] = 0ULL;
     vm_state->register_types[dst] = TYPE_INT64;
-    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, true);
 
     vm_state->pc++;
     DISPATCH();

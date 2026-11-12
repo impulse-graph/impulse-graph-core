@@ -7,6 +7,15 @@
 #define IMPULSE_VM_LANE_WALK_COMMON_HPP
 
 #include "../../impulse_vm_internal.hpp"
+#include "impulse_opcode_macros.h"
+
+#define IMP_LANE_WALK_MAX_VIRTUAL_DEPTH     4
+#define IMP_LANE_FIXPOINT_DEFAULT_MAX_ITER  1024u
+#define IMP_WORDS_FOR_BITS(n)               (((static_cast<size_t>(n)) + IMP_WORD_BIT_MASK) >> IMP_WORD_BIT_SHIFT)
+#define IMP_SLOT_WIDTH_BYTES_U16            2u
+#define IMP_SLOT_WIDTH_BITS_U16             16u
+#define IMP_SLOT_WIDTH_BYTES_U64            8u
+#define IMP_SLOT_WIDTH_BITS_U64             64u
 
 template <bool IsCsc>
 IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
@@ -15,32 +24,33 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
 ) {
     {
         const auto& inst = bytecode[vm_state->pc];
-        uint16_t dst = inst.dst_reg;
-        uint16_t src_reg = inst.payload & 0xFFFF;
-        uint16_t rel_id = (inst.payload >> 16) & 0xFFFF;
-        uint8_t flags = inst.flags;
-        VALIDATE_REG(dst);
-        VALIDATE_REG(src_reg);
-        if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+        uint16_t dst = IMP_INST_DST(inst);
+        uint16_t src_reg = IMP_INST_LOW16(inst);
+        uint16_t rel_id = IMP_INST_HIGH16(inst);
+        IMP_VALIDATE_GPR(dst);
+        IMP_VALIDATE_GPR(src_reg);
+        IMP_REQUIRE_CONTEXT(vm_state);
+        IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
         if (vm_state->register_types[src_reg] != TYPE_LANE_FRONTIER) {
             return IMPULSE_VM_ERR_INVALID_REGISTER;
         }
         size_t h_src = static_cast<size_t>(vm_state->registers[src_reg]);
+        IMPULSE_TESTCASE(h_src >= VM_MAX_LANE_FRONTIER_HANDLES || h_src >= vm_state->query_context->lane_frontiers_count);
         if (h_src >= VM_MAX_LANE_FRONTIER_HANDLES || h_src >= vm_state->query_context->lane_frontiers_count) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
-        if (rel_id >= vm_state->query_context->slots.size()) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
+        IMP_REQUIRE_REL_SLOT(vm_state, rel_id);
 
         const auto& lf_src = vm_state->query_context->lane_frontiers[h_src];
         size_t n_nodes = resolve_multilane_node_count(vm_state->query_context, rel_id, lf_src.lanes.size());
         int h_dst = acquire_lane_frontier(vm_state->query_context, n_nodes, lf_src.num_lanes);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        IMPULSE_ASSERT(static_cast<size_t>(h_dst) < VM_MAX_LANE_FRONTIER_HANDLES);
 
         auto& lf_dst = vm_state->query_context->lane_frontiers[h_dst];
         lf_dst.edge_trip_active_mask = lf_src.edge_trip_active_mask;
+        IMPULSE_TESTCASE(lf_src.edge_trip_active_mask != 0);
         if (lf_src.edge_trip_active_mask != 0) {
             for (size_t r = 0; r < VM_MAX_REL_SLOTS; ++r) {
                 if (lf_src.edge_trip_active_mask & (1u << r)) {
@@ -55,8 +65,10 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
             }
         }
 
-        bool accumulate = (flags & (0x02 | IMPULSE_VM_OP_FLAG_ACCUMULATE)) != 0;
-        bool is_fixpoint = (flags & 0x04) != 0;
+        bool accumulate = IMP_INST_HAS_FLAG(inst, IMP_FLAG_ACCUMULATE_DEST | IMPULSE_VM_OP_FLAG_ACCUMULATE);
+        bool is_fixpoint = IMP_INST_HAS_FLAG(inst, IMP_FLAG_DELTA_FIXPOINT);
+        IMPULSE_TESTCASE(accumulate);
+        IMPULSE_TESTCASE(is_fixpoint);
         constexpr bool is_csc = IsCsc;
 
         if (accumulate || is_fixpoint) {
@@ -67,13 +79,13 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                 uint64_t dst_word = 0ULL;
                 while (word != 0ULL) {
                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                    size_t u = (w_idx << 6) + bit;
-                    word &= (word - 1ULL);
+                    size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                    word = IMP_CLEAR_LOWEST_BIT(word);
                     if (u < n_nodes) {
                         uint64_t val = lf_src.lanes[u] & lf_dst.active_mask;
                         if (val != 0ULL) {
                             lf_dst.lanes[u] = val;
-                            dst_word |= (1ULL << bit);
+                            dst_word |= IMP_BIT_MASK64(bit);
                         }
                     }
                 }
@@ -92,8 +104,9 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                       std::vector<uint64_t>& next_lanes,
                                       std::vector<uint64_t>& next_active_words,
                                       int depth) -> void {
-                if (cur_rel_id >= vm_state->query_context->slots.size() || depth > 4) return;
+                if (cur_rel_id >= vm_state->query_context->slots.size() || depth > IMP_LANE_WALK_MAX_VIRTUAL_DEPTH) return;
                 const auto& s = vm_state->query_context->slots[cur_rel_id];
+                IMPULSE_TESTCASE(s.is_virtual);
                 if (s.is_virtual) {
                     for (uint16_t cid : s.virtual_children) {
                         self(self, cid, cur_lanes, cur_active_words, next_lanes, next_active_words, depth + 1);
@@ -103,16 +116,19 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                 const std::vector<uint64_t>* cur_trip = (cur_rel_id < VM_MAX_REL_SLOTS && (lf_dst.edge_trip_active_mask & (1u << cur_rel_id)) != 0)
                     ? &lf_dst.edge_trip_masks[cur_rel_id]
                     : nullptr;
+                IMPULSE_TESTCASE(cur_trip != nullptr);
+                IMPULSE_TESTCASE(s.is_raw_coo);
+                IMPULSE_TESTCASE(!s.offsets_ptr && s.targets_ptr != nullptr);
                 const bool s_csr_fast_u32 = (!s.is_raw_coo && s.offsets_ptr != nullptr && s.targets_ptr != nullptr &&
-                                             s.edge_index_width != 8 && s.edge_index_width != 64 &&
-                                             s.node_id_width != 2 && s.node_id_width != 16 &&
-                                             s.node_id_width != 8 && s.node_id_width != 64);
+                                             s.edge_index_width != IMP_SLOT_WIDTH_BYTES_U64 && s.edge_index_width != IMP_SLOT_WIDTH_BITS_U64 &&
+                                             s.node_id_width != IMP_SLOT_WIDTH_BYTES_U16 && s.node_id_width != IMP_SLOT_WIDTH_BITS_U16 &&
+                                             s.node_id_width != IMP_SLOT_WIDTH_BYTES_U64 && s.node_id_width != IMP_SLOT_WIDTH_BITS_U64);
                 const bool s_csc_fast_u32 = (!s.dynamic_csc_offsets.empty() && !s.dynamic_csc_targets.empty()) ||
                                             (s.dynamic_csc_offsets.empty() &&
                                              s.csc_offsets_ptr != nullptr && s.csc_targets_ptr != nullptr &&
-                                             s.csc_edge_index_width != 8 && s.csc_edge_index_width != 64 &&
-                                             s.csc_node_id_width != 2 && s.csc_node_id_width != 16 &&
-                                             s.csc_node_id_width != 8 && s.csc_node_id_width != 64);
+                                             s.csc_edge_index_width != IMP_SLOT_WIDTH_BYTES_U64 && s.csc_edge_index_width != IMP_SLOT_WIDTH_BITS_U64 &&
+                                             s.csc_node_id_width != IMP_SLOT_WIDTH_BYTES_U16 && s.csc_node_id_width != IMP_SLOT_WIDTH_BITS_U16 &&
+                                             s.csc_node_id_width != IMP_SLOT_WIDTH_BYTES_U64 && s.csc_node_id_width != IMP_SLOT_WIDTH_BITS_U64);
 
                 if (!is_csc) {
                     if (s.is_raw_coo && s.offsets_ptr && s.targets_ptr) {
@@ -129,14 +145,14 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     WordT nw = static_cast<WordT>(prev | prop);
                                     if (nw != prev) {
                                         next_lanes[v] = static_cast<uint64_t>(nw);
-                                        next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                        next_active_words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                                     }
                                 }
                             }
                         }
                     } else if (s.offsets_ptr && s.targets_ptr) {
                         size_t csr_n = std::min<size_t>(s.node_count > 0 ? s.node_count : n_nodes, cur_lanes.size());
-                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csr_n + 63) / 64);
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), IMP_WORDS_FOR_BITS(csr_n));
                         if (s_csr_fast_u32 && !cur_trip) {
                             const auto* c_off = static_cast<const uint32_t*>(s.offsets_ptr);
                             const auto* c_tgt = static_cast<const uint32_t*>(s.targets_ptr);
@@ -144,8 +160,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                 uint64_t word = cur_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t u = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (u >= csr_n) break;
                                     WordT u_mask = static_cast<WordT>(cur_lanes[u]) & active_mask_w;
                                     if (u_mask == 0) continue;
@@ -158,7 +174,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                             WordT nw = static_cast<WordT>(prev | u_mask);
                                             if (nw != prev) {
                                                 next_lanes[v] = static_cast<uint64_t>(nw);
-                                                next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                                next_active_words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                                             }
                                         }
                                     }
@@ -169,8 +185,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                 uint64_t word = cur_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t u = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (u >= csr_n) break;
                                     WordT u_mask = static_cast<WordT>(cur_lanes[u]) & active_mask_w;
                                     if (u_mask == 0) continue;
@@ -185,7 +201,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                             WordT nw = static_cast<WordT>(prev | prop);
                                             if (nw != prev) {
                                                 next_lanes[v] = static_cast<uint64_t>(nw);
-                                                next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                                next_active_words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                                             }
                                         }
                                     }
@@ -194,24 +210,25 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         }
                     } else if (!s.offsets_ptr && s.targets_ptr) {
                         size_t csr_n = std::min<size_t>(s.node_count > 0 ? s.node_count : n_nodes, cur_lanes.size());
-                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csr_n + 63) / 64);
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), IMP_WORDS_FOR_BITS(csr_n));
                         uint64_t sent = s.csr_sentinel();
                         for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
                             uint64_t word = cur_active_words[w_idx];
                             while (word != 0ULL) {
                                 uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                size_t u = (w_idx << 6) + bit;
-                                word &= (word - 1ULL);
+                                size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                word = IMP_CLEAR_LOWEST_BIT(word);
                                 if (u >= csr_n) break;
                                 WordT u_mask = static_cast<WordT>(cur_lanes[u]) & active_mask_w;
                                 if (u_mask == 0) continue;
                                 uint64_t v = s.get_csr_target(u);
+                                IMPULSE_TESTCASE(v == sent);
                                 if (v != sent && v < next_lanes.size()) {
                                     WordT prev = static_cast<WordT>(next_lanes[v]);
                                     WordT nw = static_cast<WordT>(prev | u_mask);
                                     if (nw != prev) {
                                         next_lanes[v] = static_cast<uint64_t>(nw);
-                                        next_active_words[v >> 6] |= (1ULL << (v & 63));
+                                        next_active_words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                                     }
                                 }
                             }
@@ -223,7 +240,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         : (s.tgt_node_count > 0 ? static_cast<size_t>(s.tgt_node_count) : (s.node_count > 0 ? static_cast<size_t>(s.node_count) : n_nodes));
                     if (((s.csc_offsets_ptr && s.csc_targets_ptr) || !s.dynamic_csc_offsets.empty()) && !cur_trip) {
                         size_t csc_n = std::min<size_t>(csc_dom_n, cur_lanes.size());
-                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csc_n + 63) / 64);
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), IMP_WORDS_FOR_BITS(csc_n));
                         if (s_csc_fast_u32) {
                             const uint32_t* c_off = !s.dynamic_csc_offsets.empty()
                                 ? s.dynamic_csc_offsets.data()
@@ -234,12 +251,13 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                             size_t dyn_off_lim = s.dynamic_csc_offsets.size();
                             size_t dyn_tgt_lim = s.dynamic_csc_targets.size();
                             bool use_dyn = !s.dynamic_csc_offsets.empty();
+                            IMPULSE_TESTCASE(use_dyn);
                             for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
                                 uint64_t word = cur_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t v = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (v >= csc_n) break;
                                     WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
                                     if (v_mask == 0) continue;
@@ -252,7 +270,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                             WordT nw = static_cast<WordT>(prev | v_mask);
                                             if (nw != prev) {
                                                 next_lanes[u] = static_cast<uint64_t>(nw);
-                                                next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                                next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                             }
                                         }
                                     }
@@ -263,8 +281,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                 uint64_t word = cur_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t v = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (v >= csc_n) break;
                                     WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
                                     if (v_mask == 0) continue;
@@ -277,7 +295,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                             WordT nw = static_cast<WordT>(prev | v_mask);
                                             if (nw != prev) {
                                                 next_lanes[u] = static_cast<uint64_t>(nw);
-                                                next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                                next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                             }
                                         }
                                     }
@@ -286,24 +304,25 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         }
                     } else if (!s.csc_offsets_ptr && s.dynamic_csc_offsets.empty() && s.csc_targets_ptr && !cur_trip) {
                         size_t csc_n = std::min<size_t>(csc_dom_n, cur_lanes.size());
-                        size_t max_words = std::min<size_t>(cur_active_words.size(), (csc_n + 63) / 64);
+                        size_t max_words = std::min<size_t>(cur_active_words.size(), IMP_WORDS_FOR_BITS(csc_n));
                         uint64_t sent = s.csc_sentinel();
                         for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
                             uint64_t word = cur_active_words[w_idx];
                             while (word != 0ULL) {
                                 uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                size_t v = (w_idx << 6) + bit;
-                                word &= (word - 1ULL);
+                                size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                word = IMP_CLEAR_LOWEST_BIT(word);
                                 if (v >= csc_n) break;
                                 WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
                                 if (v_mask == 0) continue;
                                 uint64_t u = s.get_csc_target(v);
+                                IMPULSE_TESTCASE(u == sent);
                                 if (u != sent && u < next_lanes.size()) {
                                     WordT prev = static_cast<WordT>(next_lanes[u]);
                                     WordT nw = static_cast<WordT>(prev | v_mask);
                                     if (nw != prev) {
                                         next_lanes[u] = static_cast<uint64_t>(nw);
-                                        next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                        next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                     }
                                 }
                             }
@@ -322,7 +341,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                         WordT nw = static_cast<WordT>(prev | prop);
                                         if (nw != prev) {
                                             next_lanes[u] = static_cast<uint64_t>(nw);
-                                            next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                            next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                         }
                                     }
                                 }
@@ -344,7 +363,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                         WordT nw = static_cast<WordT>(prev | prop);
                                         if (nw != prev) {
                                             next_lanes[u] = static_cast<uint64_t>(nw);
-                                            next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                            next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                         }
                                     }
                                 }
@@ -355,6 +374,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         uint64_t sent = s.csr_sentinel();
                         for (size_t u = 0; u < csr_n; ++u) {
                             uint64_t v = s.get_csr_target(u);
+                            IMPULSE_TESTCASE(v == sent);
                             if (v != sent && v < cur_lanes.size()) {
                                 WordT v_mask = static_cast<WordT>(cur_lanes[v]) & active_mask_w;
                                 if (v_mask != 0) {
@@ -362,7 +382,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     WordT nw = static_cast<WordT>(prev | v_mask);
                                     if (nw != prev) {
                                         next_lanes[u] = static_cast<uint64_t>(nw);
-                                        next_active_words[u >> 6] |= (1ULL << (u & 63));
+                                        next_active_words[IMP_WORD_INDEX(u)] |= IMP_BIT_MASK64(u);
                                     }
                                 }
                             }
@@ -376,7 +396,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                 auto& next_delta = vm_state->query_context->scratch_lanes_b;
                 auto& delta_active_words = vm_state->query_context->scratch_active_words;
                 auto& next_delta_active_words = vm_state->query_context->scratch_active_words_b;
-                size_t num_words = (n_nodes + 63) / 64;
+                size_t num_words = IMP_WORDS_FOR_BITS(n_nodes);
                 delta.assign(n_nodes, 0ULL);
                 next_delta.assign(n_nodes, 0ULL);
                 delta_active_words.assign(num_words, 0ULL);
@@ -390,13 +410,14 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                     has_delta = true;
                     while (word != 0ULL) {
                         uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                        size_t u = (w_idx << 6) + bit;
-                        word &= (word - 1ULL);
+                        size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                        word = IMP_CLEAR_LOWEST_BIT(word);
                         if (u < n_nodes) {
                             delta[u] = lf_dst.lanes[u];
                         }
                     }
                 }
+                IMPULSE_TESTCASE(!has_delta);
 
                 auto emit_delta_node = [&](size_t tgt, WordT prop, bool& out_changed) {
                     if (tgt < n_nodes) {
@@ -404,17 +425,18 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         WordT newly_reached = static_cast<WordT>(prop & ~vis);
                         if (newly_reached != 0) {
                             lf_dst.lanes[tgt] = static_cast<uint64_t>(vis | newly_reached);
-                            lf_dst.active_words[tgt >> 6] |= (1ULL << (tgt & 63));
+                            lf_dst.active_words[IMP_WORD_INDEX(tgt)] |= IMP_BIT_MASK64(tgt);
                             next_delta[tgt] |= static_cast<uint64_t>(newly_reached);
-                            next_delta_active_words[tgt >> 6] |= (1ULL << (tgt & 63));
+                            next_delta_active_words[IMP_WORD_INDEX(tgt)] |= IMP_BIT_MASK64(tgt);
                             out_changed = true;
                         }
                     }
                 };
 
                 auto step_slot_delta = [&](auto&& self, uint16_t cur_rel_id, bool& out_changed, int depth) -> void {
-                    if (cur_rel_id >= vm_state->query_context->slots.size() || depth > 4) return;
+                    if (cur_rel_id >= vm_state->query_context->slots.size() || depth > IMP_LANE_WALK_MAX_VIRTUAL_DEPTH) return;
                     const auto& s = vm_state->query_context->slots[cur_rel_id];
+                    IMPULSE_TESTCASE(s.is_virtual);
                     if (s.is_virtual) {
                         for (uint16_t cid : s.virtual_children) {
                             self(self, cid, out_changed, depth + 1);
@@ -425,15 +447,15 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         ? &lf_dst.edge_trip_masks[cur_rel_id]
                         : nullptr;
                     const bool s_csr_fast_u32 = (!s.is_raw_coo && s.offsets_ptr != nullptr && s.targets_ptr != nullptr &&
-                                                 s.edge_index_width != 8 && s.edge_index_width != 64 &&
-                                                 s.node_id_width != 2 && s.node_id_width != 16 &&
-                                                 s.node_id_width != 8 && s.node_id_width != 64);
+                                                 s.edge_index_width != IMP_SLOT_WIDTH_BYTES_U64 && s.edge_index_width != IMP_SLOT_WIDTH_BITS_U64 &&
+                                                 s.node_id_width != IMP_SLOT_WIDTH_BYTES_U16 && s.node_id_width != IMP_SLOT_WIDTH_BITS_U16 &&
+                                                 s.node_id_width != IMP_SLOT_WIDTH_BYTES_U64 && s.node_id_width != IMP_SLOT_WIDTH_BITS_U64);
                     const bool s_csc_fast_u32 = (!s.dynamic_csc_offsets.empty() && !s.dynamic_csc_targets.empty()) ||
                                                 (s.dynamic_csc_offsets.empty() &&
                                                  s.csc_offsets_ptr != nullptr && s.csc_targets_ptr != nullptr &&
-                                                 s.csc_edge_index_width != 8 && s.csc_edge_index_width != 64 &&
-                                                 s.csc_node_id_width != 2 && s.csc_node_id_width != 16 &&
-                                                 s.csc_node_id_width != 8 && s.csc_node_id_width != 64);
+                                                 s.csc_edge_index_width != IMP_SLOT_WIDTH_BYTES_U64 && s.csc_edge_index_width != IMP_SLOT_WIDTH_BITS_U64 &&
+                                                 s.csc_node_id_width != IMP_SLOT_WIDTH_BYTES_U16 && s.csc_node_id_width != IMP_SLOT_WIDTH_BITS_U16 &&
+                                                 s.csc_node_id_width != IMP_SLOT_WIDTH_BYTES_U64 && s.csc_node_id_width != IMP_SLOT_WIDTH_BITS_U64);
 
                     if (!is_csc) {
                         if (s.is_raw_coo && s.offsets_ptr && s.targets_ptr) {
@@ -448,7 +470,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                             }
                         } else if (s.offsets_ptr && s.targets_ptr) {
                             size_t csr_n = std::min<size_t>(s.node_count > 0 ? s.node_count : n_nodes, delta.size());
-                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csr_n + 63) / 64);
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), IMP_WORDS_FOR_BITS(csr_n));
                             if (s_csr_fast_u32 && !cur_trip) {
                                 const auto* c_off = static_cast<const uint32_t*>(s.offsets_ptr);
                                 const auto* c_tgt = static_cast<const uint32_t*>(s.targets_ptr);
@@ -456,8 +478,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     uint64_t word = delta_active_words[w_idx];
                                     while (word != 0ULL) {
                                         uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                        size_t u = (w_idx << 6) + bit;
-                                        word &= (word - 1ULL);
+                                        size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                        word = IMP_CLEAR_LOWEST_BIT(word);
                                         if (u >= csr_n) break;
                                         WordT u_mask = static_cast<WordT>(delta[u]) & active_mask_w;
                                         if (u_mask == 0) continue;
@@ -473,8 +495,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     uint64_t word = delta_active_words[w_idx];
                                     while (word != 0ULL) {
                                         uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                        size_t u = (w_idx << 6) + bit;
-                                        word &= (word - 1ULL);
+                                        size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                        word = IMP_CLEAR_LOWEST_BIT(word);
                                         if (u >= csr_n) break;
                                         WordT u_mask = static_cast<WordT>(delta[u]) & active_mask_w;
                                         if (u_mask == 0) continue;
@@ -489,14 +511,14 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                             }
                         } else if (!s.offsets_ptr && s.targets_ptr) {
                             size_t csr_n = std::min<size_t>(s.node_count > 0 ? s.node_count : n_nodes, delta.size());
-                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csr_n + 63) / 64);
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), IMP_WORDS_FOR_BITS(csr_n));
                             uint64_t sent = s.csr_sentinel();
                             for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
                                 uint64_t word = delta_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t u = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (u >= csr_n) break;
                                     WordT u_mask = static_cast<WordT>(delta[u]) & active_mask_w;
                                     if (u_mask == 0) continue;
@@ -513,7 +535,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                             : (s.tgt_node_count > 0 ? static_cast<size_t>(s.tgt_node_count) : (s.node_count > 0 ? static_cast<size_t>(s.node_count) : n_nodes));
                         if (((s.csc_offsets_ptr && s.csc_targets_ptr) || !s.dynamic_csc_offsets.empty()) && !cur_trip) {
                             size_t csc_n = std::min<size_t>(csc_dom_n, delta.size());
-                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csc_n + 63) / 64);
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), IMP_WORDS_FOR_BITS(csc_n));
                             if (s_csc_fast_u32) {
                                 const uint32_t* c_off = !s.dynamic_csc_offsets.empty()
                                     ? s.dynamic_csc_offsets.data()
@@ -528,8 +550,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     uint64_t word = delta_active_words[w_idx];
                                     while (word != 0ULL) {
                                         uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                        size_t v = (w_idx << 6) + bit;
-                                        word &= (word - 1ULL);
+                                        size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                        word = IMP_CLEAR_LOWEST_BIT(word);
                                         if (v >= csc_n) break;
                                         WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
                                         if (v_mask == 0) continue;
@@ -546,8 +568,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                                     uint64_t word = delta_active_words[w_idx];
                                     while (word != 0ULL) {
                                         uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                        size_t v = (w_idx << 6) + bit;
-                                        word &= (word - 1ULL);
+                                        size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                        word = IMP_CLEAR_LOWEST_BIT(word);
                                         if (v >= csc_n) break;
                                         WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
                                         if (v_mask == 0) continue;
@@ -561,14 +583,14 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                             }
                         } else if (!s.csc_offsets_ptr && s.dynamic_csc_offsets.empty() && s.csc_targets_ptr && !cur_trip) {
                             size_t csc_n = std::min<size_t>(csc_dom_n, delta.size());
-                            size_t max_words = std::min<size_t>(delta_active_words.size(), (csc_n + 63) / 64);
+                            size_t max_words = std::min<size_t>(delta_active_words.size(), IMP_WORDS_FOR_BITS(csc_n));
                             uint64_t sent = s.csc_sentinel();
                             for (size_t w_idx = 0; w_idx < max_words; ++w_idx) {
                                 uint64_t word = delta_active_words[w_idx];
                                 while (word != 0ULL) {
                                     uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                                    size_t v = (w_idx << 6) + bit;
-                                    word &= (word - 1ULL);
+                                    size_t v = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                                    word = IMP_CLEAR_LOWEST_BIT(word);
                                     if (v >= csc_n) break;
                                     WordT v_mask = static_cast<WordT>(delta[v]) & active_mask_w;
                                     if (v_mask == 0) continue;
@@ -623,10 +645,11 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
 
                 size_t max_iter = vm_state->query_context->has_fixpoint_max_hops
                     ? static_cast<size_t>(vm_state->query_context->fixpoint_max_hops)
-                    : 1024u;
+                    : IMP_LANE_FIXPOINT_DEFAULT_MAX_ITER;
                 size_t iter = 0;
                 while (has_delta && iter < max_iter) {
                     if (vm_state->query_context && vm_state->query_context->fuel_enabled) {
+                        IMPULSE_TESTCASE(vm_state->query_context->fuel == 0);
                         if (vm_state->query_context->fuel == 0) {
                             return IMPULSE_VM_ERR_GAS_EXHAUSTED;
                         }
@@ -641,8 +664,8 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                         delta_active_words[w_idx] = 0ULL;
                         while (word != 0ULL) {
                             uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                            size_t u = (w_idx << 6) + bit;
-                            word &= (word - 1ULL);
+                            size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                            word = IMP_CLEAR_LOWEST_BIT(word);
                             if (u < n_nodes) {
                                 delta[u] = 0ULL;
                             }
@@ -652,6 +675,7 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
                     delta_active_words.swap(next_delta_active_words);
                     iter++;
                 }
+                IMPULSE_TESTCASE(iter == max_iter);
             } else {
                 step_slot_once(step_slot_once, rel_id, lf_src.lanes, lf_src.active_words, lf_dst.lanes, lf_dst.active_words, 0);
             }
@@ -688,13 +712,13 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
             uint64_t cleaned_word = 0ULL;
             while (word != 0ULL) {
                 uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                size_t u = (w_idx << 6) + bit;
-                word &= (word - 1ULL);
+                size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                word = IMP_CLEAR_LOWEST_BIT(word);
                 if (u >= n_nodes) break;
                 uint64_t w = lf_dst.lanes[u] & lf_dst.active_mask;
                 lf_dst.lanes[u] = w;
                 if (w != 0ULL) {
-                    cleaned_word |= (1ULL << bit);
+                    cleaned_word |= IMP_BIT_MASK64(bit);
                     any_set = true;
                     uint64_t orig = (u < lf_src.lanes.size()) ? (lf_src.lanes[u] & lf_dst.active_mask) : 0ULL;
                     if ((w & ~orig) != 0ULL) any_changed = true;
@@ -711,17 +735,12 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_lane_walk_common(
         vm_state->register_types[dst] = TYPE_LANE_FRONTIER;
 
         if (is_fixpoint) {
-            if (!any_changed) {
-                vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-                vm_state->flags |= IMPULSE_VM_FLAG_ST;
-            } else {
-                vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-                vm_state->flags &= ~IMPULSE_VM_FLAG_ST;
-            }
+            IMP_VM_SET_ZF(vm_state, !any_changed);
+            IMP_VM_SET_ST(vm_state, !any_changed);
         } else {
-            if (!any_set) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, !any_set);
         }
+        IMPULSE_ASSERT(vm_state->register_types[dst] == TYPE_LANE_FRONTIER);
     }
 
     return IMPULSE_VM_OK;

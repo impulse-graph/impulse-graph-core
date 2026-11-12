@@ -23,14 +23,19 @@
  */
 #ifndef OP_04_CONTRACT_DEFINED
 #define OP_04_CONTRACT_DEFINED 1
+#define OP_04_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x04: OP_LOAD_CONST_INT
 op_LOAD_CONST_INT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    int32_t imm = static_cast<int32_t>(inst.payload);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    const int32_t imm = IMP_INST_PAYLOAD_I32(inst);
+    IMPULSE_TESTCASE(imm == 0);
+    IMPULSE_TESTCASE(imm < 0);
+    IMPULSE_TESTCASE(imm == INT32_MIN || imm == INT32_MAX);
     vm_state->registers[dst] = static_cast<uint64_t>(static_cast<int64_t>(imm));
     vm_state->register_types[dst] = TYPE_INT64;
     vm_state->pc++;

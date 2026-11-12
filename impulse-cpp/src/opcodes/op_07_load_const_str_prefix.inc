@@ -23,14 +23,18 @@
  */
 #ifndef OP_07_CONTRACT_DEFINED
 #define OP_07_CONTRACT_DEFINED 1
+#define OP_07_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x07: OP_LOAD_CONST_STR_PREFIX
 op_LOAD_CONST_STR_PREFIX: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = inst.payload;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    const uint32_t prefix_bits = IMP_INST_PAYLOAD_U32(inst);
+    IMPULSE_TESTCASE(prefix_bits == 0u);
+    vm_state->registers[dst] = prefix_bits;
     vm_state->register_types[dst] = TYPE_INT64;
     vm_state->pc++;
     DISPATCH();

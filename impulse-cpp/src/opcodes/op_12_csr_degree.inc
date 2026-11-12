@@ -23,37 +23,44 @@
  */
 #ifndef OP_12_CONTRACT_DEFINED
 #define OP_12_CONTRACT_DEFINED 1
+#define OP_12_ALLOWED_SRC_TYPES (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
 #endif
 
 // Opcode 0x12: OP_CSR_DEGREE
 op_CSR_DEGREE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
     uint16_t rel;
-    if (inst.flags & 0x80) {
+    IMPULSE_TESTCASE(IMP_INST_IS_EXTENDED(inst));
+    if (IMP_INST_IS_EXTENDED(inst)) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        rel = bytecode[vm_state->pc + 1].dst_reg;
+        rel = IMP_INST_DST(bytecode[vm_state->pc + 1]);
         vm_state->pc++;
     } else {
-        rel = (inst.payload >> 16) & 0xFFFF;
+        rel = IMP_INST_HIGH16(inst);
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL));
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_12_ALLOWED_SRC_TYPES);
 
-    if (rel >= vm_state->query_context->slots.size()) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+    IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
 
     uint64_t degree = 0;
     uint8_t stype = vm_state->register_types[src];
+    IMPULSE_TESTCASE(stype == TYPE_BITSET_HANDLE);
+    IMPULSE_TESTCASE(stype == TYPE_NULL);
     if (stype == TYPE_NODE_ID || stype == TYPE_INT64) {
         uint64_t u = vm_state->registers[src];
         if (slot.offsets_ptr && u < slot.node_count) {
-            degree = slot.get_csr_offset(u + 1) - slot.get_csr_offset(u);
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end = slot.get_csr_offset(u + 1);
+            IMPULSE_WELL_FORMED_ASSERT(start <= end);
+            degree = end - start;
         }
     } else if (stype == TYPE_BITSET_HANDLE && slot.offsets_ptr) {
         int h_src = static_cast<int>(vm_state->registers[src]);
@@ -62,10 +69,13 @@ op_CSR_DEGREE: {
             uint64_t word = bs_src.words[w];
             while (word) {
                 int bit = std::countr_zero(word);
-                uint64_t u = w * 64 + bit;
-                word &= word - 1;
+                uint64_t u = IMP_WORD_BIT_TO_NODE(w, bit);
+                word = IMP_CLEAR_LOWEST_BIT(word);
                 if (u < slot.node_count) {
-                    degree += slot.get_csr_offset(u + 1) - slot.get_csr_offset(u);
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
+                    degree += (end - start);
                 }
             }
         }
@@ -76,7 +86,10 @@ op_CSR_DEGREE: {
             for (size_t k = 0; k < vec_len; ++k) {
                 uint64_t u = vec_ptr[k];
                 if (u < slot.node_count) {
-                    degree += slot.get_csr_offset(u + 1) - slot.get_csr_offset(u);
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end = slot.get_csr_offset(u + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
+                    degree += (end - start);
                 }
             }
         }
@@ -84,9 +97,7 @@ op_CSR_DEGREE: {
 
     vm_state->registers[dst] = degree;
     vm_state->register_types[dst] = TYPE_INT64;
-
-    if (degree == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, degree == 0u);
 
     vm_state->pc++;
     DISPATCH();

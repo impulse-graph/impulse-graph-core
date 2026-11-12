@@ -226,20 +226,20 @@ inline void append_chunk5_contracts(std::vector<ImpulseOpcodeVariantContract>& l
     list.push_back({
         OP_LANE_SET_COVER, "OP_LANE_SET_COVER", "Greedy Set Cover (flags=0)",
         0x01, 0x00, 0x01, 0x00080000u, // max_pick=8
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
+        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
         IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
-        IMP_TYPES_INT_OR_NODE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_NODE_VECTOR),
-        true, false, IMPULSE_VM_FLAG_ZF, true, true
+        false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
     list.push_back({
         OP_LANE_SET_COVER, "OP_LANE_SET_COVER", "Exact 2-Node Pair Cover (flags=1)",
         0x01, 0x01, 0x01, 0x00000000u,
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
+        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
         IMP_TYPE_BIT(TYPE_LANE_FRONTIER),
-        IMP_TYPES_INT_OR_NODE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_NODE_VECTOR),
-        true, false, IMPULSE_VM_FLAG_ZF, true, true
+        false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
 
     // OP_VECTOR_ANN_SEARCH (0xCA)

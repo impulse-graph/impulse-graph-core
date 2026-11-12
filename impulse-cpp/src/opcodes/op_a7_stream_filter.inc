@@ -32,8 +32,12 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_A7_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_FILTER: {
-                        if (s_regs[sDst] == 0.0f) abort = true;
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
+                        const bool filter_reject = (s_regs[sDst] == 0.0f);
+                        IMPULSE_TESTCASE(filter_reject);
+                        if (filter_reject) abort = true;
                         break;
                     }

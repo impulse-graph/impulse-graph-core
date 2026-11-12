@@ -14,6 +14,9 @@
 #ifndef OP_41_CONTRACT_DEFINED
 #define OP_41_CONTRACT_DEFINED
 #define OP_41_DEFINED_FLAGS        0xFFu
+#define OP_41_UNMASKED_FLAGS       0u
+#define OP_41_WEIGHT_ATTR_SLOT     0u
+#define OP_41_DECODE_MASK_REG(f)   ((f) > OP_41_UNMASKED_FLAGS ? static_cast<int>((f) - 1u) : -1)
 #define OP_41_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL)
 #define OP_41_OUTPUT_DST_TYPES     (IMP_TYPES_FLOAT_OR_DBL)
 #endif
@@ -21,21 +24,22 @@
 // Opcode 0x41: OP_MXV
 op_MXV: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    int mask_reg_idx = inst.flags > 0 ? (inst.flags - 1) : -1;
-    uint16_t src_vec = inst.payload & 0xFF;
-    uint16_t rel = (inst.payload >> 8) & 0xFF;
-    uint16_t semiring_id = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const int mask_reg_idx = OP_41_DECODE_MASK_REG(IMP_INST_FLAGS(inst));
+    const uint16_t src_vec = IMP_INST_U8_0(inst);
+    const uint16_t rel = IMP_INST_U8_1(inst);
+    const uint16_t semiring_id = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src_vec < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_41_ALLOWED_SRC_TYPES);
 
-    if (rel >= vm_state->query_context->slots.size()) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+    IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
     if (!slot.offsets_ptr || !slot.targets_ptr) {
+        IMPULSE_TESTCASE(true);
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
@@ -47,12 +51,16 @@ op_MXV: {
     const float* edge_weights_f32 = nullptr;
     if (rel < vm_state->query_context->attribute_slots.size() &&
         !vm_state->query_context->attribute_slots[rel].empty()) {
-        const auto& a0 = vm_state->query_context->attribute_slots[rel][0];
-        if ((a0.type_code & 0x7F) == 6 && a0.data_ptr != nullptr &&
+        const auto& a0 = vm_state->query_context->attribute_slots[rel][OP_41_WEIGHT_ATTR_SLOT];
+        if (IMP_ATTR_BASE_TYPE(a0.type_code) == IMP_TYPE_CODE_FLOAT32 && a0.data_ptr != nullptr &&
             slot.edge_count > 0 && a0.data_bytes == slot.edge_count * sizeof(float)) {
             edge_weights_f32 = static_cast<const float*>(a0.data_ptr);
         }
     }
+    IMPULSE_TESTCASE(mask_reg_idx >= 0);
+    IMPULSE_TESTCASE(is_double);
+    IMPULSE_TESTCASE(edge_weights_f32 != nullptr);
+    IMPULSE_TESTCASE(dst == src_vec);
 
     if (is_double) {
         int h_dst = -1;
@@ -62,13 +70,15 @@ op_MXV: {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
+        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->double_vectors.size());
         vm_state->query_context->double_vector_lengths[h_dst] = N;
         double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
         const double* src_data = vm_state->query_context->double_vectors[h_src].data();
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
-            if (mask_reg_idx >= 0 && mask_reg_idx < 64) {
+            if (mask_reg_idx >= 0 && static_cast<uint32_t>(mask_reg_idx) < IMP_VM_GPR_COUNT) {
                 size_t mask_handle = vm_state->registers[mask_reg_idx];
                 if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
                     dst_data[u] = 0.0;
@@ -79,6 +89,7 @@ op_MXV: {
             if (u < slot.node_count) {
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end = slot.get_csr_offset(u + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     double sum = 0.0;
                     for (uint64_t i = start; i < end; ++i) {
@@ -125,6 +136,8 @@ op_MXV: {
             h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
+        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->float_vectors.size());
         N = std::min(N, vm_state->query_context->float_vectors[h_dst].size());
         vm_state->query_context->float_vector_lengths[h_dst] = N;
         float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
@@ -132,7 +145,7 @@ op_MXV: {
 
         #pragma omp parallel for schedule(static)
         for (size_t u = 0; u < N; ++u) {
-            if (mask_reg_idx >= 0 && mask_reg_idx < 64) {
+            if (mask_reg_idx >= 0 && static_cast<uint32_t>(mask_reg_idx) < IMP_VM_GPR_COUNT) {
                 size_t mask_handle = vm_state->registers[mask_reg_idx];
                 if (!impulse_vm_context_bitset_test(vm_state->query_context, mask_handle, u)) {
                     dst_data[u] = 0.0f;
@@ -143,6 +156,7 @@ op_MXV: {
             if (u < slot.node_count) {
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end = slot.get_csr_offset(u + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 if (semiring_id == SEMIRING_PLUS_TIMES) {
                     float sum = 0.0f;
                     for (uint64_t i = start; i < end; ++i) {
@@ -183,7 +197,7 @@ op_MXV: {
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
     }
 
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

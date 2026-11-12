@@ -22,19 +22,24 @@
 // Opcode 0x43: OP_EWISE_ADD
 op_EWISE_ADD: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFF;
-    uint16_t src2 = (inst.payload >> 8) & 0xFF;
-    uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_U8_0(inst);
+    const uint16_t src2 = IMP_INST_U8_1(inst);
+    const uint16_t op_id = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_43_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_43_ALLOWED_AUX1_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(is_double);
+    IMPULSE_TESTCASE(src1 == src2);
+    IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
     if (is_double) {
         size_t h_s1 = vm_state->registers[src1];
@@ -45,11 +50,12 @@ op_EWISE_ADD: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
+        IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->double_vectors.size());
         vm_state->query_context->double_vector_lengths[vm_state->registers[dst]] = active_len;
         double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
         const double* s1_data = vm_state->query_context->double_vectors[h_s1].data();
@@ -71,11 +77,12 @@ op_EWISE_ADD: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             vm_state->registers[dst] = h_dst;
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         }
+        IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->float_vectors.size());
         vm_state->query_context->float_vector_lengths[vm_state->registers[dst]] = active_len;
         float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
         const float* s1_data = vm_state->query_context->float_vectors[h_s1].data();
@@ -90,7 +97,7 @@ op_EWISE_ADD: {
         }
     }
 
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

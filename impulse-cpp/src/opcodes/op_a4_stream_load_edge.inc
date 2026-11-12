@@ -32,10 +32,13 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_A4_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_LOAD_EDGE: {
-                        uint16_t attr_id = sInst.payload & 0xFFFF;
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
+                        uint16_t attr_id = IMP_INST_LOW16(sInst);
                         const auto* ma_e_ptr = find_mock_edge_attr(vm_state->query_context, attr_id);
+                        IMPULSE_TESTCASE(ma_e_ptr != nullptr);
                         if (ma_e_ptr) {
                             const auto& ma = *ma_e_ptr;
                             if (eIdx < ma.float_data.size()) {
@@ -64,23 +67,28 @@
                             } else if (rel < vm_state->query_context->attribute_slots.size() &&
                                        attr_id < vm_state->query_context->attribute_slots[rel].size()) {
                                 const auto& aslot = vm_state->query_context->attribute_slots[rel][attr_id];
-                                uint8_t base_tc = aslot.type_code & 0x7F;
-                                bool is_null = (aslot.type_code & 0x80) != 0;
-                                size_t elem_sz = (base_tc == 7) ? sizeof(double) : sizeof(float);
-                                size_t bm_bytes = (is_null && aslot.data_bytes > 128) ? 128 : 0;
+                                uint8_t base_tc = IMP_ATTR_BASE_TYPE(aslot.type_code);
+                                bool is_null = IMP_ATTR_IS_NULLABLE(aslot.type_code);
+                                IMPULSE_TESTCASE(is_null);
+                                size_t elem_sz = (base_tc == IMP_TYPE_CODE_FLOAT64) ? sizeof(double) : sizeof(float);
+                                size_t bm_bytes = (is_null && aslot.data_bytes > IMP_SNAP_SECTION_ALIGN)
+                                    ? static_cast<size_t>(IMP_SNAP_SECTION_ALIGN)
+                                    : 0u;
                                 if (aslot.data_ptr && aslot.data_bytes > bm_bytes) {
                                     const uint8_t* raw_b = static_cast<const uint8_t*>(aslot.data_ptr);
                                     size_t cnt = (aslot.data_bytes - bm_bytes) / elem_sz;
                                     if (eIdx < cnt) {
-                                        if (is_null && (((raw_b[eIdx >> 3] >> (eIdx & 7)) & 1U) == 0U)) {
+                                        const bool is_valid = !is_null || IMP_VALIDITY_IS_VALID(raw_b, eIdx);
+                                        IMPULSE_TESTCASE(!is_valid);
+                                        if (!is_valid) {
                                             s_regs[sDst] = std::numeric_limits<float>::quiet_NaN();
-                                        } else if (base_tc == 7) {
+                                        } else if (base_tc == IMP_TYPE_CODE_FLOAT64) {
                                             s_regs[sDst] = static_cast<float>(reinterpret_cast<const double*>(raw_b + bm_bytes)[eIdx]);
-                                        } else if (base_tc == 6) {
+                                        } else if (base_tc == IMP_TYPE_CODE_FLOAT32) {
                                             s_regs[sDst] = reinterpret_cast<const float*>(raw_b + bm_bytes)[eIdx];
-                                        } else if (base_tc == 3) {
+                                        } else if (base_tc == IMP_TYPE_CODE_INT32) {
                                             s_regs[sDst] = static_cast<float>(reinterpret_cast<const int32_t*>(raw_b + bm_bytes)[eIdx]);
-                                        } else if (base_tc == 4) {
+                                        } else if (base_tc == IMP_TYPE_CODE_INT64) {
                                             s_regs[sDst] = static_cast<float>(reinterpret_cast<const int64_t*>(raw_b + bm_bytes)[eIdx]);
                                         } else {
                                             s_regs[sDst] = 0.0f;

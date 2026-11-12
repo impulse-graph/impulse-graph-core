@@ -32,45 +32,87 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_AF_DEFINED_FLAGS        IMP_FLAG_NONE
+#define OP_AF_UNARY_ABS            0x01u
+#define OP_AF_UNARY_SQRT           0x02u
+#define OP_AF_UNARY_RSQRT          0x03u
+#define OP_AF_UNARY_CBRT           0x04u
+#define OP_AF_UNARY_EXP            0x08u
+#define OP_AF_UNARY_EXP2           0x09u
+#define OP_AF_UNARY_EXP10          0x0Au
+#define OP_AF_UNARY_EXPM1          0x0Bu
+#define OP_AF_UNARY_LOG            0x0Cu
+#define OP_AF_UNARY_LOG2           0x0Du
+#define OP_AF_UNARY_LOG10          0x0Eu
+#define OP_AF_UNARY_LOG1P          0x0Fu
+#define OP_AF_UNARY_SIN            0x10u
+#define OP_AF_UNARY_COS            0x11u
+#define OP_AF_UNARY_TAN            0x12u
+#define OP_AF_UNARY_ASIN           0x13u
+#define OP_AF_UNARY_ACOS           0x14u
+#define OP_AF_UNARY_ATAN           0x15u
+#define OP_AF_UNARY_SINC           0x17u
+#define OP_AF_UNARY_SINH           0x18u
+#define OP_AF_UNARY_COSH           0x19u
+#define OP_AF_UNARY_TANH           0x1Au
+#define OP_AF_UNARY_FLOOR          0x1Eu
+#define OP_AF_UNARY_CEIL           0x1Fu
+#define OP_AF_UNARY_ROUND_HALF_UP  0x21u
+#define OP_AF_UNARY_RELU           0x25u
+#define OP_AF_UNARY_LEAKY_RELU     0x26u
+#define OP_AF_UNARY_SIGMOID        0x27u
+#define OP_AF_UNARY_GELU           0x28u
+#define OP_AF_UNARY_SILU           0x29u
+#define OP_AF_UNARY_SOFTPLUS       0x2Au
+#define OP_AF_UNARY_ISNAN          0x34u
+#define OP_AF_UNARY_ISINF          0x35u
+#define OP_AF_UNARY_ISFINITE       0x36u
+#define OP_AF_SINC_EPSILON         1e-15f
+#define OP_AF_LEAKY_RELU_ALPHA     0.01f
+#define OP_AF_GELU_SQRT_2_OVER_PI  0.7978845608028654
+#define OP_AF_GELU_CUBIC_COEFF     0.044715
 #endif
                     case OP_STREAM_MATH_UNARY: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT &&
+                                       sPayloadLow < IMP_VM_STREAM_REG_COUNT);
                         float v = s_regs[sPayloadLow];
+                        IMPULSE_TESTCASE(v <= 0.0f);
                         float res = v;
                         switch (sPayloadHigh) {
-                            case 0x01: res = std::abs(v); break;
-                            case 0x02: res = std::sqrt(v); break;
-                            case 0x03: res = 1.0f / std::sqrt(v); break;
-                            case 0x04: res = std::copysign(std::pow(std::abs(v), 1.0f / 3.0f), v); break;
-                            case 0x08: res = std::exp(v); break;
-                            case 0x09: res = std::exp2(v); break;
-                            case 0x0A: res = std::pow(10.0f, v); break;
-                            case 0x0B: res = std::expm1(v); break;
-                            case 0x0C: res = std::log(v); break;
-                            case 0x0D: res = std::log2(v); break;
-                            case 0x0E: res = std::log10(v); break;
-                            case 0x0F: res = std::log1p(v); break;
-                            case 0x10: res = std::sin(v); break;
-                            case 0x11: res = std::cos(v); break;
-                            case 0x12: res = std::tan(v); break;
-                            case 0x13: res = std::asin(v); break;
-                            case 0x14: res = std::acos(v); break;
-                            case 0x15: res = std::atan(v); break;
-                            case 0x17: res = (std::abs(v) < 1e-15f) ? 1.0f : (std::sin(v) / v); break;
-                            case 0x18: res = std::sinh(v); break;
-                            case 0x19: res = std::cosh(v); break;
-                            case 0x1A: res = std::tanh(v); break;
-                            case 0x1E: res = std::floor(v); break;
-                            case 0x1F: res = std::ceil(v); break;
-                            case 0x21: res = std::floor(v + 0.5f); break;
-                            case 0x25: res = (v > 0.0f) ? v : 0.0f; break;
-                            case 0x26: res = (v > 0.0f) ? v : 0.01f * v; break;
-                            case 0x27: res = 1.0f / (1.0f + std::exp(-v)); break;
-                            case 0x28: res = 0.5f * v * (1.0f + std::tanh(0.7978845608028654 * (v + 0.044715 * v * v * v))); break;
-                            case 0x29: res = v / (1.0f + std::exp(-v)); break;
-                            case 0x2A: res = std::log(1.0f + std::exp(v)); break;
-                            case 0x34: res = std::isnan(v) ? 1.0f : 0.0f; break;
-                            case 0x35: res = std::isinf(v) ? 1.0f : 0.0f; break;
-                            case 0x36: res = std::isfinite(v) ? 1.0f : 0.0f; break;
+                            case OP_AF_UNARY_ABS:           res = std::abs(v); break;
+                            case OP_AF_UNARY_SQRT:          res = std::sqrt(v); break;
+                            case OP_AF_UNARY_RSQRT:         res = 1.0f / std::sqrt(v); break;
+                            case OP_AF_UNARY_CBRT:          res = std::copysign(std::pow(std::abs(v), 1.0f / 3.0f), v); break;
+                            case OP_AF_UNARY_EXP:           res = std::exp(v); break;
+                            case OP_AF_UNARY_EXP2:          res = std::exp2(v); break;
+                            case OP_AF_UNARY_EXP10:         res = std::pow(10.0f, v); break;
+                            case OP_AF_UNARY_EXPM1:         res = std::expm1(v); break;
+                            case OP_AF_UNARY_LOG:           res = std::log(v); break;
+                            case OP_AF_UNARY_LOG2:          res = std::log2(v); break;
+                            case OP_AF_UNARY_LOG10:         res = std::log10(v); break;
+                            case OP_AF_UNARY_LOG1P:         res = std::log1p(v); break;
+                            case OP_AF_UNARY_SIN:           res = std::sin(v); break;
+                            case OP_AF_UNARY_COS:           res = std::cos(v); break;
+                            case OP_AF_UNARY_TAN:           res = std::tan(v); break;
+                            case OP_AF_UNARY_ASIN:          res = std::asin(v); break;
+                            case OP_AF_UNARY_ACOS:          res = std::acos(v); break;
+                            case OP_AF_UNARY_ATAN:          res = std::atan(v); break;
+                            case OP_AF_UNARY_SINC:          res = (std::abs(v) < OP_AF_SINC_EPSILON) ? 1.0f : (std::sin(v) / v); break;
+                            case OP_AF_UNARY_SINH:          res = std::sinh(v); break;
+                            case OP_AF_UNARY_COSH:          res = std::cosh(v); break;
+                            case OP_AF_UNARY_TANH:          res = std::tanh(v); break;
+                            case OP_AF_UNARY_FLOOR:         res = std::floor(v); break;
+                            case OP_AF_UNARY_CEIL:          res = std::ceil(v); break;
+                            case OP_AF_UNARY_ROUND_HALF_UP: res = std::floor(v + 0.5f); break;
+                            case OP_AF_UNARY_RELU:          res = (v > 0.0f) ? v : 0.0f; break;
+                            case OP_AF_UNARY_LEAKY_RELU:    res = (v > 0.0f) ? v : OP_AF_LEAKY_RELU_ALPHA * v; break;
+                            case OP_AF_UNARY_SIGMOID:       res = 1.0f / (1.0f + std::exp(-v)); break;
+                            case OP_AF_UNARY_GELU:          res = 0.5f * v * (1.0f + std::tanh(OP_AF_GELU_SQRT_2_OVER_PI * (v + OP_AF_GELU_CUBIC_COEFF * v * v * v))); break;
+                            case OP_AF_UNARY_SILU:          res = v / (1.0f + std::exp(-v)); break;
+                            case OP_AF_UNARY_SOFTPLUS:      res = std::log(1.0f + std::exp(v)); break;
+                            case OP_AF_UNARY_ISNAN:         res = std::isnan(v) ? 1.0f : 0.0f; break;
+                            case OP_AF_UNARY_ISINF:         res = std::isinf(v) ? 1.0f : 0.0f; break;
+                            case OP_AF_UNARY_ISFINITE:      res = std::isfinite(v) ? 1.0f : 0.0f; break;
                         }
                         s_regs[sDst] = res;
                         break;

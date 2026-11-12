@@ -17,40 +17,40 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
     list.push_back({
         OP_SAMPLE_NEIGHBORS, "OP_SAMPLE_NEIGHBORS", "Sample Neighbors (GNN Target)",
         0x00, 0x00, 0x00, 0x00000000u,
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET, IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
-        false, false, IMPULSE_VM_FLAG_ZF, true, true
+        RegFieldLayout::DST_REG, RegFieldLayout::NONE, RegFieldLayout::NONE, RegFieldLayout::NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE,
+        false, false, 0, false, false
     });
 
     // OP_RANDOM_WALK (0x61)
     list.push_back({
         OP_RANDOM_WALK, "OP_RANDOM_WALK", "Node Random Walk Traversal",
         0x00, 0x00, 0x00, 0x00000000u,
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET, IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_NODE_VECTOR),
-        false, false, IMPULSE_VM_FLAG_ZF, true, true
+        RegFieldLayout::DST_REG, RegFieldLayout::NONE, RegFieldLayout::NONE, RegFieldLayout::NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE,
+        false, false, 0, false, false
     });
 
     // OP_SCATTER_GATHER (0x62)
     list.push_back({
         OP_SCATTER_GATHER, "OP_SCATTER_GATHER", "Scatter Gather Node Feature Vectors",
         0x00, 0x00, 0x00, 0x00000000u,
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET | IMP_TYPES_NUMERIC_VEC, IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPES_NUMERIC_VEC,
-        false, false, IMPULSE_VM_FLAG_ZF, true, true
+        RegFieldLayout::DST_REG, RegFieldLayout::NONE, RegFieldLayout::NONE, RegFieldLayout::NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE,
+        false, false, 0, false, false
     });
 
     // OP_REBAC_CHECK (0x63)
     list.push_back({
         OP_REBAC_CHECK, "OP_REBAC_CHECK", "ReBAC Zanzibar Check Path Evaluation",
         0x00, 0x00, 0x00, 0x00000000u,
-        RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE), IMP_TYPES_NONE, IMP_TYPES_NONE,
-        IMP_TYPE_BIT(TYPE_BOOLEAN) | IMP_TYPE_BIT(TYPE_INT64),
-        false, false, IMPULSE_VM_FLAG_ZF, true, true
+        RegFieldLayout::DST_REG, RegFieldLayout::NONE, RegFieldLayout::NONE, RegFieldLayout::NONE,
+        IMP_TYPES_NONE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_NONE,
+        false, false, 0, false, false
     });
 
     // OP_ROARING_BITMAP_AND (0x64)
@@ -70,8 +70,8 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_ISLAND_DETECT, "OP_ISLAND_DETECT", "Power Grid Component Island Traversal",
         0x80, 0x00, 0x80, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         true, false, 0, true, true
@@ -82,7 +82,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_SPARSE_MATVEC, "OP_SPARSE_MATVEC", "Sparse Matrix-Vector Product",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_NODE_VEC, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_NODE_VEC | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPES_FLOAT_OR_DBL,
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -92,7 +92,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_LOUVAIN_MODULARITY, "OP_LOUVAIN_MODULARITY", "Louvain Community Modularity Optimization",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_UINT64_VECTOR) | IMP_TYPE_BIT(TYPE_NODE_VECTOR),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -102,7 +102,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_KCORE_DECOMPOSITION, "OP_KCORE_DECOMPOSITION", "Node K-Core Graph Shell Decomposition",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_RELATION_ID), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_RELATION_ID) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT_VECTOR),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -112,7 +112,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_MOTIF_MATCH_3, "OP_MOTIF_MATCH_3", "Search 3-Node Motifs/Subgraphs",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -122,7 +122,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_GRAPH_ISOMORPHISM, "OP_GRAPH_ISOMORPHISM", "Compare Graph Topology Isomorphism",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_SOURCE_SET, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_BOOLEAN) | IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
     });
@@ -240,7 +240,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_GATHER_NODE_ATTR, "OP_GATHER_NODE_ATTR", "Gather Node Attribute Vector (flags=0, standard)",
         0x80, 0x00, 0x80, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPES_NUMERIC_VEC | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT_VECTOR),
         false, false, 0, true, true
     });
@@ -250,7 +250,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_GATHER_NODE_ATTR, "OP_GATHER_NODE_ATTR", "Gather Node Attribute Vector (flags=0x80, wide)",
         0x80, 0x80, 0x80, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPES_NUMERIC_VEC | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT_VECTOR),
         false, false, 0, true, true
     });
@@ -260,7 +260,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_GATHER_EDGE_ATTR, "OP_GATHER_EDGE_ATTR", "Gather Edge Attribute Vector",
         0x80, 0x00, 0x80, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE, IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPES_NUMERIC_VEC | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT_VECTOR),
         false, false, 0, true, true
     });
@@ -270,7 +270,7 @@ inline void append_chunk3_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_BRIN_ZONE_SKIP, "OP_BRIN_ZONE_SKIP", "BRIN Zone Page Skipping Filter",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::NONE, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL), IMP_TYPES_NONE, IMP_TYPES_NONE,
+        IMP_TYPES_ANY, IMP_TYPES_NONE, IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_INT64),
         false, false, IMPULSE_VM_FLAG_ZF, false, true
     });

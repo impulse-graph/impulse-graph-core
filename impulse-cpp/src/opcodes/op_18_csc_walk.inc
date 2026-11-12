@@ -23,51 +23,55 @@
  */
 #ifndef OP_18_CONTRACT_DEFINED
 #define OP_18_CONTRACT_DEFINED 1
+#define OP_18_ALLOWED_SRC_TYPES (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC)
+#define OP_18_IS_VALID_TARGET(t) ((t) != IMP_SENTINEL_U32 && (t) != IMP_SENTINEL_U16 && (t) != IMP_INVALID_NODE_U64)
 #endif
 
 // Opcode 0x18: OP_CSC_WALK
 op_CSC_WALK: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    uint16_t unv = (inst.payload >> 16) & 0xFF;
-    uint16_t rel = (inst.payload >> 24) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
+    uint16_t unv = IMP_INST_U8_2(inst);
+    uint16_t rel = IMP_INST_U8_3(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC));
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_18_ALLOWED_SRC_TYPES);
 
-    if (inst.flags & 0x80) {
+    IMPULSE_TESTCASE(IMP_INST_IS_EXTENDED(inst));
+    if (IMP_INST_IS_EXTENDED(inst)) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        rel = bytecode[vm_state->pc + 1].dst_reg;
+        rel = IMP_INST_DST(bytecode[vm_state->pc + 1]);
         unv = 0;
         vm_state->pc++;
     } else {
         bool unv_is_valid_rel = (unv < vm_state->query_context->slots.size()) &&
             vm_state->query_context->slots[unv].has_any_topology();
-        if (rel == 0 && (inst.payload >> 24) == 0 && (unv_is_valid_rel || vm_state->register_types[unv] != TYPE_BITSET_HANDLE)) {
-            rel = (inst.payload >> 16) & 0xFFFF;
+        if (rel == 0 && IMP_INST_U8_3(inst) == 0u && (unv_is_valid_rel || vm_state->register_types[unv] != TYPE_BITSET_HANDLE)) {
+            rel = IMP_INST_HIGH16(inst);
             unv = 0;
         }
     }
 
-    if (rel >= vm_state->query_context->slots.size()) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+    IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
     if (!vm_state->query_context->snapshot &&
         !slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty() && !slot.csc_targets_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
-    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED));
+    const bool has_input_seed = IMP_INST_HAS_FLAG(inst, IMPULSE_VM_OP_FLAG_INPUT_SEED);
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !has_input_seed);
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
-    bool src_is_vec = (!(inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED) &&
+    bool src_is_vec = (!has_input_seed &&
                        (vm_state->register_types[src] == TYPE_NODE_VECTOR || vm_state->register_types[src] == TYPE_UINT64_VECTOR));
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
     uint64_t scalar_src = (!src_is_bitset && !src_is_vec) ? vm_state->registers[src] : 0;
 
-    if (inst.flags & IMPULSE_VM_OP_FLAG_INPUT_SEED) {
+    if (has_input_seed) {
         scalar_src = input_param;
         src_is_bitset = false;
         src_is_vec = false;
@@ -78,7 +82,14 @@ op_CSC_WALK: {
         ? vm_state->query_context->bitsets[vm_state->registers[unv]].words : nullptr;
 
     int h_dst = -1;
-    bool accum = (inst.flags & IMPULSE_VM_OP_FLAG_ACCUMULATE) != 0;
+    const bool accum = IMP_INST_HAS_FLAG(inst, IMPULSE_VM_OP_FLAG_ACCUMULATE);
+    IMPULSE_TESTCASE(src_is_null);
+    IMPULSE_TESTCASE(src_is_bitset);
+    IMPULSE_TESTCASE(src_is_vec);
+    IMPULSE_TESTCASE(unv_words != nullptr);
+    IMPULSE_TESTCASE(accum);
+    IMPULSE_TESTCASE(dst == src && src_is_bitset);
+
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         int h_existing = static_cast<int>(vm_state->registers[dst]);
         if ((dst == src && src_is_bitset) || (unv > 0 && dst == unv && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)) {
@@ -86,6 +97,7 @@ op_CSC_WALK: {
             if (h_dst < 0) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
+            IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
             if (accum) {
                 const auto& bs_existing = vm_state->query_context->bitsets[h_existing];
                 auto& bs_new = vm_state->query_context->bitsets[h_dst];
@@ -106,6 +118,7 @@ op_CSC_WALK: {
         if (h_dst < 0) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
         vm_state->query_context->bitsets[h_dst].clear();
         if (accum && (vm_state->register_types[dst] == TYPE_NODE_ID || vm_state->register_types[dst] == TYPE_INT64)) {
             bitset_add(vm_state->query_context->bitsets[h_dst], vm_state->registers[dst], vm_state->query_context->max_nodes);
@@ -133,17 +146,18 @@ op_CSC_WALK: {
                     continue;
                 }
                 uint64_t w_dst = 0;
-                for (int b = 0; b < 64; ++b) {
-                    if (w_unv & (1ULL << b)) {
-                        uint64_t v = i * 64 + b;
+                for (uint32_t b = 0; b < IMP_BITS_PER_WORD; ++b) {
+                    if (w_unv & IMP_BIT_MASK64(b)) {
+                        uint64_t v = IMP_WORD_BIT_TO_NODE(i, b);
                         if (v < csc_bound) {
                             uint64_t start = slot.get_csc_offset(v);
                             uint64_t end   = slot.get_csc_offset(v + 1);
+                            IMPULSE_WELL_FORMED_ASSERT(start <= end);
                             for (uint64_t idx = start; idx < end; ++idx) {
                                 uint64_t u = slot.get_csc_target(idx);
-                                bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                                bool hit = src_words ? ((src_words[IMP_WORD_INDEX(u)] & IMP_BIT_MASK64(u)) != 0ULL) : (u == scalar_src);
                                 if (hit) {
-                                    w_dst |= (1ULL << b);
+                                    w_dst |= IMP_BIT_MASK64(b);
                                     break;
                                 }
                             }
@@ -160,11 +174,12 @@ op_CSC_WALK: {
                     uint64_t word = bs_src.words[w];
                     while (word) {
                         int bit = std::countr_zero(word);
-                        uint64_t v = w * 64 + bit;
-                        word &= word - 1;
+                        uint64_t v = IMP_WORD_BIT_TO_NODE(w, bit);
+                        word = IMP_CLEAR_LOWEST_BIT(word);
                         if (v < csc_bound) {
                             uint64_t start = slot.get_csc_offset(v);
                             uint64_t end   = slot.get_csc_offset(v + 1);
+                            IMPULSE_WELL_FORMED_ASSERT(start <= end);
                             for (uint64_t idx = start; idx < end; ++idx) {
                                 uint64_t u = slot.get_csc_target(idx);
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
@@ -181,6 +196,7 @@ op_CSC_WALK: {
                         if (v < csc_bound) {
                             uint64_t start = slot.get_csc_offset(v);
                             uint64_t end   = slot.get_csc_offset(v + 1);
+                            IMPULSE_WELL_FORMED_ASSERT(start <= end);
                             for (uint64_t idx = start; idx < end; ++idx) {
                                 uint64_t u = slot.get_csc_target(idx);
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
@@ -193,6 +209,8 @@ op_CSC_WALK: {
                 if (v < csc_bound) {
                     uint64_t start = slot.get_csc_offset(v);
                     uint64_t end   = slot.get_csc_offset(v + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
+                    IMPULSE_TESTCASE(start == end);
                     for (uint64_t idx = start; idx < end; ++idx) {
                         uint64_t u = slot.get_csc_target(idx);
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
@@ -204,14 +222,14 @@ op_CSC_WALK: {
         if (unv_words != nullptr) {
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 uint64_t w_dst = 0;
-                for (int b = 0; b < 64; ++b) {
-                    uint64_t v = i * 64 + b;
+                for (uint32_t b = 0; b < IMP_BITS_PER_WORD; ++b) {
+                    uint64_t v = IMP_WORD_BIT_TO_NODE(i, b);
                     if (v < csc_bound) {
                         uint64_t u = slot.get_csc_target(v);
-                        if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
-                            bool hit = src_words ? ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) : (u == scalar_src);
+                        if (OP_18_IS_VALID_TARGET(u)) {
+                            bool hit = src_words ? ((src_words[IMP_WORD_INDEX(u)] & IMP_BIT_MASK64(u)) != 0ULL) : (u == scalar_src);
                             if (hit) {
-                                w_dst |= (1ULL << b);
+                                w_dst |= IMP_BIT_MASK64(b);
                             }
                         }
                     }
@@ -225,8 +243,8 @@ op_CSC_WALK: {
                     uint64_t word = bs_src.words[w];
                     while (word) {
                         int bit = std::countr_zero(word);
-                        uint64_t v = w * 64 + bit;
-                        word &= word - 1;
+                        uint64_t v = IMP_WORD_BIT_TO_NODE(w, bit);
+                        word = IMP_CLEAR_LOWEST_BIT(word);
                         if (v < csc_bound) {
                             uint64_t u = slot.get_csc_target(v);
                             if (u != slot.csc_sentinel()) {
@@ -242,7 +260,7 @@ op_CSC_WALK: {
                 if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len) && vec_ptr) {
                     for (size_t k = 0; k < vec_len; ++k) {
                         uint64_t v = vec_ptr[k];
-                        if (v != ~0ULL && v < csc_bound) {
+                        if (v != IMP_INVALID_NODE_U64 && v < csc_bound) {
                             uint64_t u = slot.get_csc_target(v);
                             if (u != sent) {
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
@@ -302,27 +320,23 @@ op_CSC_WALK: {
             break;
         }
     }
-    if (inst.flags & IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY) {
+    if (IMP_INST_HAS_FLAG(inst, IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY)) {
         IMPULSE_TESTCASE(is_empty);
-        impulse_vm_branch_coverage_record(static_cast<uint32_t>(vm_state->pc), OP_CSR_WALK_2HOP, 2u,
+        impulse_vm_branch_coverage_record(static_cast<uint32_t>(vm_state->pc), OP_CSC_WALK, 2u,
                                           IMPULSE_COV_KIND_TWO_WAY, IMPULSE_COV_BOTH,
                                           is_empty ? 0u : 1u);
     }
-    if (is_empty) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-        if (inst.flags & IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY) {
-            if (instruction_count > 0 && bytecode[instruction_count - 1].opcode == OP_HALT) {
-                uint16_t halt_reg = bytecode[instruction_count - 1].dst_reg;
-                if (halt_reg < 64 && halt_reg != dst) {
-                    vm_state->registers[halt_reg] = static_cast<uint64_t>(h_dst);
-                    vm_state->register_types[halt_reg] = TYPE_BITSET_HANDLE;
-                }
+    IMP_VM_SET_ZF(vm_state, is_empty);
+    if (is_empty && IMP_INST_HAS_FLAG(inst, IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY)) {
+        if (instruction_count > 0 && bytecode[instruction_count - 1].opcode == OP_HALT) {
+            uint16_t halt_reg = IMP_INST_DST(bytecode[instruction_count - 1]);
+            if (halt_reg < IMP_VM_GPR_COUNT && halt_reg != dst) {
+                vm_state->registers[halt_reg] = static_cast<uint64_t>(h_dst);
+                vm_state->register_types[halt_reg] = TYPE_BITSET_HANDLE;
             }
-            vm_state->pc = instruction_count;
-            return IMPULSE_VM_OK;
         }
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        vm_state->pc = instruction_count;
+        return IMPULSE_VM_OK;
     }
 
     vm_state->pc++;

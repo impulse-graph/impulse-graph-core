@@ -7,7 +7,7 @@
  * Formal Opcode Contract:
  *  - Opcode: 0x91 (OP_COLLECT_ARRAY)
  *  - Destination: dst_reg (RegFieldLayout::DST_REG)
- *  - Source: payload & 0xFFFF (RegFieldLayout::PAYLOAD_LOW16)
+ *  - Source: IMP_INST_LOW16(inst) (RegFieldLayout::PAYLOAD_LOW16)
  *  - Allowed Source Types: TYPE_BITSET_HANDLE, TYPE_LANE_FRONTIER, TYPE_NODE_VECTOR, TYPE_INT_OR_NODE
  *  - Output Destination Types: TYPE_NODE_VECTOR
  *  - Flags: Sets IMPULSE_VM_FLAG_ZF if node buffer is empty
@@ -21,13 +21,20 @@
 
 // Opcode 0x91: OP_COLLECT_ARRAY
 op_COLLECT_ARRAY: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_91_ALLOWED_SRC_TYPES);
+
+    IMPULSE_TESTCASE(dst == src);
+    IMPULSE_TESTCASE(vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    IMPULSE_TESTCASE(vm_state->register_types[src] == TYPE_LANE_FRONTIER);
 
     auto& node_buf = vm_state->query_context->node_buffer;
     if (vm_state->register_types[src] == TYPE_NODE_VECTOR &&
@@ -37,30 +44,29 @@ op_COLLECT_ARRAY: {
         node_buf.clear();
 
         if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
-            int handle = static_cast<int>(vm_state->registers[src]);
+            const int handle = static_cast<int>(vm_state->registers[src]);
             if (handle >= 0 && static_cast<size_t>(handle) < VM_MAX_BITSET_HANDLES) {
                 const auto& bs = vm_state->query_context->bitsets[handle];
                 for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                     uint64_t w = bs.words[i];
-                    if (w == 0) continue;
-                    for (int b = 0; b < 64; ++b) {
-                        if (w & (1ULL << b)) {
-                            uint64_t node_id = i * 64 + b;
-                            node_buf.push_back(node_id);
-                        }
+                    while (w != 0ULL) {
+                        const uint32_t b = static_cast<uint32_t>(std::countr_zero(w));
+                        const uint64_t node_id = IMP_WORD_BIT_TO_NODE(i, b);
+                        w = IMP_CLEAR_LOWEST_BIT(w);
+                        node_buf.push_back(node_id);
                     }
                 }
             }
         } else if (vm_state->register_types[src] == TYPE_LANE_FRONTIER) {
-            size_t h_lf = static_cast<size_t>(vm_state->registers[src]);
+            const size_t h_lf = static_cast<size_t>(vm_state->registers[src]);
             if (h_lf < VM_MAX_LANE_FRONTIER_HANDLES && h_lf < vm_state->query_context->lane_frontiers_count) {
                 const auto& lf = vm_state->query_context->lane_frontiers[h_lf];
                 for (size_t w_idx = 0; w_idx < lf.active_words.size(); ++w_idx) {
                     uint64_t word = lf.active_words[w_idx];
                     while (word != 0ULL) {
-                        uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
-                        size_t u = (w_idx << 6) + bit;
-                        word &= (word - 1ULL);
+                        const uint32_t bit = static_cast<uint32_t>(std::countr_zero(word));
+                        const size_t u = static_cast<size_t>(IMP_WORD_BIT_TO_NODE(w_idx, bit));
+                        word = IMP_CLEAR_LOWEST_BIT(word);
                         if (u >= lf.lanes.size()) break;
                         if ((lf.lanes[u] & lf.active_mask) != 0ULL) {
                             node_buf.push_back(static_cast<uint64_t>(u));
@@ -85,11 +91,14 @@ op_COLLECT_ARRAY: {
     if (vm_state->register_types[dst] == TYPE_NODE_VECTOR) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
     }
-    if (h_dst < 0 || static_cast<size_t>(h_dst) >= VM_MAX_VECTOR_HANDLES || !vm_state->query_context->node_vectors_allocated[h_dst]) {
+    if (h_dst < 0 || static_cast<size_t>(h_dst) >= VM_MAX_VECTOR_HANDLES ||
+        !vm_state->query_context->node_vectors_allocated[h_dst]) {
         h_dst = acquire_node_vector(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
-    size_t count = node_buf.size();
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < VM_MAX_VECTOR_HANDLES);
+
+    const size_t count = node_buf.size();
     auto& target_vec = vm_state->query_context->node_vectors[h_dst];
     if (count > target_vec.size()) target_vec.resize(count);
     if (count > 0) {
@@ -101,8 +110,7 @@ op_COLLECT_ARRAY: {
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
-    if (node_buf.empty()) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, node_buf.empty());
 
     vm_state->pc++;
     DISPATCH();

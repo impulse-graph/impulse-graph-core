@@ -32,5 +32,11 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_BC_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
-                    case OP_STREAM_LOAD_EDGE_ID: s_regs[sDst] = static_cast<float>(eIdx); break;
+                    case OP_STREAM_LOAD_EDGE_ID: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
+                        IMPULSE_TESTCASE(eIdx == 0ULL);
+                        s_regs[sDst] = static_cast<float>(eIdx);
+                        break;
+                    }

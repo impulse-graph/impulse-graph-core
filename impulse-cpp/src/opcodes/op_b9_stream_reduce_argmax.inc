@@ -32,12 +32,15 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_B9_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_REDUCE_ARGMAX: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
                         float val = s_regs[sDst];
                         uint16_t valReg = sPayloadLow;
                         uint16_t argReg = sPayloadHigh;
-                        VALIDATE_REG(valReg);
+                        IMP_VALIDATE_GPR(valReg);
+                        IMPULSE_ASSERT(valReg < IMP_VM_GPR_COUNT);
                         int h_vec = -1;
                         if (vm_state->register_types[valReg] == TYPE_FLOAT_VECTOR) {
                             h_vec = static_cast<int>(vm_state->registers[valReg]);
@@ -54,20 +57,23 @@
                         if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
                             auto& vec = vm_state->query_context->float_vectors[h_vec];
                             if (actualTarget < vec.size()) {
-                                uint64_t rbit = (valReg < 64) ? (1ULL << valReg) : 1ULL;
+                                uint64_t rbit = IMP_BIT_MASK64(valReg);
                                 bool first_touch = (actualTarget < reduced_reg_masks.size())
                                     ? ((reduced_reg_masks[actualTarget] & rbit) == 0ULL)
                                     : true;
+                                IMPULSE_TESTCASE(first_touch);
                                 float current = vec[actualTarget];
                                 bool is_better = first_touch ||
                                     (op == OP_STREAM_REDUCE_ARGMIN && val < current) ||
                                     (op == OP_STREAM_REDUCE_ARGMAX && val > current);
+                                IMPULSE_TESTCASE(is_better);
                                 if (is_better) {
                                     if (actualTarget < reduced_reg_masks.size()) {
                                         reduced_reg_masks[actualTarget] |= rbit;
                                     }
                                     vec[actualTarget] = val;
-                                    if (argReg < 64) {
+                                    IMPULSE_TESTCASE(argReg < IMP_VM_GPR_COUNT);
+                                    if (argReg < IMP_VM_GPR_COUNT) {
                                         vm_state->registers[argReg] = static_cast<uint64_t>(actualSource);
                                         vm_state->register_types[argReg] = TYPE_NODE_ID;
                                     }

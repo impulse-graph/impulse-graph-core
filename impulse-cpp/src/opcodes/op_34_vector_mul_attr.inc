@@ -21,6 +21,7 @@
 #ifndef OP_34_CONTRACT_DEFINED
 #define OP_34_CONTRACT_DEFINED
 #define OP_34_DEFINED_FLAGS        0x01u
+#define OP_34_MODE_SCALAR_IMM      0u
 #define OP_34_ALLOWED_SRC_TYPES    (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_INT_OR_NODE)
 #define OP_34_OUTPUT_DST_TYPES     (IMP_TYPES_FLOAT_OR_DBL)
 #endif
@@ -28,9 +29,11 @@
 // Opcode 0x34: OP_VECTOR_MUL_ATTR
 op_VECTOR_MUL_ATTR: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
     size_t size = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR);
@@ -42,21 +45,28 @@ op_VECTOR_MUL_ATTR: {
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
     }
+    IMPULSE_TESTCASE(is_double);
+    IMPULSE_TESTCASE(IMP_INST_FLAGS(inst) == OP_34_MODE_SCALAR_IMM);
 
-    if (inst.flags == 0) {
-        float scalar = reinterpret_cast<const float&>(inst.payload);
+    if (IMP_INST_FLAGS(inst) == OP_34_MODE_SCALAR_IMM) {
+        uint32_t raw_payload = IMP_INST_PAYLOAD_U32(inst);
+        float scalar = 0.0f;
+        std::memcpy(&scalar, &raw_payload, sizeof(float));
         if (is_double) {
+            IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->double_vectors.size());
             double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
             for (size_t i = 0; i < size; ++i) vec[i] *= scalar;
         } else {
+            IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->float_vectors.size());
             float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
             impulse_simd_vector_scale_f32(vec, scalar, size);
         }
     } else {
-        uint8_t src_reg = inst.payload & 0xFF;
-        uint8_t attr_id = (inst.payload >> 8) & 0xFF;
-        uint8_t rel_id = (inst.payload >> 16) & 0xFF;
+        const uint8_t src_reg = IMP_INST_U8_0(inst);
+        const uint8_t attr_id = IMP_INST_U8_1(inst);
+        const uint8_t rel_id = IMP_INST_U8_2(inst);
         VALIDATE_REG(src_reg);
+        IMPULSE_ASSERT(src_reg < IMP_VM_GPR_COUNT);
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_34_ALLOWED_SRC_TYPES);
 
         if (rel_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -64,24 +74,27 @@ op_VECTOR_MUL_ATTR: {
         const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
         if (!attr.data_ptr) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
-        uint8_t base_type = attr.type_code & 0x7F;
+        const uint8_t base_type = IMP_ATTR_BASE_TYPE(attr.type_code);
+        IMPULSE_TESTCASE(base_type == IMP_LEGACY_ALT_FLOAT32);
 
         if (is_double) {
+            IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->double_vectors.size());
             double* vec = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
 #if defined(_OPENMP)
             #pragma omp parallel for schedule(static)
 #endif
             for (size_t i = 0; i < size; ++i) {
                 double val = 1.0;
-                if (base_type == 0x08) val = static_cast<double>(static_cast<const float*>(attr.data_ptr)[i]);
-                else if (base_type == 0x09) val = static_cast<const double*>(attr.data_ptr)[i];
-                else if (base_type == 0x03) val = static_cast<double>(static_cast<const int32_t*>(attr.data_ptr)[i]);
+                if (base_type == IMP_LEGACY_ALT_FLOAT32) val = static_cast<double>(static_cast<const float*>(attr.data_ptr)[i]);
+                else if (base_type == IMP_LEGACY_ALT_FLOAT64) val = static_cast<const double*>(attr.data_ptr)[i];
+                else if (base_type == IMP_TYPE_CODE_INT32) val = static_cast<double>(static_cast<const int32_t*>(attr.data_ptr)[i]);
                 else val = static_cast<double>(static_cast<const int64_t*>(attr.data_ptr)[i]);
                 vec[i] *= val;
             }
         } else {
+            IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->float_vectors.size());
             float* vec = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();
-            if (base_type == 0x08) {
+            if (base_type == IMP_LEGACY_ALT_FLOAT32) {
                 impulse_simd_vector_mul_f32(vec, static_cast<const float*>(attr.data_ptr), size);
             } else {
 #if defined(_OPENMP)
@@ -89,8 +102,8 @@ op_VECTOR_MUL_ATTR: {
 #endif
                 for (size_t i = 0; i < size; ++i) {
                     float val = 1.0f;
-                    if (base_type == 0x09) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
-                    else if (base_type == 0x03) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
+                    if (base_type == IMP_LEGACY_ALT_FLOAT64) val = static_cast<float>(static_cast<const double*>(attr.data_ptr)[i]);
+                    else if (base_type == IMP_TYPE_CODE_INT32) val = static_cast<float>(static_cast<const int32_t*>(attr.data_ptr)[i]);
                     else val = static_cast<float>(static_cast<const int64_t*>(attr.data_ptr)[i]);
                     vec[i] *= val;
                 }

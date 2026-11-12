@@ -20,22 +20,28 @@
 // Opcode 0x45: OP_REDUCE
 op_REDUCE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src_vec = inst.payload & 0xFF;
-    uint16_t op_id = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src_vec = IMP_INST_U8_0(inst);
+    const uint16_t op_id = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src_vec < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_45_ALLOWED_SRC_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
+    IMPULSE_TESTCASE(op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX);
+    IMPULSE_TESTCASE(dst == src_vec);
     if (vm_state->register_types[src_vec] == TYPE_DOUBLE_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
         if (handle < 0 || handle >= static_cast<int>(VM_MAX_VECTOR_HANDLES) || !vm_state->query_context->double_vectors_allocated[handle]) {
+            IMPULSE_TESTCASE(true);
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->double_vector_lengths[handle];
         if (active_len > 0 && active_len < N) N = active_len;
+        IMPULSE_TESTCASE(N == 0);
         const double* vec = vm_state->query_context->double_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
             double best_val = (op_id == BINARY_OP_ARGMIN)
@@ -53,8 +59,7 @@ op_REDUCE: {
             }
             vm_state->registers[dst] = static_cast<uint64_t>(best_idx);
             vm_state->register_types[dst] = TYPE_NODE_ID;
-            if (best_idx == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, best_idx == 0);
         } else {
             double res = 0.0;
             size_t valid_count = 0;
@@ -85,16 +90,17 @@ op_REDUCE: {
             }
             vm_state->registers[dst] = reinterpret_cast<uint64_t&>(res);
             vm_state->register_types[dst] = TYPE_DOUBLE;
-            if (res == 0.0 || valid_count == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, res == 0.0 || valid_count == 0);
         }
     } else if (vm_state->register_types[src_vec] == TYPE_FLOAT_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
         if (handle < 0 || handle >= static_cast<int>(VM_MAX_VECTOR_HANDLES) || !vm_state->query_context->float_vectors_allocated[handle]) {
+            IMPULSE_TESTCASE(true);
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->float_vector_lengths[handle];
         if (active_len > 0 && active_len < N) N = active_len;
+        IMPULSE_TESTCASE(N == 0);
         const float* vec = vm_state->query_context->float_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
             float best_val = (op_id == BINARY_OP_ARGMIN)
@@ -112,8 +118,7 @@ op_REDUCE: {
             }
             vm_state->registers[dst] = static_cast<uint64_t>(best_idx);
             vm_state->register_types[dst] = TYPE_NODE_ID;
-            if (best_idx == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, best_idx == 0);
         } else {
             float res = 0.0f;
             size_t valid_count = 0;
@@ -146,16 +151,17 @@ op_REDUCE: {
             std::memcpy(&raw_bits, &res, sizeof(float));
             vm_state->registers[dst] = static_cast<uint64_t>(raw_bits);
             vm_state->register_types[dst] = TYPE_FLOAT;
-            if (res == 0.0f || valid_count == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, res == 0.0f || valid_count == 0);
         }
     } else if (vm_state->register_types[src_vec] == TYPE_UINT64_VECTOR || vm_state->register_types[src_vec] == TYPE_NODE_VECTOR) {
         int handle = static_cast<int>(vm_state->registers[src_vec]);
         if (handle < 0 || handle >= static_cast<int>(VM_MAX_VECTOR_HANDLES) || !vm_state->query_context->node_vectors_allocated[handle]) {
+            IMPULSE_TESTCASE(true);
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->node_vector_lengths[handle];
         if (active_len > 0 && active_len < N) N = active_len;
+        IMPULSE_TESTCASE(N == 0);
         const uint64_t* vec = vm_state->query_context->node_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
             uint64_t best_val = (N > 0) ? vec[0] : 0;
@@ -170,8 +176,7 @@ op_REDUCE: {
             }
             vm_state->registers[dst] = static_cast<uint64_t>(best_idx);
             vm_state->register_types[dst] = TYPE_NODE_ID;
-            if (best_idx == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, best_idx == 0);
         } else {
             uint64_t res = 0;
             if (op_id == BINARY_OP_ADD) {
@@ -190,14 +195,12 @@ op_REDUCE: {
             }
             vm_state->registers[dst] = res;
             vm_state->register_types[dst] = TYPE_INT64;
-            if (res == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-            else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+            IMP_VM_SET_ZF(vm_state, res == 0u);
         }
     } else {
         vm_state->registers[dst] = vm_state->registers[src_vec];
         vm_state->register_types[dst] = TYPE_INT64;
-        if (vm_state->registers[dst] == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        IMP_VM_SET_ZF(vm_state, vm_state->registers[dst] == 0u);
     }
 
     vm_state->pc++;

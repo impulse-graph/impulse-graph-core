@@ -21,13 +21,15 @@
 // Opcode 0x37: OP_VECTOR_STR_CONCAT
 op_VECTOR_STR_CONCAT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_LOW16(inst);
+    const uint16_t src2 = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_37_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_37_ALLOWED_AUX1_TYPES);
 
@@ -35,19 +37,24 @@ op_VECTOR_STR_CONCAT: {
     if (h_dst < 0) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(static_cast<size_t>(h_dst) < vm_state->query_context->string_vectors.size());
     auto& svec_dst = vm_state->query_context->string_vectors[h_dst];
     svec_dst.clear();
 
+    IMPULSE_TESTCASE(src1 == src2);
     if (vm_state->register_types[src1] == TYPE_STRING_VECTOR) {
         int h_src1 = static_cast<int>(vm_state->registers[src1]);
+        IMPULSE_ASSERT(h_src1 >= 0 && static_cast<size_t>(h_src1) < vm_state->query_context->string_vectors.size());
         const auto& svec1 = vm_state->query_context->string_vectors[h_src1];
         for (const char* str : svec1) svec_dst.push_back(str);
     }
     if (vm_state->register_types[src2] == TYPE_STRING_VECTOR) {
         int h_src2 = static_cast<int>(vm_state->registers[src2]);
+        IMPULSE_ASSERT(h_src2 >= 0 && static_cast<size_t>(h_src2) < vm_state->query_context->string_vectors.size());
         const auto& svec2 = vm_state->query_context->string_vectors[h_src2];
         for (const char* str : svec2) svec_dst.push_back(str);
     }
+    IMPULSE_TESTCASE(svec_dst.empty());
 
     vm_state->registers[dst] = h_dst;
     vm_state->register_types[dst] = TYPE_STRING_VECTOR;

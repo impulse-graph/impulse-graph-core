@@ -16,14 +16,18 @@
 #ifndef OP_C4_CONTRACT_DEFINED
 #define OP_C4_CONTRACT_DEFINED
 #define OP_C4_DEFINED_FLAGS        0x03u
+#define OP_C4_FLAG_ACCUMULATE      IMP_FLAG_ACCUMULATE_DEST
+#define OP_C4_FLAG_FIXPOINT        IMP_FLAG_DELTA_FIXPOINT
 #define OP_C4_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
 #define OP_C4_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_LANE_FRONTIER))
 #endif
 
 // Opcode 0xC4: OP_LANE_CSC_WALK
 op_LANE_CSC_WALK: {
+    IMPULSE_TESTCASE(IMP_INST_HAS_FLAG(bytecode[vm_state->pc], OP_C4_FLAG_FIXPOINT));
     impulse_vm_status_t st = execute_lane_walk_common<true>(bytecode, vm_state);
     if (st != IMPULSE_VM_OK) return st;
+    IMPULSE_ASSERT(vm_state->register_types[IMP_INST_DST(bytecode[vm_state->pc])] == TYPE_LANE_FRONTIER);
     vm_state->pc++;
     DISPATCH();
 }

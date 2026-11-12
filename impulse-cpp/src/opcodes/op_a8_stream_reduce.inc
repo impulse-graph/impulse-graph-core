@@ -32,12 +32,15 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_A8_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_REDUCE: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
                         float val = s_regs[sDst];
                         uint16_t globalReg = sPayloadLow;
                         uint16_t monoid = sPayloadHigh;
-                        VALIDATE_REG(globalReg);
+                        IMP_VALIDATE_GPR(globalReg);
+                        IMPULSE_ASSERT(globalReg < IMP_VM_GPR_COUNT);
                         int h_vec = -1;
                         if (vm_state->register_types[globalReg] == TYPE_FLOAT_VECTOR) {
                             h_vec = static_cast<int>(vm_state->registers[globalReg]);
@@ -54,19 +57,21 @@
                         if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
                             auto& vec = vm_state->query_context->float_vectors[h_vec];
                             if (actualTarget < vec.size()) {
-                                uint64_t rbit = (globalReg < 64) ? (1ULL << globalReg) : 1ULL;
+                                uint64_t rbit = IMP_BIT_MASK64(globalReg);
                                 bool first_touch = (actualTarget < reduced_reg_masks.size())
                                     ? ((reduced_reg_masks[actualTarget] & rbit) == 0ULL)
                                     : true;
+                                IMPULSE_TESTCASE(first_touch);
                                 if (actualTarget < reduced_reg_masks.size()) {
                                     reduced_reg_masks[actualTarget] |= rbit;
                                 }
                                 float current = vec[actualTarget];
                                 float next = current;
+                                IMPULSE_TESTCASE(monoid == IMP_STREAM_MONOID_MAX || monoid == IMP_STREAM_MONOID_MIN);
                                 switch (monoid) {
-                                    case 0: next = current + val; break;
-                                    case 1: next = first_touch ? val : std::max(current, val); break;
-                                    case 2: next = first_touch ? val : std::min(current, val); break;
+                                    case IMP_STREAM_MONOID_SUM: next = current + val; break;
+                                    case IMP_STREAM_MONOID_MAX: next = first_touch ? val : std::max(current, val); break;
+                                    case IMP_STREAM_MONOID_MIN: next = first_touch ? val : std::min(current, val); break;
                                 }
                                 vec[actualTarget] = next;
                             }

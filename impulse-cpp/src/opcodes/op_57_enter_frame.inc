@@ -12,7 +12,9 @@
 #endif
 
 // Opcode 0x57: OP_ENTER_FRAME
-op_ENTER_FRAME:
+op_ENTER_FRAME: {
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_TESTCASE(vm_state->call_stack_depth == 0);
     vm_state->pc++;
     DISPATCH();
-
+}

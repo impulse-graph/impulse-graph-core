@@ -23,10 +23,13 @@
  */
 #ifndef OP_1F_CONTRACT_DEFINED
 #define OP_1F_CONTRACT_DEFINED 1
+#define OP_1F_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x1F: OP_DROP_SCRATCH_INDEX
 op_DROP_SCRATCH_INDEX: {
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_TESTCASE(vm_state->query_context == nullptr);
     vm_state->pc++;
     DISPATCH();
 }

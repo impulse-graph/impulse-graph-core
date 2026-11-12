@@ -23,23 +23,27 @@
  */
 #ifndef OP_23_CONTRACT_DEFINED
 #define OP_23_CONTRACT_DEFINED 1
+#define OP_23_ALLOWED_OPERAND_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
 #endif
 
 // Opcode 0x23: OP_VEC_CMP_BETWEEN
 op_VEC_CMP_BETWEEN: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src_vec = inst.payload & 0xFF;
-    uint16_t r_min = (inst.payload >> 8) & 0xFF;
-    uint16_t r_max = (inst.payload >> 16) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src_vec = IMP_INST_U8_0(inst);
+    const uint16_t r_min = IMP_INST_U8_1(inst);
+    const uint16_t r_max = IMP_INST_U8_2(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src_vec);
     VALIDATE_REG(r_min);
     VALIDATE_REG(r_max);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src_vec < IMP_VM_GPR_COUNT && r_min < IMP_VM_GPR_COUNT && r_max < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(vm_state->query_context == nullptr);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
-    IMPULSE_CHECK_REG_TYPE(vm_state, r_min, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
-    IMPULSE_CHECK_REG_TYPE(vm_state, r_max, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_23_ALLOWED_OPERAND_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, r_min, OP_23_ALLOWED_OPERAND_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, r_max, OP_23_ALLOWED_OPERAND_TYPES);
 
     uint8_t type_vec = vm_state->register_types[src_vec];
     uint64_t val_vec = vm_state->registers[src_vec];
@@ -47,6 +51,8 @@ op_VEC_CMP_BETWEEN: {
     uint64_t val_min = vm_state->registers[r_min];
     uint8_t type_max = vm_state->register_types[r_max];
     uint64_t val_max = vm_state->registers[r_max];
+    IMPULSE_TESTCASE(type_vec == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(r_min == r_max);
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
@@ -54,6 +60,7 @@ op_VEC_CMP_BETWEEN: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     }
     auto& bs = vm_state->query_context->bitsets[h_dst];
     bs.clear();
@@ -65,6 +72,7 @@ op_VEC_CMP_BETWEEN: {
         const double* v = vm_state->query_context->double_vectors[h_src].data();
         double min_val = (type_min == TYPE_DOUBLE) ? std::bit_cast<double>(val_min) : static_cast<double>(static_cast<int64_t>(val_min));
         double max_val = (type_max == TYPE_DOUBLE) ? std::bit_cast<double>(val_max) : static_cast<double>(static_cast<int64_t>(val_max));
+        IMPULSE_TESTCASE(min_val > max_val);
         for (size_t i = 0; i < N; ++i) {
             if (v[i] >= min_val && v[i] <= max_val) bs.set(i);
         }
@@ -75,6 +83,7 @@ op_VEC_CMP_BETWEEN: {
         const float* v = vm_state->query_context->float_vectors[h_src].data();
         float min_val = (type_min == TYPE_FLOAT) ? std::bit_cast<float>(static_cast<uint32_t>(val_min)) : static_cast<float>(static_cast<int64_t>(val_min));
         float max_val = (type_max == TYPE_FLOAT) ? std::bit_cast<float>(static_cast<uint32_t>(val_max)) : static_cast<float>(static_cast<int64_t>(val_max));
+        IMPULSE_TESTCASE(min_val > max_val);
         for (size_t i = 0; i < N; ++i) {
             if (v[i] >= min_val && v[i] <= max_val) bs.set(i);
         }
@@ -87,8 +96,7 @@ op_VEC_CMP_BETWEEN: {
     for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
         if (bs.words[w] != 0) { is_empty = false; break; }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();

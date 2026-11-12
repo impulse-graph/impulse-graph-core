@@ -32,14 +32,18 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_BE_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_YIELD: {
+                        IMPULSE_TESTCASE(src_is_lane);
                         if (src_is_lane) {
+                            IMPULSE_ASSERT(lf_dst_ptr != nullptr);
                             if (actualTarget < lf_dst_ptr->lanes.size()) {
                                 lf_dst_ptr->lanes[actualTarget] |= prop_mask;
-                                lf_dst_ptr->active_words[actualTarget >> 6] |= (1ULL << (actualTarget & 63));
+                                lf_dst_ptr->active_words[IMP_WORD_INDEX(actualTarget)] |= IMP_BIT_MASK64(actualTarget);
                             }
                         } else {
+                            IMPULSE_ASSERT(bs_dst_ptr != nullptr);
                             bitset_add(*bs_dst_ptr, actualTarget, vm_state->query_context->max_nodes);
                         }
                         break;

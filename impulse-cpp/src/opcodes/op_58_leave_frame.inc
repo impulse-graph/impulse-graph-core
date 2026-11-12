@@ -12,7 +12,9 @@
 #endif
 
 // Opcode 0x58: OP_LEAVE_FRAME
-op_LEAVE_FRAME:
+op_LEAVE_FRAME: {
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_TESTCASE(vm_state->call_stack_depth == 0);
     vm_state->pc++;
     DISPATCH();
-
+}

@@ -21,20 +21,25 @@
 
 // Opcode 0x67: OP_LOUVAIN_MODULARITY
 op_LOUVAIN_MODULARITY: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_67_ALLOWED_SRC_TYPES);
+    IMPULSE_TESTCASE(dst == src);
 
-    int h = acquire_node_vector(vm_state->query_context);
+    const int h = acquire_node_vector(vm_state->query_context);
     if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_ASSERT(h >= 0 && static_cast<size_t>(h) < vm_state->query_context->node_vectors.size());
     vm_state->registers[dst] = static_cast<uint64_t>(h);
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
-    vm_state->flags |= IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, true);
 
     vm_state->pc++;
     DISPATCH();
