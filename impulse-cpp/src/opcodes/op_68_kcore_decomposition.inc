@@ -21,17 +21,20 @@
 
 // Opcode 0x68: OP_KCORE_DECOMPOSITION
 op_KCORE_DECOMPOSITION: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t r_src = inst.payload & 0xFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(r_src);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t r_src = IMP_INST_U8_0(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(r_src);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && r_src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, r_src, OP_68_ALLOWED_SRC_TYPES);
 
     uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
-    if (rel_id == 0 && vm_state->register_types[r_src] == TYPE_NULL && r_src > 0) {
+    if (rel_id == 0u && vm_state->register_types[r_src] == TYPE_NULL && r_src > 0u) {
         rel_id = r_src;
     }
     size_t n = 0;
@@ -42,12 +45,16 @@ op_KCORE_DECOMPOSITION: {
     }
     if (n == 0) n = vm_state->query_context->max_nodes;
 
-    int h_dst = acquire_float_vector(vm_state->query_context);
+    const int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
     n = std::min(n, vm_state->query_context->float_vectors[h_dst].size());
     vm_state->query_context->float_vector_lengths[h_dst] = n;
     float* core = vm_state->query_context->float_vectors[h_dst].data();
     std::fill_n(core, n, 0.0f);
+
+    IMPULSE_TESTCASE(n == 0);
+    IMPULSE_TESTCASE(slot_ptr != nullptr);
 
     if (slot_ptr && slot_ptr->offsets_ptr && slot_ptr->targets_ptr && n > 0) {
         const auto& slot = *slot_ptr;
@@ -56,10 +63,17 @@ op_KCORE_DECOMPOSITION: {
         deg.resize(n, 0);
         int max_deg = 0;
         for (size_t i = 0; i < n; ++i) {
-            int d = (i < slot.node_count) ? static_cast<int>(slot.get_csr_offset(i + 1) - slot.get_csr_offset(i)) : 0;
+            int d = 0;
+            if (i < slot.node_count) {
+                const uint64_t off_s = slot.get_csr_offset(i);
+                const uint64_t off_e = slot.get_csr_offset(i + 1);
+                IMPULSE_WELL_FORMED_ASSERT(off_s <= off_e);
+                d = (off_e >= off_s) ? static_cast<int>(off_e - off_s) : 0;
+            }
             deg[i] = d;
             if (d > max_deg) max_deg = d;
         }
+        IMPULSE_TESTCASE(max_deg == 0);
 
         auto& vert = vm_state->query_context->scratch_int_vert;
         vert.clear();
@@ -74,12 +88,12 @@ op_KCORE_DECOMPOSITION: {
         for (size_t i = 0; i < n; ++i) bin[deg[i]]++;
         int start = 0;
         for (int d = 0; d <= max_deg; ++d) {
-            int num = bin[d];
+            const int num = bin[d];
             bin[d] = start;
             start += num;
         }
         for (size_t i = 0; i < n; ++i) {
-            int p = bin[deg[i]]++;
+            const int p = bin[deg[i]]++;
             pos[i] = p;
             vert[p] = static_cast<int>(i);
         }
@@ -89,17 +103,19 @@ op_KCORE_DECOMPOSITION: {
         bin[0] = 0;
 
         for (size_t i = 0; i < n; ++i) {
-            int v = vert[i];
+            const int v = vert[i];
+            IMPULSE_ASSERT(v >= 0 && static_cast<size_t>(v) < n);
             core[v] = static_cast<float>(deg[v]);
-            uint64_t e_start = (static_cast<uint64_t>(v) < slot.node_count) ? slot.get_csr_offset(v) : 0;
-            uint64_t e_end = (static_cast<uint64_t>(v) < slot.node_count) ? slot.get_csr_offset(v + 1) : 0;
+            const uint64_t e_start = (static_cast<uint64_t>(v) < slot.node_count) ? slot.get_csr_offset(v) : 0;
+            const uint64_t e_end = (static_cast<uint64_t>(v) < slot.node_count) ? slot.get_csr_offset(v + 1) : 0;
+            IMPULSE_WELL_FORMED_ASSERT(e_start <= e_end);
             for (uint64_t e = e_start; e < e_end; ++e) {
-                uint64_t u = slot.get_csr_target(e);
+                const uint64_t u = slot.get_csr_target(e);
                 if (u < n && deg[u] > deg[v]) {
-                    int du = deg[u];
-                    int pu = pos[u];
-                    int pw = bin[du];
-                    int w = vert[pw];
+                    const int du = deg[u];
+                    const int pu = pos[u];
+                    const int pw = bin[du];
+                    const int w = vert[pw];
                     if (static_cast<size_t>(u) != static_cast<size_t>(w)) {
                         pos[u] = pw;
                         pos[w] = pu;
@@ -115,9 +131,8 @@ op_KCORE_DECOMPOSITION: {
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
 
     vm_state->pc++;
     DISPATCH();
 }
-

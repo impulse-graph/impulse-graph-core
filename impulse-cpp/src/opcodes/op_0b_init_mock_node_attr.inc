@@ -23,11 +23,14 @@
  */
 #ifndef OP_0B_CONTRACT_DEFINED
 #define OP_0B_CONTRACT_DEFINED 1
+#define OP_0B_IS_NODE_ATTR true
 #endif
 
 // Opcode 0x0B: OP_INIT_MOCK_NODE_ATTR
 op_INIT_MOCK_NODE_ATTR: {
-    impulse_vm_status_t st = execute_init_mock_attr<true>(bytecode, vm_state);
+    IMPULSE_ASSERT(vm_state != nullptr);
+    impulse_vm_status_t st = execute_init_mock_attr<OP_0B_IS_NODE_ATTR>(bytecode, vm_state);
+    IMPULSE_TESTCASE(st != IMPULSE_VM_OK);
     if (st != IMPULSE_VM_OK) return st;
     vm_state->pc++;
     DISPATCH();

@@ -19,21 +19,28 @@
 // Opcode 0x3C: OP_EXTRACT_VALIDITY
 op_EXTRACT_VALIDITY: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_3C_ALLOWED_SRC_TYPES);
     uint8_t stype = vm_state->register_types[src];
+    IMPULSE_TESTCASE(stype == TYPE_FLOAT_VECTOR);
+    IMPULSE_TESTCASE(stype == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(dst == src);
 
     int hDst = acquire_bitset(vm_state->query_context);
     if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->bitsets.size());
     auto& bDst = vm_state->query_context->bitsets[hDst];
     bDst.clear();
 
     if (stype == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src]);
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len = vm_state->query_context->float_vector_lengths[h1];
         if (len == 0 || len > v1.size()) len = v1.size();
@@ -44,6 +51,7 @@ op_EXTRACT_VALIDITY: {
         }
     } else if (stype == TYPE_DOUBLE_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src]);
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
         auto& v1 = vm_state->query_context->double_vectors[h1];
         size_t len = vm_state->query_context->double_vector_lengths[h1];
         if (len == 0 || len > v1.size()) len = v1.size();
@@ -69,8 +77,7 @@ op_EXTRACT_VALIDITY: {
     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
         if (bDst.words[i] != 0) { is_empty = false; break; }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
     vm_state->pc++;
     DISPATCH();
 }

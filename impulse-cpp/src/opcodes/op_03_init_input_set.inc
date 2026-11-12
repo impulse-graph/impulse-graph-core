@@ -23,17 +23,21 @@
  */
 #ifndef OP_03_CONTRACT_DEFINED
 #define OP_03_CONTRACT_DEFINED 1
+#define OP_03_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x03: OP_INIT_INPUT_SET
 op_INIT_INPUT_SET: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
     int handle = acquire_bitset(vm_state->query_context);
     if (handle < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_ASSERT(handle >= 0 && static_cast<size_t>(handle) < vm_state->query_context->bitsets.size());
 
     vm_state->registers[dst] = static_cast<uint64_t>(handle);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
@@ -42,6 +46,7 @@ op_INIT_INPUT_SET: {
     bs.clear();
 
     bool is_empty = true;
+    IMPULSE_TESTCASE(input_param == 0u);
     if (input_param) {
         const uint64_t* src_words = reinterpret_cast<const uint64_t*>(input_param);
         std::memcpy(bs.words, src_words, vm_state->query_context->words_per_bitset * sizeof(uint64_t));
@@ -53,11 +58,7 @@ op_INIT_INPUT_SET: {
         }
     }
 
-    if (is_empty) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();

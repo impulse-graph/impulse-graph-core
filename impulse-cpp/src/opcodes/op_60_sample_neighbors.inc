@@ -21,10 +21,14 @@
 
 // Opcode 0x60: OP_SAMPLE_NEIGHBORS
 op_SAMPLE_NEIGHBORS: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    VALIDATE_REG(inst.dst_reg);
+    const uint16_t dst = IMP_INST_DST(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(IMP_INST_PAYLOAD_U32(inst) == 0u);
 
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

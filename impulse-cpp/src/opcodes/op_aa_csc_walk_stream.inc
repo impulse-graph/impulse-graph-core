@@ -24,14 +24,17 @@
 // Opcode 0xAA: OP_CSC_WALK_STREAM
 op_CSC_WALK_STREAM: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    uint16_t dst = IMP_INST_DST(inst);
+    uint16_t src = IMP_INST_LOW16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
+    IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_AA_ALLOWED_SRC_TYPES);
+    IMPULSE_TESTCASE(vm_state->register_types[src] == TYPE_LANE_FRONTIER);
 
     impulse_vm_status_t st = execute_walk_stream_common<OP_CSC_WALK_STREAM>(bytecode, instruction_count, vm_state);
     if (st != IMPULSE_VM_OK) return st;
+    IMPULSE_ASSERT(vm_state->register_types[dst] == TYPE_BITSET_HANDLE ||
+                   vm_state->register_types[dst] == TYPE_LANE_FRONTIER);
     DISPATCH();
 }

@@ -23,16 +23,21 @@
  */
 #ifndef OP_02_CONTRACT_DEFINED
 #define OP_02_CONTRACT_DEFINED 1
+#define OP_02_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x02: OP_INIT_INPUT_NODE
 op_INIT_INPUT_NODE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = (inst.payload != 0) ? inst.payload : input_param;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    const uint32_t imm_node = IMP_INST_PAYLOAD_U32(inst);
+    IMPULSE_TESTCASE(imm_node != 0u);
+    IMPULSE_TESTCASE(imm_node == 0u && input_param == 0u);
+    vm_state->registers[dst] = (imm_node != 0u) ? imm_node : input_param;
     vm_state->register_types[dst] = TYPE_NODE_ID;
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

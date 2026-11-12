@@ -23,8 +23,11 @@
  */
 #ifndef OP_00_CONTRACT_DEFINED
 #define OP_00_CONTRACT_DEFINED 1
+#define OP_00_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x00: OP_HALT
 op_HALT:
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_TESTCASE(vm_state->pc == 0);
     return IMPULSE_VM_OK;

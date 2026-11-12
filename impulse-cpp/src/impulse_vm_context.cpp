@@ -221,6 +221,7 @@ int impulse_test_control(int op, ...) {
     switch (op) {
         case IMPULSE_TESTCTRL_ASSERT: {
             int x = va_arg(ap, int);
+            (void)x;
             IMPULSE_VVA_ONLY(rc = 1;)
             if (rc) {
                 IMPULSE_ASSERT(x != 0);

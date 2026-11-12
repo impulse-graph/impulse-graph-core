@@ -23,17 +23,24 @@
 
 // Opcode 0x8A: OP_FRONTIER_DIFF
 op_FRONTIER_DIFF: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t r_curr = inst.payload & 0xFF;
-    uint16_t r_prev = (inst.payload >> 8) & 0xFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(r_curr);
-    VALIDATE_REG(r_prev);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t r_curr = IMP_INST_U8_0(inst);
+    const uint16_t r_prev = IMP_INST_U8_1(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(r_curr);
+    IMP_VALIDATE_GPR(r_prev);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && r_curr < IMP_VM_GPR_COUNT && r_prev < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, r_curr, OP_8A_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, r_prev, OP_8A_ALLOWED_AUX1_TYPES);
+
+    IMPULSE_TESTCASE(dst == r_curr);
+    IMPULSE_TESTCASE(dst == r_prev);
+    IMPULSE_TESTCASE(r_curr == r_prev);
 
     const VmBitSet* bs_curr_ptr = nullptr;
     const VmBitSet* bs_prev_ptr = nullptr;
@@ -41,34 +48,36 @@ op_FRONTIER_DIFF: {
     int h_prev = -1;
     if (vm_state->register_types[r_curr] == TYPE_BITSET_HANDLE) {
         h_curr = static_cast<int>(vm_state->registers[r_curr]);
-        if (h_curr >= 0 && h_curr < static_cast<int>(vm_state->query_context->bitsets.size())) {
+        if (h_curr >= 0 && static_cast<size_t>(h_curr) < vm_state->query_context->bitsets.size()) {
             bs_curr_ptr = &vm_state->query_context->bitsets[h_curr];
         }
     }
     if (vm_state->register_types[r_prev] == TYPE_BITSET_HANDLE) {
         h_prev = static_cast<int>(vm_state->registers[r_prev]);
-        if (h_prev >= 0 && h_prev < static_cast<int>(vm_state->query_context->bitsets.size())) {
+        if (h_prev >= 0 && static_cast<size_t>(h_prev) < vm_state->query_context->bitsets.size()) {
             bs_prev_ptr = &vm_state->query_context->bitsets[h_prev];
         }
     }
 
     int h_dst = -1;
-    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && dst != r_curr && dst != r_prev) {
+    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && dst != r_curr && dst != r_prev &&
+        vm_state->registers[dst] < vm_state->query_context->bitsets.size()) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-    size_t words = vm_state->query_context->words_per_bitset;
+    const size_t words = vm_state->query_context->words_per_bitset;
     bool has_bits = false;
     for (size_t w = 0; w < words; ++w) {
-        uint64_t c = bs_curr_ptr ? bs_curr_ptr->words[w] : 0ULL;
-        uint64_t p = bs_prev_ptr ? bs_prev_ptr->words[w] : 0ULL;
-        uint64_t d = c & ~p;
+        const uint64_t c = bs_curr_ptr ? bs_curr_ptr->words[w] : 0ULL;
+        const uint64_t p = bs_prev_ptr ? bs_prev_ptr->words[w] : 0ULL;
+        const uint64_t d = c & ~p;
         bs_dst.words[w] = d;
-        if (d != 0) has_bits = true;
+        if (d != 0ULL) has_bits = true;
     }
 
     if (dst == r_curr && h_curr >= 0) {
@@ -79,14 +88,8 @@ op_FRONTIER_DIFF: {
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
-
-    if (!has_bits) {
-        vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    } else {
-        vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
-    }
+    IMP_VM_SET_ZF(vm_state, !has_bits);
 
     vm_state->pc++;
     DISPATCH();
 }
-

@@ -32,5 +32,13 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_B6_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
-                    case OP_STREAM_LOGIC_NOT: s_regs[sDst] = (s_regs[sPayloadLow] == 0.0f) ? 1.0f : 0.0f; break;
+                    case OP_STREAM_LOGIC_NOT: {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT &&
+                                       sPayloadLow < IMP_VM_STREAM_REG_COUNT);
+                        const bool inv = (s_regs[sPayloadLow] == 0.0f);
+                        IMPULSE_TESTCASE(inv);
+                        s_regs[sDst] = inv ? 1.0f : 0.0f;
+                        break;
+                    }

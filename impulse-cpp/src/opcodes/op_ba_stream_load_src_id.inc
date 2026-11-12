@@ -32,11 +32,18 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_BA_DEFINED_FLAGS        0x03u
+#define OP_BA_MODE_SRC_ID          0x00u
+#define OP_BA_MODE_LANE_POPCOUNT   0x01u
+#define OP_BA_MODE_LANE_MASK       0x02u
 #endif
                     case OP_STREAM_LOAD_SRC_ID: {
-                        if (sInst.flags == 1) {
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
+                        const uint8_t s_mode = IMP_INST_FLAGS(sInst);
+                        IMPULSE_TESTCASE(s_mode != OP_BA_MODE_SRC_ID);
+                        if (s_mode == OP_BA_MODE_LANE_POPCOUNT) {
                             s_regs[sDst] = static_cast<float>(std::popcount(u_lane_mask));
-                        } else if (sInst.flags == 2) {
+                        } else if (s_mode == OP_BA_MODE_LANE_MASK) {
                             s_regs[sDst] = static_cast<float>(u_lane_mask);
                         } else {
                             s_regs[sDst] = static_cast<float>(actualSource);

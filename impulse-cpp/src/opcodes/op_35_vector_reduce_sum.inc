@@ -19,18 +19,25 @@
 // Opcode 0x35: OP_VECTOR_REDUCE_SUM
 op_VECTOR_REDUCE_SUM: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_35_ALLOWED_SRC_TYPES);
 
     size_t size = vm_state->query_context->max_nodes;
     double sum = 0.0;
+    const uint8_t src_type = vm_state->register_types[src];
+    IMPULSE_TESTCASE(src_type == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(src_type == TYPE_FLOAT || src_type == TYPE_DOUBLE);
+    IMPULSE_TESTCASE(dst == src);
 
-    if (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR) {
+    if (src_type == TYPE_DOUBLE_VECTOR) {
         size_t h = vm_state->registers[src];
+        IMPULSE_ASSERT(h < vm_state->query_context->double_vectors.size());
         if (h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->double_vector_lengths[h] > 0) {
             size = std::min(size, vm_state->query_context->double_vector_lengths[h]);
         }
@@ -40,8 +47,9 @@ op_VECTOR_REDUCE_SUM: {
         }
         vm_state->registers[dst] = reinterpret_cast<uint64_t&>(sum);
         vm_state->register_types[dst] = TYPE_DOUBLE;
-    } else if (vm_state->register_types[src] == TYPE_FLOAT_VECTOR) {
+    } else if (src_type == TYPE_FLOAT_VECTOR) {
         size_t h = vm_state->registers[src];
+        IMPULSE_ASSERT(h < vm_state->query_context->float_vectors.size());
         if (h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vector_lengths[h] > 0) {
             size = std::min(size, vm_state->query_context->float_vector_lengths[h]);
         }
@@ -54,15 +62,15 @@ op_VECTOR_REDUCE_SUM: {
         reinterpret_cast<float&>(vm_state->registers[dst]) = fsum;
         vm_state->register_types[dst] = TYPE_FLOAT;
         sum = fsum;
-    } else if (vm_state->register_types[src] == TYPE_FLOAT) {
-        uint32_t bits = static_cast<uint32_t>(vm_state->registers[src] & 0xFFFFFFFFULL);
+    } else if (src_type == TYPE_FLOAT) {
+        uint32_t bits = static_cast<uint32_t>(vm_state->registers[src] & IMP_SENTINEL_U32);
         float fval;
         std::memcpy(&fval, &bits, sizeof(float));
         vm_state->registers[dst] = 0;
         reinterpret_cast<float&>(vm_state->registers[dst]) = fval;
         vm_state->register_types[dst] = TYPE_FLOAT;
         sum = fval;
-    } else if (vm_state->register_types[src] == TYPE_DOUBLE) {
+    } else if (src_type == TYPE_DOUBLE) {
         double dval;
         uint64_t bits = vm_state->registers[src];
         std::memcpy(&dval, &bits, sizeof(double));
@@ -74,8 +82,7 @@ op_VECTOR_REDUCE_SUM: {
         vm_state->register_types[dst] = TYPE_NULL;
     }
 
-    if (sum == 0.0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, sum == 0.0);
 
     vm_state->pc++;
     DISPATCH();

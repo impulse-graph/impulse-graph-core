@@ -23,79 +23,99 @@
 
 // Opcode 0x8B: OP_COO_WALK_FILTERED
 op_COO_WALK_FILTERED: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFF;
-    uint16_t filter_reg = (inst.payload >> 8) & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
-    VALIDATE_REG(filter_reg);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_U8_0(inst);
+    const uint16_t filter_reg = IMP_INST_U8_1(inst);
+    const uint16_t rel = IMP_INST_HIGH16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
+    IMP_VALIDATE_GPR(filter_reg);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT && filter_reg < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_8B_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, filter_reg, OP_8B_ALLOWED_AUX1_TYPES);
 
-    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL);
-    bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
-    uint64_t scalar_src = vm_state->registers[src];
+    const bool src_is_null = (vm_state->register_types[src] == TYPE_NULL);
+    const bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
+    const uint64_t scalar_src = vm_state->registers[src];
     const uint64_t* src_words = nullptr;
     if (src_is_bitset) {
-        int h = static_cast<int>(scalar_src);
-        if (h < 0 || h >= static_cast<int>(vm_state->query_context->bitsets.size())) {
+        const int h = static_cast<int>(scalar_src);
+        if (h < 0 || static_cast<size_t>(h) >= vm_state->query_context->bitsets.size()) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         src_words = vm_state->query_context->bitsets[h].words;
     }
 
-    bool flt_is_null = (vm_state->register_types[filter_reg] == TYPE_NULL);
-    bool flt_is_bitset = (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE);
-    uint64_t scalar_flt = vm_state->registers[filter_reg];
+    const bool flt_is_null = (vm_state->register_types[filter_reg] == TYPE_NULL);
+    const bool flt_is_bitset = (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE);
+    const uint64_t scalar_flt = vm_state->registers[filter_reg];
     const uint64_t* flt_words = nullptr;
     if (flt_is_bitset) {
-        int h = static_cast<int>(scalar_flt);
-        if (h < 0 || h >= static_cast<int>(vm_state->query_context->bitsets.size())) {
+        const int h = static_cast<int>(scalar_flt);
+        if (h < 0 || static_cast<size_t>(h) >= vm_state->query_context->bitsets.size()) {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         flt_words = vm_state->query_context->bitsets[h].words;
     }
 
+    IMPULSE_TESTCASE(src_is_bitset);
+    IMPULSE_TESTCASE(flt_is_bitset);
+    IMPULSE_TESTCASE(src_is_null);
+    IMPULSE_TESTCASE(flt_is_null);
+
     int h_dst = -1;
-    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && !(dst == src && src_is_bitset) && !(dst == filter_reg && flt_is_bitset)) {
+    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE &&
+        !(dst == src && src_is_bitset) && !(dst == filter_reg && flt_is_bitset) &&
+        vm_state->registers[dst] < vm_state->query_context->bitsets.size()) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    if (rel < vm_state->query_context->slots.size()) {
+    const bool valid_rel = (rel < vm_state->query_context->slots.size());
+    IMPULSE_TESTCASE(!valid_rel);
+    if (valid_rel) {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+            const size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
             if (src_is_bitset) {
+                IMPULSE_ASSERT(src_words != nullptr);
                 #pragma omp parallel for schedule(static)
                 for (size_t u = 0; u < N; ++u) {
-                    if ((src_words[u >> 6] & (1ULL << (u & 63))) != 0) {
-                        uint64_t start = slot.get_csr_offset(u);
-                        uint64_t end = slot.get_csr_offset(u + 1);
+                    if ((src_words[IMP_WORD_INDEX(u)] & IMP_BIT_MASK64(u)) != 0ULL) {
+                        const uint64_t start = slot.get_csr_offset(u);
+                        const uint64_t end = slot.get_csr_offset(u + 1);
+                        IMPULSE_WELL_FORMED_ASSERT(start <= end);
                         for (uint64_t e = start; e < end; ++e) {
-                            uint64_t v = slot.get_csr_target(e);
-                            bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (!flt_is_null && v == scalar_flt);
-                            if (match) {
+                            const uint64_t v = slot.get_csr_target(e);
+                            const bool match = flt_words
+                                ? ((flt_words[IMP_WORD_INDEX(v)] & IMP_BIT_MASK64(v)) != 0ULL)
+                                : (!flt_is_null && v == scalar_flt);
+                            if (match && v < vm_state->query_context->max_nodes) {
                                 #pragma omp atomic
-                                bs_dst.words[v >> 6] |= (1ULL << (v & 63));
+                                bs_dst.words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                             }
                         }
                     }
                 }
             } else if (!src_is_null && scalar_src < N) {
-                uint64_t start = slot.get_csr_offset(scalar_src);
-                uint64_t end = slot.get_csr_offset(scalar_src + 1);
+                const uint64_t start = slot.get_csr_offset(scalar_src);
+                const uint64_t end = slot.get_csr_offset(scalar_src + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 for (uint64_t e = start; e < end; ++e) {
-                    uint64_t v = slot.get_csr_target(e);
-                    bool match = flt_words ? ((flt_words[v >> 6] & (1ULL << (v & 63))) != 0) : (!flt_is_null && v == scalar_flt);
+                    const uint64_t v = slot.get_csr_target(e);
+                    const bool match = flt_words
+                        ? ((flt_words[IMP_WORD_INDEX(v)] & IMP_BIT_MASK64(v)) != 0ULL)
+                        : (!flt_is_null && v == scalar_flt);
                     if (match) {
                         bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
                     }
@@ -108,15 +128,13 @@ op_COO_WALK_FILTERED: {
 
     bool is_empty = true;
     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-        if (bs_dst.words[i] != 0) {
+        if (bs_dst.words[i] != 0ULL) {
             is_empty = false;
             break;
         }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();
 }
-

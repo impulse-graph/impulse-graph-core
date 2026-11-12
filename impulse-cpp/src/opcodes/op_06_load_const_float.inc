@@ -23,14 +23,18 @@
  */
 #ifndef OP_06_CONTRACT_DEFINED
 #define OP_06_CONTRACT_DEFINED 1
+#define OP_06_DEFINED_FLAGS IMP_FLAG_NONE
 #endif
 
 // Opcode 0x06: OP_LOAD_CONST_FLOAT
 op_LOAD_CONST_FLOAT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
-    vm_state->registers[dst] = inst.payload;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    const uint32_t raw_f32 = IMP_INST_PAYLOAD_U32(inst);
+    IMPULSE_TESTCASE(raw_f32 == 0u);
+    vm_state->registers[dst] = raw_f32;
     vm_state->register_types[dst] = TYPE_FLOAT;
     vm_state->pc++;
     DISPATCH();

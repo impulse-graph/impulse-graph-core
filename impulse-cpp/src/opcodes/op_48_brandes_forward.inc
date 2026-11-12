@@ -15,7 +15,10 @@
 // Opcode 0x48: OP_BRANDES_FORWARD
 op_BRANDES_FORWARD: {
     const auto& inst = bytecode[vm_state->pc];
-    VALIDATE_REG(inst.dst_reg);
+    const uint16_t dst = IMP_INST_DST(inst);
+    VALIDATE_REG(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(dst == 0u);
     vm_state->pc++;
     DISPATCH();
 }

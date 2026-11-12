@@ -14,9 +14,12 @@
 
 // Opcode 0x50: OP_JMP
 op_JMP: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    int32_t offset = static_cast<int32_t>(inst.payload);
+    const int32_t offset = IMP_INST_PAYLOAD_I32(inst);
+    IMPULSE_TESTCASE(offset < 0);
+    IMPULSE_TESTCASE(offset == 0);
+    IMPULSE_TESTCASE(offset > 0);
     vm_state->pc += offset;
     DISPATCH();
 }
-

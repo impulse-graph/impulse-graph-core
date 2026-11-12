@@ -18,11 +18,13 @@
 // Opcode 0x3A: OP_PROJECT_STATE
 op_PROJECT_STATE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_3A_ALLOWED_SRC_TYPES);
+    IMPULSE_TESTCASE(dst == src);
     vm_state->register_types[dst] = TYPE_FRONTIER_STATE;
     vm_state->registers[dst] = vm_state->registers[src];
     vm_state->pc++;

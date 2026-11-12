@@ -21,19 +21,27 @@
 // Opcode 0x3B: OP_COALESCE
 op_COALESCE: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_LOW16(inst);
+    const uint16_t src2 = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+
+    IMPULSE_TESTCASE(vm_state->register_types[src1] == TYPE_NULL);
+    IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int hDst = acquire_float_vector(vm_state->query_context);
         if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
+        IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->float_vectors.size());
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
+        IMPULSE_ASSERT(h2 >= 0 && static_cast<size_t>(h2) < vm_state->query_context->float_vectors.size());
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         auto& v2 = vm_state->query_context->float_vectors[h2];
@@ -54,6 +62,8 @@ op_COALESCE: {
         int hDst = acquire_float_vector(vm_state->query_context);
         if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
+        IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->float_vectors.size());
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len1 = vm_state->query_context->float_vector_lengths[h1];
@@ -62,7 +72,7 @@ op_COALESCE: {
         vm_state->query_context->float_vector_lengths[hDst] = active_len;
         float fallback = 0.0f;
         if (vm_state->register_types[src2] == TYPE_FLOAT) {
-            uint32_t bits = static_cast<uint32_t>(vm_state->registers[src2] & 0xFFFFFFFFULL);
+            uint32_t bits = static_cast<uint32_t>(vm_state->registers[src2] & IMP_SENTINEL_U32);
             std::memcpy(&fallback, &bits, sizeof(float));
         } else {
             fallback = static_cast<float>(static_cast<int64_t>(vm_state->registers[src2]));
@@ -80,7 +90,7 @@ op_COALESCE: {
         vm_state->registers[dst] = vm_state->registers[src2];
         vm_state->register_types[dst] = vm_state->register_types[src2];
     }
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;
     DISPATCH();
 }

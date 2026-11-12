@@ -31,20 +31,23 @@
 // Opcode 0x27: OP_VEC_BLEND
 op_VEC_BLEND: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t mask_reg = inst.payload & 0xFF;
-    uint16_t src_true = (inst.payload >> 8) & 0xFF;
-    uint16_t src_false = (inst.payload >> 16) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t mask_reg = IMP_INST_U8_0(inst);
+    const uint16_t src_true = IMP_INST_U8_1(inst);
+    const uint16_t src_false = IMP_INST_U8_2(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(mask_reg);
     VALIDATE_REG(src_true);
     VALIDATE_REG(src_false);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && mask_reg < IMP_VM_GPR_COUNT && src_true < IMP_VM_GPR_COUNT && src_false < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, mask_reg, OP_27_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_true, OP_27_ALLOWED_AUX1_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_false, OP_27_ALLOWED_AUX2_TYPES);
 
     uint8_t type_true = vm_state->register_types[src_true];
+    IMPULSE_TESTCASE(type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR);
     if (type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR) {
         // Scalar / non-vector operands: no-op per Java specification
         vm_state->pc++;
@@ -56,6 +59,9 @@ op_VEC_BLEND: {
     int h_false = static_cast<int>(vm_state->registers[src_false]);
     bool has_mask = (vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE &&
                      h_mask >= 0 && h_mask < static_cast<int>(vm_state->query_context->bitsets.size()));
+    IMPULSE_TESTCASE(!has_mask);
+    IMPULSE_TESTCASE(type_true == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(dst == src_true || dst == src_false);
     size_t N = vm_state->query_context->max_nodes;
 
     if (type_true == TYPE_DOUBLE_VECTOR) {
@@ -66,7 +72,8 @@ op_VEC_BLEND: {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            vm_state->registers[dst] = h;
+            IMPULSE_ASSERT(h >= 0 && static_cast<size_t>(h) < vm_state->query_context->double_vectors.size());
+            vm_state->registers[dst] = static_cast<uint64_t>(h);
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
@@ -88,7 +95,8 @@ op_VEC_BLEND: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            vm_state->registers[dst] = h;
+            IMPULSE_ASSERT(h >= 0 && static_cast<size_t>(h) < vm_state->query_context->float_vectors.size());
+            vm_state->registers[dst] = static_cast<uint64_t>(h);
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);

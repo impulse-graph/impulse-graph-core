@@ -14,6 +14,7 @@
 #ifndef OP_39_CONTRACT_DEFINED
 #define OP_39_CONTRACT_DEFINED
 #define OP_39_DEFINED_FLAGS        0x00u
+#define OP_39_CONVERGENCE_EPSILON  1e-4f
 #define OP_39_ALLOWED_SRC_TYPES    (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_39_ALLOWED_AUX1_TYPES   (IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL))
 #define OP_39_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_FLOAT))
@@ -22,18 +23,21 @@
 // Opcode 0x39: OP_L1_NORM_DIFF
 op_L1_NORM_DIFF: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_LOW16(inst);
+    const uint16_t src2 = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_39_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_39_ALLOWED_AUX1_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
     float l1_diff = 0.0f;
+    IMPULSE_TESTCASE(src1 == src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src1]);
@@ -56,13 +60,13 @@ op_L1_NORM_DIFF: {
             reinterpret_cast<float&>(vm_state->registers[src2]) : static_cast<float>(vm_state->registers[src2]);
         l1_diff = std::abs(val1 - val2);
     }
+    IMPULSE_TESTCASE(l1_diff == 0.0f);
 
     vm_state->registers[dst] = 0;
     reinterpret_cast<float&>(vm_state->registers[dst]) = l1_diff;
     vm_state->register_types[dst] = TYPE_FLOAT;
 
-    if (l1_diff < 1e-4f) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, l1_diff < OP_39_CONVERGENCE_EPSILON);
 
     vm_state->pc++;
     DISPATCH();

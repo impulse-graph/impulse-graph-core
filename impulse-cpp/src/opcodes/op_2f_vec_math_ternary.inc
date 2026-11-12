@@ -23,26 +23,31 @@
  */
 #ifndef OP_2F_CONTRACT_DEFINED
 #define OP_2F_CONTRACT_DEFINED 1
+#define OP_2F_TYPE_TAG_F32 0u
+#define OP_2F_TYPE_TAG_F64 1u
 #endif
 
 // Opcode 0x2F: OP_VEC_MATH_TERNARY
 op_VEC_MATH_TERNARY: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
+    const uint16_t dst = IMP_INST_DST(inst);
     VALIDATE_REG(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    uint16_t p0 = inst.payload & 0xFF;
-    uint16_t p1 = (inst.payload >> 8) & 0xFF;
-    uint16_t p2 = (inst.payload >> 16) & 0xFF;
-    uint16_t p3 = (inst.payload >> 24) & 0xFF;
+    const uint16_t p0 = IMP_INST_U8_0(inst);
+    const uint16_t p1 = IMP_INST_U8_1(inst);
+    const uint16_t p2 = IMP_INST_U8_2(inst);
+    const uint16_t p3 = IMP_INST_U8_3(inst);
 
-    bool p0_is_vec_t = (p0 < 64 && (vm_state->register_types[p0] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT_VECTOR));
-    bool p3_is_vec_t = (p3 < 64 && (vm_state->register_types[p3] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p3] == TYPE_FLOAT_VECTOR));
+    bool p0_is_vec_t = (p0 < IMP_VM_GPR_COUNT && (vm_state->register_types[p0] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT_VECTOR));
+    bool p3_is_vec_t = (p3 < IMP_VM_GPR_COUNT && (vm_state->register_types[p3] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p3] == TYPE_FLOAT_VECTOR));
 
     uint16_t src1, src2, src3;
     uint8_t func_id;
+    IMPULSE_TESTCASE(!p0_is_vec_t && p3_is_vec_t);
     if (!p0_is_vec_t && p3_is_vec_t) {
         func_id = static_cast<uint8_t>(p0);
         src1 = p1;
@@ -57,21 +62,26 @@ op_VEC_MATH_TERNARY: {
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
+    IMPULSE_ASSERT(src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT && src3 < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, IMP_TYPES_FLOAT_OR_DBL);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, IMP_TYPES_FLOAT_OR_DBL);
     IMPULSE_CHECK_REG_TYPE(vm_state, src3, IMP_TYPES_FLOAT_OR_DBL);
-    uint8_t type_tag = inst.flags;
+    const uint8_t type_tag = IMP_INST_FLAGS(inst);
     int h_s1 = static_cast<int>(vm_state->registers[src1]);
     int h_s2 = static_cast<int>(vm_state->registers[src2]);
     int h_s3 = static_cast<int>(vm_state->registers[src3]);
     size_t N = vm_state->query_context->max_nodes;
-    if (type_tag == 1 || vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR) {
+    const bool use_f64 = (type_tag == OP_2F_TYPE_TAG_F64 || vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(use_f64);
+    IMPULSE_TESTCASE(dst == src1 || dst == src2 || dst == src3);
+    if (use_f64) {
         size_t len1 = (h_s1 >= 0 && static_cast<size_t>(h_s1) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s1] : 0;
         if (len1 > 0) N = len1;
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            vm_state->registers[dst] = h;
+            IMPULSE_ASSERT(h >= 0 && static_cast<size_t>(h) < vm_state->query_context->double_vectors.size());
+            vm_state->registers[dst] = static_cast<uint64_t>(h);
             vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);
@@ -87,7 +97,8 @@ op_VEC_MATH_TERNARY: {
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            vm_state->registers[dst] = h;
+            IMPULSE_ASSERT(h >= 0 && static_cast<size_t>(h) < vm_state->query_context->float_vectors.size());
+            vm_state->registers[dst] = static_cast<uint64_t>(h);
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         }
         int h_dst = static_cast<int>(vm_state->registers[dst]);

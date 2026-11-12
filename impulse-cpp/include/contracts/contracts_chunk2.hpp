@@ -97,8 +97,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VECTOR_DIV, "OP_VECTOR_DIV", "Element-wise vector division",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::PAYLOAD_HIGH16, RegFieldLayout::NONE,
-        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPES_INT_OR_NODE,
-        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPES_INT_OR_NODE,
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPES_FLOAT_OR_DBL,
         false, false, 0, true, true
@@ -109,8 +109,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_VECTOR_STR_CONCAT, "OP_VECTOR_STR_CONCAT", "String vector concatenation",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::PAYLOAD_HIGH16, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_STRING_VECTOR),
-        IMP_TYPE_BIT(TYPE_STRING_VECTOR),
+        IMP_TYPES_ANY,
+        IMP_TYPES_ANY,
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_STRING_VECTOR),
         false, false, 0, true, true
@@ -140,8 +140,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_L1_NORM_DIFF, "OP_L1_NORM_DIFF", "L1 norm difference between vectors or scalars",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW16, RegFieldLayout::PAYLOAD_HIGH16, RegFieldLayout::NONE,
-        IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_INT64),
-        IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_INT64),
+        IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT),
         false, false, IMPULSE_VM_FLAG_ZF, true, true
@@ -231,8 +231,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_EWISE_ADD, "OP_EWISE_ADD", "Element-wise vector addition",
         0x00, 0x00, 0x00, 0x00000000u,
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_FLOAT_OR_DBL,
-        IMP_TYPES_FLOAT_OR_DBL,
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPES_FLOAT_OR_DBL,
         false, false, 0, true, true
@@ -243,8 +243,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_EWISE_MULT, "OP_EWISE_MULT", "Element-wise vector multiplication",
         0x00, 0x00, 0x00, (static_cast<uint32_t>(BINARY_OP_MUL) << 16),
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_FLOAT_OR_DBL,
-        IMP_TYPES_FLOAT_OR_DBL,
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_FLOAT_OR_DBL | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPES_FLOAT_OR_DBL,
         false, false, 0, true, true
@@ -325,8 +325,8 @@ inline void append_chunk2_contracts(std::vector<ImpulseOpcodeVariantContract>& l
         OP_READ_EDGE_WEIGHT, "OP_READ_EDGE_WEIGHT", "Read edge weight attribute (rel=0)",
         0x80, 0x00, 0x80, 0x00000000u, // rel=0
         RegFieldLayout::DST_REG, RegFieldLayout::PAYLOAD_LOW8, RegFieldLayout::PAYLOAD_BYTE1, RegFieldLayout::NONE,
-        IMP_TYPES_INT_OR_NODE,
-        IMP_TYPES_INT_OR_NODE,
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
+        IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL),
         IMP_TYPES_NONE,
         IMP_TYPE_BIT(TYPE_FLOAT),
         false, false, 0, true, true

@@ -20,14 +20,16 @@
 
 // Opcode 0x71: OP_CLEAR_REG
 op_CLEAR_REG: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    VALIDATE_REG(dst);
-    vm_state->registers[dst] = 0;
+    const uint16_t dst = IMP_INST_DST(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(vm_state->register_types[dst] == TYPE_NULL);
+    IMPULSE_TESTCASE(vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
+
+    vm_state->registers[dst] = 0ULL;
     vm_state->register_types[dst] = TYPE_NULL;
     vm_state->pc++;
     DISPATCH();
 }
-
-
-

@@ -24,28 +24,32 @@
 #ifndef OP_16_CONTRACT_DEFINED
 #define OP_16_CONTRACT_DEFINED 1
 #define OP_16_ALLOWED_SRC_TYPES (IMP_TYPES_FLOAT_OR_DBL | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_16_DEFAULT_EDGE_WEIGHT 1.0f
 #endif
 
 // Opcode 0x16: OP_CSR_WALK_REDUCE_SUM
 op_CSR_WALK_REDUCE_SUM: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint8_t src = inst.payload & 0xFF;
-    uint8_t attr_id = (inst.payload >> 8) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint8_t src = IMP_INST_U8_0(inst);
+    const uint8_t attr_id = IMP_INST_U8_1(inst);
     uint16_t rel_id;
-    if (inst.flags & 0x80) {
+    IMPULSE_TESTCASE(IMP_INST_IS_EXTENDED(inst));
+    if (IMP_INST_IS_EXTENDED(inst)) {
         if (vm_state->pc + 1 >= instruction_count) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        rel_id = bytecode[vm_state->pc + 1].dst_reg;
+        rel_id = IMP_INST_DST(bytecode[vm_state->pc + 1]);
         vm_state->pc++;
     } else {
-        rel_id = (inst.payload >> 16) & 0xFFFF;
+        rel_id = IMP_INST_HIGH16(inst);
     }
     VALIDATE_REG(dst);
     VALIDATE_REG(src);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_16_ALLOWED_SRC_TYPES);
 
-    if (rel_id >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMP_REQUIRE_REL_SLOT(vm_state, rel_id);
     const auto& slot = vm_state->query_context->slots[rel_id];
 
     bool src_is_double = (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR);
@@ -57,6 +61,8 @@ op_CSR_WALK_REDUCE_SUM: {
         edge_attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
         if (edge_attr.data_ptr) has_edge_attr = true;
     }
+    IMPULSE_TESTCASE(has_edge_attr);
+    IMPULSE_TESTCASE(src_is_double);
 
     const impulse_vm_context_t::MockAttribute* mock_node_attr = find_mock_node_attr(vm_state->query_context, attr_id);
     if (!mock_node_attr && attr_id == 0) {
@@ -69,6 +75,8 @@ op_CSR_WALK_REDUCE_SUM: {
         if (slot.offsets_ptr && slot.targets_ptr && u < slot.node_count) {
             uint64_t start = slot.get_csr_offset(u);
             uint64_t end   = slot.get_csr_offset(u + 1);
+            IMPULSE_WELL_FORMED_ASSERT(start <= end);
+            IMPULSE_TESTCASE(start == end);
             for (uint64_t idx = start; idx < end; ++idx) {
                 uint64_t target_node = slot.get_csr_target(idx);
                 if (mock_node_attr) {
@@ -80,11 +88,11 @@ op_CSR_WALK_REDUCE_SUM: {
                         sum += static_cast<int64_t>(mock_node_attr->float_data[target_node]);
                     }
                 } else if (has_edge_attr) {
-                    uint8_t base_type = edge_attr.type_code & 0x7F;
-                    if (base_type == 0x03) sum += static_cast<const int32_t*>(edge_attr.data_ptr)[idx];
-                    else if (base_type == 0x04) sum += static_cast<const int64_t*>(edge_attr.data_ptr)[idx];
-                    else if (base_type == 0x08) sum += static_cast<int64_t>(static_cast<const float*>(edge_attr.data_ptr)[idx]);
-                    else if (base_type == 0x09) sum += static_cast<int64_t>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
+                    const uint8_t base_type = IMP_ATTR_BASE_TYPE(edge_attr.type_code);
+                    if (base_type == IMP_TYPE_CODE_INT32) sum += static_cast<const int32_t*>(edge_attr.data_ptr)[idx];
+                    else if (base_type == IMP_TYPE_CODE_INT64) sum += static_cast<const int64_t*>(edge_attr.data_ptr)[idx];
+                    else if (base_type == IMP_LEGACY_ALT_FLOAT32) sum += static_cast<int64_t>(static_cast<const float*>(edge_attr.data_ptr)[idx]);
+                    else if (base_type == IMP_LEGACY_ALT_FLOAT64) sum += static_cast<int64_t>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
                     else sum += target_node;
                 } else {
                     sum += target_node;
@@ -93,8 +101,7 @@ op_CSR_WALK_REDUCE_SUM: {
         }
         vm_state->registers[dst] = static_cast<uint64_t>(sum);
         vm_state->register_types[dst] = TYPE_INT64;
-        if (sum == 0) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        IMP_VM_SET_ZF(vm_state, sum == 0);
         vm_state->pc++;
         DISPATCH();
     }
@@ -102,6 +109,7 @@ op_CSR_WALK_REDUCE_SUM: {
     if (h_dst < 0) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
     std::memset(dst_vec, 0, max_nodes * sizeof(float));
 
@@ -113,14 +121,15 @@ op_CSR_WALK_REDUCE_SUM: {
                 if (src_val == 0.0) continue;
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end   = slot.get_csr_offset(u + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 for (uint64_t idx = start; idx < end; ++idx) {
                     uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
-                        float weight = 1.0f;
+                        float weight = OP_16_DEFAULT_EDGE_WEIGHT;
                         if (has_edge_attr) {
-                            uint8_t base_type = edge_attr.type_code & 0x7F;
-                            if (base_type == 0x08) weight = static_cast<const float*>(edge_attr.data_ptr)[idx];
-                            else if (base_type == 0x09) weight = static_cast<float>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
+                            const uint8_t base_type = IMP_ATTR_BASE_TYPE(edge_attr.type_code);
+                            if (base_type == IMP_LEGACY_ALT_FLOAT32) weight = static_cast<const float*>(edge_attr.data_ptr)[idx];
+                            else if (base_type == IMP_LEGACY_ALT_FLOAT64) weight = static_cast<float>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
                         }
                         dst_vec[target_node] += static_cast<float>(src_val * weight);
                     }
@@ -133,14 +142,15 @@ op_CSR_WALK_REDUCE_SUM: {
                 if (src_val == 0.0f) continue;
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end   = slot.get_csr_offset(u + 1);
+                IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 for (uint64_t idx = start; idx < end; ++idx) {
                     uint64_t target_node = slot.get_csr_target(idx);
                     if (target_node < max_nodes) {
-                        float weight = 1.0f;
+                        float weight = OP_16_DEFAULT_EDGE_WEIGHT;
                         if (has_edge_attr) {
-                            uint8_t base_type = edge_attr.type_code & 0x7F;
-                            if (base_type == 0x08) weight = static_cast<const float*>(edge_attr.data_ptr)[idx];
-                            else if (base_type == 0x09) weight = static_cast<float>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
+                            const uint8_t base_type = IMP_ATTR_BASE_TYPE(edge_attr.type_code);
+                            if (base_type == IMP_LEGACY_ALT_FLOAT32) weight = static_cast<const float*>(edge_attr.data_ptr)[idx];
+                            else if (base_type == IMP_LEGACY_ALT_FLOAT64) weight = static_cast<float>(static_cast<const double*>(edge_attr.data_ptr)[idx]);
                         }
                         dst_vec[target_node] += src_val * weight;
                     }
@@ -149,15 +159,14 @@ op_CSR_WALK_REDUCE_SUM: {
         }
     }
 
-    vm_state->registers[dst] = h_dst;
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
     vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
 
     bool is_empty = true;
     for (size_t i = 0; i < max_nodes; ++i) {
         if (dst_vec[i] != 0.0f) { is_empty = false; break; }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();

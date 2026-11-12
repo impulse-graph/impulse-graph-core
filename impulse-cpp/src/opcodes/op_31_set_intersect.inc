@@ -22,13 +22,15 @@
 // Opcode 0x31: OP_SET_INTERSECT
 op_SET_INTERSECT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFFFF;
-    uint16_t src2 = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_LOW16(inst);
+    const uint16_t src2 = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_31_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_31_ALLOWED_AUX1_TYPES);
 
@@ -37,9 +39,13 @@ op_SET_INTERSECT: {
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
     if (type1 == TYPE_LANE_FRONTIER || type2 == TYPE_LANE_FRONTIER) {
+        IMPULSE_TESTCASE(true);
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     bool dst_was_bitset = (vm_state->register_types[dst] == TYPE_BITSET_HANDLE);
+    IMPULSE_TESTCASE(dst == src1);
+    IMPULSE_TESTCASE(dst == src2);
+    IMPULSE_TESTCASE(src1 == src2);
 
     int h_dst = -1;
     if (dst_was_bitset) {
@@ -50,12 +56,14 @@ op_SET_INTERSECT: {
         vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
         vm_state->register_types[dst] = TYPE_BITSET_HANDLE;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
     auto load_into = [&](VmBitSet& bs, uint8_t rtype, uint64_t rval) {
         bs.clear();
         if (rtype == TYPE_BITSET_HANDLE) {
             int h_s = static_cast<int>(rval);
+            IMPULSE_ASSERT(h_s >= 0 && static_cast<size_t>(h_s) < vm_state->query_context->bitsets.size());
             const auto& bs_s = vm_state->query_context->bitsets[h_s];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs.words[i] = bs_s.words[i];
@@ -76,6 +84,7 @@ op_SET_INTERSECT: {
     auto intersect_into = [&](VmBitSet& bs, uint8_t rtype, uint64_t rval) {
         if (rtype == TYPE_BITSET_HANDLE) {
             int h_s = static_cast<int>(rval);
+            IMPULSE_ASSERT(h_s >= 0 && static_cast<size_t>(h_s) < vm_state->query_context->bitsets.size());
             const auto& bs_s = vm_state->query_context->bitsets[h_s];
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
                 bs.words[i] &= bs_s.words[i];
@@ -114,8 +123,7 @@ op_SET_INTERSECT: {
         }
     }
 
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();

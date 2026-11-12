@@ -21,8 +21,14 @@
 
 // Opcode 0x8E: OP_DENSE_WALK
 op_DENSE_WALK: {
-    impulse_vm_status_t st = execute_dense_walk_common(bytecode, vm_state, OP_8E_ALLOWED_SRC_TYPES);
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_VVA_ONLY(const uint16_t dst = IMP_INST_DST(bytecode[vm_state->pc]);)
+    const impulse_vm_status_t st = execute_dense_walk_common(bytecode, vm_state, OP_8E_ALLOWED_SRC_TYPES);
+    IMPULSE_TESTCASE(st != IMPULSE_VM_OK);
     if (st != IMPULSE_VM_OK) return st;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
+    IMPULSE_ASSERT((IMP_TYPE_BIT(vm_state->register_types[dst]) & OP_8E_OUTPUT_DST_TYPES) != 0u);
+    IMPULSE_TESTCASE(IMP_VM_IS_ZF(vm_state));
     vm_state->pc++;
     DISPATCH();
 }

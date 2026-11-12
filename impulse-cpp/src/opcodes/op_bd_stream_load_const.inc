@@ -32,9 +32,12 @@
  *      edges, `vm_state->pc` jumps past `OP_STREAM_FUNC_END`. If encountered
  *      standalone in the outer VM dispatch loop, this opcode acts as `OP_NOP`.
  */
+#define OP_BD_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_LOAD_CONST: {
-                        uint32_t bits = sInst.payload;
+                        IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
+                        uint32_t bits = IMP_INST_PAYLOAD_U32(sInst);
+                        IMPULSE_TESTCASE(bits == 0u);
                         float f;
                         std::memcpy(&f, &bits, sizeof(float));
                         s_regs[sDst] = f;

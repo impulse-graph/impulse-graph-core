@@ -23,31 +23,39 @@
  */
 #ifndef OP_08_CONTRACT_DEFINED
 #define OP_08_CONTRACT_DEFINED 1
+#define OP_08_FLAG_NODE_VECTOR  IMP_FLAG_BIT0
+#define OP_08_INLINE_ELEM_BYTES sizeof(uint32_t)
 #endif
 
 // Opcode 0x08: OP_LOAD_INLINE_ARRAY
 op_LOAD_INLINE_ARRAY: {
     const impulse_instruction_t& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t offset_bytes = inst.payload & 0xFFFF;
-    uint16_t count = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t offset_bytes = IMP_INST_LOW16(inst);
+    const uint16_t count = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
 
-    if (!vm_state->query_context || !vm_state->query_context->inline_data_ptr) {
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_TESTCASE(vm_state->query_context->inline_data_ptr == nullptr);
+    if (!vm_state->query_context->inline_data_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
-    if (offset_bytes + count * sizeof(uint32_t) > vm_state->query_context->inline_data_bytes) {
+    if (offset_bytes + count * OP_08_INLINE_ELEM_BYTES > vm_state->query_context->inline_data_bytes) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_TESTCASE(count == 0u);
 
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
     size_t copy_count = std::min<size_t>(count, vm_state->query_context->float_vectors[h_dst].size());
 
     float* dst_vec_f = vm_state->query_context->float_vectors[h_dst].data();
-    std::memcpy(dst_vec_f, vm_state->query_context->inline_data_ptr + offset_bytes, copy_count * sizeof(uint32_t));
+    std::memcpy(dst_vec_f, vm_state->query_context->inline_data_ptr + offset_bytes, copy_count * OP_08_INLINE_ELEM_BYTES);
     vm_state->query_context->float_vector_lengths[h_dst] = copy_count;
 
     vm_state->query_context->node_vectors_allocated[h_dst] = true;
@@ -59,9 +67,11 @@ op_LOAD_INLINE_ARRAY: {
         dst_vec_u[i] = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(raw_u32[i])));
     }
 
-    vm_state->registers[dst] = h_dst;
-    vm_state->register_types[dst] = (inst.flags & 0x01) ? TYPE_NODE_VECTOR : TYPE_FLOAT_VECTOR;
-    vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    const bool as_node_vec = IMP_INST_HAS_FLAG(inst, OP_08_FLAG_NODE_VECTOR);
+    IMPULSE_TESTCASE(as_node_vec);
+    vm_state->registers[dst] = static_cast<uint64_t>(h_dst);
+    vm_state->register_types[dst] = as_node_vec ? TYPE_NODE_VECTOR : TYPE_FLOAT_VECTOR;
+    IMP_VM_SET_ZF(vm_state, false);
 
     vm_state->pc++;
     DISPATCH();

@@ -7,7 +7,7 @@
  * Formal Opcode Contract:
  *  - Opcode: 0x90 (OP_COLLECT_BITSET)
  *  - Destination: dst_reg (RegFieldLayout::DST_REG)
- *  - Source: payload & 0xFFFF (RegFieldLayout::PAYLOAD_LOW16)
+ *  - Source: IMP_INST_LOW16(inst) (RegFieldLayout::PAYLOAD_LOW16)
  *  - Allowed Source Types: TYPE_BITSET_HANDLE, TYPE_LANE_FRONTIER, TYPE_NODE_VECTOR, TYPE_INT_OR_NODE
  *  - Output Destination Types: Matches source register type
  *  - Flags: Preserved
@@ -21,15 +21,19 @@
 
 // Opcode 0x90: OP_COLLECT_BITSET
 op_COLLECT_BITSET: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_LOW16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_90_ALLOWED_SRC_TYPES);
 
-    uint64_t val = vm_state->registers[src];
-    uint8_t type = vm_state->register_types[src];
+    const uint64_t val = vm_state->registers[src];
+    const uint8_t type = vm_state->register_types[src];
+    IMPULSE_TESTCASE(dst == src);
+    IMPULSE_TESTCASE(type == TYPE_NULL);
     vm_state->registers[dst] = val;
     vm_state->register_types[dst] = type;
 

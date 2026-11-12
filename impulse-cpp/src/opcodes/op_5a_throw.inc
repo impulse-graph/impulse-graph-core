@@ -10,13 +10,16 @@
 #define OP_5A_CONTRACT_DEFINED
 #define OP_5A_DEFINED_FLAGS        0x00u
 #define OP_5A_OUTPUT_DST_TYPES     IMP_TYPES_NONE
+#define OP_5A_ERR_DST_REG          0u
 #endif
 
 // Opcode 0x5A: OP_THROW
 op_THROW: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const impulse_instruction_t& inst = bytecode[vm_state->pc];
-    vm_state->registers[0] = inst.payload;
-    vm_state->register_types[0] = TYPE_INT64;
+    const uint32_t err_code = IMP_INST_PAYLOAD_U32(inst);
+    IMPULSE_TESTCASE(err_code == 0u);
+    vm_state->registers[OP_5A_ERR_DST_REG] = err_code;
+    vm_state->register_types[OP_5A_ERR_DST_REG] = TYPE_INT64;
     return IMPULSE_VM_ERR_USER_THROW;
 }
-

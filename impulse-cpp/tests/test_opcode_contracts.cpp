@@ -421,6 +421,7 @@ static const char* reg_type_to_str(uint8_t t) {
         case TYPE_NULL:           return "TYPE_NULL";
         case TYPE_INT64:          return "TYPE_INT64";
         case TYPE_FLOAT:          return "TYPE_FLOAT";
+        case TYPE_DOUBLE:         return "TYPE_DOUBLE";
         case TYPE_BITSET_HANDLE:  return "TYPE_BITSET_HANDLE";
         case TYPE_NODE_ID:        return "TYPE_NODE_ID";
         case TYPE_NODE_VECTOR:    return "TYPE_NODE_VECTOR";

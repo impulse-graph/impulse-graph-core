@@ -23,25 +23,32 @@
  */
 #ifndef OP_21_CONTRACT_DEFINED
 #define OP_21_CONTRACT_DEFINED 1
+#define OP_21_ALLOWED_OPERAND_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
 #endif
 
 // Opcode 0x21: OP_VEC_CMP_GT
 op_VEC_CMP_GT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src1 = inst.payload & 0xFF;
-    uint16_t src2 = (inst.payload >> 8) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src1 = IMP_INST_U8_0(inst);
+    const uint16_t src2 = IMP_INST_U8_1(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
+    IMPULSE_TESTCASE(vm_state->query_context == nullptr);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    IMPULSE_CHECK_REG_TYPE(vm_state, src1, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
-    IMPULSE_CHECK_REG_TYPE(vm_state, src2, (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT) | IMP_TYPE_BIT(TYPE_DOUBLE) | IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE)));
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_21_ALLOWED_OPERAND_TYPES);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_21_ALLOWED_OPERAND_TYPES);
 
     uint8_t type1 = vm_state->register_types[src1];
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
+    IMPULSE_TESTCASE(src1 == src2);
+    IMPULSE_TESTCASE(type1 == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(type1 == type2);
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
@@ -49,6 +56,7 @@ op_VEC_CMP_GT: {
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     }
     auto& bs = vm_state->query_context->bitsets[h_dst];
     bs.clear();
@@ -100,8 +108,7 @@ op_VEC_CMP_GT: {
     for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
         if (bs.words[w] != 0) { is_empty = false; break; }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();

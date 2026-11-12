@@ -13,6 +13,7 @@
 
 // Opcode 0x5C: OP_TRAP
 op_TRAP: {
+    IMPULSE_ASSERT(vm_state != nullptr);
+    IMPULSE_TESTCASE(vm_state->pc == 0);
     return IMPULSE_VM_ERR_TRAP;
 }
-

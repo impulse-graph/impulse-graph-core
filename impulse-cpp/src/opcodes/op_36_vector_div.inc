@@ -21,19 +21,23 @@
 // Opcode 0x36: OP_VECTOR_DIV
 op_VECTOR_DIV: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t num = inst.payload & 0xFFFF;
-    uint16_t denom = (inst.payload >> 16) & 0xFFFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t num = IMP_INST_LOW16(inst);
+    const uint16_t denom = IMP_INST_HIGH16(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(num);
     VALIDATE_REG(denom);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && num < IMP_VM_GPR_COUNT && denom < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, num, OP_36_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, denom, OP_36_ALLOWED_AUX1_TYPES);
 
     size_t size = vm_state->query_context->max_nodes;
     bool num_is_double = (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR);
     bool denom_is_double = (vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(num_is_double || denom_is_double);
+    IMPULSE_TESTCASE(dst == num || dst == denom);
 
     if (num_is_double || denom_is_double) {
         int h_dst = -1;
@@ -42,9 +46,10 @@ op_VECTOR_DIV: {
         } else {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
         }
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
         double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
 
         const double* num_dvec = (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR)
@@ -90,6 +95,7 @@ op_VECTOR_DIV: {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
         }
+        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
         float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
 
         const float* num_fvec = (vm_state->register_types[num] == TYPE_FLOAT_VECTOR)

@@ -21,59 +21,75 @@
 
 // Opcode 0x87: OP_CSC_WALK_DIRECT_STORE
 op_CSC_WALK_DIRECT_STORE: {
+    IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t src = inst.payload & 0xFF;
-    uint16_t rel = (inst.payload >> 16) & 0xFFFF;
-    VALIDATE_REG(dst);
-    VALIDATE_REG(src);
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t src = IMP_INST_U8_0(inst);
+    const uint16_t rel = IMP_INST_HIGH16(inst);
+    IMP_VALIDATE_GPR(dst);
+    IMP_VALIDATE_GPR(src);
 
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_87_ALLOWED_SRC_TYPES);
 
-    uint8_t src_type = vm_state->register_types[src];
-    uint64_t src_val = vm_state->registers[src];
-    bool src_is_bitset = (src_type == TYPE_BITSET_HANDLE);
+    const uint8_t src_type = vm_state->register_types[src];
+    const uint64_t src_val = vm_state->registers[src];
+    const bool src_is_bitset = (src_type == TYPE_BITSET_HANDLE);
+    IMPULSE_TESTCASE(src_is_bitset);
+    IMPULSE_TESTCASE(dst == src);
+    if (src_is_bitset && static_cast<size_t>(src_val) >= vm_state->query_context->bitsets.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
 
     int h_dst = -1;
-    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && !(dst == src && src_is_bitset)) {
+    if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && !(dst == src && src_is_bitset) &&
+        vm_state->registers[dst] < vm_state->query_context->bitsets.size()) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
+    IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
-    if (rel < vm_state->query_context->slots.size()) {
+    const bool valid_rel = (rel < vm_state->query_context->slots.size());
+    IMPULSE_TESTCASE(!valid_rel);
+    if (valid_rel) {
         const auto& slot = vm_state->query_context->slots[rel];
-        bool has_csc = (slot.csc_offsets_ptr != nullptr || !slot.dynamic_csc_offsets.empty());
+        const bool has_csc = (slot.csc_offsets_ptr != nullptr || !slot.dynamic_csc_offsets.empty());
+        IMPULSE_TESTCASE(has_csc);
         if (has_csc) {
-            size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
+            const size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
             if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
-                uint64_t v = src_val;
+                const uint64_t v = src_val;
                 if (v < csc_bound) {
-                    uint64_t start = slot.get_csc_offset(v);
-                    uint64_t end = slot.get_csc_offset(v + 1);
+                    const uint64_t start = slot.get_csc_offset(v);
+                    const uint64_t end = slot.get_csc_offset(v + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
                     for (uint64_t e = start; e < end; ++e) {
-                        uint64_t u = slot.get_csc_target(e);
+                        const uint64_t u = slot.get_csc_target(e);
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
                 }
             } else if (src_is_bitset) {
-                int h_src = static_cast<int>(src_val);
+                const int h_src = static_cast<int>(src_val);
+                IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->bitsets.size());
                 const auto& bs_src = vm_state->query_context->bitsets[h_src];
                 for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
                     uint64_t word = bs_src.words[w];
-                    while (word) {
-                        int bit = std::countr_zero(word);
-                        uint64_t v = w * 64 + bit;
-                        word &= word - 1;
+                    while (word != 0ULL) {
+                        const int bit = std::countr_zero(word);
+                        const uint64_t v = IMP_WORD_BIT_TO_NODE(w, bit);
+                        word = IMP_CLEAR_LOWEST_BIT(word);
                         if (v < csc_bound) {
-                            uint64_t start = slot.get_csc_offset(v);
-                            uint64_t end = slot.get_csc_offset(v + 1);
+                            const uint64_t start = slot.get_csc_offset(v);
+                            const uint64_t end = slot.get_csc_offset(v + 1);
+                            IMPULSE_WELL_FORMED_ASSERT(start <= end);
                             for (uint64_t e = start; e < end; ++e) {
-                                uint64_t u = slot.get_csc_target(e);
+                                const uint64_t u = slot.get_csc_target(e);
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                             }
                         }
@@ -82,12 +98,13 @@ op_CSC_WALK_DIRECT_STORE: {
                 if (dst == src) release_bitset(vm_state->query_context, h_src);
             }
         } else if (slot.offsets_ptr && slot.targets_ptr) {
-            size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
+            const size_t N = (slot.node_count > 0) ? slot.node_count : vm_state->query_context->max_nodes;
             if (src_type == TYPE_NODE_ID || src_type == TYPE_INT64) {
-                uint64_t target_v = src_val;
+                const uint64_t target_v = src_val;
                 for (size_t u = 0; u < N; ++u) {
-                    uint64_t start = slot.get_csr_offset(u);
-                    uint64_t end = slot.get_csr_offset(u + 1);
+                    const uint64_t start = slot.get_csr_offset(u);
+                    const uint64_t end = slot.get_csr_offset(u + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
                     for (uint64_t e = start; e < end; ++e) {
                         if (slot.get_csr_target(e) == target_v) {
                             bs_dst.set(u);
@@ -96,13 +113,15 @@ op_CSC_WALK_DIRECT_STORE: {
                     }
                 }
             } else if (src_is_bitset) {
-                int h_src = static_cast<int>(src_val);
+                const int h_src = static_cast<int>(src_val);
+                IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->bitsets.size());
                 const auto& bs_src = vm_state->query_context->bitsets[h_src];
                 for (size_t u = 0; u < N; ++u) {
-                    uint64_t start = slot.get_csr_offset(u);
-                    uint64_t end = slot.get_csr_offset(u + 1);
+                    const uint64_t start = slot.get_csr_offset(u);
+                    const uint64_t end = slot.get_csr_offset(u + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
                     for (uint64_t e = start; e < end; ++e) {
-                        uint64_t v = slot.get_csr_target(e);
+                        const uint64_t v = slot.get_csr_target(e);
                         if (bs_src.test(v)) {
                             bs_dst.set(u);
                             break;
@@ -118,12 +137,13 @@ op_CSC_WALK_DIRECT_STORE: {
 
     bool is_empty = true;
     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
-        if (bs_dst.words[i] != 0) { is_empty = false; break; }
+        if (bs_dst.words[i] != 0ULL) {
+            is_empty = false;
+            break;
+        }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();
 }
-

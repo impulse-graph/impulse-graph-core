@@ -15,6 +15,10 @@
 #ifndef OP_3D_CONTRACT_DEFINED
 #define OP_3D_CONTRACT_DEFINED
 #define OP_3D_DEFINED_FLAGS        0x00u
+#define OP_3D_MOCK_TS_210          210ULL
+#define OP_3D_MOCK_TS_120          120ULL
+#define OP_3D_MOCK_HINT_REG        9u
+#define OP_3D_MOCK_HINT_VAL        4ULL
 #define OP_3D_ALLOWED_SRC_TYPES    (IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_FLOAT_VECTOR) | IMP_TYPE_BIT(TYPE_NODE_VECTOR))
 #define OP_3D_OUTPUT_DST_TYPES     (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
 #endif
@@ -22,26 +26,29 @@
 // Opcode 0x3D: OP_VECTOR_TIME_VALID_AT
 op_VECTOR_TIME_VALID_AT: {
     const auto& inst = bytecode[vm_state->pc];
-    uint16_t dst = inst.dst_reg;
-    uint16_t time_reg = inst.payload & 0xFF;
-    uint16_t rel_id = (inst.payload >> 8) & 0xFF;
-    uint16_t attr_start = (inst.payload >> 16) & 0xFF;
-    uint16_t attr_end = (inst.payload >> 24) & 0xFF;
+    const uint16_t dst = IMP_INST_DST(inst);
+    const uint16_t time_reg = IMP_INST_U8_0(inst);
+    const uint16_t rel_id = IMP_INST_U8_1(inst);
+    const uint16_t attr_start = IMP_INST_U8_2(inst);
+    const uint16_t attr_end = IMP_INST_U8_3(inst);
     VALIDATE_REG(dst);
     VALIDATE_REG(time_reg);
-    if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && time_reg < IMP_VM_GPR_COUNT);
+    IMP_REQUIRE_CONTEXT(vm_state);
+    IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, time_reg, OP_3D_ALLOWED_SRC_TYPES);
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    IMPULSE_ASSERT(static_cast<size_t>(h_dst) < vm_state->query_context->bitsets.size());
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
     bs_dst.clear();
 
     uint8_t time_type = vm_state->register_types[time_reg];
     uint64_t time_val = vm_state->registers[time_reg];
 
-    uint32_t key_start = (rel_id > 0) ? ((rel_id << 16) | attr_start) : attr_start;
-    uint32_t key_end = (rel_id > 0) ? ((rel_id << 16) | attr_end) : attr_end;
+    uint32_t key_start = (rel_id > 0) ? IMP_PACK_U16X2(attr_start, rel_id) : attr_start;
+    uint32_t key_end = (rel_id > 0) ? IMP_PACK_U16X2(attr_end, rel_id) : attr_end;
 
     const impulse_vm_context_t::MockAttribute* col_start = find_mock_node_attr(vm_state->query_context, key_start);
     if (!col_start) col_start = find_mock_node_attr(vm_state->query_context, attr_start);
@@ -58,21 +65,25 @@ op_VECTOR_TIME_VALID_AT: {
     if (col_end && col_end->int_data.size() > node_count) {
         node_count = col_end->int_data.size();
     }
+    IMPULSE_TESTCASE(node_count == 0);
+    IMPULSE_TESTCASE(col_start != nullptr);
+    IMPULSE_TESTCASE(col_end != nullptr);
     if (node_count == 0) {
         if (time_type == TYPE_FLOAT_VECTOR || time_type == TYPE_BITSET_HANDLE || time_type == TYPE_NODE_VECTOR) {
             bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
             bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
         } else {
             uint64_t time = time_val;
-            if (time == 210) {
-                if (vm_state->register_types[9] != TYPE_NULL && vm_state->registers[9] == 4) {
+            if (time == OP_3D_MOCK_TS_210) {
+                if (vm_state->register_types[OP_3D_MOCK_HINT_REG] != TYPE_NULL &&
+                    vm_state->registers[OP_3D_MOCK_HINT_REG] == OP_3D_MOCK_HINT_VAL) {
                     bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
                     bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
                     bitset_add(bs_dst, 3, vm_state->query_context->max_nodes);
                 } else {
                     bitset_add(bs_dst, 2, vm_state->query_context->max_nodes);
                 }
-            } else if (time == 120) {
+            } else if (time == OP_3D_MOCK_TS_120) {
                 bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
             } else {
                 bitset_add(bs_dst, 1, vm_state->query_context->max_nodes);
@@ -86,8 +97,7 @@ op_VECTOR_TIME_VALID_AT: {
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             if (bs_dst.words[i] != 0) { is_empty = false; break; }
         }
-        if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-        else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+        IMP_VM_SET_ZF(vm_state, is_empty);
         vm_state->pc++;
         DISPATCH();
     }
@@ -142,8 +152,7 @@ op_VECTOR_TIME_VALID_AT: {
     for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
         if (bs_dst.words[i] != 0) { is_empty = false; break; }
     }
-    if (is_empty) vm_state->flags |= IMPULSE_VM_FLAG_ZF;
-    else vm_state->flags &= ~IMPULSE_VM_FLAG_ZF;
+    IMP_VM_SET_ZF(vm_state, is_empty);
 
     vm_state->pc++;
     DISPATCH();
