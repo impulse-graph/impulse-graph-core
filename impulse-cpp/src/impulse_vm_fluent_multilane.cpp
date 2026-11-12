@@ -723,7 +723,7 @@ MultiLaneResult MultiLaneTraversal::collect() const {
 
                     std::unordered_map<std::string, double> f_attrs;
                     std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
 
                     if (step.kind == LaneStep::Kind::FILTER_CEL) {
                         if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row, words_per_lane, &i_attrs, &f_attrs)) {
@@ -815,7 +815,7 @@ std::vector<double> MultiLaneTraversal::reducePerLane(const std::string& node_at
         }
     } else {
         flags = 0x00;
-        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute, current_domain_id_));
     }
 
     uint16_t red_code = BINARY_OP_ADD;
@@ -912,7 +912,7 @@ std::vector<int64_t> MultiLaneTraversal::argMinNodesPerLane(const std::string& n
         }
     } else {
         flags = 0x00;
-        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute, current_domain_id_));
     }
 
     impulse_instruction_t prog[2] = {
@@ -982,7 +982,7 @@ std::vector<int64_t> MultiLaneTraversal::argMaxNodesPerLane(const std::string& n
         }
     } else {
         flags = 0x00;
-        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute));
+        attr_or_reg = static_cast<uint8_t>(resolve_attr_or_index_id(snapshot_, node_attribute, current_domain_id_));
     }
 
     impulse_instruction_t prog[2] = {

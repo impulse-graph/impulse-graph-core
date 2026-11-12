@@ -31,9 +31,9 @@ op_LOAD_COLUMN_VECTOR: {
 
     size_t N = vm_state->query_context->max_nodes;
 
-    if (domain_or_rel < vm_state->query_context->attribute_slots.size() &&
-        attr_idx < vm_state->query_context->attribute_slots[domain_or_rel].size()) {
-        const auto& slot = vm_state->query_context->attribute_slots[domain_or_rel][attr_idx];
+    const BoundAttributeSlot* slot_ptr = resolve_node_attribute_slot(vm_state->query_context, domain_or_rel, attr_idx);
+    if (slot_ptr != nullptr) {
+        const auto& slot = *slot_ptr;
         uint8_t base_tc = slot.type_code & 0x7F;
         bool is_nullable = (slot.type_code & 0x80) != 0;
         size_t elem_size = (base_tc == 7) ? sizeof(double) : sizeof(float);

@@ -29,12 +29,60 @@ impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t do
     impulse_domain_catalog_entry_t dom{};
     dom.domain_id = domain_id;
     dom.key_type = key_type;
-    dom.reserved = 0;
+    dom.reserved1 = 0;
     dom.name_offset = 0; // Set during finalize via string table
     dom.node_count = 0;
+    dom.attr_count = 0;
+    dom.key_attr_index = 0xFFFF;
 
     writer->domains.push_back(dom);
     writer->domain_names.push_back(name);
+    writer->domain_attributes.emplace_back();
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_writer_set_domain_node_count(impulse_writer_t* writer, uint16_t domain_index, uint64_t node_count) {
+    if (!writer || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    writer->domains[domain_index].node_count = node_count;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_writer_set_domain_key_attr(impulse_writer_t* writer, uint16_t domain_index, uint16_t key_attr_index) {
+    if (!writer || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    writer->domains[domain_index].key_attr_index = key_attr_index;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_writer_add_domain_attribute(
+    impulse_writer_t* writer,
+    uint16_t domain_index,
+    const char* name,
+    uint8_t type_code,
+    uint32_t dimension,
+    const void* data, uint64_t data_bytes,
+    const void* offsets, uint64_t offsets_bytes
+) {
+    if (!writer || !name || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (writer->domain_attributes.size() <= domain_index) {
+        writer->domain_attributes.resize(writer->domains.size());
+    }
+
+    impulse_writer_attr attr;
+    attr.name = name;
+    attr.type_code = type_code;
+    attr.dimension = dimension;
+
+    if (data && data_bytes > 0) {
+        attr.data.resize(data_bytes);
+        std::memcpy(attr.data.data(), data, data_bytes);
+    }
+    if (offsets && offsets_bytes > 0) {
+        attr.offsets.resize(offsets_bytes);
+        std::memcpy(attr.offsets.data(), offsets, offsets_bytes);
+    }
+
+    writer->domain_attributes[domain_index].push_back(std::move(attr));
+    writer->domains[domain_index].attr_count = static_cast<uint16_t>(writer->domain_attributes[domain_index].size());
     return IMPULSE_OK;
 }
 
@@ -173,9 +221,16 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         return off;
     };
 
+    if (writer->domain_attributes.size() < writer->domains.size()) {
+        writer->domain_attributes.resize(writer->domains.size());
+    }
+
     // Collect all strings
     for (size_t i = 0; i < writer->domain_names.size(); ++i) {
         writer->domains[i].name_offset = get_or_add_string(writer->domain_names[i]);
+        for (const auto& attr : writer->domain_attributes[i]) {
+            get_or_add_string(attr.name);
+        }
     }
     for (const auto& rel : writer->relations) {
         for (const auto& attr : rel.attributes) {
@@ -205,32 +260,95 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     align128(dir_table);
 
-    // Domain Catalog Array
-    for (const auto& dom : writer->domains) {
-        size_t pos = dir_table.size();
-        dir_table.resize(pos + sizeof(dom));
-        std::memcpy(dir_table.data() + pos, &dom, sizeof(dom));
+    // Pre-calculate exact Directory Table size (with 128B boundaries) so payload offsets are exact
+    size_t sim_dir_pos = dir_table.size();
+    for (size_t d = 0; d < writer->domains.size(); ++d) {
+        sim_dir_pos += sizeof(impulse_domain_catalog_entry_t);
+        sim_dir_pos += writer->domain_attributes[d].size() * sizeof(impulse_attribute_descriptor_t);
     }
-
-    align128(dir_table);
-
-    // Calculate directory table size including Relation Entries, Attribute Descriptors, and Index Entries
-    size_t rel_dir_size = 0;
+    sim_dir_pos = (sim_dir_pos + 127) & ~static_cast<size_t>(127);
     for (const auto& rel : writer->relations) {
-        rel_dir_size += sizeof(impulse_relation_directory_entry_t);
-        rel_dir_size += rel.attributes.size() * sizeof(impulse_attribute_descriptor_t);
+        sim_dir_pos += sizeof(impulse_relation_directory_entry_t);
+        sim_dir_pos += rel.attributes.size() * sizeof(impulse_attribute_descriptor_t);
     }
-    rel_dir_size += writer->indexes.size() * sizeof(impulse_index_directory_entry_v0_9_t);
+    sim_dir_pos = (sim_dir_pos + 127) & ~static_cast<size_t>(127);
+    sim_dir_pos += writer->indexes.size() * sizeof(impulse_index_directory_entry_t);
 
-    size_t total_dir_table_len = dir_table.size() + rel_dir_size;
-    size_t aligned_dir_table_len = (total_dir_table_len + 4095) & ~4095;
+    size_t aligned_dir_table_len = (sim_dir_pos + 4095) & ~static_cast<size_t>(4095);
 
     uint64_t rel_blocks_base_offset = footer_catalog
         ? IMPULSE_DEFAULT_DATA_OFFSET
         : (IMPULSE_DEFAULT_DATA_OFFSET + aligned_dir_table_len);
 
-    // 2. Serialize Relation Blocks
+    struct TempAttr {
+        uint32_t name_off;
+        uint64_t data_off, data_bytes;
+        uint64_t offs_off, offs_bytes;
+    };
+
+    // 2A. Serialize Node Domain Blocks & Section 2.2 Domain Catalog Entries (Spec v0.10.0)
     std::vector<uint8_t> payload;
+    for (size_t d = 0; d < writer->domains.size(); ++d) {
+        auto& dom = writer->domains[d];
+        const auto& dom_attrs = writer->domain_attributes[d];
+        dom.attr_count = static_cast<uint16_t>(dom_attrs.size());
+        if (dom.attr_count == 0 && dom.key_attr_index == 0) {
+            dom.key_attr_index = 0xFFFF;
+        }
+
+        std::vector<TempAttr> temp_dom_attrs;
+        temp_dom_attrs.reserve(dom_attrs.size());
+
+        if (!dom_attrs.empty()) {
+            align4096(payload);
+            for (const auto& attr : dom_attrs) {
+                TempAttr ta{};
+                ta.name_off = get_or_add_string(attr.name);
+                align128(payload);
+                ta.data_off = rel_blocks_base_offset + payload.size();
+                ta.data_bytes = attr.data.size();
+                payload.insert(payload.end(), attr.data.begin(), attr.data.end());
+
+                if (!attr.offsets.empty()) {
+                    align128(payload);
+                    ta.offs_off = rel_blocks_base_offset + payload.size();
+                    ta.offs_bytes = attr.offsets.size();
+                    payload.insert(payload.end(), attr.offsets.begin(), attr.offsets.end());
+                } else {
+                    ta.offs_off = 0;
+                    ta.offs_bytes = 0;
+                }
+                temp_dom_attrs.push_back(ta);
+            }
+        }
+
+        size_t pos = dir_table.size();
+        dir_table.resize(pos + sizeof(dom));
+        std::memcpy(dir_table.data() + pos, &dom, sizeof(dom));
+
+        for (size_t a = 0; a < dom_attrs.size(); ++a) {
+            const auto& attr = dom_attrs[a];
+            const auto& ta = temp_dom_attrs[a];
+
+            impulse_attribute_descriptor_t desc{};
+            desc.name_offset = ta.name_off;
+            desc.type_code = attr.type_code;
+            desc.reserved1 = 0;
+            desc.reserved2 = 0;
+            desc.dimension = attr.dimension;
+            desc.data_offset = ta.data_off;
+            desc.data_bytes = ta.data_bytes;
+            desc.offsets_offset = ta.offs_off;
+            desc.offsets_bytes = ta.offs_bytes;
+
+            dir_table.resize(dir_table.size() + sizeof(desc));
+            std::memcpy(dir_table.data() + dir_table.size() - sizeof(desc), &desc, sizeof(desc));
+        }
+    }
+
+    align128(dir_table);
+
+    // 2B. Serialize Relation Blocks
     for (auto& rel : writer->relations) {
         align4096(payload);
 
@@ -244,11 +362,6 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         uint64_t csr_col_idx_bytes = rel.col_indices.size();
         payload.insert(payload.end(), rel.col_indices.begin(), rel.col_indices.end());
 
-        struct TempAttr {
-            uint32_t name_off;
-            uint64_t data_off, data_bytes;
-            uint64_t offs_off, offs_bytes;
-        };
         std::vector<TempAttr> temp_attrs;
         temp_attrs.reserve(rel.attributes.size());
 
@@ -284,9 +397,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.node_count = rel.node_count;
         entry.edge_count = rel.edge_count;
         uint64_t sec_feats = rel.section_features;
-        if (csr_row_off_offset > 0) sec_feats |= 0x01ULL;
-        if (!rel.attributes.empty()) sec_feats |= 0x04ULL;
-        if (rel.encoding_id == 3) sec_feats |= 0x08ULL;
+        if (!rel.attributes.empty()) sec_feats |= 0x02ULL; // IMP_REL_FEATURE_WEIGHTED
         entry.section_features = sec_feats;
         entry.csr_row_off_offset = csr_row_off_offset;
         entry.csr_row_off_bytes = csr_row_off_bytes;
@@ -323,16 +434,29 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
 
     // Serialize Secondary Index Directory Entries and Payload Data
     align128(dir_table);
-    for (const auto& idx : writer->indexes) {
+    for (auto& idx : writer->indexes) {
         uint64_t data_off = 0;
         uint64_t data_bytes = idx.data.size();
         if (data_bytes > 0) {
             align128(payload);
             data_off = rel_blocks_base_offset + payload.size();
+            if (idx.index_type == 8 && idx.data.size() >= 64) { // Vamana ANN relative offset fixup
+                uint64_t rel_adj = 0;
+                std::memcpy(&rel_adj, idx.data.data() + 40, 8);
+                uint64_t abs_adj = (rel_adj == 0) ? (data_off + 128) : ((rel_adj < data_off) ? (data_off + rel_adj) : rel_adj);
+                std::memcpy(idx.data.data() + 40, &abs_adj, 8);
+
+                uint64_t rel_quant = 0;
+                std::memcpy(&rel_quant, idx.data.data() + 56, 8);
+                if (rel_quant > 0 && rel_quant < data_off) {
+                    uint64_t abs_quant = data_off + rel_quant;
+                    std::memcpy(idx.data.data() + 56, &abs_quant, 8);
+                }
+            }
             payload.insert(payload.end(), idx.data.begin(), idx.data.end());
         }
 
-        impulse_index_directory_entry_v0_9_t entry{};
+        impulse_index_directory_entry_t entry{};
         entry.index_id = idx.index_id;
         entry.domain_id = idx.domain_id;
         entry.relation_id = idx.relation_id;
@@ -490,6 +614,73 @@ void impulse_delta_layer_destroy(impulse_delta_layer_t* delta) {
     delete delta;
 }
 
+static void populate_writer_from_snapshot(const impulse_snapshot_t* base_snapshot, impulse_writer_t* writer) {
+    const uint8_t* raw = static_cast<const uint8_t*>(base_snapshot->mmap_ptr);
+
+    for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
+        const auto& dom = base_snapshot->domains[i];
+        const auto& name = base_snapshot->domain_names[i];
+        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
+        impulse_writer_set_domain_node_count(writer, static_cast<uint16_t>(i), dom.node_count);
+        impulse_writer_set_domain_key_attr(writer, static_cast<uint16_t>(i), dom.key_attr_index);
+        if (i < base_snapshot->domain_attributes.size()) {
+            const auto& dattrs = base_snapshot->domain_attributes[i];
+            const auto& dnames = base_snapshot->domain_attribute_names[i];
+            for (size_t a = 0; a < dattrs.size(); ++a) {
+                const auto& attr = dattrs[a];
+                impulse_writer_add_domain_attribute(
+                    writer,
+                    static_cast<uint16_t>(i),
+                    dnames[a].c_str(),
+                    attr.type_code,
+                    attr.dimension,
+                    (attr.data_offset > 0) ? (raw + attr.data_offset) : nullptr,
+                    attr.data_bytes,
+                    (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
+                    attr.offsets_bytes
+                );
+            }
+        }
+    }
+
+    for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
+        const auto& rel = base_snapshot->relations[r];
+        const void* row_ptr = raw + rel.csr_row_off_offset;
+        const void* col_ptr = raw + rel.csr_col_idx_offset;
+        uint64_t sec_feats = rel.section_features & ~0x01ULL; // writer currently serializes CSR only
+
+        impulse_writer_add_relation(
+            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
+            rel.node_count, rel.edge_count, sec_feats,
+            row_ptr, rel.csr_row_off_bytes,
+            col_ptr, rel.csr_col_idx_bytes
+        );
+
+        if (r < base_snapshot->relation_attributes.size()) {
+            const auto& rattrs = base_snapshot->relation_attributes[r];
+            const auto& rnames = base_snapshot->relation_attribute_names[r];
+            for (size_t a = 0; a < rattrs.size(); ++a) {
+                const auto& attr = rattrs[a];
+                impulse_writer_add_attribute(
+                    writer,
+                    static_cast<uint16_t>(r),
+                    rnames[a].c_str(),
+                    attr.type_code,
+                    attr.dimension,
+                    (attr.data_offset > 0) ? (raw + attr.data_offset) : nullptr,
+                    attr.data_bytes,
+                    (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
+                    attr.offsets_bytes
+                );
+            }
+        }
+    }
+
+    for (const auto& kv : base_snapshot->metadata) {
+        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
+    }
+}
+
 impulse_status_t impulse_snapshot_compact_to_file(
     const impulse_snapshot_t* base_snapshot,
     impulse_delta_layer_t** deltas,
@@ -501,37 +692,13 @@ impulse_status_t impulse_snapshot_compact_to_file(
     if (!base_snapshot || !output_file_path) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = 0;
-    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 0x0009) {
-        gfeat = base_snapshot->header.required_features;
+    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+        gfeat = base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
     }
     impulse_writer_t* writer = impulse_writer_create(output_file_path, gfeat);
     if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
-        const auto& dom = base_snapshot->domains[i];
-        const auto& name = base_snapshot->domain_names[i];
-        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
-    }
-
-    const uint8_t* raw = static_cast<const uint8_t*>(base_snapshot->mmap_ptr);
-
-    for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
-        const auto& rel = base_snapshot->relations[r];
-
-        const void* row_ptr = raw + rel.csr_row_off_offset;
-        const void* col_ptr = raw + rel.csr_col_idx_offset;
-
-        impulse_writer_add_relation(
-            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
-            rel.node_count, rel.edge_count, rel.section_features,
-            row_ptr, rel.csr_row_off_bytes,
-            col_ptr, rel.csr_col_idx_bytes
-        );
-    }
-
-    for (const auto& kv : base_snapshot->metadata) {
-        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
-    }
+    populate_writer_from_snapshot(base_snapshot, writer);
 
     impulse_status_t st = impulse_writer_finalize(writer);
     impulse_writer_destroy(writer);
@@ -550,37 +717,13 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
-    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 0x0009) {
-        gfeat |= base_snapshot->header.required_features;
+    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+        gfeat |= (base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED);
     }
     impulse_writer_t* writer = impulse_writer_create_stream(write_cb, user_data, gfeat);
     if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
-        const auto& dom = base_snapshot->domains[i];
-        const auto& name = base_snapshot->domain_names[i];
-        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
-    }
-
-    const uint8_t* raw = static_cast<const uint8_t*>(base_snapshot->mmap_ptr);
-
-    for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
-        const auto& rel = base_snapshot->relations[r];
-
-        const void* row_ptr = raw + rel.csr_row_off_offset;
-        const void* col_ptr = raw + rel.csr_col_idx_offset;
-
-        impulse_writer_add_relation(
-            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
-            rel.node_count, rel.edge_count, rel.section_features,
-            row_ptr, rel.csr_row_off_bytes,
-            col_ptr, rel.csr_col_idx_bytes
-        );
-    }
-
-    for (const auto& kv : base_snapshot->metadata) {
-        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
-    }
+    populate_writer_from_snapshot(base_snapshot, writer);
 
     impulse_status_t st = impulse_writer_finalize(writer);
     impulse_writer_destroy(writer);

@@ -23,6 +23,7 @@
 #include <string>
 #include <cstdarg>
 #include <atomic>
+#include <deque>
 #include <mutex>
 #include <map>
 
@@ -95,6 +96,8 @@ struct BoundRelationSlot {
     const void* targets_ptr = nullptr;
     const void* csc_offsets_ptr = nullptr;
     const void* csc_targets_ptr = nullptr;
+    uint16_t    src_domain_id = 0;
+    uint16_t    tgt_domain_id = 0;
     uint8_t     node_id_width = 4;
     uint8_t     edge_index_width = 4;
     uint8_t     csc_node_id_width = 4;
@@ -163,6 +166,7 @@ struct BoundValueMap {
     std::vector<const char*> keys;
     std::vector<float> values;
     std::vector<std::array<char, 24>> fallback_keys;
+    std::deque<std::string> owned_keys;
 };
 
 // Maximum concurrent bitset and vector handles per VM query context
@@ -203,9 +207,12 @@ struct impulse_vm_context {
     uint64_t* private_arena_memory;
     std::vector<VmBitSet> private_bitsets;
 
-    // Pre-indexed relation slots for zero-lookup overhead
+    // Pre-indexed relation and domain slots for zero-lookup overhead
     std::vector<BoundRelationSlot> slots;
     std::vector<std::vector<BoundAttributeSlot>> attribute_slots;
+    std::vector<std::vector<BoundAttributeSlot>> domain_attribute_slots;
+    std::vector<uint16_t> domain_key_attr_indices;
+    std::vector<uint64_t> domain_node_counts;
 
     // Pre-allocated float and double vectors for VM operations
     std::array<std::vector<float>, VM_MAX_VECTOR_HANDLES> float_vectors;
@@ -219,6 +226,7 @@ struct impulse_vm_context {
     std::array<size_t, VM_MAX_VECTOR_HANDLES> node_vector_lengths{};
     std::array<bool, VM_MAX_VECTOR_HANDLES> node_vector_length_explicit{};
     std::array<std::vector<const char*>, VM_MAX_VECTOR_HANDLES> string_vectors;
+    std::array<std::deque<std::string>, VM_MAX_VECTOR_HANDLES> string_vector_owned;
     std::array<bool, VM_MAX_VECTOR_HANDLES> string_vectors_allocated;
     std::array<BoundValueMap, VM_MAX_VECTOR_HANDLES> value_maps;
     std::array<bool, VM_MAX_VECTOR_HANDLES> value_maps_allocated;
@@ -558,6 +566,7 @@ inline int acquire_string_vector(impulse_vm_context_t* ctx) {
         if (!ctx->string_vectors_allocated[i]) {
             ctx->string_vectors_allocated[i] = true;
             ctx->string_vectors[i].clear();
+            ctx->string_vector_owned[i].clear();
             return static_cast<int>(i);
         }
     }
@@ -567,6 +576,7 @@ inline int acquire_string_vector(impulse_vm_context_t* ctx) {
 inline void release_string_vector(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->string_vectors[handle].clear();
+        ctx->string_vector_owned[handle].clear();
         ctx->string_vectors_allocated[handle] = false;
     }
 }
@@ -579,6 +589,7 @@ inline int acquire_value_map(impulse_vm_context_t* ctx) {
             ctx->value_maps_allocated[i] = true;
             ctx->value_maps[i].keys.clear();
             ctx->value_maps[i].values.clear();
+            ctx->value_maps[i].owned_keys.clear();
             return static_cast<int>(i);
         }
     }
@@ -589,6 +600,7 @@ inline void release_value_map(impulse_vm_context_t* ctx, size_t handle) {
     if (ctx && handle < VM_MAX_VECTOR_HANDLES) {
         ctx->value_maps[handle].keys.clear();
         ctx->value_maps[handle].values.clear();
+        ctx->value_maps[handle].owned_keys.clear();
         ctx->value_maps_allocated[handle] = false;
     }
 }
@@ -636,10 +648,107 @@ inline bool bitset_test(const VmBitSet& bs, uint64_t node_id, size_t max_nodes) 
 }
 
 
+inline const BoundAttributeSlot* resolve_node_attribute_slot(
+    const impulse_vm_context_t* ctx,
+    uint16_t domain_or_rel,
+    uint16_t attr_id
+) {
+    if (!ctx) return nullptr;
+    if (domain_or_rel < ctx->domain_attribute_slots.size() &&
+        attr_id < ctx->domain_attribute_slots[domain_or_rel].size() &&
+        ctx->domain_attribute_slots[domain_or_rel][attr_id].data_ptr != nullptr) {
+        return &ctx->domain_attribute_slots[domain_or_rel][attr_id];
+    }
+    if (domain_or_rel < ctx->attribute_slots.size() &&
+        attr_id < ctx->attribute_slots[domain_or_rel].size() &&
+        ctx->attribute_slots[domain_or_rel][attr_id].data_ptr != nullptr) {
+        return &ctx->attribute_slots[domain_or_rel][attr_id];
+    }
+    return nullptr;
+}
+
+inline size_t resolve_domain_row_count(const impulse_vm_context_t* ctx, uint16_t domain_id) {
+    if (!ctx) return 0;
+    if (domain_id < ctx->domain_node_counts.size() && ctx->domain_node_counts[domain_id] > 0) {
+        return static_cast<size_t>(ctx->domain_node_counts[domain_id]);
+    }
+    return ctx->max_nodes;
+}
+
+inline bool extract_var_string_slice(
+    const BoundAttributeSlot& attr,
+    size_t total_rows,
+    uint64_t u,
+    const char** out_ptr,
+    size_t* out_len
+) {
+    if (!attr.data_ptr || !out_ptr || !out_len) return false;
+    const uint8_t* val_ptr = static_cast<const uint8_t*>(attr.data_ptr);
+    uint64_t val_bytes = attr.data_bytes;
+
+    if ((attr.type_code & 0x80) != 0) {
+        size_t rows = total_rows;
+        if (attr.offsets_ptr && attr.offsets_bytes >= 8) {
+            rows = (attr.offsets_bytes / 4) - 1;
+        }
+        uint64_t raw_bm = ((rows + 63ULL) / 64ULL) * 8ULL;
+        uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
+        if (val_bytes < padded_bm || (u >> 3) >= raw_bm) return false;
+        if (((val_ptr[u >> 3] >> (u & 7u)) & 1u) == 0u) return false;
+        val_ptr += padded_bm;
+        val_bytes -= padded_bm;
+    }
+
+    if (!attr.offsets_ptr) {
+        if (attr.dimension == 0 || (u + 1ULL) * attr.dimension > val_bytes) return false;
+        const char* p = reinterpret_cast<const char*>(val_ptr) + u * attr.dimension;
+        size_t len = 0;
+        while (len < attr.dimension && p[len] != '\0') ++len;
+        *out_ptr = p;
+        *out_len = len;
+        return true;
+    }
+
+    if ((u + 2ULL) * 4ULL > attr.offsets_bytes) return false;
+    const uint32_t* offsets = static_cast<const uint32_t*>(attr.offsets_ptr);
+    uint32_t start = offsets[u];
+    uint32_t end = offsets[u + 1];
+    if (start > end || static_cast<uint64_t>(end) > val_bytes) return false;
+    if (end > start && val_ptr[end - 1] == '\0') {
+        end -= 1;
+    }
+    *out_ptr = reinterpret_cast<const char*>(val_ptr + start);
+    *out_len = static_cast<size_t>(end - start);
+    return true;
+}
+
 inline const BoundAttributeSlot* find_key_attribute(const impulse_vm_state_t* vm_state, uint16_t domain_id) {
     if (!vm_state || !vm_state->query_context) return nullptr;
-    if (domain_id >= vm_state->query_context->attribute_slots.size()) return nullptr;
-    const auto& attrs = vm_state->query_context->attribute_slots[domain_id];
+    const auto* ctx = vm_state->query_context;
+
+    if (domain_id < ctx->domain_attribute_slots.size() && !ctx->domain_attribute_slots[domain_id].empty()) {
+        const auto& dattrs = ctx->domain_attribute_slots[domain_id];
+        if (domain_id < ctx->domain_key_attr_indices.size()) {
+            uint16_t kidx = ctx->domain_key_attr_indices[domain_id];
+            if (kidx < dattrs.size() && dattrs[kidx].data_ptr) {
+                return &dattrs[kidx];
+            }
+        }
+        for (const auto& attr : dattrs) {
+            if (attr.data_ptr) {
+                uint8_t base_type = attr.type_code & 0x7F;
+                if (base_type == 0x0B || base_type == 0x0A || base_type == 0x03 || base_type == 0x04) {
+                    return &attr;
+                }
+            }
+        }
+        if (dattrs[0].data_ptr) {
+            return &dattrs[0];
+        }
+    }
+
+    if (domain_id >= ctx->attribute_slots.size()) return nullptr;
+    const auto& attrs = ctx->attribute_slots[domain_id];
     for (const auto& attr : attrs) {
         if (attr.data_ptr) {
             uint8_t base_type = attr.type_code & 0x7F;

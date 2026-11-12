@@ -10,7 +10,6 @@ The official Rust engine crate for **Impulse Graph Engine** (`impulse-graph`), d
 * **Zero Runtime Dependencies**: Strictly zero third-party crate dependencies per ecosystem architectural rules (`AGENTS.md §3.2`).
 * **Hardware Alignment**: 128-byte aligned sections optimized for AVX-512 SIMD vectorization and GPU Direct Storage (`cuFile`).
 * **Structure of Arrays (SoA) Attributes**: Direct typed slice accessors for columnar floats, integers, and fixed-width vector embeddings.
-* **Fluent Multi-Hop Traversal Pipeline**: High-speed typed traversal and neighbor expansion (`traverse(start_node).out("relation")`).
 * **Single-Pass Snapshot Writer**: Create binary snapshot files directly from Rust streaming pipelines.
 
 ---
@@ -46,7 +45,6 @@ cargo test
 Test coverage includes:
 * `test_sha256_known_vector` / `test_crc16_known_vector`: Cryptographic baseline checksum verification.
 * `test_v09_roundtrip_write_read`: Full binary serialization and deserialization roundtrip.
-* `test_rust_fluent_traversal_multihop`: Multi-hop graph traversal.
 * `test_rust_simd_*`: Native SIMD dot products and sorted intersection vector math.
 
 ---
@@ -92,7 +90,7 @@ cargo run --example 04_analytical_vectors
 
 ## 5. Rust API Quick Reference
 
-### Fluent Traversal Pipeline
+### Zero-Copy Snapshot Inspection
 
 ```rust
 use impulse_graph::SnapshotReader;
@@ -101,14 +99,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open snapshot with zero-copy mmap
     let reader = SnapshotReader::open("social_graph.imps")?;
 
-    // 2-Hop Traversal: Seed(0) -> follows -> follows
-    let reachable_users: Vec<u64> = reader
-        .traverse(0)
-        .out("follows")
-        .out("follows")
-        .to_vec();
-
-    println!("2-Hop Reachable Users from Node 0: {:?}", reachable_users);
+    println!("Domain count: {}", reader.domain_count());
+    println!("Relation count: {}", reader.relation_count());
+    let neighbors = reader.get_neighbors(0, 0)?;
+    println!("Direct neighbors of node 0: {:?}", neighbors);
     Ok(())
 }
 ```

@@ -50,9 +50,9 @@ op_NODE_FILTER: {
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     uint64_t val = vm_state->registers[val_reg];
 
-    bool has_attr = (rel_id < vm_state->query_context->attribute_slots.size() &&
-                     attr_id < vm_state->query_context->attribute_slots[rel_id].size() &&
-                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr);
+    const BoundAttributeSlot* attr_ptr = resolve_node_attribute_slot(vm_state->query_context, rel_id, attr_id);
+    bool has_attr = (attr_ptr != nullptr);
+    size_t dom_rows = resolve_domain_row_count(vm_state->query_context, rel_id);
 
     const auto* mock_ptr = find_mock_node_attr(vm_state->query_context, attr_id);
     auto eval_match = [&](uint64_t u) -> bool {
@@ -73,14 +73,31 @@ op_NODE_FILTER: {
             return false;
         }
         if (!has_attr) return true;
-        const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
+        const auto& attr = *attr_ptr;
         uint8_t base_type = attr.type_code & 0x7F;
-        if (base_type == 0x01 || base_type == 0x02) {
-            const int64_t* data = static_cast<const int64_t*>(attr.data_ptr);
-            return data[u] == static_cast<int64_t>(val);
+        const uint8_t* val_ptr = static_cast<const uint8_t*>(attr.data_ptr);
+        uint64_t val_bytes = attr.data_bytes;
+        if ((attr.type_code & 0x80) != 0) {
+            uint64_t raw_bm = ((dom_rows + 63ULL) / 64ULL) * 8ULL;
+            uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
+            if (val_bytes < padded_bm || (u >> 3) >= raw_bm) return false;
+            if (((val_ptr[u >> 3] >> (u & 7u)) & 1u) == 0u) return false;
+            val_ptr += padded_bm;
+            val_bytes -= padded_bm;
+        }
+        if (base_type == 0x04) {
+            if ((u + 1) * sizeof(int64_t) > val_bytes) return false;
+            return reinterpret_cast<const int64_t*>(val_ptr)[u] == static_cast<int64_t>(val);
+        } else if (base_type == 0x01 || base_type == 0x02) {
+            if (dom_rows > 0 && val_bytes >= dom_rows * sizeof(int64_t)) {
+                return reinterpret_cast<const int64_t*>(val_ptr)[u] == static_cast<int64_t>(val);
+            }
+            if (u >= val_bytes) return false;
+            if (base_type == 0x01) return val_ptr[u] == static_cast<uint8_t>(val);
+            return reinterpret_cast<const int8_t*>(val_ptr)[u] == static_cast<int8_t>(val);
         } else if (base_type == 0x03) {
-            const int32_t* data = static_cast<const int32_t*>(attr.data_ptr);
-            return data[u] == static_cast<int32_t>(val);
+            if ((u + 1) * sizeof(int32_t) > val_bytes) return false;
+            return reinterpret_cast<const int32_t*>(val_ptr)[u] == static_cast<int32_t>(val);
         }
         return true;
     };

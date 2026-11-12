@@ -171,6 +171,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_snapshot_writer.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph_internal.hpp");
+    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_bytecode_emitter.cpp");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_simd.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_vm.h");
     println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_graph.h");
@@ -249,6 +250,12 @@ fn main() {
         &out_dir,
         has_omp,
     );
+    let obj_emitter = compile_cpp(
+        "../impulse-cpp/src/impulse_bytecode_emitter.cpp",
+        cpp_include,
+        &out_dir,
+        has_omp,
+    );
 
     // Archive into a single static library
     if is_windows {
@@ -267,6 +274,7 @@ fn main() {
                 &obj_graph,
                 &obj_writer,
                 &obj_index,
+                &obj_emitter,
             ])
             .status();
 
@@ -290,6 +298,7 @@ fn main() {
                 &obj_graph,
                 &obj_writer,
                 &obj_index,
+                &obj_emitter,
             ])
             .status();
 

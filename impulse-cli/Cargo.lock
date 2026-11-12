@@ -785,7 +785,7 @@ version = "0.9.0"
 
 [[package]]
 name = "impulse-graph-tooling"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",

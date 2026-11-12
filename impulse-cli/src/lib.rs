@@ -10,8 +10,8 @@ pub mod parquet_reader;
 #[command(
     name = "impulse-graph",
     author = "Impulse Graph Engine Contributors",
-    version = "0.9.0",
-    about = "Impulse Graph Engine Developer Utilities & Layout Optimizer Suite (Spec v0.9.0)",
+    version = "0.10.0",
+    about = "Impulse Graph Engine Developer Utilities & Layout Optimizer Suite (Spec v0.10.0)",
     long_about = "Official CLI utility for inspecting, validating, compiling, optimizing, signing, comparing, exporting, and executing impulse scripts (.impscm) and binary snapshot files (.imps)."
 )]
 pub struct Cli {
@@ -127,6 +127,10 @@ pub enum Commands {
         /// Optional relation filter (name or relation ID)
         #[arg(long)]
         relation: Option<String>,
+
+        /// Display 4KB/128B physical byte offset layout, section addresses, and alignment padding
+        #[arg(long = "page-map")]
+        page_map: bool,
     },
 
     /// Assemble textual assembly (.impas) into binary bytecode program (.impb)
@@ -330,9 +334,13 @@ pub enum SnapshotCommands {
         /// Optional relation filter (name or relation ID)
         #[arg(long)]
         relation: Option<String>,
+
+        /// Display 4KB/128B physical byte offset layout, section addresses, and alignment padding
+        #[arg(long = "page-map")]
+        page_map: bool,
     },
 
-    /// Validate binary snapshot file against Spec v0.9.0 normative requirements
+    /// Validate binary snapshot file against Spec v0.10.0 normative requirements
     Validate {
         /// Path to binary snapshot file (.imps)
         #[arg(value_name = "SNAPSHOT")]
@@ -471,6 +479,90 @@ pub enum SnapshotCommands {
         /// Supernode Z-Score threshold (default: 3.0)
         #[arg(long, default_value_t = 3.0)]
         supernode_threshold: f64,
+    },
+
+    /// Manage Section 2.6 secondary and vector indexes (list, add, drop)
+    Index {
+        #[command(subcommand)]
+        command: IndexCommands,
+    },
+
+    /// Sample raw node or edge rows and attributes from binary snapshot
+    Sample {
+        /// Path to binary snapshot file (.imps)
+        #[arg(value_name = "SNAPSHOT")]
+        file: PathBuf,
+
+        /// Number of sample rows to display (default: 10)
+        #[arg(short = 'n', long, default_value_t = 10)]
+        limit: usize,
+
+        /// Specific domain name or ID to sample
+        #[arg(short, long)]
+        domain: Option<String>,
+
+        /// Specific relation name or index to sample
+        #[arg(short, long)]
+        relation: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+
+    /// Transmute schema, compact integer widths, add/drop CSC, infer multiplicity, or mutate metadata
+    Transmute(commands::transmute::TransmuteArgs),
+}
+
+#[derive(Subcommand)]
+pub enum IndexCommands {
+    /// List all Section 2.6 secondary and vector indexes in a snapshot
+    List {
+        /// Path to binary snapshot file (.imps)
+        #[arg(value_name = "SNAPSHOT")]
+        file: PathBuf,
+
+        /// Output format (text, json)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+
+    /// Build and add one or more secondary/vector indexes (0x01..0x08) to a snapshot
+    Add {
+        /// Input binary snapshot (.imps)
+        #[arg(short, long, value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Output destination snapshot (.imps)
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: PathBuf,
+
+        /// Index specifications: "Entity.attr:type[:param=val...]"
+        #[arg(short, long = "spec", value_name = "SPEC", num_args = 1..)]
+        specs: Vec<String>,
+    },
+
+    /// Drop one or more secondary/vector indexes from a snapshot
+    Drop {
+        /// Input binary snapshot (.imps)
+        #[arg(short, long, value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Output destination snapshot (.imps)
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: PathBuf,
+
+        /// Drop index by name
+        #[arg(short, long, value_name = "NAME")]
+        name: Option<String>,
+
+        /// Drop all indexes matching a type (permutation, zonemap, inverted_bitset, mphf, trigram, domain_split, temporal_interval, vamana)
+        #[arg(short = 't', long = "type", value_name = "TYPE")]
+        index_type: Option<String>,
+
+        /// Drop all indexes from the snapshot
+        #[arg(long)]
+        all: bool,
     },
 }
 

@@ -1,6 +1,7 @@
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use impulse_graph::spec::{
-    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMP_INDEX_VAMANA_ANN,
+    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMPULSE_VERSION_V090,
+    IMP_INDEX_VAMANA_ANN,
 };
 use impulse_graph::SnapshotReader;
 use sha2::Digest;
@@ -75,16 +76,42 @@ pub fn run_with_options(file: &Path, opts: &ValidateOptions<'_>) -> Result<(), B
 
     // Ed25519 Signature Verification
     if let Some(pub_key_path) = opts.public_key {
-        let pub_key_bytes = fs::read(pub_key_path)?;
-        if pub_key_bytes.len() < 32 {
-            return Err("Public key file must be at least 32 bytes".into());
-        }
+        let raw_pub = fs::read(pub_key_path)?;
+        let decoded_pub = crate::parquet_reader::decode_hex_or_uuid_bytes(
+            std::str::from_utf8(&raw_pub).unwrap_or(""),
+        );
+        let pub_slice: &[u8] = if decoded_pub.len() == 32 {
+            &decoded_pub
+        } else if raw_pub.len() >= 32 {
+            &raw_pub[..32]
+        } else {
+            return Err("Public key file must be 32 bytes (or 64 hex chars)".into());
+        };
         let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&pub_key_bytes[..32]);
-        let _pk = VerifyingKey::from_bytes(&bytes)?;
+        bytes.copy_from_slice(&pub_key_slice_exact(pub_slice));
+        let pk = VerifyingKey::from_bytes(&bytes)?;
 
         let file_data = fs::read(file)?;
-        let _digest = sha2::Sha256::digest(&file_data[..64]);
+        let digest = sha2::Sha256::digest(&file_data[..64]);
+
+        let sig_path = Path::new(&format!("{}.sig", file.to_string_lossy())).to_path_buf();
+        if sig_path.exists() {
+            let raw_sig = fs::read(&sig_path)?;
+            let decoded_sig = crate::parquet_reader::decode_hex_or_uuid_bytes(
+                std::str::from_utf8(&raw_sig).unwrap_or(""),
+            );
+            let sig_slice: &[u8] = if decoded_sig.len() == 64 {
+                &decoded_sig
+            } else if raw_sig.len() >= 64 {
+                &raw_sig[..64]
+            } else {
+                return Err("Signature file must be 64 bytes (or 128 hex chars)".into());
+            };
+            let mut sig_arr = [0u8; 64];
+            sig_arr.copy_from_slice(&sig_slice[..64]);
+            let sig = Signature::from_bytes(&sig_arr);
+            pk.verify(&digest, &sig)?;
+        }
 
         println!(
             "  [OK] Ed25519 signature verified with key {}",
@@ -96,6 +123,12 @@ pub fn run_with_options(file: &Path, opts: &ValidateOptions<'_>) -> Result<(), B
     Ok(())
 }
 
+fn pub_key_slice_exact(slice: &[u8]) -> [u8; 32] {
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&slice[..32]);
+    arr
+}
+
 pub fn validate_reader(
     reader: &SnapshotReader,
     file_len: u64,
@@ -103,7 +136,7 @@ pub fn validate_reader(
 ) -> Result<(), Box<dyn Error>> {
     let header = reader.header();
 
-    // 1. Magic & Version
+    // 1. Magic & Version (Spec v0.10.0 & backwards-compatible v0.9.0)
     if header.magic() != IMPULSE_MAGIC {
         return Err(format!(
             "Invalid magic 0x{:08X}, expected 0x{:08X} (IMPS)",
@@ -112,15 +145,72 @@ pub fn validate_reader(
         )
         .into());
     }
-    if header.version() != IMPULSE_VERSION_PACKED {
+    let ver = header.version();
+    if ver != IMPULSE_VERSION_PACKED && ver != IMPULSE_VERSION_V090 {
         return Err(format!(
-            "Unsupported version 0x{:04X}, expected 0x{:04X} (v0.9.0)",
-            header.version(),
-            IMPULSE_VERSION_PACKED
+            "Unsupported version 0x{:04X}, expected 0x{:04X} (v0.10.0) or 0x{:04X} (v0.9.0)",
+            ver, IMPULSE_VERSION_PACKED, IMPULSE_VERSION_V090
         )
         .into());
     }
-    println!("  [OK] Header Magic & Version (IMPS v0.9.0)");
+    println!(
+        "  [OK] Header Magic & Version (IMPS v0.{}.0)",
+        ver
+    );
+
+    // 2. Domain Catalog & Inline Node Attribute Alignment Checks (Spec v0.10.0 §2.2 / §3)
+    for dom in reader.domains() {
+        if dom.key_attr_index != 0xFFFF && (dom.key_attr_index as usize) >= dom.attributes.len() {
+            return Err(format!(
+                "Domain #{} ('{}'): key_attr_index {} exceeds domain attribute count {}",
+                dom.domain_id,
+                dom.name,
+                dom.key_attr_index,
+                dom.attributes.len()
+            )
+            .into());
+        }
+        for (a_idx, attr) in dom.attributes.iter().enumerate() {
+            if attr.data_offset > 0 {
+                if attr.data_offset % 128 != 0 {
+                    return Err(format!(
+                        "Domain #{} Attr #{}: Data offset 0x{:X} is not 128-byte aligned",
+                        dom.domain_id, a_idx, attr.data_offset
+                    )
+                    .into());
+                }
+                if attr.data_offset + attr.data_bytes > file_len {
+                    return Err(format!(
+                        "Domain #{} Attr #{}: Data end 0x{:X} exceeds file length {}",
+                        dom.domain_id,
+                        a_idx,
+                        attr.data_offset + attr.data_bytes,
+                        file_len
+                    )
+                    .into());
+                }
+            }
+            if attr.offsets_offset > 0 {
+                if attr.offsets_offset % 128 != 0 {
+                    return Err(format!(
+                        "Domain #{} Attr #{}: Offsets offset 0x{:X} is not 128-byte aligned",
+                        dom.domain_id, a_idx, attr.offsets_offset
+                    )
+                    .into());
+                }
+                if attr.offsets_offset + attr.offsets_bytes > file_len {
+                    return Err(format!(
+                        "Domain #{} Attr #{}: Offsets end 0x{:X} exceeds file length {}",
+                        dom.domain_id,
+                        a_idx,
+                        attr.offsets_offset + attr.offsets_bytes,
+                        file_len
+                    )
+                    .into());
+                }
+            }
+        }
+    }
 
     // 3. Topology & CSR Integrity & 128-Byte Array Alignment Checks
     let mut prev_pair: Option<(u16, u16)> = None;
@@ -258,9 +348,91 @@ pub fn validate_reader(
             }
         }
 
-        if rel.node_count > 0 {
+        let tgt_node_count = reader
+            .domains()
+            .iter()
+            .find(|d| d.domain_id == rel.tgt_domain_id)
+            .map(|d| d.node_count)
+            .unwrap_or(rel.node_count);
+
+        if rel.is_virtual() {
+            if rel.virtual_component_ids.is_empty() {
+                return Err(format!(
+                    "Relation #{} ('{}'): Virtual relation has 0 component relation IDs",
+                    idx, rel.name
+                )
+                .into());
+            }
+            for &comp_id in &rel.virtual_component_ids {
+                let comp = reader
+                    .relations()
+                    .get(comp_id as usize)
+                    .ok_or_else(|| {
+                        format!(
+                            "Relation #{} ('{}'): Virtual component relation ID {} out of bounds",
+                            idx, rel.name, comp_id
+                        )
+                    })?;
+                if comp.is_virtual() {
+                    return Err(format!(
+                        "Relation #{} ('{}'): Virtual relation cannot reference nested virtual relation {}",
+                        idx, rel.name, comp_id
+                    )
+                    .into());
+                }
+                if comp.src_domain_id != rel.src_domain_id || comp.tgt_domain_id != rel.tgt_domain_id
+                {
+                    return Err(format!(
+                        "Relation #{} ('{}'): Virtual component #{} domain pair ({}, {}) mismatches ({}, {})",
+                        idx, rel.name, comp_id, comp.src_domain_id, comp.tgt_domain_id, rel.src_domain_id, rel.tgt_domain_id
+                    )
+                    .into());
+                }
+            }
+        } else if rel.is_flat_forward() {
+            // Flat M:1 / 1:1 array: csr_row_off_bytes == 0, csr_col_idx has `node_count` entries (sentinel 0xFFFF or u32::MAX)
+            if rel.node_count > 0 {
+                let flat_targets = reader.get_col_indices_as_u32_vec(idx)?;
+                if flat_targets.len() as u64 != rel.node_count {
+                    return Err(format!(
+                        "Relation #{} ('{}'): Flat forward array length {} does not match node_count {}",
+                        idx, rel.name, flat_targets.len(), rel.node_count
+                    )
+                    .into());
+                }
+                let sentinel = if rel.node_id_width == 2 {
+                    0xFFFFu32
+                } else {
+                    u32::MAX
+                };
+                if !opts.quick_check {
+                    let mut present_edges = 0u64;
+                    for (u, &v) in flat_targets.iter().enumerate() {
+                        if v != sentinel {
+                            if (v as u64) >= tgt_node_count {
+                                return Err(format!(
+                                    "Relation #{}: Flat target[{}]={} out of bounds (tgt_node_count={})",
+                                    idx, u, v, tgt_node_count
+                                )
+                                .into());
+                            }
+                            present_edges += 1;
+                        }
+                    }
+                    if present_edges != rel.edge_count {
+                        return Err(format!(
+                            "Relation #{}: Flat forward non-null count {} does not match edge_count {}",
+                            idx, present_edges, rel.edge_count
+                        )
+                        .into());
+                    }
+                }
+            }
+        } else if rel.node_count > 0
+            && (rel.encoding_id == 0 || rel.encoding_id == 2 || rel.encoding_id == 3)
+        {
             let row_offsets = reader.get_row_offsets(idx)?;
-            let col_indices = reader.get_col_indices(idx)?;
+            let col_indices = reader.get_col_indices_as_u32_vec(idx)?;
 
             if row_offsets.len() != (rel.node_count as usize + 1) {
                 return Err(format!(
@@ -306,12 +478,6 @@ pub fn validate_reader(
             }
 
             if !opts.quick_check {
-                let tgt_node_count = reader
-                    .domains()
-                    .iter()
-                    .find(|d| d.domain_id == rel.tgt_domain_id)
-                    .map(|d| d.node_count)
-                    .unwrap_or(rel.node_count);
                 for (edge_idx, &tgt_id) in col_indices.iter().enumerate() {
                     if (tgt_id as u64) >= tgt_node_count {
                         return Err(format!(
@@ -322,53 +488,87 @@ pub fn validate_reader(
                     }
                 }
             }
+        }
 
-            if opts.deep_audit && rel.csc_row_off_offset > 0 && rel.csc_col_idx_offset > 0 {
-                if let (Some(csc_rows), Some(csc_cols)) = (
-                    reader.get_csc_row_offsets(idx)?,
-                    reader.get_csc_col_indices(idx)?,
-                ) {
-                    let mut csr_edges = Vec::with_capacity(rel.edge_count as usize);
-                    for u in 0..rel.node_count as usize {
-                        let start = row_offsets[u] as usize;
-                        let end = row_offsets[u + 1] as usize;
-                        for &v in &col_indices[start..end] {
-                            csr_edges.push((u as u32, v));
+        // Deep-audit CSC reverse transpose parity across standard CSR/CSC, flat M:1/1:M/1:1, and u16 widths
+        if opts.deep_audit && !rel.is_virtual() && rel.has_csc() && rel.node_count > 0 {
+            let mut forward_edges = Vec::with_capacity(rel.edge_count as usize);
+            if rel.is_flat_forward() {
+                let tgts = reader.get_col_indices_as_u32_vec(idx)?;
+                let sentinel = if rel.node_id_width == 2 {
+                    0xFFFFu32
+                } else {
+                    u32::MAX
+                };
+                for (u, &v) in tgts.iter().enumerate() {
+                    if v != sentinel {
+                        forward_edges.push((u as u32, v));
+                    }
+                }
+            } else if rel.encoding_id == 0 || rel.encoding_id == 2 || rel.encoding_id == 3 {
+                let row_offsets = reader.get_row_offsets(idx)?;
+                let col_indices = reader.get_col_indices_as_u32_vec(idx)?;
+                for u in 0..rel.node_count as usize {
+                    let start = row_offsets[u] as usize;
+                    let end = row_offsets[u + 1] as usize;
+                    for &v in &col_indices[start..end] {
+                        forward_edges.push((u as u32, v));
+                    }
+                }
+            }
+
+            let mut csc_edges = Vec::with_capacity(rel.edge_count as usize);
+            if rel.is_flat_reverse() {
+                if let Some(csc_cols) = reader.get_csc_col_indices_as_u32_vec(idx)? {
+                    let sentinel = if rel.node_id_width == 2 {
+                        0xFFFFu32
+                    } else {
+                        u32::MAX
+                    };
+                    for (v, &u) in csc_cols.iter().enumerate() {
+                        if u != sentinel {
+                            csc_edges.push((u, v as u32));
                         }
                     }
-                    let mut csc_edges = Vec::with_capacity(rel.edge_count as usize);
-                    let tgt_cnt = csc_rows.len().saturating_sub(1);
-                    for v in 0..tgt_cnt {
-                        if csc_rows[v] > csc_rows[v + 1] {
-                            return Err(format!(
-                                "Relation #{}: CSC row_offsets non-monotonic at target {}",
-                                idx, v
-                            )
-                            .into());
-                        }
-                        for e in csc_rows[v] as usize..csc_rows[v + 1] as usize {
-                            if e >= csc_cols.len() {
-                                return Err(format!(
-                                    "Relation #{}: CSC edge index {} exceeds csc_cols length {}",
-                                    idx,
-                                    e,
-                                    csc_cols.len()
-                                )
-                                .into());
-                            }
-                            csc_edges.push((csc_cols[e], v as u32));
-                        }
-                    }
-                    csr_edges.sort_unstable();
-                    csc_edges.sort_unstable();
-                    if csr_edges != csc_edges {
+                }
+            } else if let (Some(csc_rows), Some(csc_cols)) = (
+                reader.get_csc_row_offsets(idx)?,
+                reader.get_csc_col_indices_as_u32_vec(idx)?,
+            ) {
+                let tgt_cnt = csc_rows.len().saturating_sub(1);
+                for v in 0..tgt_cnt {
+                    if csc_rows[v] > csc_rows[v + 1] {
                         return Err(format!(
-                            "Relation #{}: Deep audit failed: CSC transpose edge multiset does not match CSR",
-                            idx
+                            "Relation #{}: CSC row_offsets non-monotonic at target {}",
+                            idx, v
                         )
                         .into());
                     }
+                    for e in csc_rows[v] as usize..csc_rows[v + 1] as usize {
+                        if e >= csc_cols.len() {
+                            return Err(format!(
+                                "Relation #{}: CSC edge index {} exceeds csc_cols length {}",
+                                idx,
+                                e,
+                                csc_cols.len()
+                            )
+                            .into());
+                        }
+                        csc_edges.push((csc_cols[e], v as u32));
+                    }
                 }
+            }
+
+            forward_edges.sort_unstable();
+            csc_edges.sort_unstable();
+            if forward_edges != csc_edges {
+                return Err(format!(
+                    "Relation #{}: Deep audit failed: CSC transpose edge multiset ({}) does not match forward edges ({})",
+                    idx,
+                    csc_edges.len(),
+                    forward_edges.len()
+                )
+                .into());
             }
         }
     }

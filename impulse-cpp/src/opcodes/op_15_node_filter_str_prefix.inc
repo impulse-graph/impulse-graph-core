@@ -55,33 +55,24 @@ op_NODE_FILTER_STR_PREFIX: {
         bitset_add(bs_dst, vm_state->registers[src], vm_state->query_context->max_nodes);
     }
 
-    bool has_attr = (rel_id < vm_state->query_context->attribute_slots.size() &&
-                     attr_id < vm_state->query_context->attribute_slots[rel_id].size() &&
-                     vm_state->query_context->attribute_slots[rel_id][attr_id].data_ptr != nullptr &&
-                     (vm_state->query_context->attribute_slots[rel_id][attr_id].type_code == 0x0B ||
-                      vm_state->query_context->attribute_slots[rel_id][attr_id].offsets_ptr != nullptr));
+    const BoundAttributeSlot* attr_ptr = resolve_node_attribute_slot(vm_state->query_context, rel_id, attr_id);
+    bool has_attr = (attr_ptr != nullptr &&
+                     ((attr_ptr->type_code & 0x7F) == 0x0B || attr_ptr->offsets_ptr != nullptr));
     const char* prefix = reinterpret_cast<const char*>(vm_state->registers[val_reg]);
     bool valid_prefix = (prefix != nullptr && reinterpret_cast<uintptr_t>(prefix) >= 4096);
 
     if (has_attr && valid_prefix) {
-        const auto& attr = vm_state->query_context->attribute_slots[rel_id][attr_id];
+        const auto& attr = *attr_ptr;
+        size_t dom_rows = resolve_domain_row_count(vm_state->query_context, rel_id);
         size_t prefix_len = std::strlen(prefix);
         auto eval_match = [&](uint64_t u) -> bool {
             const char* str_ptr = nullptr;
             size_t str_len = 0;
-            if (!attr.offsets_ptr) {
-                str_ptr = static_cast<const char*>(attr.data_ptr) + u * attr.dimension;
-                str_len = attr.dimension;
-            } else {
-                const uint32_t* offsets = static_cast<const uint32_t*>(attr.offsets_ptr);
-                str_ptr = static_cast<const char*>(attr.data_ptr) + offsets[u];
-                str_len = offsets[u + 1] - offsets[u];
+            if (!extract_var_string_slice(attr, dom_rows, u, &str_ptr, &str_len) || !str_ptr) {
+                return false;
             }
-            if (!str_ptr) return false;
-            for (size_t idx = 0; idx < prefix_len; ++idx) {
-                if (idx >= str_len || str_ptr[idx] != prefix[idx]) return false;
-            }
-            return true;
+            if (prefix_len > str_len) return false;
+            return prefix_len == 0 || std::memcmp(str_ptr, prefix, prefix_len) == 0;
         };
 
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {

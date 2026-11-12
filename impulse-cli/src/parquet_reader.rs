@@ -1,9 +1,9 @@
 use arrow_array::{
-    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeListArray, Float16Array,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
-    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-    TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
-    UInt8Array,
+    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeBinaryArray,
+    FixedSizeListArray, Float16Array, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, StringArray,
+    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::HashMap;
@@ -319,7 +319,6 @@ pub fn read_parquet_column_data(
                             let s = arr.value(i);
                             acc.payload_bytes.extend_from_slice(s.as_bytes());
                         }
-                        acc.payload_bytes.push(0); // Null terminator
                         offsets.push(acc.payload_bytes.len() as u32);
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
@@ -333,8 +332,19 @@ pub fn read_parquet_column_data(
                             let s = arr.value(i);
                             acc.payload_bytes.extend_from_slice(s.as_bytes());
                         }
-                        acc.payload_bytes.push(0);
                         offsets.push(acc.payload_bytes.len() as u32);
+                    }
+                } else if let Some(arr) = array.as_any().downcast_ref::<FixedSizeBinaryArray>() {
+                    let byte_w = arr.value_length() as u32;
+                    acc.inferred_base_type = 0x0A;
+                    acc.dimension = byte_w.max(1);
+                    for i in 0..len {
+                        if arr.is_null(i) {
+                            acc.payload_bytes
+                                .extend(std::iter::repeat_n(0u8, byte_w as usize));
+                        } else {
+                            acc.payload_bytes.extend_from_slice(arr.value(i));
+                        }
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
                     acc.inferred_base_type = 0x0C;
@@ -545,7 +555,7 @@ pub fn read_text_column_data(
 
         let mut is_valid = Vec::with_capacity(row_count);
         let mut payload_bytes = Vec::new();
-        let mut string_offsets = if base_type == 0x0B {
+        let mut string_offsets = if base_type == 0x0B || base_type == 0x0C {
             Some(vec![0])
         } else {
             None
@@ -556,8 +566,14 @@ pub fn read_text_column_data(
             let s = val_opt.as_deref().unwrap_or("");
             match base_type {
                 0x01 => {
-                    // Int8
-                    let v: i8 = s.parse().unwrap_or(0);
+                    // Int8 / Bool
+                    let v: i8 = if s.eq_ignore_ascii_case("true") {
+                        1
+                    } else if s.eq_ignore_ascii_case("false") {
+                        0
+                    } else {
+                        s.parse().unwrap_or(0)
+                    };
                     payload_bytes.push(v as u8);
                 }
                 0x02 => {
@@ -566,14 +582,37 @@ pub fn read_text_column_data(
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
                 0x03 => {
-                    // Int32
-                    let v: i32 = s.parse().unwrap_or(0);
-                    payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    // Int32 (scalar or D-dimensional inline vector)
+                    if dimension > 1 {
+                        let parsed =
+                            crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        for d in 0..(dimension as usize) {
+                            let v = parsed.get(d).copied().unwrap_or(0.0f32) as i32;
+                            payload_bytes.extend_from_slice(&v.to_le_bytes());
+                        }
+                    } else {
+                        let v: i32 = s.parse().unwrap_or(0);
+                        payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
                 }
-                0x04 => {
-                    // Int64
+                0x04 | 0x08 | 0x09 => {
+                    // Int64 / TimestampMs / TimestampNs
                     let v: i64 = s.parse().unwrap_or(0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
+                }
+                0x05 => {
+                    // Float16 (IEEE 754 binary16, scalar or D-dimensional inline vector)
+                    if dimension > 1 {
+                        let parsed =
+                            crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        for d in 0..(dimension as usize) {
+                            let v = f32_to_f16_bits(parsed.get(d).copied().unwrap_or(0.0f32));
+                            payload_bytes.extend_from_slice(&v.to_le_bytes());
+                        }
+                    } else {
+                        let v = f32_to_f16_bits(s.parse::<f32>().unwrap_or(0.0));
+                        payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
                 }
                 0x06 => {
                     // Float32 (scalar or D-dimensional inline vector)
@@ -603,13 +642,40 @@ pub fn read_text_column_data(
                         payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
                 }
+                0x0A => {
+                    // FixedBytes (hex or hyphenated UUID string, padded/truncated to `dimension` bytes)
+                    let width = dimension.max(1) as usize;
+                    let decoded = decode_hex_or_uuid_bytes(s);
+                    for b_idx in 0..width {
+                        payload_bytes.push(decoded.get(b_idx).copied().unwrap_or(0u8));
+                    }
+                }
                 0x0B => {
-                    // String
+                    // VarString (exact UTF-8 bytes per Spec §4.3.2, no trailing NUL)
                     payload_bytes.extend_from_slice(s.as_bytes());
-                    payload_bytes.push(0);
                     if let Some(ref mut offs) = string_offsets {
                         offs.push(payload_bytes.len() as u32);
                     }
+                }
+                0x0C => {
+                    // VarBytes (hex-encoded byte slice)
+                    let decoded = decode_hex_or_uuid_bytes(s);
+                    payload_bytes.extend_from_slice(&decoded);
+                    if let Some(ref mut offs) = string_offsets {
+                        offs.push(payload_bytes.len() as u32);
+                    }
+                }
+                0x0D => {
+                    // IntervalSec32: 8 bytes (u32 start_sec, u32 duration_sec) formatted as "start:dur" or "start;dur"
+                    let (start_sec, dur_sec) = parse_u32_pair(s);
+                    payload_bytes.extend_from_slice(&start_sec.to_le_bytes());
+                    payload_bytes.extend_from_slice(&dur_sec.to_le_bytes());
+                }
+                0x0E => {
+                    // IntervalMs64: 16 bytes (u64 start_ms, u64 duration_ms) formatted as "start:dur" or "start;dur"
+                    let (start_ms, dur_ms) = parse_u64_pair(s);
+                    payload_bytes.extend_from_slice(&start_ms.to_le_bytes());
+                    payload_bytes.extend_from_slice(&dur_ms.to_le_bytes());
                 }
                 _ => {
                     let v: i32 = s.parse().unwrap_or(0);
@@ -686,6 +752,22 @@ pub fn read_parquet_columns(
                             col_vec.push(string_array.value(i).to_string());
                         }
                     }
+                } else if let Some(i8_array) = array.as_any().downcast_ref::<Int8Array>() {
+                    for i in 0..array.len() {
+                        col_vec.push(i8_array.value(i).to_string());
+                    }
+                } else if let Some(i16_array) = array.as_any().downcast_ref::<Int16Array>() {
+                    for i in 0..array.len() {
+                        col_vec.push(i16_array.value(i).to_string());
+                    }
+                } else if let Some(u8_array) = array.as_any().downcast_ref::<UInt8Array>() {
+                    for i in 0..array.len() {
+                        col_vec.push(u8_array.value(i).to_string());
+                    }
+                } else if let Some(u16_array) = array.as_any().downcast_ref::<UInt16Array>() {
+                    for i in 0..array.len() {
+                        col_vec.push(u16_array.value(i).to_string());
+                    }
                 } else if let Some(i64_array) = array.as_any().downcast_ref::<Int64Array>() {
                     for i in 0..array.len() {
                         col_vec.push(i64_array.value(i).to_string());
@@ -710,6 +792,17 @@ pub fn read_parquet_columns(
                     for i in 0..array.len() {
                         col_vec.push(f64_array.value(i).to_string());
                     }
+                } else if let Some(fsb_array) =
+                    array.as_any().downcast_ref::<FixedSizeBinaryArray>()
+                {
+                    for i in 0..array.len() {
+                        let hex_s: String = fsb_array
+                            .value(i)
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect();
+                        col_vec.push(hex_s);
+                    }
                 } else {
                     for _i in 0..array.len() {
                         col_vec.push(format!("{:?}", array.to_data()));
@@ -720,4 +813,105 @@ pub fn read_parquet_columns(
     }
 
     Ok(result)
+}
+
+pub fn f32_to_f16_bits(val: f32) -> u16 {
+    let bits = val.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let mant = bits & 0x007F_FFFF;
+
+    if exp == 255 {
+        if mant != 0 {
+            return sign | 0x7E00; // NaN
+        }
+        return sign | 0x7C00; // Inf
+    }
+    let half_exp = exp - 127 + 15;
+    if half_exp >= 31 {
+        return sign | 0x7C00; // Overflow -> Inf
+    }
+    if half_exp <= 0 {
+        if half_exp < -10 {
+            return sign;
+        }
+        let m = (mant | 0x0080_0000) >> (1 - half_exp);
+        return sign | ((m + 0x1000) >> 13) as u16;
+    }
+    let rounded = mant + 0x0FFF + ((mant >> 13) & 1);
+    if (rounded & 0x0080_0000) != 0 {
+        let next_exp = half_exp + 1;
+        if next_exp >= 31 {
+            return sign | 0x7C00;
+        }
+        return sign | ((next_exp as u16) << 10);
+    }
+    sign | ((half_exp as u16) << 10) | ((rounded >> 13) as u16)
+}
+
+pub fn f16_bits_to_f32(bits: u16) -> f32 {
+    let sign = ((bits & 0x8000) as u32) << 16;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let mant = (bits & 0x03FF) as u32;
+
+    if exp == 0 {
+        if mant == 0 {
+            return f32::from_bits(sign);
+        }
+        let mut m = mant;
+        let mut e = -14i32;
+        while (m & 0x0400) == 0 {
+            m <<= 1;
+            e -= 1;
+        }
+        m &= 0x03FF;
+        let f_exp = ((e + 127) as u32) << 23;
+        return f32::from_bits(sign | f_exp | (m << 13));
+    }
+    if exp == 31 {
+        return f32::from_bits(sign | 0x7F80_0000 | (mant << 13));
+    }
+    let f_exp = (exp + 127 - 15) << 23;
+    f32::from_bits(sign | f_exp | (mant << 13))
+}
+
+pub fn decode_hex_or_uuid_bytes(s: &str) -> Vec<u8> {
+    let trimmed = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let hex_only: String = trimmed.chars().filter(|c| *c != '-').collect();
+    if hex_only.len().is_multiple_of(2) && hex_only.chars().all(|c| c.is_ascii_hexdigit()) {
+        let mut out = Vec::with_capacity(hex_only.len() / 2);
+        for i in (0..hex_only.len()).step_by(2) {
+            if let Ok(b) = u8::from_str_radix(&hex_only[i..i + 2], 16) {
+                out.push(b);
+            }
+        }
+        out
+    } else {
+        trimmed.as_bytes().to_vec()
+    }
+}
+
+fn parse_u32_pair(s: &str) -> (u32, u32) {
+    let clean = s.trim().trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
+    if clean.is_empty() {
+        return (0, 0);
+    }
+    let parts: Vec<&str> = clean.split([':', ';', ',']).collect();
+    let a = parts.first().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
+    let b = parts.get(1).and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
+    (a, b)
+}
+
+fn parse_u64_pair(s: &str) -> (u64, u64) {
+    let clean = s.trim().trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
+    if clean.is_empty() {
+        return (0, 0);
+    }
+    let parts: Vec<&str> = clean.split([':', ';', ',']).collect();
+    let a = parts.first().and_then(|p| p.trim().parse::<u64>().ok()).unwrap_or(0);
+    let b = parts.get(1).and_then(|p| p.trim().parse::<u64>().ok()).unwrap_or(0);
+    (a, b)
 }

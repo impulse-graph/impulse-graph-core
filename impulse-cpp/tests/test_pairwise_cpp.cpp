@@ -192,8 +192,9 @@ static void run_pairwise_test_case(size_t index, const PairwiseConfig& cfg) {
     uint16_t src_reg = 1;
     uint16_t dst_reg = 0;
 
-    bool expected_csc = (cfg.direction == StepDir::BackwardCSC) ||
-                        (cfg.direction == StepDir::Adaptive && cfg.frontier == FrontierKind::DenseBitSet);
+    // OP_ADAPTIVE_WALK dynamically switches between CSR push and CSC pull while always
+    // executing the forward (Sources -> Targets) step; only BackwardCSC walks Targets -> Sources.
+    bool expected_csc = (cfg.direction == StepDir::BackwardCSC);
 
     if (cfg.frontier == FrontierKind::Scalar) {
         if (expected_csc) {

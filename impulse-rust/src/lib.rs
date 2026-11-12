@@ -11,7 +11,6 @@ pub mod reader;
 pub mod simd;
 pub mod spec;
 pub mod stats;
-pub mod traversal;
 pub mod vamana;
 pub mod writer;
 
@@ -22,7 +21,6 @@ pub use spec::{
     VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMP_INDEX_VAMANA_ANN, VAMANA_MAGIC,
 };
 pub use stats::*;
-pub use traversal::{StepDirection, Traversal, TraversalStep};
 pub use vamana::{BuiltVamanaIndex, VamanaBuildConfig};
 pub use writer::{AttributeField, SnapshotWriter};
 
@@ -179,46 +177,6 @@ mod tests {
         let _ = fs::remove_file(TEST_FILE);
     }
 
-    #[test]
-    fn test_rust_fluent_traversal_multihop() {
-        const TRAV_TEST_FILE: &str = "__impulse_rust_traversal_test.imps";
-        let _ = fs::remove_file(TRAV_TEST_FILE);
-
-        let mut writer = SnapshotWriter::new(TRAV_TEST_FILE);
-        writer.add_domain(0, KeyType::Int32, "Node");
-
-        // Relation 0: "Edge" (0 -> 1, 0 -> 2, 1 -> 3, 2 -> 3)
-        let row_offsets = vec![0u32, 2, 3, 4, 4];
-        let col_indices = vec![1u32, 2, 3, 3];
-        writer.add_relation(0, 0, 4, 4, row_offsets, col_indices);
-        assert!(writer.finalize().is_ok());
-
-        let reader = SnapshotReader::open(TRAV_TEST_FILE).unwrap();
-
-        // 1-hop traversal: 0 -> {1, 2}
-        let hop1 = reader.traverse(0).out("0").to_vec().unwrap();
-        assert_eq!(hop1, vec![1, 2]);
-
-        // 2-hop traversal: 0 -> {1, 2} -> {3}
-        let hop2 = reader.traverse(0).out("0").out("0").to_vec().unwrap();
-        assert_eq!(hop2, vec![3]);
-
-        // Reverse 1-hop traversal: 3 <- {1, 2}
-        let rev1 = reader.traverse(3).in_step("0").to_vec().unwrap();
-        assert_eq!(rev1, vec![1, 2]);
-
-        // Param binding & count
-        let count = reader
-            .traverse(0)
-            .out("0")
-            .out("0")
-            .with_param("minScore", 0.5)
-            .count()
-            .unwrap();
-        assert_eq!(count, 1);
-
-        let _ = fs::remove_file(TRAV_TEST_FILE);
-    }
 
     #[test]
     fn test_relation_statistics_calculation_and_supernode_detection() {
@@ -675,7 +633,8 @@ mod tests {
         let bytes = writer.finalize_to_bytes().unwrap();
         let reader = SnapshotReader::from_bytes(bytes).unwrap();
 
-        // Relation PURCHASED must NOT have "age"
+        // Relation PURCHASED must NOT have "age", and no synthetic "User_nodes" relation is created in v0.10.0
+        assert_eq!(reader.relation_count(), 1);
         let purchased = reader
             .relations()
             .iter()
@@ -684,16 +643,10 @@ mod tests {
         assert_eq!(purchased.attributes.len(), 1);
         assert_eq!(purchased.attributes[0].name, "weight");
 
-        // Dedicated node relation "User_nodes" must exist and hold "age"
-        let user_nodes = reader
-            .relations()
-            .iter()
-            .find(|r| r.name == "User_nodes")
-            .unwrap();
-        assert_eq!(user_nodes.src_domain_id, 0);
-        assert_eq!(user_nodes.tgt_domain_id, 0);
-        assert_eq!(user_nodes.attributes.len(), 1);
-        assert_eq!(user_nodes.attributes[0].name, "age");
+        // Domain 0 ("User") directly owns inline domain attribute "age"
+        let user_dom = reader.domains().iter().find(|d| d.domain_id == 0).unwrap();
+        assert_eq!(user_dom.attributes.len(), 1);
+        assert_eq!(user_dom.attributes[0].name, "age");
 
         // Reader get_domain_attribute_data must successfully retrieve "age"
         let read_age = reader.get_domain_attribute_data(0, "age").unwrap();
@@ -838,9 +791,9 @@ mod tests {
         let bytes = writer.finalize_to_bytes().unwrap();
         let reader = SnapshotReader::from_bytes(bytes).unwrap();
 
-        // 4. Verify relations:
-        // CITES should exist with 5 edges and 1 attribute ("weight", dim=1)
-        // Doc_nodes should exist with 0 edges and 1 attribute ("embedding", dim=16)
+        // 4. Verify relations & v0.10.0 inline domain attributes:
+        // CITES should exist with 5 edges and 1 attribute ("weight", dim=1), and no dummy Doc_nodes relation
+        assert_eq!(reader.relation_count(), 1);
         let cites = reader
             .relations()
             .iter()
@@ -851,22 +804,15 @@ mod tests {
         assert_eq!(cites.attributes[0].name, "weight");
         assert_eq!(cites.attributes[0].dimension, 1);
 
-        let doc_nodes = reader
-            .relations()
-            .iter()
-            .find(|r| r.name == "Doc_nodes")
-            .unwrap();
-        assert_eq!(doc_nodes.edge_count, 0);
-        assert_eq!(doc_nodes.attributes.len(), 1);
-        assert_eq!(doc_nodes.attributes[0].name, "embedding");
-        assert_eq!(doc_nodes.attributes[0].dimension, 16);
+        let doc_dom = reader.domains().iter().find(|d| d.domain_id == 0).unwrap();
+        assert_eq!(doc_dom.attributes.len(), 1);
+        assert_eq!(doc_dom.attributes[0].name, "embedding");
+        assert_eq!(doc_dom.attributes[0].dimension, 16);
 
-        // 5. Verify reader domain attribute accessors pick Doc_nodes instead of CITES
-        // (a) get_domain_float32_slice with attr_index = Some(0):
-        // Prior to the fix, this picked CITES attribute 0 ("weight", dim=1)!
+        // 5. Verify reader domain attribute accessors pick inline domain attribute instead of CITES
         let (node_count, out_dim, slice) = reader
             .get_domain_float32_slice(0, Some(0), None)
-            .expect("Must resolve domain vector attribute from Doc_nodes carrier relation");
+            .expect("Must resolve domain vector attribute from v0.10.0 DomainInfo.attributes");
         assert_eq!(node_count, n);
         assert_eq!(out_dim, dim);
         assert_eq!(slice.len(), n * dim);
@@ -890,9 +836,10 @@ mod tests {
         let emb_data = reader.get_domain_attribute_data(0, "embedding").unwrap();
         assert_eq!(emb_data.len(), n * dim * 4);
 
-        // 6. Verify Vamana ANN search works through the reader
+        // 6. Verify Vamana ANN search works through the reader with relation_id == 0xFFFF
         assert_eq!(reader.index_entries().len(), 1);
         let entry = &reader.index_entries()[0];
+        assert_eq!(entry.relation_id, 0xFFFF);
         let q = &vectors[3 * dim..4 * dim];
         let results = reader.vamana_ann_search(entry, q, 3, 16).unwrap();
         assert_eq!(results.len(), 3);
@@ -900,5 +847,89 @@ mod tests {
             results[0].0, 3,
             "Exact query vector must match node 3 at rank 0"
         );
+    }
+
+    #[test]
+    fn test_v010_flat_virtual_coo_and_key_attr_resolution() {
+        let mut writer = SnapshotWriter::new("__unused_v010_features.imps");
+        writer.add_domain(0, KeyType::String, "Bus");
+        writer.set_domain_node_count(0, 4);
+        writer.add_domain(1, KeyType::Int32, "Zone");
+        writer.set_domain_node_count(1, 2);
+
+        // Primary key VAR_STRING attribute on Bus (key_attr_index = 0)
+        let names = ["BUS_101", "BUS_102", "BUS_103", "BUS_104"];
+        let mut name_blob = Vec::new();
+        let mut name_offs = vec![0u32];
+        for s in names {
+            name_blob.extend_from_slice(s.as_bytes());
+            name_offs.push(name_blob.len() as u32);
+        }
+        writer.add_attribute_to_domain(
+            0,
+            "bus_name",
+            BaseDataType::VarString as u8,
+            0,
+            name_blob,
+            Some(name_offs),
+        );
+        writer.set_domain_key_attr(0, 0);
+
+        // Rel 0: AC_LINE (CSR u16: 0->1, 1->2)
+        writer.add_relation(0, 0, 4, 2, vec![0, 1, 2, 2, 2], vec![1, 2]);
+        writer.set_relation_name(0, "AC_LINE");
+        writer.set_relation_widths(0, 2, 4);
+        writer.set_relation_include_csc(0, true);
+
+        // Rel 1: TRANSFORMER (COO encoding_id = 3: 2->3)
+        writer.add_relation(0, 0, 4, 1, vec![0, 0, 0, 1, 1], vec![3]);
+        writer.set_relation_name(1, "TRANSFORMER");
+        writer.set_relation_encoding(1, 3);
+
+        // Rel 2: GRID_BRANCH = virtual union of AC_LINE (0) and TRANSFORMER (1)
+        writer.add_virtual_relation(0, 0, 4, "GRID_BRANCH", vec![0, 1]);
+
+        // Rel 3: IN_ZONE (Flat M:1 Bus -> Zone, u16: 0->0, 1->1, 2->none, 3->1)
+        writer.add_relation(0, 1, 4, 3, vec![0, 1, 2, 2, 3], vec![0, 1, 1]);
+        writer.set_relation_name(3, "IN_ZONE");
+        writer.set_relation_widths(3, 2, 4);
+        writer.set_relation_section_features(3, spec::IMP_REL_CARDINALITY_M_1);
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+        assert_eq!(reader.header().version(), 10);
+
+        // Verify §5.1 Dense ID -> Key resolution
+        assert_eq!(reader.resolve_dense_id(0, 0).unwrap(), Some(b"BUS_101".as_slice()));
+        assert_eq!(reader.resolve_dense_id(0, 3).unwrap(), Some(b"BUS_104".as_slice()));
+
+        // Verify COO relation
+        let xfmr_idx = reader
+            .relations()
+            .iter()
+            .position(|r| r.name == "TRANSFORMER")
+            .unwrap() as u16;
+        assert_eq!(reader.get_neighbors(xfmr_idx, 2).unwrap(), vec![3]);
+        assert_eq!(reader.get_neighbors(xfmr_idx, 0).unwrap(), Vec::<u64>::new());
+
+        // Verify Virtual relation union
+        let v_idx = reader
+            .relations()
+            .iter()
+            .position(|r| r.name == "GRID_BRANCH")
+            .unwrap() as u16;
+        assert_eq!(reader.get_neighbors(v_idx, 0).unwrap(), vec![1]);
+        assert_eq!(reader.get_neighbors(v_idx, 2).unwrap(), vec![3]);
+
+        // Verify Flat M:1 relation (csr_row_off_bytes == 0)
+        let z_idx = reader
+            .relations()
+            .iter()
+            .position(|r| r.name == "IN_ZONE")
+            .unwrap();
+        assert_eq!(reader.relations()[z_idx].csr_row_off_bytes, 0);
+        assert_eq!(reader.get_neighbors(z_idx as u16, 0).unwrap(), vec![0]);
+        assert_eq!(reader.get_neighbors(z_idx as u16, 2).unwrap(), Vec::<u64>::new());
+        assert_eq!(reader.get_neighbors(z_idx as u16, 3).unwrap(), vec![1]);
     }
 }

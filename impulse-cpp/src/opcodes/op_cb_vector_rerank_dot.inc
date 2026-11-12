@@ -86,13 +86,15 @@ op_VECTOR_RERANK_DOT: {
         const float* snap_embs = nullptr;
         size_t snap_emb_floats = 0;
         size_t snap_dim = q_len;
-        if (!mock_embs && vm_state->query_context->snapshot && !vm_state->query_context->attribute_slots.empty()) {
-            const auto& attrs0 = vm_state->query_context->attribute_slots[0];
-            uint16_t a_idx = (attr_id < attrs0.size()) ? attr_id : 0u;
-            if (a_idx < attrs0.size() && attrs0[a_idx].data_ptr) {
-                snap_embs = static_cast<const float*>(attrs0[a_idx].data_ptr);
-                snap_emb_floats = attrs0[a_idx].data_bytes / sizeof(float);
-                if (attrs0[a_idx].dimension > 0) snap_dim = attrs0[a_idx].dimension;
+        if (!mock_embs && vm_state->query_context->snapshot) {
+            const BoundAttributeSlot* emb_slot = resolve_node_attribute_slot(vm_state->query_context, 0, attr_id);
+            if (!emb_slot && attr_id != 0) {
+                emb_slot = resolve_node_attribute_slot(vm_state->query_context, 0, 0);
+            }
+            if (emb_slot && emb_slot->data_ptr) {
+                snap_embs = static_cast<const float*>(emb_slot->data_ptr);
+                snap_emb_floats = emb_slot->data_bytes / sizeof(float);
+                if (emb_slot->dimension > 0) snap_dim = emb_slot->dimension;
             }
         }
 

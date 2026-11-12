@@ -1,6 +1,6 @@
 use clap::Parser;
 use impulse_graph_tooling::commands;
-use impulse_graph_tooling::{Cli, Commands, CompilerCommands, CryptoCommands, SnapshotCommands};
+use impulse_graph_tooling::{Cli, Commands, CompilerCommands, CryptoCommands, IndexCommands, SnapshotCommands};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -58,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             anonymize,
             domain,
             relation,
+            page_map,
         } => {
             commands::inspect::run_with_options(
                 &file,
@@ -67,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     anonymize,
                     domain_filter: domain.as_deref(),
                     relation_filter: relation.as_deref(),
+                    page_map,
                 },
             )?;
         }
@@ -161,6 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 anonymize,
                 domain,
                 relation,
+                page_map,
             } => {
                 commands::inspect::run_with_options(
                     &file,
@@ -170,6 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         anonymize,
                         domain_filter: domain.as_deref(),
                         relation_filter: relation.as_deref(),
+                        page_map,
                     },
                 )?;
             }
@@ -250,6 +254,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 supernode_threshold,
             } => {
                 commands::stats::run(&file, &format, verbose, supernode_threshold)?;
+            }
+            SnapshotCommands::Index { command } => match command {
+                IndexCommands::List { file, format } => {
+                    commands::index::list(&file, &format)?;
+                }
+                IndexCommands::Add {
+                    input,
+                    output,
+                    specs,
+                } => {
+                    commands::index::add(&input, &output, &specs)?;
+                }
+                IndexCommands::Drop {
+                    input,
+                    output,
+                    name,
+                    index_type,
+                    all,
+                } => {
+                    commands::index::drop(
+                        &input,
+                        &output,
+                        name.as_deref(),
+                        index_type.as_deref(),
+                        all,
+                    )?;
+                }
+            },
+            SnapshotCommands::Sample {
+                file,
+                limit,
+                domain,
+                relation,
+                format,
+            } => {
+                commands::sample::run(
+                    &file,
+                    domain.as_deref(),
+                    relation.as_deref(),
+                    limit,
+                    0,
+                    &format,
+                )?;
+            }
+            SnapshotCommands::Transmute(args) => {
+                commands::transmute::run(&args)?;
             }
         },
 

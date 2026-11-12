@@ -1,4 +1,4 @@
-//! Spec v0.9.0 Constants, Binary Layout Structs, Enums, and Hashing Primitives
+//! Spec v0.10.0 (with v0.9.0 dual-version reader compat) Constants, Binary Layout Structs, Enums, and Hashing Primitives
 
 use std::fmt;
 
@@ -12,8 +12,9 @@ macro_rules! const_assert_eq {
 
 pub const IMPULSE_MAGIC: u32 = 0x494D5053; // "IMPS" Little-Endian
 pub const IMPULSE_VERSION_MAJOR: u16 = 0;
-pub const IMPULSE_VERSION_MINOR: u16 = 9;
-pub const IMPULSE_VERSION_PACKED: u16 = 9; // v0.9.0 packed as 9
+pub const IMPULSE_VERSION_MINOR: u16 = 10;
+pub const IMPULSE_VERSION_PACKED: u16 = 10; // v0.10.0 packed as 10 (0x000A)
+pub const IMPULSE_VERSION_V090: u16 = 9; // v0.9.0 packed as 9 (0x0009)
 pub const IMPULSE_DEFAULT_DATA_OFFSET: u32 = 4096;
 
 // Alignment Constants & Helpers
@@ -30,7 +31,7 @@ pub fn align_4k(val: u64) -> u64 {
     (val + 4095) & !4095
 }
 
-// Domain Catalog Key Type Enums
+// Domain Catalog Key Type Enums (Spec v0.10.0 §3.2)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyType {
@@ -38,30 +39,54 @@ pub enum KeyType {
     Int16 = 0x02,
     Int32 = 0x03,
     Int64 = 0x04,
-    Uuid = 0x0A,
+    Uint8 = 0x05,
+    Uint16 = 0x06,
+    Uint32 = 0x07,
+    Uint64 = 0x08,
+    Float32 = 0x09,
+    Float64 = 0x0A,
     String = 0x0B,
+    Uuid128 = 0x0C,
 }
 
 impl KeyType {
+    #[allow(non_upper_case_globals)]
+    pub const Uuid: Self = KeyType::Uuid128;
+
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0x01 => Some(KeyType::Int8),
             0x02 => Some(KeyType::Int16),
             0x03 => Some(KeyType::Int32),
             0x04 => Some(KeyType::Int64),
-            0x0A => Some(KeyType::Uuid),
+            0x05 => Some(KeyType::Uint8),
+            0x06 => Some(KeyType::Uint16),
+            0x07 => Some(KeyType::Uint32),
+            0x08 => Some(KeyType::Uint64),
+            0x09 => Some(KeyType::Float32),
+            0x0A => Some(KeyType::Float64),
             0x0B => Some(KeyType::String),
+            0x0C => Some(KeyType::Uuid128),
             _ => None,
         }
     }
+
+    pub fn from_u8_for_version(val: u8, ver: u16) -> Option<Self> {
+        if ver == IMPULSE_VERSION_V090 && val == 0x0A {
+            return Some(KeyType::Uuid128);
+        }
+        Self::from_u8(val)
+    }
 }
 
-// Topology Encodings (v0.9.0: Standard RAW zero-copy is 0x00)
+// Topology Encodings (Standard RAW zero-copy is 0x00)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodingType {
     Raw = 0x00,
     ZstdFrame = 0x01,
+    RawU16 = 0x02,
+    Hybrid16_32 = 0x03,
     CustomVendor(u8),
 }
 
@@ -70,6 +95,8 @@ impl EncodingType {
         match val {
             0x00 => EncodingType::Raw,
             0x01 => EncodingType::ZstdFrame,
+            0x02 => EncodingType::RawU16,
+            0x03 => EncodingType::Hybrid16_32,
             v => EncodingType::CustomVendor(v),
         }
     }
@@ -78,6 +105,8 @@ impl EncodingType {
         match self {
             EncodingType::Raw => 0x00,
             EncodingType::ZstdFrame => 0x01,
+            EncodingType::RawU16 => 0x02,
+            EncodingType::Hybrid16_32 => 0x03,
             EncodingType::CustomVendor(v) => *v,
         }
     }
@@ -102,6 +131,8 @@ pub enum BaseDataType {
     FixedBytes = 0x0A,
     VarString = 0x0B,
     VarBytes = 0x0C,
+    IntervalSec32 = 0x0D,
+    IntervalMs64 = 0x0E,
 }
 
 impl BaseDataType {
@@ -120,6 +151,8 @@ impl BaseDataType {
             0x0A => Some(BaseDataType::FixedBytes),
             0x0B => Some(BaseDataType::VarString),
             0x0C => Some(BaseDataType::VarBytes),
+            0x0D => Some(BaseDataType::IntervalSec32),
+            0x0E => Some(BaseDataType::IntervalMs64),
             _ => None,
         }
     }
@@ -132,7 +165,9 @@ impl BaseDataType {
             BaseDataType::Int64
             | BaseDataType::Float64
             | BaseDataType::TimestampMs
-            | BaseDataType::TimestampNs => 8,
+            | BaseDataType::TimestampNs
+            | BaseDataType::IntervalSec32 => 8,
+            BaseDataType::IntervalMs64 => 16,
             BaseDataType::FixedBytes => 1,
             BaseDataType::VarString | BaseDataType::VarBytes => 0,
         }
@@ -146,12 +181,20 @@ impl BaseDataType {
 // Global Feature Flags
 pub const IMPULSE_FEAT_4KB_PAGE_ALIGNED: u64 = 1 << 0;
 pub const IMPULSE_FEAT_CRYPTO_SIGNED: u64 = 1 << 1;
+pub const IMPULSE_FEAT_FOOTER_CATALOG: u64 = 1 << 2;
 
 // Section Feature Flags (RelationDirectoryEntry.section_features)
 pub const IMPULSE_SECTION_FEAT_INCLUDE_CSC: u64 = 1 << 0;
 pub const IMP_REL_FEATURE_CSC: u64 = IMPULSE_SECTION_FEAT_INCLUDE_CSC;
 pub const IMP_REL_FEATURE_WEIGHTED: u64 = 1 << 1;
 pub const IMP_REL_FEATURE_VIRTUAL: u64 = 1 << 2;
+
+pub const IMP_REL_CARDINALITY_SHIFT: u64 = 3;
+pub const IMP_REL_CARDINALITY_MASK: u64 = 3 << 3;
+pub const IMP_REL_CARDINALITY_M_N: u64 = 0 << 3;
+pub const IMP_REL_CARDINALITY_M_1: u64 = 1 << 3;
+pub const IMP_REL_CARDINALITY_1_M: u64 = 2 << 3;
+pub const IMP_REL_CARDINALITY_1_1: u64 = 3 << 3;
 
 // Error Codes
 #[repr(i32)]
@@ -257,12 +300,42 @@ const_assert_eq!(std::mem::size_of::<FooterTrailer>(), 16);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
-pub struct DomainCatalogEntry {
+pub struct DomainCatalogEntryV09 {
     pub domain_id: u16,   // 0x00..0x01
     pub key_type: u8,     // 0x02
     pub reserved: u8,     // 0x03
     pub name_offset: u32, // 0x04..0x07 (Offset into Shared String Table)
     pub node_count: u64,  // 0x08..0x0F
+}
+
+impl DomainCatalogEntryV09 {
+    pub fn domain_id(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.domain_id)) }
+    }
+    pub fn key_type(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.key_type)) }
+    }
+    pub fn name_offset(&self) -> u32 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
+    }
+    pub fn node_count(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_count)) }
+    }
+}
+
+const_assert_eq!(std::mem::size_of::<DomainCatalogEntryV09>(), 16);
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct DomainCatalogEntry {
+    pub domain_id: u16,        // 0x00..0x01
+    pub key_type: u8,          // 0x02
+    pub reserved: u8,          // 0x03
+    pub name_offset: u32,      // 0x04..0x07 (Offset into Shared String Table)
+    pub node_count: u64,       // 0x08..0x0F
+    pub attr_count: u16,       // 0x10..0x11
+    pub key_attr_index: u16,   // 0x12..0x13 (0xFFFF if none)
+    pub reserved2: [u8; 12],   // 0x14..0x1F (Pads struct to 32 Bytes)
 }
 
 impl DomainCatalogEntry {
@@ -277,6 +350,12 @@ impl DomainCatalogEntry {
     }
     pub fn node_count(&self) -> u64 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.node_count)) }
+    }
+    pub fn attr_count(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.attr_count)) }
+    }
+    pub fn key_attr_index(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.key_attr_index)) }
     }
 }
 
@@ -403,7 +482,7 @@ pub struct VamanaHeader {
 
 const_assert_eq!(std::mem::size_of::<VamanaHeader>(), 64);
 
-const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 16);
+const_assert_eq!(std::mem::size_of::<DomainCatalogEntry>(), 32);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]

@@ -19,6 +19,7 @@
 
 #include "impulse_graph.h"
 #include "impulse_format_v0_9.h"
+#include "impulse_format_v0_10.h"
 #include "impulse_vm.h"
 #include "impulse_vm_fluent.hpp"
 #include "impulse_cel.h"
@@ -115,25 +116,26 @@ struct ExpectedDomainInfo {
     uint16_t id;
     const char* name;
     uint64_t node_count;
+    uint16_t expected_attr_count;
 };
 
 static const ExpectedDomainInfo kExpectedDomains[16] = {
-    {0,  "User",         16},
-    {1,  "Profile",      16},
-    {2,  "Department",    6},
-    {3,  "Product",      12},
-    {4,  "Order",        20},
-    {5,  "Tag",           8},
-    {6,  "Task",         12},
-    {7,  "Group",         8},
-    {8,  "Resource",     10},
-    {9,  "Sensor",       10},
-    {10, "MatEmpty0",     0},
-    {11, "MatVec10",     10},
-    {12, "MatGrid50",    50},
-    {13, "MatBit64",     64},
-    {14, "MatNet100",   100},
-    {15, "MatFeature50", 50}
+    {0,  "User",         16, 5},
+    {1,  "Profile",      16, 3},
+    {2,  "Department",    6, 3},
+    {3,  "Product",      12, 3},
+    {4,  "Order",        20, 3},
+    {5,  "Tag",           8, 2},
+    {6,  "Task",         12, 3},
+    {7,  "Group",         8, 2},
+    {8,  "Resource",     10, 2},
+    {9,  "Sensor",       10, 4},
+    {10, "MatEmpty0",     0, 2},
+    {11, "MatVec10",     10, 6},
+    {12, "MatGrid50",    50, 8},
+    {13, "MatBit64",     64, 4},
+    {14, "MatNet100",   100, 7},
+    {15, "MatFeature50", 50, 3}
 };
 
 struct ExpectedRelationInfo {
@@ -151,32 +153,32 @@ constexpr uint8_t kEncCsr = 0;
 constexpr uint8_t kEncCoo = 3;
 
 static const ExpectedRelationInfo kExpectedRelations[26] = {
-    {0,  "USER_FOLLOWS",           0,  0,  24, true,  kEncCsr, 7}, // 5 User node attrs + 2 edge attrs
+    {0,  "USER_FOLLOWS",           0,  0,  24, true,  kEncCsr, 2},
     {1,  "USER_HAS_PROFILE",       0,  1,  14, true,  kEncCsr, 1},
     {2,  "USER_WORKS_IN",          0,  2,  14, true,  kEncCsr, 1},
     {3,  "USER_RATED_PRODUCT",     0,  3,  18, false, kEncCsr, 2},
     {4,  "USER_IN_GROUP",          0,  7,  16, true,  kEncCsr, 1},
-    {5,  "PROFILE_PRIMARY_USER",   1,  0,  14, true,  kEncCsr, 4}, // 3 Profile node attrs + 1 edge attr
-    {6,  "DEPT_HAS_MEMBER",        2,  0,  14, true,  kEncCsr, 5}, // 3 Department node attrs + 2 edge attrs
+    {5,  "PROFILE_PRIMARY_USER",   1,  0,  14, true,  kEncCsr, 1},
+    {6,  "DEPT_HAS_MEMBER",        2,  0,  14, true,  kEncCsr, 2},
     {7,  "DEPT_PARENT",            2,  2,   5, true,  kEncCsr, 1},
-    {8,  "PRODUCT_HAS_TAG",        3,  5,  22, true,  kEncCsr, 4}, // 3 Product node attrs + 1 edge attr
-    {9,  "ORDER_PLACED_BY",        4,  0,  20, true,  kEncCsr, 4}, // 3 Order node attrs + 1 edge attr
-    {10, "ORDER_CONTAINS_PRODUCT", 4,  3,  35, true,  kEncCsr, 3}, // 3 edge attrs
-    {11, "TAG_IMPLIED_BY",         5,  5,   6, true,  kEncCsr, 3}, // 2 Tag node attrs + 1 edge attr
-    {12, "TASK_DEPENDS_ON",        6,  6,  14, true,  kEncCsr, 5}, // 3 Task node attrs + 2 edge attrs
-    {13, "GROUP_INCLUDES",         7,  7,   9, true,  kEncCsr, 3}, // 2 Group node attrs + 1 edge attr
+    {8,  "PRODUCT_HAS_TAG",        3,  5,  22, true,  kEncCsr, 1},
+    {9,  "ORDER_PLACED_BY",        4,  0,  20, true,  kEncCsr, 1},
+    {10, "ORDER_CONTAINS_PRODUCT", 4,  3,  35, true,  kEncCsr, 3},
+    {11, "TAG_IMPLIED_BY",         5,  5,   6, true,  kEncCsr, 1},
+    {12, "TASK_DEPENDS_ON",        6,  6,  14, true,  kEncCsr, 2},
+    {13, "GROUP_INCLUDES",         7,  7,   9, true,  kEncCsr, 1},
     {14, "GROUP_CAN_ACCESS",       7,  8,  15, true,  kEncCsr, 2},
-    {15, "RESOURCE_LINKED_TO",     8,  8,   8, true,  kEncCsr, 3}, // 2 Resource node attrs + 1 edge attr
-    {16, "SENSOR_FEEDS_SENSOR",    9,  9,  16, true,  kEncCsr, 6}, // 4 Sensor node attrs + 2 edge attrs
-    {17, "MAT0_EMPTY_CSR",         10, 10,  0, true,  kEncCsr, 3}, // 2 MatEmpty0 node attrs + 1 edge attr
-    {18, "MAT10_UPPER_TRI_CSR",    11, 11, 25, true,  kEncCsr, 9}, // 6 MatVec10 node attrs + 3 edge attrs
-    {19, "MAT50_ZERO_CSR",         12, 12,  0, true,  kEncCsr, 9}, // 8 MatGrid50 node attrs + 1 edge attr
+    {15, "RESOURCE_LINKED_TO",     8,  8,   8, true,  kEncCsr, 1},
+    {16, "SENSOR_FEEDS_SENSOR",    9,  9,  16, true,  kEncCsr, 2},
+    {17, "MAT0_EMPTY_CSR",         10, 10,  0, true,  kEncCsr, 1},
+    {18, "MAT10_UPPER_TRI_CSR",    11, 11, 25, true,  kEncCsr, 3},
+    {19, "MAT50_ZERO_CSR",         12, 12,  0, true,  kEncCsr, 1},
     {20, "MAT50_IDENTITY_COO",     12, 12, 50, true,  kEncCoo, 3},
     {21, "MAT50_LAPLACIAN_CSR",    12, 12, 100, true, kEncCsr, 3},
-    {22, "MAT64_PERM_BOOL_CSR",    13, 13, 64, true,  kEncCsr, 5}, // 4 MatBit64 node attrs + 1 edge attr
-    {23, "MAT100_STOCHASTIC_CSR",  14, 14, 250, true, kEncCsr, 10}, // 7 MatNet100 node attrs + 3 edge attrs
+    {22, "MAT64_PERM_BOOL_CSR",    13, 13, 64, true,  kEncCsr, 1},
+    {23, "MAT100_STOCHASTIC_CSR",  14, 14, 250, true, kEncCsr, 3},
     {24, "MAT_RECT_100x50_COO",    14, 15, 150, true, kEncCoo, 2},
-    {25, "MAT_RECT_50x100_COO",    15, 14, 100, true, kEncCoo, 4}  // 3 MatFeature50 node attrs + 1 edge attr
+    {25, "MAT_RECT_50x100_COO",    15, 14, 100, true, kEncCoo, 1}
 };
 
 GraphCatalog build_e2e_catalog(const impulse_snapshot_t* snap) {
@@ -272,18 +274,20 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
 
     impulse_status_t status = IMPULSE_ERR_IO_FAILURE;
     impulse_snapshot_t* snap = impulse_snapshot_open(imps_path.string().c_str(), &status);
-    E2E_CHECK(status == IMPULSE_OK && snap != nullptr, "impulse_snapshot_open failed");
+    E2E_CHECK(status == IMPULSE_OK && snap != nullptr,
+              "impulse_snapshot_open failed (status=" + std::to_string(status) + ")");
     *out_snap = snap;
+    if (snap == nullptr) return;
 
     // 1. Header Magic & Version
     uint32_t magic = impulse_snapshot_magic(snap);
     uint16_t version = impulse_snapshot_version(snap);
     E2E_CHECK(magic == 0x494D5053U, "Snapshot magic must be 0x494D5053 ('IMPS')");
-    E2E_CHECK(version == 9U, "Snapshot version must be 9 (v0.9.0)");
+    E2E_CHECK(version == 10U, "Snapshot version must be 10 (v0.10.0)");
     std::cout << "[Suite 1] Verified Header: magic=0x" << std::hex << magic << std::dec
               << " ('IMPS'), version=" << version << ", size=" << fs::file_size(imps_path) << " bytes\n";
 
-    // 2. Domain Catalog (16 domains)
+    // 2. Domain Catalog (16 domains + inline Spec v0.10.0 node attribute counts)
     uint16_t domain_count = impulse_snapshot_domain_count(snap);
     E2E_CHECK(domain_count == 16U, "Expected 16 domains in snapshot");
     for (uint16_t d = 0; d < 16; ++d) {
@@ -296,8 +300,10 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
         E2E_CHECK(d_entry.domain_id == d, "Domain ID mismatch");
         E2E_CHECK(d_entry.node_count == kExpectedDomains[d].node_count,
                   "Domain node_count mismatch for " + std::string(d_name));
+        E2E_CHECK(d_entry.attr_count == kExpectedDomains[d].expected_attr_count,
+                  "Domain attr_count mismatch for " + std::string(d_name));
     }
-    std::cout << "[Suite 1] Verified all 16 domains (User..MatFeature50) and exact node counts.\n";
+    std::cout << "[Suite 1] Verified all 16 domains (User..MatFeature50), node counts, and inline attr_counts.\n";
 
     // 3. Relation Directory (26 relations)
     uint16_t rel_count = impulse_snapshot_relation_count(snap);
@@ -314,17 +320,19 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
                   "edge_count mismatch on relation " + std::string(kExpectedRelations[r].name));
         E2E_CHECK(r_entry.attr_count == kExpectedRelations[r].expected_attr_count,
                   "attr_count mismatch on relation " + std::string(kExpectedRelations[r].name));
-        E2E_CHECK(r_entry.section_features != 0,
-                  "Expected non-zero section_features on relation " + std::string(kExpectedRelations[r].name));
         E2E_CHECK(r_entry.encoding_id == kExpectedRelations[r].expected_encoding_id,
                   "encoding_id mismatch on relation " + std::string(kExpectedRelations[r].name) +
                   ": expected " + std::to_string(kExpectedRelations[r].expected_encoding_id) +
                   ", got " + std::to_string(r_entry.encoding_id));
 
         if (kExpectedRelations[r].include_csc) {
+            E2E_CHECK((r_entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) != 0,
+                      "Expected IMP_REL_FEATURE_INCLUDE_CSC on relation " + std::string(kExpectedRelations[r].name));
             E2E_CHECK(r_entry.csc_row_off_offset > 0,
                       "Expected non-zero csc_row_off_offset on " + std::string(kExpectedRelations[r].name));
         } else {
+            E2E_CHECK((r_entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) == 0,
+                      "Expected zero IMP_REL_FEATURE_INCLUDE_CSC when include_csc=false on " + std::string(kExpectedRelations[r].name));
             E2E_CHECK(r_entry.csc_row_off_offset == 0,
                       "Expected zero csc_row_off_offset when include_csc=false on " + std::string(kExpectedRelations[r].name));
         }
@@ -393,9 +401,9 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
                       "USER_FOLLOWS.strength_f32 values mismatch");
         }
 
-        // User.age_i32 (attr 2) -> 20, 22, ..., 50 (type_code 0x03)
-        E2E_CHECK(impulse_snapshot_get_attribute_buffers(snap, 0, 2, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
-                  "get_attribute_buffers(0, 2) failed");
+        // User.age_i32 (domain 0, attr 0) -> 20, 22, ..., 50 (type_code 0x03)
+        E2E_CHECK(impulse_snapshot_get_domain_attribute_buffers(snap, 0, 0, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
+                  "get_domain_attribute_buffers(0, 0) failed");
         E2E_CHECK(type_code == 0x03U && data_bytes == 16 * sizeof(int32_t), "User.age_i32 metadata mismatch");
         if (data_ptr != nullptr) {
             const auto* ages = static_cast<const int32_t*>(data_ptr);
@@ -404,9 +412,9 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
             }
         }
 
-        // User.score_f64 (attr 4) -> 50.0, 53.25, ..., 98.75 (type_code 0x07)
-        E2E_CHECK(impulse_snapshot_get_attribute_buffers(snap, 0, 4, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
-                  "get_attribute_buffers(0, 4) failed");
+        // User.score_f64 (domain 0, attr 2) -> 50.0, 53.25, ..., 98.75 (type_code 0x07)
+        E2E_CHECK(impulse_snapshot_get_domain_attribute_buffers(snap, 0, 2, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
+                  "get_domain_attribute_buffers(0, 2) failed");
         E2E_CHECK(type_code == 0x07U && data_bytes == 16 * sizeof(double), "User.score_f64 metadata mismatch");
         if (data_ptr != nullptr) {
             const auto* scores = static_cast<const double*>(data_ptr);
@@ -415,17 +423,17 @@ void run_suite_1_snapshot_verification(const fs::path& suite_dir, const fs::path
             }
         }
 
-        // User.opt_nickname_str (attr 5) -> nullable string (type_code & 0x80 != 0)
-        E2E_CHECK(impulse_snapshot_get_attribute_buffers(snap, 0, 5, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
-                  "get_attribute_buffers(0, 5) failed");
+        // User.opt_nickname_str (domain 0, attr 3) -> nullable string (type_code & 0x80 != 0)
+        E2E_CHECK(impulse_snapshot_get_domain_attribute_buffers(snap, 0, 3, &data_ptr, &data_bytes, nullptr, nullptr, &type_code, &dim) == IMPULSE_OK,
+                  "get_domain_attribute_buffers(0, 3) failed");
         E2E_CHECK((type_code & 0x80U) != 0, "User.opt_nickname_str must have nullable bit 0x80 set");
 
-        // Nullable float32 attribute via OP_LOAD_COLUMN_VECTOR directly (MatGrid50.opt_obs_f32: rel 19, attr 8, type_code 0x86)
+        // Nullable float32 attribute via OP_LOAD_COLUMN_VECTOR directly (MatGrid50.opt_obs_f32: domain 12, attr 7, type_code 0x86)
         impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
         impulse_vm_state_t state{};
         state.query_context = ctx;
         const impulse_instruction_t load_nullable_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 19U | (8U << 16)},
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 12U | (7U << 16)},
             {OP_HALT,               0, 1, 0}
         };
         E2E_CHECK(impulse_vm_execute(load_nullable_prog, 2, &state, 0) == IMPULSE_VM_OK,
@@ -780,11 +788,11 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         impulse_vm_state_t state{};
         state.query_context = ctx;
 
-        // Load MatGrid50.x_f32 (rel 19, attr 1: [1, 2, ..., 50]) into R1
+        // Load MatGrid50.x_f32 (domain 12, attr 0: [1, 2, ..., 50]) into R1
         // Test A: Zero matrix annihilator on MAT50_ZERO_CSR (rel 19) -> R2, reduce sum -> R3
         // Test B: Identity matrix on MAT50_IDENTITY_COO (rel 20) -> R4, reduce sum -> R5 (1275.0)
         // Test C: Scaled diagonal (MAT50_IDENTITY_COO.scale_f32, rel 20, attr 1: 2.0) * R4 -> R7, reduce sum -> R8 (2550.0)
-        const uint32_t p_load_x     = 19U | (1U << 16);
+        const uint32_t p_load_x     = 12U | (0U << 16);
         const uint32_t p_mxv_zero   = 1U | (19U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16);
         const uint32_t p_mxv_id     = 1U | (20U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16);
         const uint32_t p_load_scale = 20U | (1U << 16);
@@ -831,13 +839,13 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         rect_state.register_types[13] = TYPE_FLOAT_VECTOR;
 
         const impulse_instruction_t rect_prog[] = {
-            // Load MatFeature50.feat_a_f32 (rel 25, attr 1: 50 floats) into R1
-            {OP_LOAD_COLUMN_VECTOR, 0, 1,  25U | (1U << 16)},
+            // Load MatFeature50.feat_a_f32 (domain 15, attr 0: 50 floats) into R1
+            {OP_LOAD_COLUMN_VECTOR, 0, 1,  15U | (0U << 16)},
             // y_100 = A_{100x50} * x_50 via OP_MXV on rel 24 -> R2, sum -> R3
             {OP_MXV,                0, 2,  1U | (24U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16)},
             {OP_REDUCE,             0, 3,  2U | (static_cast<uint32_t>(BINARY_OP_ADD) << 16)},
-            // Load MatNet100.pr_init_f32 (rel 23, attr 3: 100 values of 0.01) into R4
-            {OP_LOAD_COLUMN_VECTOR, 0, 4,  23U | (3U << 16)},
+            // Load MatNet100.pr_init_f32 (domain 14, attr 0: 100 values of 0.01) into R4
+            {OP_LOAD_COLUMN_VECTOR, 0, 4,  14U | (0U << 16)},
             // z_50 = B_{50x100} * p_100 via OP_MXV on rel 25 -> R5, sum -> R6 (100 edges * 0.01 = 1.0)
             {OP_MXV,                0, 5,  4U | (25U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16)},
             {OP_REDUCE,             0, 6,  5U | (static_cast<uint32_t>(BINARY_OP_ADD) << 16)},
@@ -983,8 +991,8 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         impulse_vm_state_t mm_state{};
         mm_state.query_context = ctx;
         const impulse_instruction_t mm_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 18U | (3U << 16)}, // MatVec10.x_f32: [1..10] (attr 3 on rel 18)
-            {OP_LOAD_COLUMN_VECTOR, 0, 2, 18U | (4U << 16)}, // MatVec10.y_f32: [0.5..9.5] (attr 4 on rel 18)
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 11U | (0U << 16)}, // MatVec10.x_f32: [1..10] (domain 11, attr 0)
+            {OP_LOAD_COLUMN_VECTOR, 0, 2, 11U | (1U << 16)}, // MatVec10.y_f32: [0.5..9.5] (domain 11, attr 1)
             {OP_MXV,                0, 3, 1U | (18U << 8) | (static_cast<uint32_t>(SEMIRING_MAX_MIN) << 16)},
             {OP_EWISE_ADD,          0, 4, 1U | (2U << 8) | (static_cast<uint32_t>(BINARY_OP_MAX) << 16)},
             {OP_REDUCE,             0, 5, 4U | (static_cast<uint32_t>(BINARY_OP_ADD) << 16)},
@@ -1012,7 +1020,7 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
 
         // MAT50_LAPLACIAN_CSR (rel 21) is the adjacency matrix A of the 2-regular 50-node ring C_50.
         const impulse_instruction_t nullspace_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 19U | (2U << 16)}, // R1 = y_f32 = [2.0, ..., 2.0]
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 12U | (1U << 16)}, // R1 = MatGrid50.y_f32 = [2.0, ..., 2.0]
             {OP_MXV,                0, 2, 1U | (21U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16)}, // R2 = A * f = [4.0, ..., 4.0]
             {OP_FLOAT_VECTOR_SCALE, 0, 1, float_to_bits(2.0f)}, // R1 = 2 * f = [4.0, ..., 4.0]
             {OP_L1_NORM_DIFF,       0, 3, 1U | (2U << 16)},     // R3 = ||2f - Af||_1 == 0.0
@@ -1023,11 +1031,11 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         double nullspace_l1 = read_scalar_float(state, 3);
         E2E_CHECK(std::abs(nullspace_l1) < 1e-5, "Constant vector must be in the nullspace of Ring Laplacian L = D - A");
 
-        // 5-step Explicit Euler Heat Diffusion PDE starting from MatGrid50.heat0_f32 (rel 19, attr 5):
+        // 5-step Explicit Euler Heat Diffusion PDE starting from MatGrid50.heat0_f32 (domain 12, attr 4):
         impulse_vm_state_t heat_state{};
         heat_state.query_context = ctx;
         const impulse_instruction_t init_heat[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 19U | (5U << 16)}, // R1 = heat0_f32
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 12U | (4U << 16)}, // R1 = heat0_f32
             {OP_HALT,               0, 1, 0}
         };
         E2E_CHECK(impulse_vm_execute(init_heat, 2, &heat_state, 0) == IMPULSE_VM_OK, "Heat init failed");
@@ -1070,11 +1078,11 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         state.query_context = ctx;
 
         const impulse_instruction_t init_pr[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1,  23U | (3U << 16)}, // R1 = p^{(0)} (0.01)
-            {OP_LOAD_COLUMN_VECTOR, 0, 3,  23U | (3U << 16)}, // R3 = scratch float vector handle (distinct from R1)
-            {OP_LOAD_COLUMN_VECTOR, 0, 5,  23U | (3U << 16)}, // R5 = p^{(0)}
+            {OP_LOAD_COLUMN_VECTOR, 0, 1,  14U | (0U << 16)}, // R1 = p^{(0)} (0.01)
+            {OP_LOAD_COLUMN_VECTOR, 0, 3,  14U | (0U << 16)}, // R3 = scratch float vector handle (distinct from R1)
+            {OP_LOAD_COLUMN_VECTOR, 0, 5,  14U | (0U << 16)}, // R5 = p^{(0)}
             {OP_FLOAT_VECTOR_SCALE, 0, 5,  float_to_bits(0.15f)}, // R5 = 0.15 * p^{(0)}
-            {OP_LOAD_COLUMN_VECTOR, 0, 10, 23U | (3U << 16)}, // R10 = 0.01
+            {OP_LOAD_COLUMN_VECTOR, 0, 10, 14U | (0U << 16)}, // R10 = 0.01
             {OP_FLOAT_VECTOR_SCALE, 0, 10, float_to_bits(100.0f)}, // R10 = 1_100 = [1.0, ..., 1.0]
             {OP_MXV,                0, 8,  10U | (23U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16)}, // R8 = A * 1_100 = d_out
             {OP_HALT,               0, 1, 0}
@@ -1129,9 +1137,9 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         state.query_context = ctx;
 
         const impulse_instruction_t gnn_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 19U | (1U << 16)}, // R1 = x_f32
-            {OP_LOAD_COLUMN_VECTOR, 0, 2, 19U | (4U << 16)}, // R2 = inv_sqrt_deg_f32 (1/sqrt(2))
-            {OP_LOAD_COLUMN_VECTOR, 0, 3, 19U | (3U << 16)}, // R3 = bias_f32 (0.25)
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 12U | (0U << 16)}, // R1 = MatGrid50.x_f32
+            {OP_LOAD_COLUMN_VECTOR, 0, 2, 12U | (3U << 16)}, // R2 = MatGrid50.inv_sqrt_deg_f32 (1/sqrt(2))
+            {OP_LOAD_COLUMN_VECTOR, 0, 3, 12U | (2U << 16)}, // R3 = MatGrid50.bias_f32 (0.25)
             {OP_EWISE_MULT,         0, 4, 1U | (2U << 8) | (static_cast<uint32_t>(BINARY_OP_MUL) << 16)},
             {OP_MXV,                0, 5, 4U | (21U << 8) | (static_cast<uint32_t>(SEMIRING_PLUS_TIMES) << 16)},
             {OP_EWISE_MULT,         0, 6, 5U | (2U << 8) | (static_cast<uint32_t>(BINARY_OP_MUL) << 16)},
@@ -1190,10 +1198,10 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
         coal_state.registers[2] = static_cast<uint64_t>(h_fallback);
         coal_state.register_types[2] = TYPE_FLOAT_VECTOR;
 
-        // Load MatGrid50.opt_obs_f32 (rel 19, attr 8, type_code 0x86) directly via OP_LOAD_COLUMN_VECTOR into R1
+        // Load MatGrid50.opt_obs_f32 (domain 12, attr 7, type_code 0x86) directly via OP_LOAD_COLUMN_VECTOR into R1
         // without manual data_ptr + 128 offset reconstruction, then run OP_EXTRACT_VALIDITY and OP_COALESCE:
         const impulse_instruction_t coal_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 19U | (8U << 16)}, // R1 = MatGrid50.opt_obs_f32 (40 valid, 10 NULLs)
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 12U | (7U << 16)}, // R1 = MatGrid50.opt_obs_f32 (40 valid, 10 NULLs)
             {OP_EXTRACT_VALIDITY,   0, 3, 1U},               // R3 = bitset of valid entries in R1
             {OP_SET_CARDINALITY,    0, 4, 3U},               // R4 = count of valid entries (expected 40)
             {OP_COALESCE,           0, 5, 1U | (2U << 16)},  // R5 = coalesce(R1, R2)
@@ -1243,7 +1251,7 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
             {OP_LANE_INIT_SEEDS,    0, 1, 0U},
             {OP_LANE_CSR_WALK,      0, 2, 1U | (22U << 16)},
             {OP_LANE_FILTER_QUORUM, 0, 3, 2U | (1U << 16)},
-            {OP_LOAD_COLUMN_VECTOR, 0, 4, 22U | (3U << 16)},
+            {OP_LOAD_COLUMN_VECTOR, 0, 4, 13U | (2U << 16)},
             {OP_MXV,                0, 5, 4U | (22U << 8) | (static_cast<uint32_t>(SEMIRING_BOOL) << 16)},
             {OP_REDUCE,             0, 6, 5U | (static_cast<uint32_t>(BINARY_OP_ADD) << 16)},
             {OP_HALT,               0, 3, 0}
@@ -1370,7 +1378,7 @@ void run_suite_4_cel_filters_and_projections(const impulse_snapshot_t* snap) {
         user_state.register_types[3] = TYPE_DOUBLE;
 
         const impulse_instruction_t user_cel_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 0U | (4U << 16)}, // R1 = User.score_f64 (type_code 7 -> expect TYPE_DOUBLE_VECTOR)
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 0U | (2U << 16)}, // R1 = User.score_f64 (domain 0, attr 2, type_code 7 -> expect TYPE_DOUBLE_VECTOR)
             {OP_VEC_CMP_GT,         0, 4, 1U | (2U << 8)},  // R4 = score_f64 > 70.0
             {OP_VEC_CMP_LT,         0, 5, 1U | (3U << 8)},  // R5 = score_f64 < 90.0
             {OP_MASK_AND,           0, 6, 4U | (5U << 8)},  // R6 = R4 && R5
@@ -1398,8 +1406,8 @@ void run_suite_4_cel_filters_and_projections(const impulse_snapshot_t* snap) {
         sensor_state.register_types[3] = TYPE_DOUBLE;
 
         const impulse_instruction_t sensor_cel_prog[] = {
-            {OP_LOAD_COLUMN_VECTOR, 0, 1, 16U | (2U << 16)}, // R1 = Sensor.voltage_f64 (float64, attr 2 on rel 16)
-            {OP_LOAD_COLUMN_VECTOR, 0, 2, 16U | (4U << 16)}, // R2 = Sensor.reading_f32 (float32, attr 4 on rel 16)
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 9U | (0U << 16)}, // R1 = Sensor.voltage_f64 (float64, domain 9, attr 0)
+            {OP_LOAD_COLUMN_VECTOR, 0, 2, 9U | (2U << 16)}, // R2 = Sensor.reading_f32 (float32, domain 9, attr 2)
             {OP_LOAD_CONST_FLOAT,   0, 4, float_to_bits(60.0f)},
             {OP_VEC_CMP_GT,         0, 5, 1U | (3U << 8)},   // R5 = voltage_f64 > 119.0
             {OP_VEC_CMP_LT,         0, 6, 2U | (4U << 8)},   // R6 = reading_f32 < 60.0
@@ -1451,7 +1459,7 @@ void run_suite_4_cel_filters_and_projections(const impulse_snapshot_t* snap) {
             {OP_STREAM_LOAD_CONST, 0, 1, float_to_bits(155.0f)}, // S1 = 155.0f
             {OP_STREAM_CMP_GT,     0, 2, 0U | (1U << 16)},       // S2 = (S0 > S1)
             {OP_STREAM_FILTER,     0, 2, 0},                     // abort if S2 == 0.0f
-            {OP_STREAM_LOAD_SRC,   0, 3, 4U},                    // S3 = src.reading_f32 (rel 16, attr 4)
+            {OP_STREAM_LOAD_SRC,   0, 3, 2U},                    // S3 = src.reading_f32 (Sensor domain 9, attr 2)
             {OP_STREAM_MATH_MUL,   0, 4, 0U | (3U << 16)},       // S4 = S0 * S3
             {OP_STREAM_REDUCE,     0, 4, 2U | (0U << 16)},       // R2[tgt] += S4 (monoid 0 = SUM)
             {OP_STREAM_YIELD,      0, 1, 0},

@@ -220,6 +220,7 @@ fn test_issue_4_anonymized_inspect() {
         anonymize: true,
         domain_filter: None,
         relation_filter: None,
+        page_map: false,
     };
     let res = commands::inspect::run_with_options(&imps_path, &anon_opts);
     assert!(res.is_ok());
@@ -231,6 +232,7 @@ fn test_issue_4_anonymized_inspect() {
         anonymize: true,
         domain_filter: Some("Domain_1"),
         relation_filter: None,
+        page_map: false,
     };
     let res_dom = commands::inspect::run_with_options(&imps_path, &dom_filter_opts);
     assert!(res_dom.is_ok());
@@ -242,6 +244,7 @@ fn test_issue_4_anonymized_inspect() {
         anonymize: true,
         domain_filter: None,
         relation_filter: Some("Relation_1"),
+        page_map: false,
     };
     let res_rel = commands::inspect::run_with_options(&imps_path, &rel_filter_opts);
     assert!(res_rel.is_ok());

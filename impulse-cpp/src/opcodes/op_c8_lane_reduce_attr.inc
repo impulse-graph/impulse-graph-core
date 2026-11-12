@@ -88,6 +88,32 @@ op_LANE_REDUCE_ATTR: {
                     if (u < ma.int_data.size()) return static_cast<float>(ma.int_data[u]);
                     return 0.0f;
                 }
+                auto read_slot_float = [&](const BoundAttributeSlot& slot, float& out_f) -> bool {
+                    uint8_t base_t = slot.type_code & 0x7F;
+                    if (base_t == 0x06 && (u + 1) * sizeof(float) <= slot.data_bytes) {
+                        out_f = static_cast<const float*>(slot.data_ptr)[u];
+                        return true;
+                    } else if (base_t == 0x07 && (u + 1) * sizeof(double) <= slot.data_bytes) {
+                        out_f = static_cast<float>(static_cast<const double*>(slot.data_ptr)[u]);
+                        return true;
+                    } else if (base_t == 0x05 && (u + 1) * sizeof(float) <= slot.data_bytes) {
+                        out_f = static_cast<const float*>(slot.data_ptr)[u];
+                        return true;
+                    } else if (base_t == 0x03 && (u + 1) * sizeof(int32_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(static_cast<const int32_t*>(slot.data_ptr)[u]);
+                        return true;
+                    } else if (base_t == 0x04 && (u + 1) * sizeof(int64_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(static_cast<const int64_t*>(slot.data_ptr)[u]);
+                        return true;
+                    }
+                    return false;
+                };
+                for (const auto& dom_attrs : vm_state->query_context->domain_attribute_slots) {
+                    if (attr_or_reg < dom_attrs.size() && dom_attrs[attr_or_reg].data_ptr) {
+                        float v = 0.0f;
+                        if (read_slot_float(dom_attrs[attr_or_reg], v)) return v;
+                    }
+                }
                 for (const auto& dom_attrs : vm_state->query_context->attribute_slots) {
                     if (attr_or_reg < dom_attrs.size() && dom_attrs[attr_or_reg].data_ptr) {
                         const auto& slot = dom_attrs[attr_or_reg];
