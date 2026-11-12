@@ -3,12 +3,17 @@
  * @brief Exhaustive Unit Tests for Google CEL Zero-Dependency Pratt Parser & ImpScheme IR Lowering.
  */
 
+#undef NDEBUG
 #include "impulse_cel.h"
 #include <iostream>
 #include <cassert>
 #include <iomanip>
 #include <chrono>
 #include <algorithm>
+#include <limits>
+#include <string>
+#include <string_view>
+#include <vector>
 
 using namespace impulse::cel;
 
@@ -520,10 +525,10 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(AstOptimizer::optimize(Parser("x * 1.0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("1.0 * x").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("x * 5.0").parse_expression())->kind == AstKind::BINARY_OP);
-    assert(AstOptimizer::optimize(Parser("x * 0").parse_expression())->float_val == 0.0);
-    assert(AstOptimizer::optimize(Parser("0 * x").parse_expression())->float_val == 0.0);
-    assert(AstOptimizer::optimize(Parser("x * 0.0").parse_expression())->float_val == 0.0);
-    assert(AstOptimizer::optimize(Parser("0.0 * x").parse_expression())->float_val == 0.0);
+    assert(AstOptimizer::optimize(Parser("x * 0").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("0 * x").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("x * 0.0").parse_expression())->kind == AstKind::BINARY_OP);
+    assert(AstOptimizer::optimize(Parser("0.0 * x").parse_expression())->kind == AstKind::BINARY_OP);
     assert(AstOptimizer::optimize(Parser("x / 1").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("x / 1.0").parse_expression())->text == "x");
     assert(AstOptimizer::optimize(Parser("x / 5").parse_expression())->kind == AstKind::BINARY_OP);
@@ -566,6 +571,60 @@ static void test_cel_exhaustive_mcdc_truth_tables() {
     assert(AstOptimizer::optimize(Parser("clamp(15.0, 0.0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("clamp(15, y, 10)").parse_expression())->kind == AstKind::FUNCTION_CALL);
     assert(AstOptimizer::optimize(Parser("clamp(15, 0, z)").parse_expression())->kind == AstKind::FUNCTION_CALL);
+
+    // IEEE-754 NaN / negative-domain monotonic pushdown guards for sqrt(x)
+    {
+        const std::vector<std::string> exprs = {
+            "sqrt(x) < 5.0",
+            "sqrt(x) <= 5.0",
+            "5.0 > sqrt(x)",
+            "5.0 >= sqrt(x)",
+            "sqrt(x) > 5.0",
+            "sqrt(x) >= 5.0",
+            "sqrt(x) >= 0.0",
+            "sqrt(x) == 5.0",
+            "sqrt(x) == 0.0",
+            "sqrt(x) != 5.0",
+            "sqrt(x) < -1.0",
+            "x * 0.0 == 0.0"
+        };
+        const std::vector<double> test_xs = {
+            -100.0, -4.0, -1e-12, -0.0, +0.0, 4.0, 16.0, 25.0, 36.0,
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::infinity(),
+            -std::numeric_limits<double>::infinity()
+        };
+
+        // Verify AST structure of sqrt(x) < 5.0 (rewritten to (x >= 0.0) && (x < 25.0)) and sqrt(x) != 5.0 (not pushed down)
+        auto opt_lt = AstOptimizer::optimize(Parser("sqrt(x) < 5.0").parse_expression());
+        assert(opt_lt->kind == AstKind::BINARY_OP && opt_lt->text == "&&");
+        auto opt_neq = AstOptimizer::optimize(Parser("sqrt(x) != 5.0").parse_expression());
+        assert(opt_neq->kind == AstKind::BINARY_OP && opt_neq->text == "!=" && opt_neq->children[0]->kind == AstKind::FUNCTION_CALL);
+
+        for (const auto& expr : exprs) {
+            auto raw_ast = Parser(expr).parse_expression();
+            auto opt_ast = AstOptimizer::optimize(Parser(expr).parse_expression());
+            for (double xv : test_xs) {
+                CelMultiLaneEvaluator::FloatAttrMap f_attrs{{"x", xv}};
+                bool raw_ml = CelMultiLaneEvaluator::eval_bool(raw_ast, 1ULL, nullptr, &f_attrs);
+                bool opt_ml = CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, nullptr, &f_attrs);
+                assert(raw_ml == opt_ml);
+
+                auto resolve_fn = [&](std::string_view name) -> CelValue {
+                    if (name == "x") return CelValue::make_double(xv);
+                    return CelValue::make_null();
+                };
+                bool raw_kl = CelKleeneEvaluator::eval_filter_bool(raw_ast, resolve_fn);
+                bool opt_kl = CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn);
+                assert(raw_kl == opt_kl);
+            }
+        }
+        // Specific regression checks: negative x = -4.0 and NaN must evaluate sqrt(x) < 5.0 to false!
+        CelMultiLaneEvaluator::FloatAttrMap neg_attr{{"x", -4.0}};
+        CelMultiLaneEvaluator::FloatAttrMap nan_attr{{"x", std::numeric_limits<double>::quiet_NaN()}};
+        assert(CelMultiLaneEvaluator::eval_bool(opt_lt, 1ULL, nullptr, &neg_attr) == false);
+        assert(CelMultiLaneEvaluator::eval_bool(opt_lt, 1ULL, nullptr, &nan_attr) == false);
+    }
 
     std::cout << "  -> PASSED: All exhaustive CEL MC/DC truth tables and decision paths verified." << std::endl;
 }

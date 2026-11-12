@@ -157,6 +157,33 @@ static inline uint32_t impulse_builtin_ctz64(uint64_t x) {
 #endif
 
 /**
+ * @brief UB-free float-to-uint32 saturating truncation helper.
+ */
+static inline uint32_t impulse_f32_to_u32_clamped(float x) {
+    if (isnan(x) || x <= 0.0f) return 0u;
+    if ((double)x >= 4294967295.0) return 0xFFFFFFFFu;
+    return (uint32_t)trunc((double)x);
+}
+
+/**
+ * @brief UB-free double-to-uint64 saturating truncation helper.
+ */
+static inline uint64_t impulse_f64_to_u64_clamped(double x) {
+    if (isnan(x) || x <= 0.0) return 0ULL;
+    if (x >= 18446744073709551616.0) return 0xFFFFFFFFFFFFFFFFULL;
+    return (uint64_t)trunc(x);
+}
+
+/**
+ * @brief UB-free masked shift count extraction from double.
+ */
+static inline uint32_t impulse_shift_amount_f64(double y, uint32_t mask) {
+    if (isnan(y) || isinf(y) || y <= -9007199254740992.0 || y >= 9007199254740992.0) return 0u;
+    int64_t sy = (int64_t)trunc(y);
+    return ((uint32_t)sy) & mask;
+}
+
+/**
  * @brief Evaluates a scalar unary math operation on float.
  */
 static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
@@ -179,7 +206,7 @@ static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
         case MATH_FUNC_ASIN:       return asinf(x);
         case MATH_FUNC_ACOS:       return acosf(x);
         case MATH_FUNC_ATAN:       return atanf(x);
-        case MATH_FUNC_SINC:       return (fabsf(x) < 1e-7f) ? 1.0f : (sinf(x) / x);
+        case MATH_FUNC_SINC:       return isnan(x) ? x : ((fabsf(x) < 1e-7f) ? 1.0f : (sinf(x) / x));
         case MATH_FUNC_SINH:       return sinhf(x);
         case MATH_FUNC_COSH:       return coshf(x);
         case MATH_FUNC_TANH:       return tanhf(x);
@@ -190,22 +217,40 @@ static inline float impulse_math_unary_f32(uint8_t func_id, float x) {
         case MATH_FUNC_CEIL:       return ceilf(x);
         case MATH_FUNC_TRUNC:      return truncf(x);
         case MATH_FUNC_ROUND:      return roundf(x);
-        case MATH_FUNC_RELU:       return (x > 0.0f) ? x : 0.0f;
-        case MATH_FUNC_LEAKY_RELU: return (x > 0.0f) ? x : (0.01f * x);
+        case MATH_FUNC_RELU:       return isnan(x) ? x : ((x > 0.0f) ? x : 0.0f);
+        case MATH_FUNC_LEAKY_RELU: return isnan(x) ? x : ((x > 0.0f) ? x : (0.01f * x));
         case MATH_FUNC_SIGMOID:    return 1.0f / (1.0f + expf(-x));
         case MATH_FUNC_GELU: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0f) ? x : 0.0f;
+            if (x <= -15.0f) return 0.0f;
+            if (x >= 15.0f) return x;
             const float k0 = 0.7978845608f; // sqrt(2/pi)
             const float k1 = 0.044715f;
             return 0.5f * x * (1.0f + tanhf(k0 * (x + k1 * x * x * x)));
         }
-        case MATH_FUNC_SILU:       return x / (1.0f + expf(-x));
-        case MATH_FUNC_SOFTPLUS:   return log1pf(expf(x));
+        case MATH_FUNC_SILU: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0f) ? x : 0.0f;
+            return x / (1.0f + expf(-x));
+        }
+        case MATH_FUNC_SOFTPLUS: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0f) ? x : 0.0f;
+            if (x > 20.0f) return x;
+            return log1pf(expf(x));
+        }
         case MATH_FUNC_ERF:        return erff(x);
         case MATH_FUNC_ERFC:       return erfcf(x);
-        case MATH_FUNC_LGAMMA:     return lgammaf(x);
-        case MATH_FUNC_POPCOUNT:   return (float)impulse_builtin_popcount32((uint32_t)x);
-        case MATH_FUNC_CLZ:        return (float)impulse_builtin_clz32((uint32_t)x);
-        case MATH_FUNC_CTZ:        return (float)impulse_builtin_ctz32((uint32_t)x);
+        case MATH_FUNC_LGAMMA: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (float)INFINITY;
+            if (x <= 0.0f && floorf(x) == x) return (float)INFINITY;
+            return lgammaf(x);
+        }
+        case MATH_FUNC_POPCOUNT:   return isnan(x) ? x : (float)impulse_builtin_popcount32(impulse_f32_to_u32_clamped(x));
+        case MATH_FUNC_CLZ:        return isnan(x) ? x : (float)impulse_builtin_clz32(impulse_f32_to_u32_clamped(x));
+        case MATH_FUNC_CTZ:        return isnan(x) ? x : (float)impulse_builtin_ctz32(impulse_f32_to_u32_clamped(x));
         case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0f : 0.0f;
         case MATH_FUNC_ISINF:      return isinf(x) ? 1.0f : 0.0f;
         case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0f : 0.0f;
@@ -236,7 +281,7 @@ static inline double impulse_math_unary_f64(uint8_t func_id, double x) {
         case MATH_FUNC_ASIN:       return asin(x);
         case MATH_FUNC_ACOS:       return acos(x);
         case MATH_FUNC_ATAN:       return atan(x);
-        case MATH_FUNC_SINC:       return (fabs(x) < 1e-15) ? 1.0 : (sin(x) / x);
+        case MATH_FUNC_SINC:       return isnan(x) ? x : ((fabs(x) < 1e-15) ? 1.0 : (sin(x) / x));
         case MATH_FUNC_SINH:       return sinh(x);
         case MATH_FUNC_COSH:       return cosh(x);
         case MATH_FUNC_TANH:       return tanh(x);
@@ -247,22 +292,40 @@ static inline double impulse_math_unary_f64(uint8_t func_id, double x) {
         case MATH_FUNC_CEIL:       return ceil(x);
         case MATH_FUNC_TRUNC:      return trunc(x);
         case MATH_FUNC_ROUND:      return round(x);
-        case MATH_FUNC_RELU:       return (x > 0.0) ? x : 0.0;
-        case MATH_FUNC_LEAKY_RELU: return (x > 0.0) ? x : (0.01 * x);
+        case MATH_FUNC_RELU:       return isnan(x) ? x : ((x > 0.0) ? x : 0.0);
+        case MATH_FUNC_LEAKY_RELU: return isnan(x) ? x : ((x > 0.0) ? x : (0.01 * x));
         case MATH_FUNC_SIGMOID:    return 1.0 / (1.0 + exp(-x));
         case MATH_FUNC_GELU: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0) ? x : 0.0;
+            if (x <= -15.0) return 0.0;
+            if (x >= 15.0) return x;
             const double k0 = 0.7978845608028654; // sqrt(2/pi)
             const double k1 = 0.044715;
             return 0.5 * x * (1.0 + tanh(k0 * (x + k1 * x * x * x)));
         }
-        case MATH_FUNC_SILU:       return x / (1.0 + exp(-x));
-        case MATH_FUNC_SOFTPLUS:   return log1p(exp(x));
+        case MATH_FUNC_SILU: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0) ? x : 0.0;
+            return x / (1.0 + exp(-x));
+        }
+        case MATH_FUNC_SOFTPLUS: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (x > 0.0) ? x : 0.0;
+            if (x > 40.0) return x;
+            return log1p(exp(x));
+        }
         case MATH_FUNC_ERF:        return erf(x);
         case MATH_FUNC_ERFC:       return erfc(x);
-        case MATH_FUNC_LGAMMA:     return lgamma(x);
-        case MATH_FUNC_POPCOUNT:   return (double)impulse_builtin_popcount64((uint64_t)x);
-        case MATH_FUNC_CLZ:        return (double)impulse_builtin_clz64((uint64_t)x);
-        case MATH_FUNC_CTZ:        return (double)impulse_builtin_ctz64((uint64_t)x);
+        case MATH_FUNC_LGAMMA: {
+            if (isnan(x)) return x;
+            if (isinf(x)) return (double)INFINITY;
+            if (x <= 0.0 && floor(x) == x) return (double)INFINITY;
+            return lgamma(x);
+        }
+        case MATH_FUNC_POPCOUNT:   return isnan(x) ? x : (double)impulse_builtin_popcount64(impulse_f64_to_u64_clamped(x));
+        case MATH_FUNC_CLZ:        return isnan(x) ? x : (double)impulse_builtin_clz64(impulse_f64_to_u64_clamped(x));
+        case MATH_FUNC_CTZ:        return isnan(x) ? x : (double)impulse_builtin_ctz64(impulse_f64_to_u64_clamped(x));
         case MATH_FUNC_ISNAN:      return isnan(x) ? 1.0 : 0.0;
         case MATH_FUNC_ISINF:      return isinf(x) ? 1.0 : 0.0;
         case MATH_FUNC_ISFINITE:   return isfinite(x) ? 1.0 : 0.0;
@@ -278,24 +341,26 @@ static inline float impulse_math_binary_f32(uint8_t func_id, float x, float y) {
         case 0:                    return x + y;
         case 1:                    return x - y;
         case 2:                    return x * y;
-        case 3:                    return (y == 0.0f || isnan(y)) ? 0.0f : (x / y);
+        case 3:                    return isnan(x) ? x : ((y == 0.0f || isnan(y)) ? 0.0f : (x / y));
         case 4:                    return powf(x, y);
         case MATH_FUNC_POW:        return powf(x, y);
         case MATH_FUNC_HYPOT:      return hypotf(x, y);
         case MATH_FUNC_ATAN2:      return atan2f(x, y);
-        case MATH_FUNC_COPYSIGN:   return copysignf(x, y);
+        case MATH_FUNC_COPYSIGN:   return (isnan(x) || isnan(y)) ? (float)NAN : copysignf(x, y);
         case MATH_FUNC_FMOD:       return fmodf(x, y);
-        case MATH_FUNC_LEAKY_RELU: return (x > 0.0f) ? x : (y * x);
-        case MATH_FUNC_SAFE_DIV:   return (y == 0.0f || isnan(y)) ? 0.0f : (x / y);
+        case MATH_FUNC_LEAKY_RELU: return (isnan(x) || isnan(y)) ? (float)NAN : ((x > 0.0f) ? x : (y * x));
+        case MATH_FUNC_SAFE_DIV:   return isnan(x) ? x : ((y == 0.0f || isnan(y)) ? 0.0f : (x / y));
         case MATH_FUNC_ROTL: {
-            uint32_t ux = (uint32_t)x;
-            uint32_t s = (uint32_t)y & 31;
-            return (float)((ux << s) | (ux >> ((32 - s) & 31)));
+            if (isnan(x) || isnan(y)) return (float)NAN;
+            uint32_t ux = impulse_f32_to_u32_clamped(x);
+            uint32_t s = impulse_shift_amount_f64((double)y, 31u);
+            return (s == 0u) ? (float)ux : (float)((ux << s) | (ux >> (32u - s)));
         }
         case MATH_FUNC_ROTR: {
-            uint32_t ux = (uint32_t)x;
-            uint32_t s = (uint32_t)y & 31;
-            return (float)((ux >> s) | (ux << ((32 - s) & 31)));
+            if (isnan(x) || isnan(y)) return (float)NAN;
+            uint32_t ux = impulse_f32_to_u32_clamped(x);
+            uint32_t s = impulse_shift_amount_f64((double)y, 31u);
+            return (s == 0u) ? (float)ux : (float)((ux >> s) | (ux << (32u - s)));
         }
         default:                   return x;
     }
@@ -309,24 +374,26 @@ static inline double impulse_math_binary_f64(uint8_t func_id, double x, double y
         case 0:                    return x + y;
         case 1:                    return x - y;
         case 2:                    return x * y;
-        case 3:                    return (y == 0.0 || isnan(y)) ? 0.0 : (x / y);
+        case 3:                    return isnan(x) ? x : ((y == 0.0 || isnan(y)) ? 0.0 : (x / y));
         case 4:                    return pow(x, y);
         case MATH_FUNC_POW:        return pow(x, y);
         case MATH_FUNC_HYPOT:      return hypot(x, y);
         case MATH_FUNC_ATAN2:      return atan2(x, y);
-        case MATH_FUNC_COPYSIGN:   return copysign(x, y);
+        case MATH_FUNC_COPYSIGN:   return (isnan(x) || isnan(y)) ? (double)NAN : copysign(x, y);
         case MATH_FUNC_FMOD:       return fmod(x, y);
-        case MATH_FUNC_LEAKY_RELU: return (x > 0.0) ? x : (y * x);
-        case MATH_FUNC_SAFE_DIV:   return (y == 0.0 || isnan(y)) ? 0.0 : (x / y);
+        case MATH_FUNC_LEAKY_RELU: return (isnan(x) || isnan(y)) ? (double)NAN : ((x > 0.0) ? x : (y * x));
+        case MATH_FUNC_SAFE_DIV:   return isnan(x) ? x : ((y == 0.0 || isnan(y)) ? 0.0 : (x / y));
         case MATH_FUNC_ROTL: {
-            uint64_t ux = (uint64_t)x;
-            uint32_t s = (uint32_t)y & 63;
-            return (double)((ux << s) | (ux >> ((64 - s) & 63)));
+            if (isnan(x) || isnan(y)) return (double)NAN;
+            uint64_t ux = impulse_f64_to_u64_clamped(x);
+            uint32_t s = impulse_shift_amount_f64(y, 63u);
+            return (s == 0u) ? (double)ux : (double)((ux << s) | (ux >> (64u - s)));
         }
         case MATH_FUNC_ROTR: {
-            uint64_t ux = (uint64_t)x;
-            uint32_t s = (uint32_t)y & 63;
-            return (double)((ux >> s) | (ux << ((64 - s) & 63)));
+            if (isnan(x) || isnan(y)) return (double)NAN;
+            uint64_t ux = impulse_f64_to_u64_clamped(x);
+            uint32_t s = impulse_shift_amount_f64(y, 63u);
+            return (s == 0u) ? (double)ux : (double)((ux >> s) | (ux << (64u - s)));
         }
         default:                   return x;
     }
@@ -340,8 +407,8 @@ static inline float impulse_math_ternary_f32(uint8_t func_id, float x, float y, 
         case 0:
         case 1:                  return fmaf(x, y, z);
         case MATH_FUNC_LERP:     return x + z * (y - x);
-        case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
-        case MATH_FUNC_SAFE_DIV: return (y == 0.0f || isnan(y)) ? z : (x / y);
+        case MATH_FUNC_CLAMP:    return (isnan(x) || isnan(y) || isnan(z)) ? (float)NAN : ((x < y) ? y : ((x > z) ? z : x));
+        case MATH_FUNC_SAFE_DIV: return isnan(x) ? x : ((y == 0.0f || isnan(y)) ? z : (x / y));
         default:                 return x;
     }
 }
@@ -354,8 +421,8 @@ static inline double impulse_math_ternary_f64(uint8_t func_id, double x, double 
         case 0:
         case 1:                  return fma(x, y, z);
         case MATH_FUNC_LERP:     return x + z * (y - x);
-        case MATH_FUNC_CLAMP:    return (x < y) ? y : ((x > z) ? z : x);
-        case MATH_FUNC_SAFE_DIV: return (y == 0.0 || isnan(y)) ? z : (x / y);
+        case MATH_FUNC_CLAMP:    return (isnan(x) || isnan(y) || isnan(z)) ? (double)NAN : ((x < y) ? y : ((x > z) ? z : x));
+        case MATH_FUNC_SAFE_DIV: return isnan(x) ? x : ((y == 0.0 || isnan(y)) ? z : (x / y));
         default:                 return x;
     }
 }

@@ -1172,7 +1172,21 @@ private:
                         else if (op == ">=") new_op = "<=";
                     }
                     if (lhs->text == "sqrt") {
-                        if (c >= 0) return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c));
+                        if (c >= 0.0) {
+                            if (new_op == "<" || new_op == "<=") {
+                                return AstNode::make_binary(
+                                    "&&",
+                                    AstNode::make_binary(">=", lhs->children[0], AstNode::make_float(0.0)),
+                                    AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c))
+                                );
+                            }
+                            if (c > 0.0 && (new_op == "==" || new_op == ">" || new_op == ">=")) {
+                                return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(c * c));
+                            }
+                            if (c == 0.0 && (new_op == ">" || new_op == ">=")) {
+                                return AstNode::make_binary(new_op, lhs->children[0], AstNode::make_float(0.0));
+                            }
+                        }
                     }
                 }
                 return nullptr;
@@ -1498,6 +1512,14 @@ public:
     // -----------------------------------------------------------------------
     // eval_bits / eval_int (Exact 64-bit integer & bitmask evaluator)
     // -----------------------------------------------------------------------
+    static uint64_t double_to_bits_safe(double d) {
+        if (!std::isfinite(d)) return 0ULL;
+        if (d < -9223372036854775808.0) return static_cast<uint64_t>(INT64_MIN);
+        if (d >= 18446744073709551616.0) return ~0ULL;
+        if (d >= 9223372036854775808.0) return static_cast<uint64_t>(std::trunc(d));
+        return static_cast<uint64_t>(static_cast<int64_t>(std::trunc(d)));
+    }
+
     static uint64_t eval_bits(const std::shared_ptr<AstNode>& node,
                               const uint64_t* lane_words,
                               size_t num_words,
@@ -1510,7 +1532,7 @@ public:
             case AstKind::LITERAL_BOOL:
                 return node->bool_val ? 1ULL : 0ULL;
             case AstKind::LITERAL_FLOAT:
-                return static_cast<uint64_t>(static_cast<int64_t>(node->float_val));
+                return double_to_bits_safe(node->float_val);
             case AstKind::IDENTIFIER:
             case AstKind::MEMBER_ACCESS: {
                 if (node->text == "lane") {
@@ -1522,7 +1544,7 @@ public:
                 }
                 if (float_attrs) {
                     auto it = float_attrs->find(node->text);
-                    if (it != float_attrs->end()) return static_cast<uint64_t>(static_cast<int64_t>(it->second));
+                    if (it != float_attrs->end()) return double_to_bits_safe(it->second);
                 }
                 return 0ULL;
             }
@@ -1560,10 +1582,10 @@ public:
                     if (op == ">>") return (ib < 0 || ib >= 64) ? 0ULL : static_cast<uint64_t>(ia >> ib);
                     if (op == ">>>") return (ib < 0 || ib >= 64) ? 0ULL : (ua >> ib);
                 }
-                return static_cast<uint64_t>(static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs)));
+                return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
             }
             default:
-                return static_cast<uint64_t>(static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs)));
+                return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
         }
     }
 
@@ -1795,8 +1817,8 @@ struct CelValue {
             case Kind::Int64:  out = int_val; return true;
             case Kind::Uint64: out = static_cast<int64_t>(uint_val); return true;
             case Kind::Double:
-                if (std::isnan(dbl_val)) return false;
-                out = static_cast<int64_t>(dbl_val);
+                if (!std::isfinite(dbl_val) || dbl_val < -9223372036854775808.0 || dbl_val >= 9223372036854775808.0) return false;
+                out = static_cast<int64_t>(std::trunc(dbl_val));
                 return true;
             default:
                 return false;

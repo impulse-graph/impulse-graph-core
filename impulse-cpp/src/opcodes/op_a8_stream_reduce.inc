@@ -55,6 +55,8 @@
                             }
                         }
                         if (h_vec >= 0 && static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h_vec]) {
+                            IMPULSE_TESTCASE(std::isnan(val));
+                            if (std::isnan(val)) break;
                             auto& vec = vm_state->query_context->float_vectors[h_vec];
                             if (actualTarget < vec.size()) {
                                 uint64_t rbit = IMP_BIT_MASK64(globalReg);

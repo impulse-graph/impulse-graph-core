@@ -8,6 +8,7 @@
 
 #include "../../impulse_vm_internal.hpp"
 #include "impulse_opcode_macros.h"
+#include "impulse_math_ops.h"
 
 #define IMP_STREAM_REDUCED_MASK_SLACK   1024u
 

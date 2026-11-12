@@ -83,6 +83,59 @@ op_COALESCE: {
         }
         vm_state->registers[dst] = hDst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+    } else if (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR && vm_state->register_types[src2] == TYPE_DOUBLE_VECTOR) {
+        int hDst = acquire_double_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        int h2 = static_cast<int>(vm_state->registers[src2]);
+        IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->double_vectors.size());
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
+        IMPULSE_ASSERT(h2 >= 0 && static_cast<size_t>(h2) < vm_state->query_context->double_vectors.size());
+        auto& vDst = vm_state->query_context->double_vectors[hDst];
+        auto& v1 = vm_state->query_context->double_vectors[h1];
+        auto& v2 = vm_state->query_context->double_vectors[h2];
+        size_t len1 = vm_state->query_context->double_vector_lengths[h1];
+        size_t len2 = vm_state->query_context->double_vector_lengths[h2];
+        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : std::max(v1.size(), v2.size());
+        active_len = std::min(active_len, vDst.size());
+        vm_state->query_context->double_vector_lengths[hDst] = active_len;
+        for (size_t i = 0; i < active_len; ++i) {
+            double a = (i < v1.size()) ? v1[i] : std::numeric_limits<double>::quiet_NaN();
+            double b = (i < v2.size()) ? v2[i] : 0.0;
+            vDst[i] = std::isnan(a) ? b : a;
+        }
+        vm_state->registers[dst] = hDst;
+        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+    } else if (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR &&
+               (vm_state->register_types[src2] == TYPE_DOUBLE || vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
+        int hDst = acquire_double_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h1 = static_cast<int>(vm_state->registers[src1]);
+        IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->double_vectors.size());
+        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
+        auto& vDst = vm_state->query_context->double_vectors[hDst];
+        auto& v1 = vm_state->query_context->double_vectors[h1];
+        size_t len1 = vm_state->query_context->double_vector_lengths[h1];
+        size_t active_len = (len1 > 0) ? len1 : v1.size();
+        active_len = std::min(active_len, vDst.size());
+        vm_state->query_context->double_vector_lengths[hDst] = active_len;
+        double fallback = 0.0;
+        if (vm_state->register_types[src2] == TYPE_DOUBLE) {
+            std::memcpy(&fallback, &vm_state->registers[src2], sizeof(double));
+        } else if (vm_state->register_types[src2] == TYPE_FLOAT) {
+            float f32 = 0.0f;
+            uint32_t bits = static_cast<uint32_t>(vm_state->registers[src2] & IMP_SENTINEL_U32);
+            std::memcpy(&f32, &bits, sizeof(float));
+            fallback = static_cast<double>(f32);
+        } else {
+            fallback = static_cast<double>(static_cast<int64_t>(vm_state->registers[src2]));
+        }
+        for (size_t i = 0; i < active_len; ++i) {
+            double a = (i < v1.size()) ? v1[i] : std::numeric_limits<double>::quiet_NaN();
+            vDst[i] = std::isnan(a) ? fallback : a;
+        }
+        vm_state->registers[dst] = hDst;
+        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else if (vm_state->register_types[src1] != TYPE_NULL) {
         vm_state->registers[dst] = vm_state->registers[src1];
         vm_state->register_types[dst] = vm_state->register_types[src1];

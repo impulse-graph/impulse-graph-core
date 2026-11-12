@@ -42,6 +42,8 @@
                         const bool has_vec = (attrId < vm_state->query_context->float_vectors.size() &&
                                               vm_state->query_context->float_vectors_allocated[attrId]);
                         IMPULSE_TESTCASE(has_vec);
+                        IMPULSE_TESTCASE(std::isnan(val));
+                        if (std::isnan(val)) break;
                         if (has_vec) {
                             auto& vec = vm_state->query_context->float_vectors[attrId];
                             if (actualTarget < vec.size()) {
