@@ -206,7 +206,13 @@ op_VECTOR_ANN_SEARCH: {
             if (v_node_count > 0 && v_medoid_node_id >= v_node_count) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            uint64_t expected_slab_bytes = v_node_count * (static_cast<uint64_t>(v_max_degree_r) + 1ULL) * OP_CA_VAMANA_ADJ_U32_BYTES;
+            uint64_t deg_plus_one = static_cast<uint64_t>(v_max_degree_r) + 1ULL;
+            uint64_t row_bytes_u64 = 0;
+            uint64_t expected_slab_bytes = 0;
+            if (__builtin_mul_overflow(deg_plus_one, OP_CA_VAMANA_ADJ_U32_BYTES, &row_bytes_u64) ||
+                __builtin_mul_overflow(v_node_count, row_bytes_u64, &expected_slab_bytes)) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
             if ((v_adj_slab_offset % IMP_SNAP_SECTION_ALIGN) != 0ULL || v_adj_slab_bytes < expected_slab_bytes) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
@@ -215,14 +221,19 @@ op_VECTOR_ANN_SEARCH: {
             );
             if (!adj_slab) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
 
-            uint64_t quant_row_bytes = (v_quant_type == OP_CA_QUANT_BQ1) ? ((v_dimension + 7u) / 8u)
-                : ((v_quant_type == OP_CA_QUANT_SQ8) ? v_dimension : ((v_quant_type == OP_CA_QUANT_FP16) ? (v_dimension * 2u) : 0u));
+            uint64_t dim_u64 = static_cast<uint64_t>(v_dimension);
+            uint64_t quant_row_bytes = (v_quant_type == OP_CA_QUANT_BQ1) ? ((dim_u64 + 7ULL) / 8ULL)
+                : ((v_quant_type == OP_CA_QUANT_SQ8) ? dim_u64 : ((v_quant_type == OP_CA_QUANT_FP16) ? (dim_u64 * 2ULL) : 0ULL));
             const uint8_t* quant_slab = nullptr;
             if (v_quant_code_offset > 0ULL) {
                 if ((v_quant_code_offset % IMP_SNAP_SECTION_ALIGN) != 0ULL) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                 if (v_quant_type != OP_CA_QUANT_NONE) {
+                    uint64_t expected_quant_bytes = 0;
+                    if (__builtin_mul_overflow(v_node_count, quant_row_bytes, &expected_quant_bytes)) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
                     quant_slab = static_cast<const uint8_t*>(
-                        impulse_snapshot_get_buffer(snap, v_quant_code_offset, v_node_count * quant_row_bytes)
+                        impulse_snapshot_get_buffer(snap, v_quant_code_offset, expected_quant_bytes)
                     );
                     if (!quant_slab) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                 }
@@ -239,11 +250,31 @@ op_VECTOR_ANN_SEARCH: {
             }
             const auto& attr = *attr_ptr;
             uint32_t attr_dim = std::max<uint32_t>(1u, attr.dimension);
-            if (!attr.data_ptr || attr.data_bytes < v_node_count * static_cast<uint64_t>(attr_dim) * sizeof(float)) {
+            uint64_t vec_row_bytes = static_cast<uint64_t>(attr_dim) * sizeof(float);
+            uint64_t req_emb_bytes = 0;
+            if (__builtin_mul_overflow(v_node_count, vec_row_bytes, &req_emb_bytes)) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            uint64_t emb_offset_bytes = 0;
+            if (IMP_ATTR_IS_NULLABLE(attr.type_code) && v_node_count > 0) {
+                uint64_t words = (v_node_count >> 6) + ((v_node_count & 63ULL) != 0ULL ? 1ULL : 0ULL);
+                uint64_t raw_bm = 0;
+                if (__builtin_mul_overflow(words, 8ULL, &raw_bm) ||
+                    __builtin_add_overflow(raw_bm, 127ULL, &emb_offset_bytes)) {
+                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                }
+                emb_offset_bytes &= ~127ULL;
+            }
+            uint64_t total_req_attr_bytes = 0;
+            if (__builtin_add_overflow(emb_offset_bytes, req_emb_bytes, &total_req_attr_bytes) ||
+                !attr.data_ptr || attr.data_bytes < total_req_attr_bytes ||
+                (reinterpret_cast<uintptr_t>(static_cast<const uint8_t*>(attr.data_ptr) + emb_offset_bytes) % alignof(float)) != 0u) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
             IMPULSE_WELL_FORMED_ASSERT(adj_slab != nullptr && attr.data_ptr != nullptr);
-            const float* emb_table = static_cast<const float*>(attr.data_ptr);
+            const float* emb_table = reinterpret_cast<const float*>(
+                static_cast<const uint8_t*>(attr.data_ptr) + emb_offset_bytes
+            );
             size_t dim = std::min<size_t>(v_dimension, std::min<size_t>(attr_dim, q_len));
             IMPULSE_ASSERT(dim <= q_len && dim <= v_dimension);
 

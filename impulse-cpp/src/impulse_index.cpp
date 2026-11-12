@@ -186,8 +186,11 @@ impulse_status_t impulse_index_permutation_range_query(
     PermutationHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
-    if (hdr.count > (SIZE_MAX - sizeof(PermutationHeader)) / sizeof(uint32_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
-    if (index_size < sizeof(PermutationHeader) + hdr.count * sizeof(uint32_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (hdr.count > (index_size - sizeof(PermutationHeader)) / sizeof(uint32_t)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (min_val != min_val || max_val != max_val || min_val > max_val) {
+        *out_count = 0;
+        return IMPULSE_OK;
+    }
 
     const uint32_t* perm = reinterpret_cast<const uint32_t*>(raw + sizeof(PermutationHeader));
     uint8_t base_type = hdr.type_code & 0x7F;
@@ -315,10 +318,10 @@ impulse_status_t impulse_index_zone_map_filter(
     ZoneMapHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
-    if (index_size < sizeof(ZoneMapHeader) + hdr.page_count * sizeof(ZoneMapBlock)) return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (hdr.page_count > (index_size - sizeof(ZoneMapHeader)) / sizeof(ZoneMapBlock)) return IMPULSE_ERR_BUFFER_OVERFLOW;
 
     const ZoneMapBlock* blocks = reinterpret_cast<const ZoneMapBlock*>(raw + sizeof(ZoneMapHeader));
-    size_t req_words = (hdr.page_count + 63) / 64;
+    size_t req_words = (static_cast<size_t>(hdr.page_count) + 63ULL) / 64ULL;
     if (max_words < req_words) return IMPULSE_ERR_BUFFER_OVERFLOW;
 
     std::memset(out_page_bitmask, 0, req_words * sizeof(uint64_t));
@@ -384,8 +387,10 @@ impulse_status_t impulse_index_build_inverted_bitset(
     size_t entries_bytes = key_count * sizeof(InvertedBitsetEntry);
     size_t data_bytes_total = key_count * words_per_bitset * sizeof(uint64_t);
 
-    size_t total_size = header_size + str_pool_bytes + entries_bytes + data_bytes_total;
-    uint8_t* buf = static_cast<uint8_t*>(std::malloc(total_size));
+    size_t unaligned_data_start = header_size + str_pool_bytes + entries_bytes;
+    size_t aligned_data_start = (unaligned_data_start + 7ULL) & ~7ULL;
+    size_t total_size = aligned_data_start + data_bytes_total;
+    uint8_t* buf = static_cast<uint8_t*>(std::calloc(1, total_size));
     if (!buf) return IMPULSE_ERR_BUFFER_OVERFLOW;
 
     InvertedBitsetHeader hdr;
@@ -402,7 +407,7 @@ impulse_status_t impulse_index_build_inverted_bitset(
     cur += str_pool_bytes;
 
     size_t entries_offset = cur;
-    cur += entries_bytes;
+    cur = aligned_data_start;
 
     for (size_t k = 0; k < key_count; ++k) {
         entries[k].bitset_offset = cur;
@@ -460,6 +465,10 @@ impulse_status_t impulse_index_inverted_bitset_lookup(
         if (std::strcmp(key_str, query_key) == 0) {
             if (entries[k].bitset_offset > index_size || entries[k].bitset_bytes > index_size - entries[k].bitset_offset) {
                 return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            if ((entries[k].bitset_offset & 7ULL) != 0ULL ||
+                (reinterpret_cast<uintptr_t>(raw + entries[k].bitset_offset) & 7ULL) != 0ULL) {
+                return IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
             }
             if (hdr.words_per_bitset > SIZE_MAX / 8 || hdr.words_per_bitset * 8 > entries[k].bitset_bytes) {
                 return IMPULSE_ERR_BUFFER_OVERFLOW;
@@ -639,9 +648,10 @@ impulse_status_t impulse_index_build_trigram(
     size_t header_size = sizeof(TrigramHeader);
     size_t entries_bytes = trigram_count * sizeof(TrigramEntry);
     size_t data_bytes_total = trigram_count * words_per_bitset * sizeof(uint64_t);
-    size_t total_size = header_size + entries_bytes + data_bytes_total;
+    size_t aligned_data_start = (header_size + entries_bytes + 7ULL) & ~7ULL;
+    size_t total_size = aligned_data_start + data_bytes_total;
 
-    uint8_t* buf = static_cast<uint8_t*>(std::malloc(total_size));
+    uint8_t* buf = static_cast<uint8_t*>(std::calloc(1, total_size));
     if (!buf) return IMPULSE_ERR_BUFFER_OVERFLOW;
 
     TrigramHeader hdr;
@@ -654,7 +664,7 @@ impulse_status_t impulse_index_build_trigram(
     cur += header_size;
 
     size_t entries_offset = cur;
-    cur += entries_bytes;
+    cur = aligned_data_start;
 
     for (size_t k = 0; k < trigram_count; ++k) {
         entries[k].bitset_offset = cur;
@@ -706,12 +716,16 @@ impulse_status_t impulse_index_trigram_search(
 
         for (uint32_t k = 0; k < hdr.trigram_count; ++k) {
             if (std::memcmp(entries[k].trigram, target_tri, 3) == 0) {
-                if (entries[k].bitset_offset > index_size || bitset_bytes > index_size - entries[k].bitset_offset) {
+                if (entries[k].bitset_bytes < bitset_bytes ||
+                    entries[k].bitset_offset > index_size ||
+                    bitset_bytes > index_size - entries[k].bitset_offset) {
                     return IMPULSE_ERR_BUFFER_OVERFLOW;
                 }
-                const uint64_t* tri_words = reinterpret_cast<const uint64_t*>(raw + entries[k].bitset_offset);
+                const uint8_t* tri_bytes = raw + entries[k].bitset_offset;
                 for (size_t w = 0; w < hdr.words_per_bitset; ++w) {
-                    out_words[w] &= tri_words[w];
+                    uint64_t tri_word = 0ULL;
+                    std::memcpy(&tri_word, tri_bytes + (w * sizeof(uint64_t)), sizeof(uint64_t));
+                    out_words[w] &= tri_word;
                 }
                 found = true;
                 break;
@@ -839,7 +853,7 @@ impulse_status_t impulse_index_temporal_interval_query(
     TemporalIntervalHeader hdr;
     std::memcpy(&hdr, raw, sizeof(hdr));
 
-    if (index_size < sizeof(TemporalIntervalHeader) + hdr.count * sizeof(TemporalIntervalEntry)) {
+    if (hdr.count > (index_size - sizeof(TemporalIntervalHeader)) / sizeof(TemporalIntervalEntry)) {
         return IMPULSE_ERR_BUFFER_OVERFLOW;
     }
 

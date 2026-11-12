@@ -335,23 +335,33 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     if (impulse_faultsim_step() != 0) {
         return nullptr;
     }
-    auto* ctx = new impulse_vm_context();
-    IMPULSE_ASSERT(ctx != nullptr);
-    ctx->snapshot = snapshot;
-    ctx->stack_pointer = 0;
-    ctx->call_stack.fill(0);
-
     uint64_t max_nodes = 0;
     if (snapshot) {
         max_nodes = impulse_snapshot_max_node_count(snapshot);
     }
-    if (max_nodes == 0) {
-        max_nodes = 1024; // Default fallback for tests
+    // Guard against malicious/corrupted snapshot headers advertising petabyte-scale
+    // dense node arenas (e.g. UINT64_MAX wrapping (bitset_capacity + 63) / 64 to 0
+    // or triggering unhandled std::bad_alloc across the C ABI boundary).
+    constexpr uint64_t VM_MAX_SAFE_PREALLOC_NODES = (1ULL << 27); // 134,217,728 nodes
+    if (max_nodes > VM_MAX_SAFE_PREALLOC_NODES) {
+        return nullptr;
     }
-    ctx->max_nodes = max_nodes;
-    uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);
-    ctx->words_per_bitset = (bitset_capacity + 63) / 64;
-    IMPULSE_ASSERT(ctx->words_per_bitset > 0);
+
+    impulse_vm_context* ctx = nullptr;
+    try {
+        ctx = new impulse_vm_context();
+        IMPULSE_ASSERT(ctx != nullptr);
+        ctx->snapshot = snapshot;
+        ctx->stack_pointer = 0;
+        ctx->call_stack.fill(0);
+
+        if (max_nodes == 0) {
+            max_nodes = 1024; // Default fallback for tests
+        }
+        ctx->max_nodes = max_nodes;
+        uint64_t bitset_capacity = std::max<uint64_t>(max_nodes, 65536ULL);
+        ctx->words_per_bitset = (bitset_capacity + 63ULL) / 64ULL;
+        IMPULSE_ASSERT(ctx->words_per_bitset > 0);
 
     // Pre-allocate off-heap bitsets in a contiguous memory block
     ctx->arena_memory = new uint64_t[VM_MAX_BITSET_HANDLES * ctx->words_per_bitset];
@@ -573,10 +583,15 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
                 }
 
                 uint64_t edge_w_bytes = (edge_index_width == 8 || edge_index_width == 64) ? 8ULL : 4ULL;
+                uint64_t coo_row_bytes = 0;
+                uint64_t n_plus_1 = 0;
+                uint64_t std_csr_bytes = 0;
                 if (is_modern && rel_entry.encoding_id == 3 &&
                     ctx->slots[r].offsets_ptr != nullptr &&
-                    rel_entry.csr_row_off_bytes == edge_count * 4ULL) {
-                    uint64_t std_csr_bytes = (node_count + 1ULL) * edge_w_bytes;
+                    !__builtin_mul_overflow(edge_count, 4ULL, &coo_row_bytes) &&
+                    rel_entry.csr_row_off_bytes == coo_row_bytes &&
+                    !__builtin_add_overflow(node_count, 1ULL, &n_plus_1) &&
+                    !__builtin_mul_overflow(n_plus_1, edge_w_bytes, &std_csr_bytes)) {
                     if (rel_entry.csr_row_off_bytes != std_csr_bytes) {
                         ctx->slots[r].is_raw_coo = true;
                         ctx->slots[r].raw_coo_src_width = 4;
@@ -676,6 +691,10 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
     }
 
     return ctx;
+    } catch (...) {
+        impulse_vm_context_destroy(ctx);
+        return nullptr;
+    }
 }
 
 void impulse_vm_context_destroy(impulse_vm_context_t* ctx) {

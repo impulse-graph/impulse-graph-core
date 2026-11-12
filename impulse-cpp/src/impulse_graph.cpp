@@ -32,6 +32,18 @@ static inline bool check_section_bounds(uint64_t offset, uint64_t bytes, uint64_
     return true;
 }
 
+static inline bool safe_add(uint64_t a, uint64_t b, uint64_t* out) noexcept {
+#if defined(__has_builtin) && __has_builtin(__builtin_add_overflow)
+    return !__builtin_add_overflow(a, b, out);
+#elif defined(__GNUC__) || defined(__clang__)
+    return !__builtin_add_overflow(a, b, out);
+#else
+    if (a > UINT64_MAX - b) return false;
+    *out = a + b;
+    return true;
+#endif
+}
+
 static inline bool safe_mul(uint64_t a, uint64_t b, uint64_t* out) noexcept {
 #if defined(__has_builtin) && __has_builtin(__builtin_mul_overflow)
     return !__builtin_mul_overflow(a, b, out);
@@ -46,6 +58,147 @@ static inline bool safe_mul(uint64_t a, uint64_t b, uint64_t* out) noexcept {
     *out = a * b;
     return true;
 #endif
+}
+
+static inline bool compute_padded_validity_bytes(uint64_t row_count, uint64_t* out_raw_bm, uint64_t* out_padded_bm) noexcept {
+    uint64_t words = (row_count >> 6) + (((row_count & 63ULL) != 0ULL) ? 1ULL : 0ULL);
+    uint64_t raw_bm = 0;
+    if (!safe_mul(words, 8ULL, &raw_bm)) return false;
+    uint64_t padded_bm = 0;
+    if (!safe_add(raw_bm, 127ULL, &padded_bm)) return false;
+    padded_bm &= ~127ULL;
+    if (out_raw_bm) *out_raw_bm = raw_bm;
+    if (out_padded_bm) *out_padded_bm = padded_bm;
+    return true;
+}
+
+static inline uint64_t fixed_attr_type_width(uint8_t base_type) noexcept {
+    switch (base_type) {
+        case 0x01:
+        case 0x0A:
+        case 0x11:
+            return 1ULL;
+        case 0x02:
+        case 0x05:
+        case 0x12:
+            return 2ULL;
+        case 0x03:
+        case 0x06:
+        case 0x13:
+            return 4ULL;
+        case 0x04:
+        case 0x07:
+        case 0x08:
+        case 0x09:
+        case 0x0D:
+        case 0x14:
+            return 8ULL;
+        case 0x0E:
+            return 16ULL;
+        default:
+            return 0ULL;
+    }
+}
+
+static impulse_status_t validate_attribute_payload(
+    const uint8_t* raw,
+    uint64_t file_size,
+    const impulse_attribute_descriptor_t& attr,
+    uint64_t row_count,
+    bool is_domain_attr,
+    bool is_v10,
+    uint64_t req_align,
+    std::string& err_msg
+) noexcept {
+    if (!check_section_bounds(attr.data_offset, attr.data_bytes, file_size, req_align) ||
+        !check_section_bounds(attr.offsets_offset, attr.offsets_bytes, file_size, req_align)) {
+        err_msg = "Attribute section bounds check failed";
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
+    uint8_t base_type = attr.type_code & 0x7F;
+    bool is_nullable = (attr.type_code & 0x80) != 0;
+    uint64_t payload_bytes = attr.data_bytes;
+
+    if (is_v10 && is_nullable && attr.data_offset > 0 && row_count > 0) {
+        uint64_t bm_rows = is_domain_attr ? row_count : 1ULL;
+        uint64_t padded_bm = 0;
+        if (!compute_padded_validity_bytes(bm_rows, nullptr, &padded_bm) || attr.data_bytes < padded_bm) {
+            err_msg = "Nullable attribute data_bytes smaller than 128B-padded validity bitmap";
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+        if (is_domain_attr) {
+            payload_bytes = attr.data_bytes - padded_bm;
+        }
+    }
+
+    if (base_type == 0x0B || base_type == 0x0C) {
+        // Variable-length strings/bytes when offsets_offset > 0 (or dimension == 0 on non-empty domain attr);
+        // fixed-width inline strings/bytes when offsets_offset == 0 && dimension > 0.
+        bool is_var_len = (attr.offsets_offset > 0) || (is_domain_attr && attr.dimension == 0 && attr.data_offset > 0);
+        if (is_var_len && row_count > 0) {
+            if (attr.offsets_offset == 0) {
+                err_msg = "Variable-length attribute missing offsets_offset";
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            if (is_domain_attr) {
+                uint64_t rows_plus_one = 0;
+                uint64_t req_off_bytes = 0;
+                if (!safe_add(row_count, 1ULL, &rows_plus_one) ||
+                    !safe_mul(rows_plus_one, 4ULL, &req_off_bytes) ||
+                    attr.offsets_bytes < req_off_bytes) {
+                    err_msg = "Variable-length attribute offsets_bytes smaller than (row_count + 1) * 4";
+                    return IMPULSE_ERR_BUFFER_OVERFLOW;
+                }
+            } else if (attr.offsets_bytes < 4ULL || (attr.offsets_bytes & 3ULL) != 0ULL) {
+                err_msg = "Variable-length relation attribute offsets_bytes invalid";
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            uint64_t num_entries = is_domain_attr ? row_count : ((attr.offsets_bytes / 4ULL) - 1ULL);
+            const auto* offs = reinterpret_cast<const uint32_t*>(raw + attr.offsets_offset);
+            if (offs[0] != 0) {
+                err_msg = "Variable-length attribute offsets[0] must be 0";
+                return IMPULSE_ERR_INVALID_ARGUMENT;
+            }
+            uint32_t prev = 0;
+            for (uint64_t r = 0; r < num_entries; ++r) {
+                uint32_t cur_off = offs[r + 1];
+                if (cur_off < prev) {
+                    err_msg = "Variable-length attribute offsets must be monotonically non-decreasing";
+                    return IMPULSE_ERR_INVALID_ARGUMENT;
+                }
+                prev = cur_off;
+            }
+            uint64_t max_payload = (attr.data_offset > 0) ? payload_bytes : 0ULL;
+            if (static_cast<uint64_t>(prev) > max_payload) {
+                err_msg = "Variable-length attribute terminal offset exceeds payload byte size";
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+        } else if (is_domain_attr && is_v10 && attr.data_offset > 0 && row_count > 0 && attr.dimension > 0) {
+            uint64_t req_payload = 0;
+            if (!safe_mul(row_count, static_cast<uint64_t>(attr.dimension), &req_payload) || payload_bytes < req_payload) {
+                err_msg = "Fixed-width string/bytes attribute payload smaller than row_count * dimension";
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+        }
+    } else if (is_domain_attr && is_v10 && attr.data_offset > 0 && row_count > 0) {
+        uint64_t type_w = fixed_attr_type_width(base_type);
+        if (type_w == 0ULL) {
+            err_msg = "Unsupported fixed-width attribute type_code";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+        uint64_t dim = (attr.dimension == 0) ? 1ULL : static_cast<uint64_t>(attr.dimension);
+        uint64_t elem_bytes = 0;
+        uint64_t req_payload = 0;
+        if (!safe_mul(type_w, dim, &elem_bytes) ||
+            !safe_mul(row_count, elem_bytes, &req_payload) ||
+            payload_bytes < req_payload) {
+            err_msg = "Fixed-width attribute payload smaller than row_count * elem_bytes";
+            return IMPULSE_ERR_BUFFER_OVERFLOW;
+        }
+    }
+
+    return IMPULSE_OK;
 }
 
 static std::string resolve_snapshot_path(const char* file_path) {
@@ -154,7 +307,8 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     }
     FdGuard fd_guard(fd);
     struct stat st;
-    if (::fstat(fd, &st) < 0) {
+    if (::fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0) {
+        g_last_error = "Snapshot path is not a readable regular file";
         if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
         return nullptr;
     }
@@ -249,12 +403,23 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
     size_t dir_offset = static_cast<size_t>(snap->header.data_offset);
     if (is_modern) {
-        if (snap->header.footer_directory_offset > 0 && snap->header.footer_directory_offset < file_size) {
+        if (snap->header.footer_directory_offset > 0) {
+            if (snap->header.footer_directory_offset > file_size ||
+                snap->header.footer_directory_bytes > file_size - snap->header.footer_directory_offset) {
+                g_last_error = "Footer directory offset or byte length out of bounds";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
             dir_offset = static_cast<size_t>(snap->header.footer_directory_offset);
         } else if ((snap->header.required_features & IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG) && file_size >= 16) {
             impulse_footer_trailer_t trailer;
             std::memcpy(&trailer, raw + file_size - 16, 16);
-            if (trailer.footer_magic == IMPULSE_MAGIC && trailer.footer_length >= 16 && trailer.footer_length <= file_size) {
+            if (trailer.footer_magic == IMPULSE_MAGIC) {
+                if (trailer.footer_length < 16 || trailer.footer_length > file_size) {
+                    g_last_error = "Footer trailer length out of bounds";
+                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                    return nullptr;
+                }
                 dir_offset = file_size - static_cast<size_t>(trailer.footer_length);
             }
         }
@@ -298,20 +463,33 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             return nullptr;
         }
 
+        // Strict RFC-3629 UTF-8 validation (rejects C0/C1/E0/F0 overlongs, UTF-16 surrogates, and > U+10FFFF)
         auto is_valid_utf8 = [](const char* str, size_t len) -> bool {
             const uint8_t* bytes = reinterpret_cast<const uint8_t*>(str);
             size_t i = 0;
             while (i < len) {
-                if (bytes[i] <= 0x7F) {
-                    i++;
-                } else if ((bytes[i] & 0xE0) == 0xC0) {
+                uint8_t b0 = bytes[i];
+                if (b0 <= 0x7F) {
+                    i += 1;
+                } else if (b0 >= 0xC2 && b0 <= 0xDF) {
                     if (i + 1 >= len || (bytes[i + 1] & 0xC0) != 0x80) return false;
                     i += 2;
-                } else if ((bytes[i] & 0xF0) == 0xE0) {
-                    if (i + 2 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80) return false;
+                } else if (b0 >= 0xE0 && b0 <= 0xEF) {
+                    if (i + 2 >= len) return false;
+                    uint8_t b1 = bytes[i + 1];
+                    uint8_t b2 = bytes[i + 2];
+                    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return false;
+                    if (b0 == 0xE0 && b1 < 0xA0) return false; // Overlong 3-byte
+                    if (b0 == 0xED && b1 >= 0xA0) return false; // UTF-16 surrogate U+D800..U+DFFF
                     i += 3;
-                } else if ((bytes[i] & 0xF8) == 0xF0) {
-                    if (i + 3 >= len || (bytes[i + 1] & 0xC0) != 0x80 || (bytes[i + 2] & 0xC0) != 0x80 || (bytes[i + 3] & 0xC0) != 0x80) return false;
+                } else if (b0 >= 0xF0 && b0 <= 0xF4) {
+                    if (i + 3 >= len) return false;
+                    uint8_t b1 = bytes[i + 1];
+                    uint8_t b2 = bytes[i + 2];
+                    uint8_t b3 = bytes[i + 3];
+                    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) return false;
+                    if (b0 == 0xF0 && b1 < 0x90) return false; // Overlong 4-byte
+                    if (b0 == 0xF4 && b1 >= 0x90) return false; // > U+10FFFF
                     i += 4;
                 } else {
                     return false;
@@ -418,12 +596,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                         if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
                         return nullptr;
                     }
-                    if (!check_section_bounds(snap->domain_attributes[i][a].data_offset,
-                                              snap->domain_attributes[i][a].data_bytes, file_size, 128) ||
-                        !check_section_bounds(snap->domain_attributes[i][a].offsets_offset,
-                                              snap->domain_attributes[i][a].offsets_bytes, file_size, 128)) {
-                        g_last_error = "Domain attribute section bounds check failed";
-                        if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                    impulse_status_t attr_st = validate_attribute_payload(
+                        raw, file_size, snap->domain_attributes[i][a], dom_entry.node_count, true, is_v10, 128, g_last_error
+                    );
+                    if (attr_st != IMPULSE_OK) {
+                        if (out_status) *out_status = attr_st;
                         return nullptr;
                     }
                 }
@@ -453,7 +630,12 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             cur += sizeof(rel_entry);
 
             std::string rname;
-            validate_and_get_string(rel_entry.name_offset, rname);
+            impulse_status_t rstr_st = validate_and_get_string(rel_entry.name_offset, rname);
+            if (rstr_st != IMPULSE_OK) {
+                g_last_error = "Corrupt relation name in Section 2 Shared String Table";
+                if (out_status) *out_status = rstr_st;
+                return nullptr;
+            }
             snap->relation_names.push_back(rname);
 
             uint16_t attr_count = rel_entry.attr_count;
@@ -466,9 +648,13 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                 }
                 std::memcpy(&snap->relation_attributes[j][a], raw + cur, sizeof(impulse_attribute_descriptor_t));
                 std::string aname;
-                if (validate_and_get_string(snap->relation_attributes[j][a].name_offset, aname) == IMPULSE_OK) {
-                    snap->relation_attribute_names[j][a] = aname;
+                impulse_status_t rastr_st = validate_and_get_string(snap->relation_attributes[j][a].name_offset, aname);
+                if (rastr_st != IMPULSE_OK) {
+                    g_last_error = "Corrupt relation attribute name in Section 2 Shared String Table";
+                    if (out_status) *out_status = rastr_st;
+                    return nullptr;
                 }
+                snap->relation_attribute_names[j][a] = aname;
                 cur += sizeof(impulse_attribute_descriptor_t);
             }
 
@@ -512,9 +698,12 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
 
             std::string iname;
             impulse_status_t str_status = validate_and_get_string(idx_entry.name_offset, iname);
-            if (str_status == IMPULSE_OK) {
-                snap->index_names[k] = iname;
+            if (str_status != IMPULSE_OK) {
+                g_last_error = "Corrupt secondary index name in Section 2 Shared String Table";
+                if (out_status) *out_status = str_status;
+                return nullptr;
             }
+            snap->index_names[k] = iname;
 
             if (idx_entry.data_offset > 0 && idx_entry.data_offset % 128 != 0) {
                 g_last_error = "Unaligned index data offset (must be 128B aligned)";
@@ -543,7 +732,9 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             cur += 64;
 
             if (name_len > 0) {
-                if (name_off == 0 || name_off + name_len > file_size) {
+                uint64_t name_end = 0;
+                if (name_off == 0 || !safe_add(static_cast<uint64_t>(name_off), static_cast<uint64_t>(name_len), &name_end) ||
+                    name_end > file_size) {
                     g_last_error = "Domain name offset out of bounds";
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
@@ -583,27 +774,34 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             std::memcpy(&aux_offset, raw + cur + 69, 8);
             std::memcpy(&aux_bytes, raw + cur + 77, 8);
 
-            if (aux_offset > 0 && aux_bytes >= 24 && aux_offset + aux_bytes <= file_size) {
-                size_t aux_count = aux_bytes / 24;
-                for (size_t a = 0; a < aux_count; ++a) {
-                    size_t a_cur = aux_offset + a * 24;
-                    uint16_t sec_type = 0;
-                    std::memcpy(&sec_type, raw + a_cur, 2);
-                    uint64_t sec_off = 0;
-                    std::memcpy(&sec_off, raw + a_cur + 8, 8);
-                    uint64_t sec_size = 0;
-                    std::memcpy(&sec_size, raw + a_cur + 16, 8);
+            if (aux_offset > 0) {
+                if (aux_offset > file_size || aux_bytes > file_size - aux_offset) {
+                    g_last_error = "Legacy auxiliary directory offset or byte length out of bounds";
+                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                    return nullptr;
+                }
+                if (aux_bytes >= 24) {
+                    size_t aux_count = aux_bytes / 24;
+                    for (size_t a = 0; a < aux_count; ++a) {
+                        size_t a_cur = aux_offset + a * 24;
+                        uint16_t sec_type = 0;
+                        std::memcpy(&sec_type, raw + a_cur, 2);
+                        uint64_t sec_off = 0;
+                        std::memcpy(&sec_off, raw + a_cur + 8, 8);
+                        uint64_t sec_size = 0;
+                        std::memcpy(&sec_size, raw + a_cur + 16, 8);
 
-                    if (sec_type == 0x0001) { // CSC Row Offsets
-                        rel_entry.csc_row_off_offset = sec_off;
-                        rel_entry.csc_row_off_bytes = sec_size;
-                    } else if (sec_type == 0x0002) { // CSC Col Targets
-                        rel_entry.csc_col_idx_offset = sec_off;
-                        rel_entry.csc_col_idx_bytes = sec_size;
-                    } else if (sec_type != 0) {
-                        g_last_error = "Unsupported auxiliary section feature type";
-                        if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
-                        return nullptr;
+                        if (sec_type == 0x0001) { // CSC Row Offsets
+                            rel_entry.csc_row_off_offset = sec_off;
+                            rel_entry.csc_row_off_bytes = sec_size;
+                        } else if (sec_type == 0x0002) { // CSC Col Targets
+                            rel_entry.csc_col_idx_offset = sec_off;
+                            rel_entry.csc_col_idx_bytes = sec_size;
+                        } else if (sec_type != 0) {
+                            g_last_error = "Unsupported auxiliary section feature type";
+                            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+                            return nullptr;
+                        }
                     }
                 }
             }
@@ -623,9 +821,31 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
     }
 
     uint64_t req_align = is_modern ? 128 : 64;
+    std::vector<std::vector<uint16_t>> virtual_children_graph(snap->relations.size());
+    bool has_any_virtual_relation = false;
 
     for (size_t r = 0; r < snap->relations.size(); ++r) {
         const auto& rel = snap->relations[r];
+        if (is_modern && !snap->domains.empty()) {
+            if (rel.src_domain_id >= snap->domains.size() || rel.tgt_domain_id >= snap->domains.size()) {
+                g_last_error = "Relation src_domain_id or tgt_domain_id out of bounds for domain catalog";
+                if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                return nullptr;
+            }
+        }
+        if (rel.node_id_width != 0 && rel.node_id_width != 2 && rel.node_id_width != 4 && rel.node_id_width != 8 &&
+            rel.node_id_width != 16 && rel.node_id_width != 32 && rel.node_id_width != 64) {
+            g_last_error = "Unsupported relation node_id_width";
+            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+            return nullptr;
+        }
+        if (rel.edge_index_width != 0 && rel.edge_index_width != 4 && rel.edge_index_width != 8 &&
+            rel.edge_index_width != 32 && rel.edge_index_width != 64) {
+            g_last_error = "Unsupported relation edge_index_width";
+            if (out_status) *out_status = IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+            return nullptr;
+        }
+
         uint64_t src_node_count = rel.node_count;
         uint64_t tgt_node_count = rel.node_count;
         if (rel.src_domain_id < snap->domains.size()) {
@@ -661,13 +881,63 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         }
 
         if (is_virtual) {
+            has_any_virtual_relation = true;
+            uint16_t comp_count = 0;
+            std::memcpy(&comp_count, &rel.reserved2[0], sizeof(uint16_t));
+            uint16_t tag_or_first = 0;
+            std::memcpy(&tag_or_first, &rel.reserved2[2], sizeof(uint16_t));
+
+            if (rel.csr_col_idx_offset > 0 && (rel.csr_col_idx_bytes & 1ULL) != 0ULL) {
+                g_last_error = "Virtual super-relation overflow component list must have an even byte length";
+                if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                return nullptr;
+            }
+            if (comp_count > 0) {
+                bool use_overflow_slab = (comp_count > 10) ||
+                    (tag_or_first == 0xFFFF && rel.csr_col_idx_bytes >= static_cast<uint64_t>(comp_count) * 2ULL);
+                if (use_overflow_slab) {
+                    if (rel.csr_col_idx_offset == 0 || rel.csr_col_idx_bytes < static_cast<uint64_t>(comp_count) * 2ULL) {
+                        g_last_error = "Virtual super-relation overflow component list truncated or missing";
+                        if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                        return nullptr;
+                    }
+                    const auto* ext_ids = reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset);
+                    virtual_children_graph[r].reserve(comp_count);
+                    for (uint16_t i = 0; i < comp_count; ++i) {
+                        uint16_t cid = ext_ids[i];
+                        if (cid >= snap->relations.size() || cid == r) {
+                            g_last_error = "Virtual super-relation references out-of-bounds or self-referential child relation";
+                            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                            return nullptr;
+                        }
+                        virtual_children_graph[r].push_back(cid);
+                    }
+                } else {
+                    virtual_children_graph[r].reserve(comp_count);
+                    for (uint16_t i = 0; i < comp_count; ++i) {
+                        uint16_t cid = 0;
+                        std::memcpy(&cid, &rel.reserved2[2 + 2 * i], sizeof(uint16_t));
+                        if (cid >= snap->relations.size() || cid == r) {
+                            g_last_error = "Virtual super-relation inline child relation ID out of bounds or self-loop";
+                            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                            return nullptr;
+                        }
+                        virtual_children_graph[r].push_back(cid);
+                    }
+                }
+            }
             continue;
         }
 
         bool is_raw_coo = false;
-        if (is_modern && rel.encoding_id == 3 && !flat_forward && rel.csr_row_off_bytes == rel.edge_count * 4ULL) {
-            uint64_t std_csr_bytes = (rel.node_count + 1ULL) * edge_width_bytes;
-            if (rel.csr_row_off_bytes != std_csr_bytes) {
+        uint64_t coo_row_bytes = 0;
+        if (is_modern && rel.encoding_id == 3 && !flat_forward &&
+            safe_mul(rel.edge_count, 4ULL, &coo_row_bytes) && rel.csr_row_off_bytes == coo_row_bytes) {
+            uint64_t n_plus_1 = 0;
+            uint64_t std_csr_bytes = 0;
+            bool std_csr_ok = safe_add(rel.node_count, 1ULL, &n_plus_1) &&
+                              safe_mul(n_plus_1, edge_width_bytes, &std_csr_bytes);
+            if (!std_csr_ok || rel.csr_row_off_bytes != std_csr_bytes) {
                 is_raw_coo = true;
             } else if (rel.csr_row_off_offset > 0 && rel.edge_count > 0) {
                 uint64_t first_off = is_edge64
@@ -739,8 +1009,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         } else if (rel.csr_row_off_offset > 0 || rel.csr_row_off_bytes > 0 ||
             rel.csr_col_idx_offset > 0 || rel.csr_col_idx_bytes > 0 ||
             rel.node_count > 0 || rel.edge_count > 0) {
+            uint64_t n_plus_1 = 0;
             uint64_t req_row_bytes = 0;
-            if (!safe_mul(rel.node_count + 1ULL, edge_width_bytes, &req_row_bytes) || rel.csr_row_off_bytes < req_row_bytes) {
+            if (!safe_add(rel.node_count, 1ULL, &n_plus_1) ||
+                !safe_mul(n_plus_1, edge_width_bytes, &req_row_bytes) ||
+                rel.csr_row_off_bytes < req_row_bytes) {
                 g_last_error = "CSR row offsets buffer smaller than required minimum byte size";
                 if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                 return nullptr;
@@ -823,8 +1096,11 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                     }
                 }
             } else {
+                uint64_t tgt_plus_1 = 0;
                 uint64_t req_csc_row_bytes = 0;
-                if (!safe_mul(tgt_node_count + 1ULL, edge_width_bytes, &req_csc_row_bytes) || rel.csc_row_off_bytes < req_csc_row_bytes) {
+                if (!safe_add(tgt_node_count, 1ULL, &tgt_plus_1) ||
+                    !safe_mul(tgt_plus_1, edge_width_bytes, &req_csc_row_bytes) ||
+                    rel.csc_row_off_bytes < req_csc_row_bytes) {
                     g_last_error = "CSC row offsets buffer smaller than required minimum byte size";
                     if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
                     return nullptr;
@@ -876,13 +1152,44 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             }
         }
 
-        // Validate attribute descriptors
+        // Validate attribute descriptors & payloads
         if (r < snap->relation_attributes.size()) {
             for (const auto& attr : snap->relation_attributes[r]) {
-                if (!check_section_bounds(attr.data_offset, attr.data_bytes, file_size, req_align) ||
-                    !check_section_bounds(attr.offsets_offset, attr.offsets_bytes, file_size, req_align)) {
-                    g_last_error = "Attribute section bounds check failed";
-                    if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                uint64_t rel_rows = (rel.edge_count > 0 || (attr.data_bytes == 0 && attr.offsets_bytes <= 4))
+                    ? rel.edge_count
+                    : rel.node_count;
+                impulse_status_t attr_st = validate_attribute_payload(
+                    raw, file_size, attr, rel_rows, false, is_v10, req_align, g_last_error
+                );
+                if (attr_st != IMPULSE_OK) {
+                    if (out_status) *out_status = attr_st;
+                    return nullptr;
+                }
+            }
+        }
+    }
+
+    // 3-color DFS cycle & max-depth (<= 16) validation across virtual super-relations
+    if (has_any_virtual_relation) {
+        std::vector<uint8_t> color(snap->relations.size(), 0);
+        auto dfs_virtual = [&](auto& self, size_t u, uint32_t depth) -> bool {
+            if (depth > 16) return false;
+            color[u] = 1; // visiting
+            for (uint16_t cid : virtual_children_graph[u]) {
+                if (cid >= snap->relations.size()) return false;
+                if (color[cid] == 1) return false; // cycle detected
+                if (color[cid] == 0 && !virtual_children_graph[cid].empty()) {
+                    if (!self(self, cid, depth + 1)) return false;
+                }
+            }
+            color[u] = 2; // done
+            return true;
+        };
+        for (size_t r = 0; r < snap->relations.size(); ++r) {
+            if (!virtual_children_graph[r].empty() && color[r] == 0) {
+                if (!dfs_virtual(dfs_virtual, r, 0)) {
+                    g_last_error = "Virtual super-relation graph contains a cycle or exceeds max nesting depth (16)";
+                    if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
                     return nullptr;
                 }
             }
@@ -894,6 +1201,16 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         if (!check_section_bounds(idx.data_offset, idx.data_bytes, file_size, req_align)) {
             g_last_error = "Index section bounds check failed";
             if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+            return nullptr;
+        }
+        if (is_modern && !snap->domains.empty() && idx.domain_id != 0xFFFF && idx.domain_id >= snap->domains.size()) {
+            g_last_error = "Secondary index domain_id out of bounds";
+            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+            return nullptr;
+        }
+        if (is_modern && idx.relation_id != 0xFFFF && idx.relation_id >= snap->relations.size()) {
+            g_last_error = "Secondary index relation_id out of bounds";
+            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
             return nullptr;
         }
     }
@@ -909,32 +1226,35 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             size_t meta_bytes = static_cast<size_t>(trailer.footer_length) - 16;
 
             if (snap->header.footer_directory_offset > 0 && snap->header.footer_directory_offset == meta_offset) {
-                meta_offset += static_cast<size_t>(snap->header.footer_directory_bytes);
-                if (meta_bytes >= static_cast<size_t>(snap->header.footer_directory_bytes)) {
+                if (snap->header.footer_directory_bytes <= meta_bytes) {
+                    meta_offset += static_cast<size_t>(snap->header.footer_directory_bytes);
                     meta_bytes -= static_cast<size_t>(snap->header.footer_directory_bytes);
+                } else {
+                    meta_bytes = 0;
                 }
             }
 
-            if (meta_offset + meta_bytes <= file_size && meta_bytes >= 4) {
+            if (meta_offset <= file_size && meta_bytes <= file_size - meta_offset && meta_bytes >= 4) {
                 size_t mcur = meta_offset;
+                size_t meta_end = meta_offset + meta_bytes;
                 uint32_t count = 0;
                 std::memcpy(&count, raw + mcur, 4);
                 mcur += 4;
 
                 for (uint32_t k = 0; k < count; ++k) {
-                    if (mcur + 2 > meta_offset + meta_bytes) break;
+                    if (meta_end - mcur < 2) break;
                     uint16_t klen = 0;
                     std::memcpy(&klen, raw + mcur, 2);
                     mcur += 2;
-                    if (mcur + klen > meta_offset + meta_bytes) break;
+                    if (meta_end - mcur < klen) break;
                     std::string key(reinterpret_cast<const char*>(raw + mcur), klen);
                     mcur += klen;
 
-                    if (mcur + 4 > meta_offset + meta_bytes) break;
+                    if (meta_end - mcur < 4) break;
                     uint32_t vlen = 0;
                     std::memcpy(&vlen, raw + mcur, 4);
                     mcur += 4;
-                    if (mcur + vlen > meta_offset + meta_bytes) break;
+                    if (meta_end - mcur < vlen) break;
                     std::string val(reinterpret_cast<const char*>(raw + mcur), vlen);
                     mcur += vlen;
 
@@ -1098,7 +1418,7 @@ impulse_status_t impulse_snapshot_get_index(
     if (attribute_index) *attribute_index = entry.attribute_index;
     if (index_type) *index_type = entry.index_type;
     if (index_name && index_idx < snapshot->index_names.size()) *index_name = snapshot->index_names[index_idx].c_str();
-    if (index_data) *index_data = reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + entry.data_offset;
+    if (index_data) *index_data = (entry.data_offset > 0) ? (reinterpret_cast<const uint8_t*>(snapshot->mmap_ptr) + entry.data_offset) : nullptr;
     if (index_bytes) *index_bytes = entry.data_bytes;
 
     return IMPULSE_OK;
@@ -1121,10 +1441,33 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     }
 
     const auto& rel = snapshot->relations[relation_index];
+    if (rel.csr_row_off_offset == 0 || rel.csr_col_idx_offset == 0) {
+        *out_count = 0;
+        return IMPULSE_OK;
+    }
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    if (!check_section_bounds(rel.csr_row_off_offset, rel.csr_row_off_bytes, snapshot->file_size, 0) ||
+        !check_section_bounds(rel.csr_col_idx_offset, rel.csr_col_idx_bytes, snapshot->file_size, 0)) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
 
-    const uint32_t* row_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
-    const uint32_t* col_indices = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+    bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
+    bool is_node16 = (rel.node_id_width == 2 || rel.node_id_width == 16);
+    bool is_node64 = (rel.node_id_width == 8 || rel.node_id_width == 64);
+    size_t edge_w = is_edge64 ? 8 : 4;
+    size_t node_w = is_node16 ? 2 : (is_node64 ? 8 : 4);
+    size_t num_row_offsets = rel.csr_row_off_bytes / edge_w;
+    size_t num_col_indices = rel.csr_col_idx_bytes / node_w;
+
+    auto read_row_off = [&](uint64_t idx) -> uint64_t {
+        return is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[idx]
+                         : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[idx];
+    };
+    auto read_col_tgt = [&](uint64_t idx) -> uint64_t {
+        return is_node16 ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[idx]
+                         : (is_node64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[idx]
+                                      : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[idx]);
+    };
 
     size_t total_written = 0;
     pcg32_fast rng(seed, 54u);
@@ -1133,14 +1476,17 @@ impulse_status_t impulse_snapshot_sample_neighbors(
     if (!out_src || !out_tgt) {
         for (size_t i = 0; i < num_nodes; ++i) {
             uint64_t u = src_nodes[i];
-            if (u >= rel.node_count) continue;
+            if (u >= rel.node_count || u + 1 >= num_row_offsets) continue;
 
-            uint32_t start_idx = row_offsets[u];
-            uint32_t end_idx = row_offsets[u + 1];
-            uint32_t deg = end_idx - start_idx;
-            if (deg == 0) continue;
+            uint64_t start_idx = read_row_off(u);
+            uint64_t end_idx = read_row_off(u + 1);
+            if (start_idx >= end_idx || end_idx > num_col_indices) continue;
+            uint64_t deg64 = end_idx - start_idx;
+            uint32_t deg = (deg64 > static_cast<uint64_t>(INT32_MAX)) ? static_cast<uint32_t>(INT32_MAX) : static_cast<uint32_t>(deg64);
 
-            int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : (std::min)(static_cast<int>(deg), k_samples);
+            size_t num_to_sample = (k_samples < 0)
+                ? static_cast<size_t>(deg)
+                : static_cast<size_t>((std::min)(static_cast<int>(deg), k_samples));
             total_written += num_to_sample;
         }
         *out_count = total_written;
@@ -1149,13 +1495,13 @@ impulse_status_t impulse_snapshot_sample_neighbors(
 
     for (size_t i = 0; i < num_nodes; ++i) {
         uint64_t u = src_nodes[i];
-        if (u >= rel.node_count) continue;
+        if (u >= rel.node_count || u + 1 >= num_row_offsets) continue;
 
-        uint32_t start_idx = row_offsets[u];
-        uint32_t end_idx = row_offsets[u + 1];
-        uint32_t deg = end_idx - start_idx;
-
-        if (deg == 0) continue;
+        uint64_t start_idx = read_row_off(u);
+        uint64_t end_idx = read_row_off(u + 1);
+        if (start_idx >= end_idx || end_idx > num_col_indices) continue;
+        uint64_t deg64 = end_idx - start_idx;
+        uint32_t deg = (deg64 > static_cast<uint64_t>(INT32_MAX)) ? static_cast<uint32_t>(INT32_MAX) : static_cast<uint32_t>(deg64);
 
         int num_to_sample = (k_samples < 0) ? static_cast<int>(deg) : (std::min)(static_cast<int>(deg), k_samples);
 
@@ -1165,12 +1511,12 @@ impulse_status_t impulse_snapshot_sample_neighbors(
                 return IMPULSE_ERR_BUFFER_OVERFLOW;
             }
 
-            uint32_t sample_idx = (k_samples < 0 || num_to_sample == static_cast<int>(deg))
-                ? (start_idx + k)
-                : (start_idx + rng.bounded(deg));
+            uint64_t sample_idx = (k_samples < 0 || num_to_sample == static_cast<int>(deg))
+                ? (start_idx + static_cast<uint64_t>(k))
+                : (start_idx + static_cast<uint64_t>(rng.bounded(deg)));
 
             out_src[total_written] = u;
-            out_tgt[total_written] = static_cast<uint64_t>(col_indices[sample_idx]);
+            out_tgt[total_written] = read_col_tgt(sample_idx);
             total_written++;
         }
     }
@@ -1204,8 +1550,8 @@ impulse_status_t impulse_snapshot_get_relation_buffers(
     }
     const auto& rel = snapshot->relations[relation_index];
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
-    *out_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
-    *out_targets = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+    *out_offsets = (rel.csr_row_off_offset > 0) ? reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset) : nullptr;
+    *out_targets = (rel.csr_col_idx_offset > 0) ? reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset) : nullptr;
     if (out_node_count) *out_node_count = rel.node_count;
     if (out_edge_count) *out_edge_count = rel.edge_count;
     return IMPULSE_OK;
@@ -1255,7 +1601,7 @@ impulse_status_t impulse_snapshot_get_attribute_buffers(
     }
     const auto& attr = attrs[attribute_index];
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
-    if (out_data) *out_data = raw + attr.data_offset;
+    if (out_data) *out_data = (attr.data_offset > 0) ? (raw + attr.data_offset) : nullptr;
     if (out_data_bytes) *out_data_bytes = attr.data_bytes;
     if (out_offsets) *out_offsets = (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr;
     if (out_offsets_bytes) *out_offsets_bytes = attr.offsets_bytes;
@@ -1437,71 +1783,57 @@ static bool resolve_domain_key_slice_internal(
 
     const auto& attr = attrs[kidx];
     if (attr.data_offset == 0 && attr.data_bytes == 0) return false;
+    if (attr.data_offset == 0 && attr.offsets_offset == 0) return false;
 
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
-    const uint8_t* val_ptr = raw + attr.data_offset;
-    uint64_t val_bytes = attr.data_bytes;
+    const uint8_t* val_ptr = (attr.data_offset > 0) ? (raw + attr.data_offset) : nullptr;
+    uint64_t val_bytes = (attr.data_offset > 0) ? attr.data_bytes : 0ULL;
 
     if ((attr.type_code & 0x80) != 0) {
-        uint64_t raw_bm = ((dom.node_count + 63ULL) / 64ULL) * 8ULL;
-        uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
-        if (val_bytes < padded_bm || (node_id >> 3) >= raw_bm) return false;
+        if (!val_ptr) return false;
+        uint64_t raw_bm = 0;
+        uint64_t padded_bm = 0;
+        if (!compute_padded_validity_bytes(dom.node_count, &raw_bm, &padded_bm)) return false;
+        if (val_bytes < padded_bm || static_cast<uint64_t>(node_id >> 3) >= raw_bm) return false;
         if ((val_ptr[node_id >> 3] & (1u << (node_id & 7u))) == 0) return false;
         val_ptr += padded_bm;
         val_bytes -= padded_bm;
     }
 
     uint8_t base_type = attr.type_code & 0x7F;
-    uint32_t dim = (attr.dimension == 0) ? 1u : attr.dimension;
+    uint64_t dim = (attr.dimension == 0) ? 1ULL : static_cast<uint64_t>(attr.dimension);
 
     if (base_type == 0x0B || base_type == 0x0C) {
         if (attr.offsets_offset == 0) return false;
-        if ((static_cast<uint64_t>(node_id) + 2ULL) * 4ULL > attr.offsets_bytes) return false;
+        uint64_t req_off_bytes = 0;
+        if (!safe_mul(static_cast<uint64_t>(node_id) + 2ULL, 4ULL, &req_off_bytes) ||
+            req_off_bytes > attr.offsets_bytes) {
+            return false;
+        }
         const uint32_t* offsets = reinterpret_cast<const uint32_t*>(raw + attr.offsets_offset);
         uint32_t start = offsets[node_id];
         uint32_t end = offsets[node_id + 1];
         if (start > end || static_cast<uint64_t>(end) > val_bytes) return false;
+        if (end > start && !val_ptr) return false;
         if (base_type == 0x0B && end > start && val_ptr[end - 1] == '\0') {
             end -= 1;
         }
-        *out_key_bytes = val_ptr + start;
+        static const uint8_t kEmptyKey = 0;
+        *out_key_bytes = val_ptr ? (val_ptr + start) : &kEmptyKey;
         *out_key_len = static_cast<size_t>(end - start);
         return true;
     }
 
+    if (!val_ptr) return false;
+    uint64_t type_w = fixed_attr_type_width(base_type);
+    if (type_w == 0ULL) return false;
     uint64_t elem_bytes = 0;
-    switch (base_type) {
-        case 0x01:
-        case 0x0A:
-        case 0x11:
-            elem_bytes = 1ULL * dim;
-            break;
-        case 0x02:
-        case 0x05:
-        case 0x12:
-            elem_bytes = 2ULL * dim;
-            break;
-        case 0x03:
-        case 0x06:
-        case 0x13:
-            elem_bytes = 4ULL * dim;
-            break;
-        case 0x04:
-        case 0x07:
-        case 0x08:
-        case 0x09:
-        case 0x0D:
-        case 0x14:
-            elem_bytes = 8ULL * dim;
-            break;
-        case 0x0E:
-            elem_bytes = 16ULL * dim;
-            break;
-        default:
-            return false;
+    uint64_t req_end = 0;
+    if (!safe_mul(type_w, dim, &elem_bytes) ||
+        !safe_mul(static_cast<uint64_t>(node_id) + 1ULL, elem_bytes, &req_end) ||
+        req_end > val_bytes) {
+        return false;
     }
-
-    if ((static_cast<uint64_t>(node_id) + 1ULL) * elem_bytes > val_bytes) return false;
     *out_key_bytes = val_ptr + static_cast<uint64_t>(node_id) * elem_bytes;
     *out_key_len = static_cast<size_t>(elem_bytes);
     return true;
@@ -1521,7 +1853,7 @@ impulse_status_t impulse_snapshot_resolve_key(
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
 
     for (const auto& idx : snapshot->indexes) {
-        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF && idx.data_offset > 0) {
             if (dom.key_attr_index != 0xFFFF && idx.attribute_index != 0xFFFF &&
                 idx.attribute_index != dom.key_attr_index && idx.index_type != 4) {
                 continue;
@@ -1682,7 +2014,7 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
 
     for (const auto& idx : snapshot->indexes) {
-        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF) {
+        if (idx.domain_id == domain_id && idx.relation_id == 0xFFFF && idx.data_offset > 0) {
             if (idx.index_type == 4) { // IMP_INDEX_MINIMAL_PERFECT_HASH
                 const void* index_data = raw + idx.data_offset;
                 const uint8_t* iraw = static_cast<const uint8_t*>(index_data);
@@ -1695,8 +2027,9 @@ impulse_status_t impulse_snapshot_resolve_dense_id(
                 std::memcpy(&str_bytes, iraw + 16, 4);
 
                 size_t str_offset = 32;
+                if (str_bytes == 0 || str_bytes > idx.data_bytes - str_offset) return IMPULSE_ERR_INVALID_ARGUMENT;
                 size_t table_offset = str_offset + str_bytes;
-                if (idx.data_bytes < table_offset + key_count * 8) return IMPULSE_ERR_INVALID_ARGUMENT;
+                if (key_count > (idx.data_bytes - table_offset) / 8ULL) return IMPULSE_ERR_INVALID_ARGUMENT;
 
                 const char* str_pool = reinterpret_cast<const char*>(iraw + str_offset);
                 const uint8_t* table = iraw + table_offset;

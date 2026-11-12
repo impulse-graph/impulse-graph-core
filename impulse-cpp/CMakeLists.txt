@@ -288,6 +288,10 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_security_hardening PRIVATE impulse_graph_static)
     add_test(NAME test_security_hardening COMMAND test_security_hardening)
 
+    add_executable(test_imps_malicious_hardening tests/test_imps_malicious_hardening.cpp)
+    target_link_libraries(test_imps_malicious_hardening PRIVATE impulse_graph_static)
+    add_test(NAME test_imps_malicious_hardening COMMAND test_imps_malicious_hardening)
+
     # --- Mutation, Pairwise & Property-Based Verification Targets ---
     add_executable(test_mutation_cpp tests/test_mutation_cpp.cpp)
     target_link_libraries(test_mutation_cpp PRIVATE impulse_graph_static)
