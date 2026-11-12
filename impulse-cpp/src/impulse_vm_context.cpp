@@ -443,14 +443,18 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
 
     // Pre-index snapshot domains and relations if a snapshot is present
     if (snapshot) {
+        uint16_t snap_ver = impulse_snapshot_version(snapshot);
+        bool is_modern = (snap_ver >= 10);
         uint16_t dom_count = impulse_snapshot_domain_count(snapshot);
         ctx->domain_attribute_slots.resize(dom_count);
         ctx->domain_key_attr_indices.resize(dom_count, 0xFFFF);
+        ctx->domain_key_types.resize(dom_count, 0);
         ctx->domain_node_counts.resize(dom_count, 0);
         for (uint16_t d = 0; d < dom_count; ++d) {
             impulse_domain_catalog_entry_t dentry{};
             if (impulse_snapshot_get_domain_entry(snapshot, d, &dentry, nullptr) == IMPULSE_OK) {
                 ctx->domain_node_counts[d] = dentry.node_count;
+                ctx->domain_key_types[d] = dentry.key_type;
             }
             ctx->domain_key_attr_indices[d] = impulse_snapshot_get_domain_key_attr_index(snapshot, d);
             uint16_t dattr_count = impulse_snapshot_get_domain_attribute_count(snapshot, d);
@@ -510,29 +514,155 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
             ctx->slots[r].csc_node_id_width = csc_n_w;
             ctx->slots[r].csc_edge_index_width = csc_e_w;
 
-            // Attributes
+            // Relation Directory metadata, virtual super-relations, raw COO, & 0-byte guards
             impulse_relation_directory_entry_t rel_entry{};
             impulse_snapshot_get_relation_entry(snapshot, r, &rel_entry);
             ctx->slots[r].src_domain_id = rel_entry.src_domain_id;
             ctx->slots[r].tgt_domain_id = rel_entry.tgt_domain_id;
+            ctx->slots[r].encoding_id = rel_entry.encoding_id;
+            ctx->slots[r].section_features = rel_entry.section_features;
+            ctx->slots[r].tgt_node_count = (rel_entry.tgt_domain_id < ctx->domain_node_counts.size())
+                ? ctx->domain_node_counts[rel_entry.tgt_domain_id]
+                : node_count;
+
+            bool is_virtual = is_modern && ((rel_entry.section_features & 0x04ULL) != 0);
+            ctx->slots[r].is_virtual = is_virtual;
+            if (is_virtual) {
+                uint16_t comp_count = 0;
+                std::memcpy(&comp_count, &rel_entry.reserved2[0], sizeof(uint16_t));
+                uint16_t tag_or_first = 0;
+                std::memcpy(&tag_or_first, &rel_entry.reserved2[2], sizeof(uint16_t));
+                if (comp_count > 0) {
+                    ctx->slots[r].virtual_children.reserve(comp_count);
+                    if (comp_count <= 10 &&
+                        !(tag_or_first == 0xFFFF && rel_entry.csr_col_idx_bytes >= static_cast<uint64_t>(comp_count) * 2ULL)) {
+                        for (uint16_t i = 0; i < comp_count; ++i) {
+                            uint16_t cid = 0;
+                            std::memcpy(&cid, &rel_entry.reserved2[2 + 2 * i], sizeof(uint16_t));
+                            if (cid < rel_count && cid != r) {
+                                ctx->slots[r].virtual_children.push_back(cid);
+                            }
+                        }
+                    } else if (targets != nullptr && rel_entry.csr_col_idx_bytes >= static_cast<uint64_t>(comp_count) * 2ULL) {
+                        const auto* ext_ids = static_cast<const uint16_t*>(targets);
+                        for (uint16_t i = 0; i < comp_count; ++i) {
+                            uint16_t cid = ext_ids[i];
+                            if (cid < rel_count && cid != r) {
+                                ctx->slots[r].virtual_children.push_back(cid);
+                            }
+                        }
+                    }
+                }
+                ctx->slots[r].offsets_ptr = nullptr;
+                ctx->slots[r].targets_ptr = nullptr;
+                ctx->slots[r].csc_offsets_ptr = nullptr;
+                ctx->slots[r].csc_targets_ptr = nullptr;
+            } else {
+                if (rel_entry.csr_row_off_bytes == 0) {
+                    ctx->slots[r].offsets_ptr = nullptr;
+                    if (rel_entry.csr_col_idx_bytes == 0) {
+                        ctx->slots[r].targets_ptr = nullptr;
+                    }
+                }
+                if (rel_entry.csc_row_off_bytes == 0) {
+                    ctx->slots[r].csc_offsets_ptr = nullptr;
+                    if (rel_entry.csc_col_idx_bytes == 0) {
+                        ctx->slots[r].csc_targets_ptr = nullptr;
+                    }
+                }
+
+                uint64_t edge_w_bytes = (edge_index_width == 8 || edge_index_width == 64) ? 8ULL : 4ULL;
+                if (is_modern && rel_entry.encoding_id == 3 &&
+                    ctx->slots[r].offsets_ptr != nullptr &&
+                    rel_entry.csr_row_off_bytes == edge_count * 4ULL) {
+                    uint64_t std_csr_bytes = (node_count + 1ULL) * edge_w_bytes;
+                    if (rel_entry.csr_row_off_bytes != std_csr_bytes) {
+                        ctx->slots[r].is_raw_coo = true;
+                        ctx->slots[r].raw_coo_src_width = 4;
+                    } else if (edge_count > 0) {
+                        uint64_t first_off = ctx->slots[r].get_csr_offset(0);
+                        uint64_t last_off  = ctx->slots[r].get_csr_offset(node_count);
+                        if (first_off != 0 || last_off != edge_count) {
+                            ctx->slots[r].is_raw_coo = true;
+                            ctx->slots[r].raw_coo_src_width = 4;
+                        }
+                    }
+                }
+            }
+
             uint16_t attr_count = rel_entry.attr_count;
             ctx->attribute_slots[r].resize(attr_count);
             for (uint16_t a = 0; a < attr_count; ++a) {
                 const void* data = nullptr;
                 uint64_t data_bytes = 0;
-                const void* offsets = nullptr;
+                const void* offsets_a = nullptr;
                 uint64_t offsets_bytes = 0;
                 uint8_t type_code = 0;
                 uint32_t dimension = 0;
                 impulse_snapshot_get_attribute_buffers(
-                    snapshot, r, a, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+                    snapshot, r, a, &data, &data_bytes, &offsets_a, &offsets_bytes, &type_code, &dimension
                 );
                 ctx->attribute_slots[r][a].data_ptr = data;
                 ctx->attribute_slots[r][a].data_bytes = data_bytes;
-                ctx->attribute_slots[r][a].offsets_ptr = offsets;
+                ctx->attribute_slots[r][a].offsets_ptr = offsets_a;
                 ctx->attribute_slots[r][a].offsets_bytes = offsets_bytes;
                 ctx->attribute_slots[r][a].type_code = type_code;
                 ctx->attribute_slots[r][a].dimension = dimension;
+            }
+
+            // Precompute CSC -> forward edge index mapping for O(deg^-) edge-filtered reverse walks
+            if (!is_virtual && attr_count > 0 && edge_count > 0 && edge_count <= UINT32_MAX &&
+                ctx->slots[r].csc_offsets_ptr != nullptr && ctx->slots[r].csc_targets_ptr != nullptr) {
+                uint64_t csc_n = (ctx->slots[r].csc_node_count > 0)
+                    ? ctx->slots[r].csc_node_count
+                    : ctx->slots[r].tgt_node_count;
+                if (csc_n > 0) {
+                    std::vector<uint64_t> write_heads(static_cast<size_t>(csc_n));
+                    for (uint64_t v = 0; v < csc_n; ++v) {
+                        write_heads[static_cast<size_t>(v)] = ctx->slots[r].get_csc_offset(v);
+                    }
+                    ctx->slots[r].csc_to_csr_edge_idx.assign(static_cast<size_t>(edge_count), UINT32_MAX);
+                    if (ctx->slots[r].is_raw_coo) {
+                        for (uint64_t e = 0; e < edge_count; ++e) {
+                            uint64_t v = ctx->slots[r].get_csr_target(e);
+                            if (v < csc_n) {
+                                uint64_t pos = write_heads[static_cast<size_t>(v)]++;
+                                if (pos < edge_count) {
+                                    ctx->slots[r].csc_to_csr_edge_idx[static_cast<size_t>(pos)] = static_cast<uint32_t>(e);
+                                }
+                            }
+                        }
+                    } else if (ctx->slots[r].offsets_ptr != nullptr && ctx->slots[r].targets_ptr != nullptr) {
+                        for (uint64_t u = 0; u < node_count; ++u) {
+                            uint64_t start = ctx->slots[r].get_csr_offset(u);
+                            uint64_t end   = ctx->slots[r].get_csr_offset(u + 1);
+                            for (uint64_t e = start; e < end && e < edge_count; ++e) {
+                                uint64_t v = ctx->slots[r].get_csr_target(e);
+                                if (v < csc_n) {
+                                    uint64_t pos = write_heads[static_cast<size_t>(v)]++;
+                                    if (pos < edge_count) {
+                                        ctx->slots[r].csc_to_csr_edge_idx[static_cast<size_t>(pos)] = static_cast<uint32_t>(e);
+                                    }
+                                }
+                            }
+                        }
+                    } else if (ctx->slots[r].targets_ptr != nullptr) {
+                        uint64_t sent = ctx->slots[r].csr_sentinel();
+                        uint64_t fwd_e = 0;
+                        for (uint64_t u = 0; u < node_count; ++u) {
+                            uint64_t v = ctx->slots[r].get_csr_target(u);
+                            if (v != sent) {
+                                if (v < csc_n && fwd_e < edge_count) {
+                                    uint64_t pos = write_heads[static_cast<size_t>(v)]++;
+                                    if (pos < edge_count) {
+                                        ctx->slots[r].csc_to_csr_edge_idx[static_cast<size_t>(pos)] = static_cast<uint32_t>(fwd_e);
+                                    }
+                                }
+                                ++fwd_e;
+                            }
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -592,6 +722,8 @@ void impulse_vm_context_reset(impulse_vm_context_t* ctx) {
     ctx->node_buffer.clear();
     ctx->stack_pointer = 0;
     ctx->call_stack.fill(0);
+    ctx->fixpoint_max_hops = 0;
+    ctx->has_fixpoint_max_hops = false;
 }
 
 const uint64_t* impulse_vm_context_get_collected_nodes(const impulse_vm_context_t* ctx, size_t* out_count) {

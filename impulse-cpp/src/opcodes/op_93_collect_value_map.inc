@@ -81,11 +81,10 @@ op_COLLECT_VALUE_MAP: {
         }
 
         if (!str_ptr && vm_state->query_context->snapshot) {
-            const void* kbytes = nullptr;
-            size_t klen = 0;
-            if (impulse_snapshot_resolve_dense_id(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), &kbytes, &klen) == IMPULSE_OK &&
-                kbytes && klen > 0) {
-                vmap.owned_keys.emplace_back(static_cast<const char*>(kbytes), klen);
+            std::string formatted;
+            if (format_snapshot_node_key(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), formatted) &&
+                !formatted.empty()) {
+                vmap.owned_keys.push_back(std::move(formatted));
                 str_ptr = vmap.owned_keys.back().c_str();
             } else if (vmap.keys.size() < vmap.fallback_keys.size()) {
                 char* buf = vmap.fallback_keys[vmap.keys.size()].data();

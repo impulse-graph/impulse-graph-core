@@ -1240,7 +1240,6 @@ private:
         } else if (op == "*") {
             if (is_one(left)) return right;
             if (is_one(right)) return left;
-            if (is_zero(left) || is_zero(right)) return AstNode::make_float(0.0);
         } else if (op == "/") {
             if (is_one(right)) return left;
         } else if (op == "&&") {
@@ -1426,7 +1425,7 @@ public:
                         for (size_t w = 0; w < num_words; ++w) total += std::popcount(lane_words[w]);
                         return static_cast<double>(total);
                     }
-                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, int_attrs, float_attrs);
                     return static_cast<double>(std::popcount(v));
                 }
                 if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
@@ -1439,7 +1438,7 @@ public:
                         }
                         return -1.0;
                     }
-                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, int_attrs, float_attrs);
                     return (v == 0ULL) ? -1.0 : static_cast<double>(std::countr_zero(v));
                 }
                 if (fn == "last_lane" && !node->children.empty()) {
@@ -1452,11 +1451,11 @@ public:
                         }
                         return -1.0;
                     }
-                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, int_attrs, float_attrs);
                     return (v == 0ULL) ? -1.0 : static_cast<double>(63 - std::countl_zero(v));
                 }
                 if (fn == "clz" && !node->children.empty()) {
-                    uint64_t v = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs));
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, int_attrs, float_attrs);
                     return (v == 0ULL) ? 64.0 : static_cast<double>(std::countl_zero(v));
                 }
                 if (fn == "has_any" || fn == "has_all" || fn == "has_none" || fn == "has_lane") {
@@ -1497,21 +1496,90 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    // eval_int
+    // eval_bits / eval_int (Exact 64-bit integer & bitmask evaluator)
     // -----------------------------------------------------------------------
+    static uint64_t eval_bits(const std::shared_ptr<AstNode>& node,
+                              const uint64_t* lane_words,
+                              size_t num_words,
+                              const AttrMap* node_attrs = nullptr,
+                              const FloatAttrMap* float_attrs = nullptr) {
+        if (!node) return 0ULL;
+        switch (node->kind) {
+            case AstKind::LITERAL_INT:
+                return static_cast<uint64_t>(node->int_val);
+            case AstKind::LITERAL_BOOL:
+                return node->bool_val ? 1ULL : 0ULL;
+            case AstKind::LITERAL_FLOAT:
+                return static_cast<uint64_t>(static_cast<int64_t>(node->float_val));
+            case AstKind::IDENTIFIER:
+            case AstKind::MEMBER_ACCESS: {
+                if (node->text == "lane") {
+                    return (lane_words && num_words > 0) ? lane_words[0] : 0ULL;
+                }
+                if (node_attrs) {
+                    auto it = node_attrs->find(node->text);
+                    if (it != node_attrs->end()) return static_cast<uint64_t>(it->second);
+                }
+                if (float_attrs) {
+                    auto it = float_attrs->find(node->text);
+                    if (it != float_attrs->end()) return static_cast<uint64_t>(static_cast<int64_t>(it->second));
+                }
+                return 0ULL;
+            }
+            case AstKind::UNARY_OP: {
+                if (node->text == "!") {
+                    return eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs) ? 0ULL : 1ULL;
+                }
+                if (node->text == "~") {
+                    return ~eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                }
+                if (node->text == "-") {
+                    int64_t sv = static_cast<int64_t>(eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs));
+                    return static_cast<uint64_t>(0ULL - static_cast<uint64_t>(sv));
+                }
+                return eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+            }
+            case AstKind::TERNARY_OP: {
+                bool c = eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                return eval_bits(c ? node->children[1] : node->children[2], lane_words, num_words, node_attrs, float_attrs);
+            }
+            case AstKind::BINARY_OP: {
+                const std::string& op = node->text;
+                if (op == "=") {
+                    return eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
+                }
+                if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
+                    uint64_t ua = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    uint64_t ub = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
+                    int64_t ia = static_cast<int64_t>(ua);
+                    int64_t ib = static_cast<int64_t>(ub);
+                    if (op == "&") return ua & ub;
+                    if (op == "|") return ua | ub;
+                    if (op == "^") return ua ^ ub;
+                    if (op == "<<") return (ib < 0 || ib >= 64) ? 0ULL : (ua << ib);
+                    if (op == ">>") return (ib < 0 || ib >= 64) ? 0ULL : static_cast<uint64_t>(ia >> ib);
+                    if (op == ">>>") return (ib < 0 || ib >= 64) ? 0ULL : (ua >> ib);
+                }
+                return static_cast<uint64_t>(static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs)));
+            }
+            default:
+                return static_cast<uint64_t>(static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs)));
+        }
+    }
+
     static int64_t eval_int(const std::shared_ptr<AstNode>& node,
                             const uint64_t* lane_words,
                             size_t num_words,
                             const AttrMap* node_attrs = nullptr,
                             const FloatAttrMap* float_attrs = nullptr) {
-        return static_cast<int64_t>(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
+        return static_cast<int64_t>(eval_bits(node, lane_words, num_words, node_attrs, float_attrs));
     }
 
     static int64_t eval_int(const std::shared_ptr<AstNode>& node,
                             uint64_t lane_mask,
                             const AttrMap* node_attrs = nullptr,
                             const FloatAttrMap* float_attrs = nullptr) {
-        return static_cast<int64_t>(eval_double(node, &lane_mask, 1, float_attrs, node_attrs));
+        return static_cast<int64_t>(eval_bits(node, &lane_mask, 1, node_attrs, float_attrs));
     }
 
     // -----------------------------------------------------------------------
@@ -1577,7 +1645,7 @@ public:
                         node->children[0]->text == "lane" ||
                         (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane")) {
                         if (node->children.size() >= 2) {
-                            uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                            uint64_t req = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                             return ((lane_words && num_words > 0 ? lane_words[0] : 0ULL) & req) != 0ULL;
                         }
                         for (size_t w = 0; w < num_words; ++w) {
@@ -1585,20 +1653,20 @@ public:
                         }
                         return false;
                     }
-                    uint64_t m = static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
-                    uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                    uint64_t m = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    uint64_t req = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     return (m & req) != 0ULL;
                 }
                 if (fn == "has_all" && node->children.size() >= 2) {
                     uint64_t m = (node->children[0]->text == "lane") ? (lane_words && num_words > 0 ? lane_words[0] : 0ULL)
-                                                                     : static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
-                    uint64_t req = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                                                                     : eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    uint64_t req = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     return (m & req) == req;
                 }
                 if (fn == "has_none" && node->children.size() >= 2) {
                     uint64_t m = (node->children[0]->text == "lane") ? (lane_words && num_words > 0 ? lane_words[0] : 0ULL)
-                                                                     : static_cast<uint64_t>(eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs));
-                    uint64_t forbid = static_cast<uint64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                                                                     : eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    uint64_t forbid = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     return (m & forbid) == 0ULL;
                 }
                 if (fn == "has_lane" && node->children.size() >= 2) {
@@ -1642,6 +1710,544 @@ public:
                                    const FloatAttrMap* float_attrs = nullptr) {
         if (!lane_words || num_words == 0) return;
         lane_words[0] = static_cast<uint64_t>(eval_int(node, lane_words, num_words, node_attrs, float_attrs));
+    }
+};
+
+/**
+ * @brief Typed value with Kleene 3-valued NULL semantics (Spec v0.10.0).
+ */
+struct CelValue {
+    enum class Kind : uint8_t { Null = 0, Bool, Int64, Uint64, Double, String };
+
+    Kind kind = Kind::Null;
+    bool bool_val = false;
+    bool uses_owned_str = false;
+    int64_t int_val = 0;
+    uint64_t uint_val = 0;
+    double dbl_val = 0.0;
+    std::string_view str_view{};
+    std::string str_owned{};
+
+    static CelValue make_null() { return CelValue{}; }
+    static CelValue make_bool(bool b) {
+        CelValue v;
+        v.kind = Kind::Bool;
+        v.bool_val = b;
+        return v;
+    }
+    static CelValue make_int(int64_t x) {
+        CelValue v;
+        v.kind = Kind::Int64;
+        v.int_val = x;
+        return v;
+    }
+    static CelValue make_uint(uint64_t x) {
+        CelValue v;
+        v.kind = Kind::Uint64;
+        v.uint_val = x;
+        return v;
+    }
+    static CelValue make_double(double x) {
+        if (std::isnan(x)) return make_null();
+        CelValue v;
+        v.kind = Kind::Double;
+        v.dbl_val = x;
+        return v;
+    }
+    static CelValue make_string_view(std::string_view sv) {
+        CelValue v;
+        v.kind = Kind::String;
+        v.uses_owned_str = false;
+        v.str_view = sv;
+        return v;
+    }
+    static CelValue make_string(std::string s) {
+        CelValue v;
+        v.kind = Kind::String;
+        v.uses_owned_str = true;
+        v.str_owned = std::move(s);
+        return v;
+    }
+
+    bool is_null() const { return kind == Kind::Null; }
+
+    std::string_view as_string_view() const {
+        return uses_owned_str ? std::string_view(str_owned) : str_view;
+    }
+
+    bool to_double(double& out) const {
+        switch (kind) {
+            case Kind::Bool:   out = bool_val ? 1.0 : 0.0; return true;
+            case Kind::Int64:  out = static_cast<double>(int_val); return true;
+            case Kind::Uint64: out = static_cast<double>(uint_val); return true;
+            case Kind::Double:
+                if (std::isnan(dbl_val)) return false;
+                out = dbl_val;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    bool to_int64(int64_t& out) const {
+        switch (kind) {
+            case Kind::Bool:   out = bool_val ? 1 : 0; return true;
+            case Kind::Int64:  out = int_val; return true;
+            case Kind::Uint64: out = static_cast<int64_t>(uint_val); return true;
+            case Kind::Double:
+                if (std::isnan(dbl_val)) return false;
+                out = static_cast<int64_t>(dbl_val);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Returns 1 = true, 0 = false, -1 = Kleene Unknown (NULL)
+    int to_tribool() const {
+        switch (kind) {
+            case Kind::Null:   return -1;
+            case Kind::Bool:   return bool_val ? 1 : 0;
+            case Kind::Int64:  return (int_val != 0) ? 1 : 0;
+            case Kind::Uint64: return (uint_val != 0) ? 1 : 0;
+            case Kind::Double: return std::isnan(dbl_val) ? -1 : ((dbl_val != 0.0) ? 1 : 0);
+            case Kind::String: return as_string_view().empty() ? 0 : 1;
+        }
+        return -1;
+    }
+};
+
+/**
+ * @brief Spec v0.10.0 Kleene 3-valued CEL evaluator for node, edge, and multi-lane predicates.
+ */
+class CelKleeneEvaluator {
+public:
+    static CelValue compare_values(const std::string& op, const CelValue& a, const CelValue& b) {
+        if (a.is_null() || b.is_null()) return CelValue::make_null();
+
+        if (a.kind == CelValue::Kind::String || b.kind == CelValue::Kind::String) {
+            if (a.kind != CelValue::Kind::String || b.kind != CelValue::Kind::String) {
+                if (op == "==") return CelValue::make_bool(false);
+                if (op == "!=") return CelValue::make_bool(true);
+                return CelValue::make_null();
+            }
+            std::string_view sa = a.as_string_view();
+            std::string_view sb = b.as_string_view();
+            if (op == "==") return CelValue::make_bool(sa == sb);
+            if (op == "!=") return CelValue::make_bool(sa != sb);
+            if (op == "<")  return CelValue::make_bool(sa < sb);
+            if (op == "<=") return CelValue::make_bool(sa <= sb);
+            if (op == ">")  return CelValue::make_bool(sa > sb);
+            if (op == ">=") return CelValue::make_bool(sa >= sb);
+            return CelValue::make_null();
+        }
+
+        if (a.kind == CelValue::Kind::Bool && b.kind == CelValue::Kind::Bool) {
+            if (op == "==") return CelValue::make_bool(a.bool_val == b.bool_val);
+            if (op == "!=") return CelValue::make_bool(a.bool_val != b.bool_val);
+            if (op == "<")  return CelValue::make_bool(!a.bool_val && b.bool_val);
+            if (op == "<=") return CelValue::make_bool(!a.bool_val || b.bool_val);
+            if (op == ">")  return CelValue::make_bool(a.bool_val && !b.bool_val);
+            if (op == ">=") return CelValue::make_bool(a.bool_val || !b.bool_val);
+            return CelValue::make_null();
+        }
+
+        // Exact integer / bool comparisons (avoids double precision loss on int64 PKs & timestamps)
+        if (a.kind != CelValue::Kind::Double && b.kind != CelValue::Kind::Double) {
+            auto as_signed_or_unsigned = [](const CelValue& v, bool& is_neg, uint64_t& mag) {
+                if (v.kind == CelValue::Kind::Bool) {
+                    is_neg = false;
+                    mag = v.bool_val ? 1ULL : 0ULL;
+                } else if (v.kind == CelValue::Kind::Uint64) {
+                    is_neg = false;
+                    mag = v.uint_val;
+                } else {
+                    if (v.int_val < 0) {
+                        is_neg = true;
+                        mag = static_cast<uint64_t>(-(v.int_val + 1)) + 1ULL;
+                    } else {
+                        is_neg = false;
+                        mag = static_cast<uint64_t>(v.int_val);
+                    }
+                }
+            };
+            bool neg_a = false, neg_b = false;
+            uint64_t mag_a = 0, mag_b = 0;
+            as_signed_or_unsigned(a, neg_a, mag_a);
+            as_signed_or_unsigned(b, neg_b, mag_b);
+            int cmp = 0;
+            if (neg_a != neg_b) {
+                cmp = neg_a ? -1 : 1;
+            } else if (neg_a) {
+                cmp = (mag_a > mag_b) ? -1 : ((mag_a < mag_b) ? 1 : 0);
+            } else {
+                cmp = (mag_a < mag_b) ? -1 : ((mag_a > mag_b) ? 1 : 0);
+            }
+            if (op == "==") return CelValue::make_bool(cmp == 0);
+            if (op == "!=") return CelValue::make_bool(cmp != 0);
+            if (op == "<")  return CelValue::make_bool(cmp < 0);
+            if (op == "<=") return CelValue::make_bool(cmp <= 0);
+            if (op == ">")  return CelValue::make_bool(cmp > 0);
+            if (op == ">=") return CelValue::make_bool(cmp >= 0);
+            return CelValue::make_null();
+        }
+
+        double da = 0.0, db = 0.0;
+        if (!a.to_double(da) || !b.to_double(db)) return CelValue::make_null();
+        if (op == "==") return CelValue::make_bool(da == db);
+        if (op == "!=") return CelValue::make_bool(da != db);
+        if (op == "<")  return CelValue::make_bool(da < db);
+        if (op == "<=") return CelValue::make_bool(da <= db);
+        if (op == ">")  return CelValue::make_bool(da > db);
+        if (op == ">=") return CelValue::make_bool(da >= db);
+        return CelValue::make_null();
+    }
+
+    template <typename ResolveAttrFn>
+    static CelValue eval(
+        const std::shared_ptr<AstNode>& node,
+        ResolveAttrFn&& resolve_attr,
+        const uint64_t* lane_words = nullptr,
+        size_t num_lane_words = 0
+    ) {
+        if (!node) return CelValue::make_null();
+        switch (node->kind) {
+            case AstKind::LITERAL_BOOL:
+                return CelValue::make_bool(node->bool_val);
+            case AstKind::LITERAL_INT:
+                return CelValue::make_int(node->int_val);
+            case AstKind::LITERAL_FLOAT:
+                return CelValue::make_double(node->float_val);
+            case AstKind::LITERAL_STRING:
+                return CelValue::make_string_view(node->str_val);
+            case AstKind::IDENTIFIER:
+            case AstKind::MEMBER_ACCESS: {
+                if (node->text == "null" || node->text == "NULL") {
+                    return CelValue::make_null();
+                }
+                if (node->text == "lane") {
+                    uint64_t lw = (lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL;
+                    return CelValue::make_uint(lw);
+                }
+                if (node->kind == AstKind::MEMBER_ACCESS && !node->children.empty() &&
+                    node->children[0] && node->children[0]->kind == AstKind::IDENTIFIER &&
+                    (node->children[0]->text == "edge" || node->children[0]->text == "node" || node->children[0]->text == "self")) {
+                    return resolve_attr(node->text);
+                }
+                return resolve_attr(node->text);
+            }
+            case AstKind::UNARY_OP: {
+                CelValue sub = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                if (node->text == "!") {
+                    int tb = sub.to_tribool();
+                    if (tb < 0) return CelValue::make_null();
+                    return CelValue::make_bool(tb == 0);
+                }
+                if (sub.is_null()) return CelValue::make_null();
+                if (node->text == "+") return sub;
+                if (node->text == "-") {
+                    if (sub.kind == CelValue::Kind::Int64) return CelValue::make_int(-sub.int_val);
+                    if (sub.kind == CelValue::Kind::Uint64) return CelValue::make_double(-static_cast<double>(sub.uint_val));
+                    double dv = 0.0;
+                    if (sub.to_double(dv)) return CelValue::make_double(-dv);
+                    return CelValue::make_null();
+                }
+                if (node->text == "~") {
+                    int64_t iv = 0;
+                    if (sub.to_int64(iv)) return CelValue::make_int(~iv);
+                    return CelValue::make_null();
+                }
+                return CelValue::make_null();
+            }
+            case AstKind::TERNARY_OP: {
+                CelValue c = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                int tb = c.to_tribool();
+                if (tb < 0) return CelValue::make_null();
+                return eval(tb ? node->children[1] : node->children[2], resolve_attr, lane_words, num_lane_words);
+            }
+            case AstKind::BINARY_OP: {
+                const std::string& op = node->text;
+                if (op == "=") {
+                    return eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                }
+                if (op == "&&") {
+                    int tl = eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_tribool();
+                    if (tl == 0) return CelValue::make_bool(false);
+                    int tr = eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_tribool();
+                    if (tr == 0) return CelValue::make_bool(false);
+                    if (tl == 1 && tr == 1) return CelValue::make_bool(true);
+                    return CelValue::make_null();
+                }
+                if (op == "||") {
+                    int tl = eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_tribool();
+                    if (tl == 1) return CelValue::make_bool(true);
+                    int tr = eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_tribool();
+                    if (tr == 1) return CelValue::make_bool(true);
+                    if (tl == 0 && tr == 0) return CelValue::make_bool(false);
+                    return CelValue::make_null();
+                }
+                if (op == "in") {
+                    const auto& rhs = node->children[1];
+                    if (!rhs || rhs->kind != AstKind::LIST_LITERAL) return CelValue::make_bool(false);
+                    if (rhs->children.empty()) return CelValue::make_bool(false);
+                    CelValue lhs = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    if (lhs.is_null()) return CelValue::make_null();
+                    bool saw_null = false;
+                    for (const auto& elem_node : rhs->children) {
+                        CelValue elem = eval(elem_node, resolve_attr, lane_words, num_lane_words);
+                        CelValue eq = compare_values("==", lhs, elem);
+                        if (eq.is_null()) saw_null = true;
+                        else if (eq.bool_val) return CelValue::make_bool(true);
+                    }
+                    return saw_null ? CelValue::make_null() : CelValue::make_bool(false);
+                }
+                if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+                    CelValue lhs = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    if (lhs.is_null()) return CelValue::make_null();
+                    CelValue rhs = eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                    if (rhs.is_null()) return CelValue::make_null();
+                    return compare_values(op, lhs, rhs);
+                }
+
+                CelValue lhs = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                if (lhs.is_null()) return CelValue::make_null();
+                CelValue rhs = eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                if (rhs.is_null()) return CelValue::make_null();
+
+                if (op == "+" && lhs.kind == CelValue::Kind::String && rhs.kind == CelValue::Kind::String) {
+                    std::string s(lhs.as_string_view());
+                    s.append(rhs.as_string_view());
+                    return CelValue::make_string(std::move(s));
+                }
+
+                bool both_int = (lhs.kind == CelValue::Kind::Int64 || lhs.kind == CelValue::Kind::Bool) &&
+                                (rhs.kind == CelValue::Kind::Int64 || rhs.kind == CelValue::Kind::Bool);
+                if (both_int && (op == "+" || op == "-" || op == "*" || op == "%")) {
+                    int64_t ia = 0, ib = 0;
+                    lhs.to_int64(ia);
+                    rhs.to_int64(ib);
+                    if (op == "+") return CelValue::make_int(ia + ib);
+                    if (op == "-") return CelValue::make_int(ia - ib);
+                    if (op == "*") return CelValue::make_int(ia * ib);
+                    if (op == "%") return (ib == 0) ? CelValue::make_null() : CelValue::make_int(ia % ib);
+                }
+
+                if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+                    double da = 0.0, db = 0.0;
+                    if (!lhs.to_double(da) || !rhs.to_double(db)) return CelValue::make_null();
+                    if (op == "+") return CelValue::make_double(da + db);
+                    if (op == "-") return CelValue::make_double(da - db);
+                    if (op == "*") return CelValue::make_double(da * db);
+                    if (op == "/") return (db == 0.0) ? CelValue::make_null() : CelValue::make_double(da / db);
+                    if (op == "%") return (db == 0.0) ? CelValue::make_null() : CelValue::make_double(std::fmod(da, db));
+                }
+
+                int64_t ia = 0, ib = 0;
+                if (lhs.to_int64(ia) && rhs.to_int64(ib)) {
+                    if (op == "&") return CelValue::make_int(ia & ib);
+                    if (op == "|") return CelValue::make_int(ia | ib);
+                    if (op == "^") return CelValue::make_int(ia ^ ib);
+                    if (op == "<<") return CelValue::make_int((ib < 0 || ib >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(ia) << ib));
+                    if (op == ">>") return CelValue::make_int((ib < 0 || ib >= 64) ? 0 : (ia >> ib));
+                    if (op == ">>>") return CelValue::make_int((ib < 0 || ib >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(ia) >> ib));
+                }
+                return CelValue::make_null();
+            }
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if ((fn == "is_null" || fn == "isNull") && node->children.size() == 1) {
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    return CelValue::make_bool(v.is_null());
+                }
+                if ((fn == "is_not_null" || fn == "isNotNull") && node->children.size() == 1) {
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    return CelValue::make_bool(!v.is_null());
+                }
+                if ((fn == "starts_with" || fn == "startsWith") && node->children.size() == 2) {
+                    CelValue s = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    if (s.is_null()) return CelValue::make_null();
+                    CelValue p = eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                    if (p.is_null()) return CelValue::make_null();
+                    if (s.kind != CelValue::Kind::String || p.kind != CelValue::Kind::String) {
+                        return CelValue::make_null();
+                    }
+                    std::string_view sv = s.as_string_view();
+                    std::string_view pv = p.as_string_view();
+                    return CelValue::make_bool(sv.size() >= pv.size() && sv.substr(0, pv.size()) == pv);
+                }
+                if ((fn == "ends_with" || fn == "endsWith") && node->children.size() == 2) {
+                    CelValue s = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    if (s.is_null()) return CelValue::make_null();
+                    CelValue p = eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                    if (p.is_null()) return CelValue::make_null();
+                    if (s.kind != CelValue::Kind::String || p.kind != CelValue::Kind::String) {
+                        return CelValue::make_null();
+                    }
+                    std::string_view sv = s.as_string_view();
+                    std::string_view pv = p.as_string_view();
+                    return CelValue::make_bool(sv.size() >= pv.size() && sv.substr(sv.size() - pv.size()) == pv);
+                }
+                if (fn == "contains" && node->children.size() == 2) {
+                    CelValue s = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    if (s.is_null()) return CelValue::make_null();
+                    CelValue p = eval(node->children[1], resolve_attr, lane_words, num_lane_words);
+                    if (p.is_null()) return CelValue::make_null();
+                    if (s.kind != CelValue::Kind::String || p.kind != CelValue::Kind::String) {
+                        return CelValue::make_null();
+                    }
+                    return CelValue::make_bool(s.as_string_view().find(p.as_string_view()) != std::string_view::npos);
+                }
+
+                // Multi-lane intrinsics
+                if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
+                    if (node->children[0]->text == "lane") {
+                        int64_t total = 0;
+                        for (size_t w = 0; w < num_lane_words; ++w) total += std::popcount(lane_words[w]);
+                        return CelValue::make_int(total);
+                    }
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    int64_t iv = 0;
+                    if (!v.to_int64(iv)) return CelValue::make_null();
+                    return CelValue::make_int(std::popcount(static_cast<uint64_t>(iv)));
+                }
+                if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
+                    if (node->children[0]->text == "lane") {
+                        for (size_t w = 0; w < num_lane_words; ++w) {
+                            if (lane_words[w] != 0ULL) {
+                                return CelValue::make_int(static_cast<int64_t>(w * 64 + std::countr_zero(lane_words[w])));
+                            }
+                        }
+                        return CelValue::make_int(-1);
+                    }
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    int64_t iv = 0;
+                    if (!v.to_int64(iv)) return CelValue::make_null();
+                    uint64_t uv = static_cast<uint64_t>(iv);
+                    return CelValue::make_int(uv == 0ULL ? -1 : static_cast<int64_t>(std::countr_zero(uv)));
+                }
+                if (fn == "last_lane" && !node->children.empty()) {
+                    if (node->children[0]->text == "lane") {
+                        for (size_t w = num_lane_words; w > 0; --w) {
+                            if (lane_words[w - 1] != 0ULL) {
+                                return CelValue::make_int(static_cast<int64_t>((w - 1) * 64 + 63 - std::countl_zero(lane_words[w - 1])));
+                            }
+                        }
+                        return CelValue::make_int(-1);
+                    }
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    int64_t iv = 0;
+                    if (!v.to_int64(iv)) return CelValue::make_null();
+                    uint64_t uv = static_cast<uint64_t>(iv);
+                    return CelValue::make_int(uv == 0ULL ? -1 : static_cast<int64_t>(63 - std::countl_zero(uv)));
+                }
+                if (fn == "clz" && !node->children.empty()) {
+                    CelValue v = eval(node->children[0], resolve_attr, lane_words, num_lane_words);
+                    int64_t iv = 0;
+                    if (!v.to_int64(iv)) return CelValue::make_null();
+                    uint64_t uv = static_cast<uint64_t>(iv);
+                    return CelValue::make_int(uv == 0ULL ? 64 : static_cast<int64_t>(std::countl_zero(uv)));
+                }
+                if (fn == "has_any" && !node->children.empty()) {
+                    if (node->children.size() == 1 && node->children[0]->text == "lane") {
+                        for (size_t w = 0; w < num_lane_words; ++w) {
+                            if (lane_words[w] != 0ULL) return CelValue::make_bool(true);
+                        }
+                        return CelValue::make_bool(false);
+                    }
+                    int64_t m = 0, req = 0;
+                    if (node->children[0]->text == "lane") {
+                        m = static_cast<int64_t>((lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL);
+                    } else if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_int64(m)) {
+                        return CelValue::make_null();
+                    }
+                    if (node->children.size() >= 2) {
+                        if (!eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_int64(req)) {
+                            return CelValue::make_null();
+                        }
+                        return CelValue::make_bool((static_cast<uint64_t>(m) & static_cast<uint64_t>(req)) != 0ULL);
+                    }
+                    return CelValue::make_bool(m != 0);
+                }
+                if (fn == "has_all" && node->children.size() >= 2) {
+                    int64_t m = 0, req = 0;
+                    if (node->children[0]->text == "lane") {
+                        m = static_cast<int64_t>((lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL);
+                    } else if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_int64(m)) {
+                        return CelValue::make_null();
+                    }
+                    if (!eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_int64(req)) {
+                        return CelValue::make_null();
+                    }
+                    return CelValue::make_bool((static_cast<uint64_t>(m) & static_cast<uint64_t>(req)) == static_cast<uint64_t>(req));
+                }
+                if (fn == "has_none" && node->children.size() >= 2) {
+                    int64_t m = 0, forbid = 0;
+                    if (node->children[0]->text == "lane") {
+                        m = static_cast<int64_t>((lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL);
+                    } else if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_int64(m)) {
+                        return CelValue::make_null();
+                    }
+                    if (!eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_int64(forbid)) {
+                        return CelValue::make_null();
+                    }
+                    return CelValue::make_bool((static_cast<uint64_t>(m) & static_cast<uint64_t>(forbid)) == 0ULL);
+                }
+                if (fn == "has_lane" && node->children.size() >= 2) {
+                    int64_t idx = 0;
+                    if (!eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_int64(idx)) {
+                        return CelValue::make_null();
+                    }
+                    if (idx < 0) return CelValue::make_bool(false);
+                    size_t w = static_cast<size_t>(idx) / 64;
+                    size_t b = static_cast<size_t>(idx) % 64;
+                    if (lane_words && w < num_lane_words) {
+                        return CelValue::make_bool(((lane_words[w] >> b) & 1ULL) != 0ULL);
+                    }
+                    return CelValue::make_bool(false);
+                }
+
+                int func_id = CelCompiler::resolve_math_func(fn);
+                if (func_id > 0) {
+                    if (node->children.size() == 1) {
+                        double a = 0.0;
+                        if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_double(a)) {
+                            return CelValue::make_null();
+                        }
+                        return CelValue::make_double(impulse_math_unary_f64(static_cast<uint8_t>(func_id), a));
+                    }
+                    if (node->children.size() == 2) {
+                        double a = 0.0, b = 0.0;
+                        if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_double(a) ||
+                            !eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_double(b)) {
+                            return CelValue::make_null();
+                        }
+                        return CelValue::make_double(impulse_math_binary_f64(static_cast<uint8_t>(func_id), a, b));
+                    }
+                    if (node->children.size() == 3) {
+                        double a = 0.0, b = 0.0, c = 0.0;
+                        if (!eval(node->children[0], resolve_attr, lane_words, num_lane_words).to_double(a) ||
+                            !eval(node->children[1], resolve_attr, lane_words, num_lane_words).to_double(b) ||
+                            !eval(node->children[2], resolve_attr, lane_words, num_lane_words).to_double(c)) {
+                            return CelValue::make_null();
+                        }
+                        return CelValue::make_double(impulse_math_ternary_f64(static_cast<uint8_t>(func_id), a, b, c));
+                    }
+                }
+                return CelValue::make_null();
+            }
+            default:
+                return CelValue::make_null();
+        }
+    }
+
+    template <typename ResolveAttrFn>
+    static bool eval_filter_bool(
+        const std::shared_ptr<AstNode>& node,
+        ResolveAttrFn&& resolve_attr,
+        const uint64_t* lane_words = nullptr,
+        size_t num_lane_words = 0
+    ) {
+        return eval(node, std::forward<ResolveAttrFn>(resolve_attr), lane_words, num_lane_words).to_tribool() == 1;
     }
 };
 

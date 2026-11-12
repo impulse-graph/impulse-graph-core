@@ -664,6 +664,24 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
             continue;
         }
 
+        bool is_raw_coo = false;
+        if (is_modern && rel.encoding_id == 3 && !flat_forward && rel.csr_row_off_bytes == rel.edge_count * 4ULL) {
+            uint64_t std_csr_bytes = (rel.node_count + 1ULL) * edge_width_bytes;
+            if (rel.csr_row_off_bytes != std_csr_bytes) {
+                is_raw_coo = true;
+            } else if (rel.csr_row_off_offset > 0 && rel.edge_count > 0) {
+                uint64_t first_off = is_edge64
+                    ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[0]
+                    : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[0];
+                uint64_t last_off = is_edge64
+                    ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[rel.node_count]
+                    : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[rel.node_count];
+                if (first_off != 0 || last_off != rel.edge_count) {
+                    is_raw_coo = true;
+                }
+            }
+        }
+
         if (flat_forward) {
             if (rel.csr_col_idx_offset > 0 || rel.csr_col_idx_bytes > 0 || rel.node_count > 0) {
                 uint64_t req_col_bytes = 0;
@@ -684,6 +702,37 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                             if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
                             return nullptr;
                         }
+                    }
+                }
+            }
+        } else if (is_raw_coo) {
+            uint64_t req_col_bytes = 0;
+            if (!safe_mul(rel.edge_count, tgt_node_width_bytes, &req_col_bytes) || rel.csr_col_idx_bytes < req_col_bytes) {
+                g_last_error = "Raw COO col indices buffer smaller than required minimum byte size";
+                if (out_status) *out_status = IMPULSE_ERR_BUFFER_OVERFLOW;
+                return nullptr;
+            }
+            if (rel.csr_row_off_offset > 0 && src_node_count > 0) {
+                const auto* coo_srcs = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
+                for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                    if (coo_srcs[e] >= src_node_count) {
+                        g_last_error = "Raw COO source node ID exceeds source domain node_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
+                    }
+                }
+            }
+            if (rel.csr_col_idx_offset > 0 && tgt_node_count > 0) {
+                for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                    uint64_t target_val = is_node16
+                        ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[e]
+                        : (is_node64
+                            ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[e]
+                            : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[e]);
+                    if (target_val >= tgt_node_count) {
+                        g_last_error = "Raw COO target node ID exceeds target domain node_count";
+                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                        return nullptr;
                     }
                 }
             }
@@ -1424,14 +1473,17 @@ static bool resolve_domain_key_slice_internal(
     switch (base_type) {
         case 0x01:
         case 0x0A:
+        case 0x11:
             elem_bytes = 1ULL * dim;
             break;
         case 0x02:
         case 0x05:
+        case 0x12:
             elem_bytes = 2ULL * dim;
             break;
         case 0x03:
         case 0x06:
+        case 0x13:
             elem_bytes = 4ULL * dim;
             break;
         case 0x04:
@@ -1439,6 +1491,7 @@ static bool resolve_domain_key_slice_internal(
         case 0x08:
         case 0x09:
         case 0x0D:
+        case 0x14:
             elem_bytes = 8ULL * dim;
             break;
         case 0x0E:
@@ -1492,19 +1545,71 @@ impulse_status_t impulse_snapshot_resolve_key(
                         base_type = snapshot->domain_attributes[domain_id][dom.key_attr_index].type_code & 0x7F;
                     }
                     auto cmp_keys = [&](const void* a, size_t alen, const void* b, size_t blen) -> int {
-                        if (base_type == 0x02 && alen == 1 && blen == 1) {
+                        if ((base_type == 0x01 || base_type == 0x02) && alen == 1 && blen == 1) {
+                            if (dom.key_type == 5) {
+                                uint8_t va = *static_cast<const uint8_t*>(a);
+                                uint8_t vb = *static_cast<const uint8_t*>(b);
+                                return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                            }
                             int8_t va = *static_cast<const int8_t*>(a);
                             int8_t vb = *static_cast<const int8_t*>(b);
                             return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
                         }
+                        if (base_type == 0x11 && alen == 1 && blen == 1) {
+                            uint8_t va = *static_cast<const uint8_t*>(a);
+                            uint8_t vb = *static_cast<const uint8_t*>(b);
+                            return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                        }
+                        if (base_type == 0x02 && alen == 2 && blen == 2) {
+                            if (dom.key_type == 6) {
+                                uint16_t va = 0, vb = 0;
+                                std::memcpy(&va, a, 2);
+                                std::memcpy(&vb, b, 2);
+                                return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                            }
+                            int16_t va = 0, vb = 0;
+                            std::memcpy(&va, a, 2);
+                            std::memcpy(&vb, b, 2);
+                            return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                        }
+                        if (base_type == 0x12 && alen == 2 && blen == 2) {
+                            uint16_t va = 0, vb = 0;
+                            std::memcpy(&va, a, 2);
+                            std::memcpy(&vb, b, 2);
+                            return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                        }
                         if (base_type == 0x03 && alen == 4 && blen == 4) {
+                            if (dom.key_type == 7) {
+                                uint32_t va = 0, vb = 0;
+                                std::memcpy(&va, a, 4);
+                                std::memcpy(&vb, b, 4);
+                                return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                            }
                             int32_t va = 0, vb = 0;
                             std::memcpy(&va, a, 4);
                             std::memcpy(&vb, b, 4);
                             return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
                         }
+                        if (base_type == 0x13 && alen == 4 && blen == 4) {
+                            uint32_t va = 0, vb = 0;
+                            std::memcpy(&va, a, 4);
+                            std::memcpy(&vb, b, 4);
+                            return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                        }
                         if (base_type == 0x04 && alen == 8 && blen == 8) {
+                            if (dom.key_type == 8) {
+                                uint64_t va = 0, vb = 0;
+                                std::memcpy(&va, a, 8);
+                                std::memcpy(&vb, b, 8);
+                                return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                            }
                             int64_t va = 0, vb = 0;
+                            std::memcpy(&va, a, 8);
+                            std::memcpy(&vb, b, 8);
+                            return (va < vb) ? -1 : ((va > vb) ? 1 : 0);
+                        }
+                        if (base_type == 0x14 && alen == 8 && blen == 8) {
+                            uint64_t va = 0, vb = 0;
                             std::memcpy(&va, a, 8);
                             std::memcpy(&vb, b, 8);
                             return (va < vb) ? -1 : ((va > vb) ? 1 : 0);

@@ -17,6 +17,8 @@ Traversal::Traversal(const impulse_snapshot_t* snapshot, uint16_t domain_id, std
       all_nodes_(all_nodes) {}
 
 Traversal& Traversal::out(const std::string& relation) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::OUT;
     s.str1 = relation;
@@ -26,6 +28,10 @@ Traversal& Traversal::out(const std::string& relation) {
 
 Traversal& Traversal::out(const std::vector<std::string>& relations) {
     if (relations.size() == 1) return out(relations[0]);
+    if (!relations.empty()) {
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relations[0]);
+        current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
+    }
     Step s{};
     s.kind = Step::Kind::OUT_MULTI;
     s.rel_names = relations;
@@ -34,6 +40,8 @@ Traversal& Traversal::out(const std::vector<std::string>& relations) {
 }
 
 Traversal& Traversal::in(const std::string& relation) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
     Step s{};
     s.kind = Step::Kind::IN;
     s.str1 = relation;
@@ -43,6 +51,10 @@ Traversal& Traversal::in(const std::string& relation) {
 
 Traversal& Traversal::in(const std::vector<std::string>& relations) {
     if (relations.size() == 1) return in(relations[0]);
+    if (!relations.empty()) {
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relations[0]);
+        current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
+    }
     Step s{};
     s.kind = Step::Kind::IN_MULTI;
     s.rel_names = relations;
@@ -68,6 +80,8 @@ Traversal& Traversal::both(const std::vector<std::string>& relations) {
 }
 
 Traversal& Traversal::outFiltered(const std::string& relation, uint32_t filter_id) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::OUT_FILTERED;
     s.str1 = relation;
@@ -77,6 +91,8 @@ Traversal& Traversal::outFiltered(const std::string& relation, uint32_t filter_i
 }
 
 Traversal& Traversal::outPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::OUT_PREDICATE;
     s.str1 = relation;
@@ -86,6 +102,8 @@ Traversal& Traversal::outPredicate(const std::string& relation, const std::strin
 }
 
 Traversal& Traversal::inPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
     Step s{};
     s.kind = Step::Kind::IN_PREDICATE;
     s.str1 = relation;
@@ -95,6 +113,10 @@ Traversal& Traversal::inPredicate(const std::string& relation, const std::string
 }
 
 Traversal& Traversal::out2Hop(const std::string& rel1, const std::string& rel2) {
+    uint16_t r1 = resolve_relation_id_by_name(snapshot_, current_domain_id_, rel1);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, r1, false);
+    uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, rel2);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, r2, false);
     Step s{};
     s.kind = Step::Kind::OUT_2HOP;
     s.str1 = rel1;
@@ -112,10 +134,11 @@ Traversal& Traversal::repeat(int iterations, const std::string& relation) {
     return *this;
 }
 
-Traversal& Traversal::repeatUntilStable(const std::string& relation) {
+Traversal& Traversal::repeatUntilStable(const std::string& relation, uint32_t max_hops) {
     Step s{};
     s.kind = Step::Kind::REPEAT_UNTIL_STABLE;
     s.str1 = relation;
+    s.u32_arg1 = max_hops;
     steps_.push_back(std::move(s));
     return *this;
 }
@@ -206,6 +229,8 @@ double Traversal::l1NormDiff(const Traversal& other) const {
 }
 
 Traversal& Traversal::mxv(const std::string& relation, uint8_t semiring) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::MXV;
     s.str1 = relation;
@@ -215,6 +240,8 @@ Traversal& Traversal::mxv(const std::string& relation, uint8_t semiring) {
 }
 
 Traversal& Traversal::vxm(const std::string& relation, uint8_t semiring) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
     Step s{};
     s.kind = Step::Kind::VXM;
     s.str1 = relation;
@@ -250,6 +277,8 @@ Traversal& Traversal::degree(const std::string& relation) {
 }
 
 Traversal& Traversal::sampleNeighbors(const std::string& relation, int32_t k, uint32_t seed) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::SAMPLE_NEIGHBORS;
     s.str1 = relation;
@@ -260,6 +289,8 @@ Traversal& Traversal::sampleNeighbors(const std::string& relation, int32_t k, ui
 }
 
 Traversal& Traversal::randomWalk(const std::string& relation, int32_t steps_cnt, uint32_t seed) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     Step s{};
     s.kind = Step::Kind::RANDOM_WALK;
     s.str1 = relation;
@@ -294,29 +325,37 @@ CompiledQuery Traversal::compile() const {
     } else {
         qb.inputNode(0);
     }
+    uint16_t step_dom = initial_domain_id_;
     for (const auto& step : steps_) {
-        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str1);
+        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str1);
         switch (step.kind) {
             case Step::Kind::OUT:
             case Step::Kind::MXV:
                 qb.walkEdge(rel_id);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
                 break;
             case Step::Kind::IN:
             case Step::Kind::VXM:
                 qb.walkCsc(rel_id);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, true);
                 break;
             case Step::Kind::OUT_FILTERED:
                 qb.walkEdgeFiltered(rel_id, step.u32_arg1);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
                 break;
             case Step::Kind::OUT_PREDICATE:
                 qb.walkEdgePredicate(rel_id, 0);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
                 break;
             case Step::Kind::IN_PREDICATE:
                 qb.walkCsc(rel_id);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, true);
                 break;
             case Step::Kind::OUT_2HOP: {
-                uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str2);
+                uint16_t mid_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
+                uint16_t r2 = resolve_relation_id_by_name(snapshot_, mid_dom, step.str2);
                 qb.walkEdge2Hop(rel_id, r2);
+                step_dom = advance_domain_id(snapshot_, mid_dom, r2, false);
                 break;
             }
             case Step::Kind::REPEAT:
@@ -345,9 +384,11 @@ CompiledQuery Traversal::compile() const {
                 break;
             case Step::Kind::SAMPLE_NEIGHBORS:
                 qb.sampleNeighbors(rel_id, static_cast<int32_t>(step.u32_arg1), step.u32_arg2);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
                 break;
             case Step::Kind::RANDOM_WALK:
                 qb.randomWalk(rel_id, static_cast<int32_t>(step.u32_arg1), step.u32_arg2);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
                 break;
             case Step::Kind::KCORE:
                 qb.kcoreDecomposition();
@@ -365,8 +406,7 @@ CompiledQuery Traversal::compile() const {
 
 std::vector<uint64_t> Traversal::collect() const {
     if (!snapshot_) return {};
-    uint32_t max_n = get_domain_node_count(snapshot_, initial_domain_id_);
-    if (max_n == 0) return {};
+    uint32_t init_n = get_domain_node_count(snapshot_, initial_domain_id_);
 
     impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
     if (!ctx) return {};
@@ -374,60 +414,60 @@ std::vector<uint64_t> Traversal::collect() const {
     impulse_vm_state_t state{};
     state.query_context = ctx;
 
-    // Seed initial frontier in R0
-    std::vector<impulse_instruction_t> init_prog;
+    // Always seed initial frontier in R0 via OP_INIT_INPUT_SET so R0 is guaranteed TYPE_BITSET_HANDLE
+    std::vector<uint64_t> init_words(ctx->words_per_bitset, 0ULL);
     if (all_nodes_) {
-        init_prog.push_back(impulse_instruction_t{OP_INIT_INPUT_SET, 0, 0, 0});
-    } else if (seeds_.empty()) {
-        init_prog.push_back(impulse_instruction_t{OP_CLEAR_REG, 0, 0, 0});
-    } else {
-        init_prog.push_back(impulse_instruction_t{OP_INIT_INPUT_NODE, 0, 0, 0});
-    }
-    init_prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
-
-    if (all_nodes_) {
-        size_t max_snap_nodes = std::max<size_t>(impulse_snapshot_max_node_count(snapshot_), 65536ULL);
-        size_t word_cnt = (max_snap_nodes + 63) / 64;
-        std::vector<uint64_t> all_words(word_cnt, 0ULL);
-        for (uint32_t u = 0; u < max_n; ++u) {
-            all_words[u / 64] |= (1ULL << (u % 64));
+        for (uint32_t u = 0; u < init_n; ++u) {
+            size_t w = u / 64;
+            if (w < init_words.size()) {
+                init_words[w] |= (1ULL << (u % 64));
+            }
         }
-        state.pc = 0;
-        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, reinterpret_cast<uint64_t>(all_words.data()));
-    } else if (seeds_.empty()) {
-        state.pc = 0;
-        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, 0);
     } else {
-        // Union all seeds into R0 via VM
-        state.pc = 0;
-        impulse_vm_execute(init_prog.data(), init_prog.size(), &state, seeds_[0]);
-        for (size_t i = 1; i < seeds_.size(); ++i) {
-            impulse_instruction_t add_seed[3] = {
-                {OP_INIT_INPUT_NODE, 0, 2, 0},
-                {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (2 << 16))},
-                {OP_HALT, 0, 0, 0}
-            };
-            state.pc = 0;
-            impulse_vm_execute(add_seed, 3, &state, seeds_[i]);
+        for (uint64_t u : seeds_) {
+            if (u < init_n) {
+                size_t w = static_cast<size_t>(u / 64);
+                if (w < init_words.size()) {
+                    init_words[w] |= (1ULL << (u % 64));
+                }
+            }
         }
     }
 
+    impulse_instruction_t init_prog[2] = {
+        {OP_INIT_INPUT_SET, 0, 0, 0},
+        {OP_HALT, 0, 0, 0}
+    };
+    state.pc = 0;
+    impulse_vm_execute(init_prog, 2, &state, reinterpret_cast<uint64_t>(init_words.data()));
+
+    auto exec_r0_step = [&](const impulse_instruction_t* prog_ptr, size_t prog_len) {
+        int old_h0 = (state.register_types[0] == TYPE_BITSET_HANDLE) ? static_cast<int>(state.registers[0]) : -1;
+        state.pc = 0;
+        impulse_vm_execute(prog_ptr, prog_len, &state, 0);
+        int new_h0 = (state.register_types[0] == TYPE_BITSET_HANDLE) ? static_cast<int>(state.registers[0]) : -1;
+        if (old_h0 >= 0 && old_h0 != new_h0) {
+            release_bitset(ctx, old_h0);
+        }
+    };
+
+    uint16_t step_dom = initial_domain_id_;
     for (const auto& step : steps_) {
-        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str1);
+        uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str1);
         if (step.kind == Step::Kind::OUT || step.kind == Step::Kind::MXV) {
             impulse_instruction_t insts[2] = {
                 {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
         } else if (step.kind == Step::Kind::IN || step.kind == Step::Kind::VXM) {
             impulse_instruction_t insts[2] = {
                 {OP_CSC_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, true);
         } else if (step.kind == Step::Kind::BOTH || step.kind == Step::Kind::OUT_MULTI ||
                    step.kind == Step::Kind::IN_MULTI || step.kind == Step::Kind::BOTH_MULTI) {
             std::vector<std::pair<uint16_t, bool>> branches; // (rel_id, is_csc)
@@ -436,7 +476,7 @@ std::vector<uint64_t> Traversal::collect() const {
                 branches.emplace_back(rel_id, true);
             } else {
                 for (const auto& rname : step.rel_names) {
-                    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, rname);
+                    uint16_t rid = resolve_relation_id_by_name(snapshot_, step_dom, rname);
                     if (step.kind == Step::Kind::OUT_MULTI || step.kind == Step::Kind::BOTH_MULTI) {
                         branches.emplace_back(rid, false);
                     }
@@ -445,7 +485,11 @@ std::vector<uint64_t> Traversal::collect() const {
                     }
                 }
             }
-            if (!branches.empty()) {
+            if (branches.empty()) {
+                if (state.register_types[0] == TYPE_BITSET_HANDLE) {
+                    ctx->bitsets[state.registers[0]].clear();
+                }
+            } else {
                 std::vector<impulse_instruction_t> b_prog;
                 b_prog.push_back({static_cast<uint8_t>(branches[0].second ? OP_CSC_WALK : OP_CSR_WALK), 0, 5,
                                   static_cast<uint32_t>((branches[0].first << 16) | 0)});
@@ -456,69 +500,253 @@ std::vector<uint64_t> Traversal::collect() const {
                 }
                 b_prog.push_back({OP_MOV, 0, 0, 5});
                 b_prog.push_back({OP_HALT, 0, 0, 0});
-                state.pc = 0;
-                impulse_vm_execute(b_prog.data(), b_prog.size(), &state, 0);
+                exec_r0_step(b_prog.data(), b_prog.size());
+                if (state.register_types[6] == TYPE_BITSET_HANDLE && state.registers[6] != state.registers[0]) {
+                    release_bitset(ctx, static_cast<int>(state.registers[6]));
+                }
+                state.registers[5] = 0;
+                state.register_types[5] = TYPE_NULL;
+                state.registers[6] = 0;
+                state.register_types[6] = TYPE_NULL;
+                if (step.kind == Step::Kind::OUT_MULTI) {
+                    step_dom = advance_domain_id(snapshot_, step_dom, branches[0].first, false);
+                } else if (step.kind == Step::Kind::IN_MULTI) {
+                    step_dom = advance_domain_id(snapshot_, step_dom, branches[0].first, true);
+                }
             }
         } else if (step.kind == Step::Kind::OUT_2HOP) {
-            uint16_t r2 = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str2);
-            impulse_instruction_t insts[2] = {
-                {OP_CSR_WALK_2HOP, 0, 0, static_cast<uint32_t>(rel_id | (r2 << 16))},
-                {OP_HALT, 0, 0, 0}
-            };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            uint16_t mid_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
+            uint16_t r2 = resolve_relation_id_by_name(snapshot_, mid_dom, step.str2);
+            bool use_two_walks = true;
+            if (rel_id < ctx->slots.size() && r2 < ctx->slots.size()) {
+                const auto& s1 = ctx->slots[rel_id];
+                const auto& s2 = ctx->slots[r2];
+                if (!s1.is_virtual && !s1.is_raw_coo && s1.offsets_ptr && s1.targets_ptr &&
+                    s1.node_id_width == 4 && s1.edge_index_width == 4 &&
+                    !s2.is_virtual && !s2.is_raw_coo && s2.offsets_ptr && s2.targets_ptr &&
+                    s2.node_id_width == 4 && s2.edge_index_width == 4) {
+                    use_two_walks = false;
+                }
+            }
+            if (use_two_walks) {
+                impulse_instruction_t w1[2] = {
+                    {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                    {OP_HALT, 0, 0, 0}
+                };
+                exec_r0_step(w1, 2);
+                impulse_instruction_t w2[2] = {
+                    {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((r2 << 16) | 0)},
+                    {OP_HALT, 0, 0, 0}
+                };
+                exec_r0_step(w2, 2);
+            } else {
+                impulse_instruction_t insts[2] = {
+                    {OP_CSR_WALK_2HOP, 0, 0, static_cast<uint32_t>(rel_id | (r2 << 16))},
+                    {OP_HALT, 0, 0, 0}
+                };
+                exec_r0_step(insts, 2);
+            }
+            step_dom = advance_domain_id(snapshot_, mid_dom, r2, false);
         } else if (step.kind == Step::Kind::OUT_FILTERED) {
             impulse_instruction_t insts[2] = {
                 {OP_CSR_WALK_FILTERED, 0, 0, static_cast<uint32_t>((rel_id << 16) | ((step.u32_arg1 & 0xFF) << 8) | 0)},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
-        } else if (step.kind == Step::Kind::OUT_PREDICATE) {
-            impulse_instruction_t insts[2] = {
-                {OP_CSR_WALK_PREDICATE, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
-                {OP_HALT, 0, 0, 0}
-            };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
+        } else if (step.kind == Step::Kind::OUT_PREDICATE || step.kind == Step::Kind::IN_PREDICATE) {
+            bool is_rev = (step.kind == Step::Kind::IN_PREDICATE);
+            if (!is_rev && step.str2.empty()) {
+                impulse_instruction_t insts[2] = {
+                    {OP_CSR_WALK_PREDICATE, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
+                    {OP_HALT, 0, 0, 0}
+                };
+                exec_r0_step(insts, 2);
+            } else if (state.register_types[0] == TYPE_BITSET_HANDLE) {
+                impulse::cel::Parser parser(step.str2);
+                auto ast = parser.parse_expression();
+                auto opt = ast ? impulse::cel::AstOptimizer::optimize(ast) : nullptr;
+
+                int old_h0 = static_cast<int>(state.registers[0]);
+                int h_dst = acquire_bitset(ctx);
+                if (h_dst >= 0) {
+                    auto& bs_src = ctx->bitsets[old_h0];
+                    auto& bs_dst = ctx->bitsets[h_dst];
+                    bs_dst.clear();
+
+                    uint32_t src_dom_n = get_domain_node_count(snapshot_, step_dom);
+                    std::vector<uint32_t> active_src;
+                    extract_active_bits(bs_src, active_src);
+
+                    auto eval_rel_edges = [&](auto& self, uint16_t rid, uint32_t depth) -> void {
+                        if (depth > 8 || rid >= ctx->slots.size()) return;
+                        const auto& slot = ctx->slots[rid];
+                        if (slot.is_virtual) {
+                            for (uint16_t cid : slot.virtual_children) {
+                                self(self, cid, depth + 1);
+                            }
+                            return;
+                        }
+                        auto edge_attrs = build_relation_attr_cache(snapshot_, rid);
+                        auto test_edge = [&](uint64_t edge_idx) -> bool {
+                            if (!opt) return false;
+                            return impulse::cel::CelKleeneEvaluator::eval_filter_bool(
+                                opt, [&](const std::string& aname) { return edge_attrs.resolve(edge_idx, aname); });
+                        };
+
+                        if (!is_rev) {
+                            if (slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+                                for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                                    uint64_t u = slot.get_raw_coo_src(e);
+                                    if (u < src_dom_n && bitset_test(bs_src, u, ctx->max_nodes) && test_edge(e)) {
+                                        bitset_add(bs_dst, slot.get_csr_target(e), ctx->max_nodes);
+                                    }
+                                }
+                            } else if (slot.offsets_ptr && slot.targets_ptr) {
+                                for (uint32_t u : active_src) {
+                                    if (u >= src_dom_n || u >= slot.node_count) continue;
+                                    uint64_t start = slot.get_csr_offset(u);
+                                    uint64_t end = std::min<uint64_t>(slot.get_csr_offset(u + 1), slot.edge_count);
+                                    for (uint64_t e = start; e < end; ++e) {
+                                        if (test_edge(e)) {
+                                            bitset_add(bs_dst, slot.get_csr_target(e), ctx->max_nodes);
+                                        }
+                                    }
+                                }
+                            } else if (!slot.offsets_ptr && slot.targets_ptr) {
+                                uint64_t sent = slot.csr_sentinel();
+                                if (slot.edge_count == slot.node_count) {
+                                    for (uint32_t u : active_src) {
+                                        if (u >= src_dom_n || u >= slot.node_count) continue;
+                                        uint64_t v = slot.get_csr_target(u);
+                                        if (v != sent && test_edge(u)) {
+                                            bitset_add(bs_dst, v, ctx->max_nodes);
+                                        }
+                                    }
+                                } else {
+                                    uint64_t edge_rank = 0;
+                                    for (uint64_t u = 0; u < slot.node_count; ++u) {
+                                        uint64_t v = slot.get_csr_target(u);
+                                        if (v != sent) {
+                                            if (u < src_dom_n && bitset_test(bs_src, u, ctx->max_nodes) && test_edge(edge_rank)) {
+                                                bitset_add(bs_dst, v, ctx->max_nodes);
+                                            }
+                                            edge_rank++;
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+                                for (uint32_t v : active_src) {
+                                    if (v >= src_dom_n || v >= slot.csc_node_count) continue;
+                                    uint64_t start = slot.get_csc_offset(v);
+                                    uint64_t end = std::min<uint64_t>(slot.get_csc_offset(v + 1), slot.edge_count);
+                                    for (uint64_t ce = start; ce < end; ++ce) {
+                                        uint64_t csr_e = (ce < slot.csc_to_csr_edge_idx.size()) ? slot.csc_to_csr_edge_idx[ce] : ce;
+                                        if (test_edge(csr_e)) {
+                                            bitset_add(bs_dst, slot.get_csc_target(ce), ctx->max_nodes);
+                                        }
+                                    }
+                                }
+                            } else if (slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+                                for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                                    uint64_t v = slot.get_csr_target(e);
+                                    if (v < src_dom_n && bitset_test(bs_src, v, ctx->max_nodes) && test_edge(e)) {
+                                        bitset_add(bs_dst, slot.get_raw_coo_src(e), ctx->max_nodes);
+                                    }
+                                }
+                            } else if (slot.offsets_ptr && slot.targets_ptr) {
+                                for (uint64_t u = 0; u < slot.node_count; ++u) {
+                                    uint64_t start = slot.get_csr_offset(u);
+                                    uint64_t end = std::min<uint64_t>(slot.get_csr_offset(u + 1), slot.edge_count);
+                                    for (uint64_t e = start; e < end; ++e) {
+                                        uint64_t v = slot.get_csr_target(e);
+                                        if (v < src_dom_n && bitset_test(bs_src, v, ctx->max_nodes) && test_edge(e)) {
+                                            bitset_add(bs_dst, u, ctx->max_nodes);
+                                        }
+                                    }
+                                }
+                            } else if (!slot.offsets_ptr && slot.targets_ptr) {
+                                uint64_t sent = slot.csr_sentinel();
+                                uint64_t edge_rank = 0;
+                                for (uint64_t u = 0; u < slot.node_count; ++u) {
+                                    uint64_t v = slot.get_csr_target(u);
+                                    if (v != sent) {
+                                        uint64_t eidx = (slot.edge_count == slot.node_count) ? u : edge_rank;
+                                        edge_rank++;
+                                        if (v < src_dom_n && bitset_test(bs_src, v, ctx->max_nodes) && test_edge(eidx)) {
+                                            bitset_add(bs_dst, u, ctx->max_nodes);
+                                        }
+                                    }
+                                }
+                            } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+                                uint64_t sent = slot.csc_sentinel();
+                                uint64_t edge_rank = 0;
+                                for (uint64_t v = 0; v < slot.csc_node_count; ++v) {
+                                    uint64_t u = slot.get_csc_target(v);
+                                    if (u != sent) {
+                                        uint64_t eidx = (slot.edge_count == slot.csc_node_count) ? v : edge_rank;
+                                        edge_rank++;
+                                        if (v < src_dom_n && bitset_test(bs_src, v, ctx->max_nodes) && test_edge(eidx)) {
+                                            bitset_add(bs_dst, u, ctx->max_nodes);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    if (!active_src.empty()) {
+                        eval_rel_edges(eval_rel_edges, rel_id, 0);
+                    }
+                    state.registers[0] = static_cast<uint64_t>(h_dst);
+                    state.register_types[0] = TYPE_BITSET_HANDLE;
+                    release_bitset(ctx, old_h0);
+                }
+            }
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, is_rev);
         } else if (step.kind == Step::Kind::REPEAT) {
             for (uint32_t it = 0; it < step.u32_arg1; ++it) {
                 impulse_instruction_t insts[2] = {
                     {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
                     {OP_HALT, 0, 0, 0}
                 };
-                state.pc = 0;
-                impulse_vm_execute(insts, 2, &state, 0);
+                exec_r0_step(insts, 2);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
             }
         } else if (step.kind == Step::Kind::REPEAT_UNTIL_STABLE) {
-            impulse_instruction_t insts[3] = {
-                {OP_CSR_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
-                {OP_STABLE_CHECK, 0, 0, static_cast<uint32_t>(-1)},
+            ctx->fixpoint_max_hops = step.u32_arg1;
+            ctx->has_fixpoint_max_hops = true;
+            impulse_instruction_t insts[2] = {
+                {OP_FIXPOINT_KLEENE_STAR, 0, 0, static_cast<uint32_t>((rel_id << 16) | 0)},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 3, &state, 0);
+            exec_r0_step(insts, 2);
+            ctx->has_fixpoint_max_hops = false;
+            ctx->fixpoint_max_hops = 0;
         } else if (step.kind == Step::Kind::SET_UNION || step.kind == Step::Kind::SET_INTERSECT ||
                    step.kind == Step::Kind::SET_DIFFERENCE || step.kind == Step::Kind::EWISE_ADD ||
                    step.kind == Step::Kind::EWISE_MULT) {
-            // Load other_nodes into R3 via VM
-            impulse_instruction_t clr[2] = {{OP_CLEAR_REG, 0, 3, 0}, {OP_HALT, 0, 0, 0}};
-            state.pc = 0;
-            impulse_vm_execute(clr, 2, &state, 0);
-            if (!step.other_nodes.empty()) {
-                impulse_instruction_t init3[2] = {{OP_INIT_INPUT_NODE, 0, 3, 0}, {OP_HALT, 0, 0, 0}};
-                state.pc = 0;
-                impulse_vm_execute(init3, 2, &state, step.other_nodes[0]);
-                for (size_t i = 1; i < step.other_nodes.size(); ++i) {
-                    impulse_instruction_t u3[3] = {
-                        {OP_INIT_INPUT_NODE, 0, 4, 0},
-                        {OP_SET_UNION, 0, 3, static_cast<uint32_t>(3 | (4 << 16))},
-                        {OP_HALT, 0, 0, 0}
-                    };
-                    state.pc = 0;
-                    impulse_vm_execute(u3, 3, &state, step.other_nodes[i]);
+            uint32_t step_n = get_domain_node_count(snapshot_, step_dom);
+            std::vector<uint64_t> other_words(ctx->words_per_bitset, 0ULL);
+            for (uint64_t u : step.other_nodes) {
+                if (u < step_n) {
+                    size_t w = static_cast<size_t>(u / 64);
+                    if (w < other_words.size()) {
+                        other_words[w] |= (1ULL << (u % 64));
+                    }
                 }
             }
+            if (state.register_types[3] == TYPE_BITSET_HANDLE) {
+                release_bitset(ctx, static_cast<int>(state.registers[3]));
+                state.registers[3] = 0;
+                state.register_types[3] = TYPE_NULL;
+            }
+            impulse_instruction_t init3[2] = {{OP_INIT_INPUT_SET, 0, 3, 0}, {OP_HALT, 0, 0, 0}};
+            state.pc = 0;
+            impulse_vm_execute(init3, 2, &state, reinterpret_cast<uint64_t>(other_words.data()));
+
             uint8_t op = OP_SET_UNION;
             if (step.kind == Step::Kind::SET_INTERSECT || step.kind == Step::Kind::EWISE_MULT) op = OP_SET_INTERSECT;
             else if (step.kind == Step::Kind::SET_DIFFERENCE) op = OP_SET_DIFFERENCE;
@@ -526,96 +754,47 @@ std::vector<uint64_t> Traversal::collect() const {
                 {op, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(comb, 2, &state, 0);
+            exec_r0_step(comb, 2);
+            if (state.register_types[3] == TYPE_BITSET_HANDLE) {
+                release_bitset(ctx, static_cast<int>(state.registers[3]));
+                state.registers[3] = 0;
+                state.register_types[3] = TYPE_NULL;
+            }
         } else if (step.kind == Step::Kind::SAMPLE_NEIGHBORS) {
             impulse_instruction_t insts[2] = {
                 {OP_SAMPLE_NEIGHBORS, 0, 0, static_cast<uint32_t>((rel_id << 16) | (step.u32_arg1 & 0xFFFF))},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
         } else if (step.kind == Step::Kind::RANDOM_WALK) {
             impulse_instruction_t insts[2] = {
                 {OP_RANDOM_WALK, 0, 0, static_cast<uint32_t>((rel_id << 16) | (step.u32_arg1 & 0xFFFF))},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
         } else if (step.kind == Step::Kind::KCORE) {
             impulse_instruction_t insts[2] = {
                 {OP_KCORE_DECOMPOSITION, 0, 0, step.u32_arg1},
                 {OP_HALT, 0, 0, 0}
             };
-            state.pc = 0;
-            impulse_vm_execute(insts, 2, &state, 0);
+            exec_r0_step(insts, 2);
         } else if (step.kind == Step::Kind::FILTER_CEL) {
             impulse::cel::Parser parser(step.str1);
             auto ast = parser.parse_expression();
-            if (ast) {
+            if (ast && state.register_types[0] == TYPE_BITSET_HANDLE) {
                 auto opt = impulse::cel::AstOptimizer::optimize(ast);
-                bool handled_by_vm = false;
-                if (opt->kind == impulse::cel::AstKind::BINARY_OP && opt->children.size() == 2) {
-                    const auto& lhs = opt->children[0];
-                    const auto& rhs = opt->children[1];
-                    const std::string& op = opt->text;
-                    if (lhs->kind == impulse::cel::AstKind::IDENTIFIER &&
-                        (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT || rhs->kind == impulse::cel::AstKind::LITERAL_INT) &&
-                        (op == "==" || op == "!=" || op == ">" || op == "<" || op == ">=" || op == "<=")) {
-                        std::string attr_name = lhs->text;
-                        uint16_t a_rel = 0, a_idx = 0;
-                        uint8_t a_tc = 0;
-                        if (resolve_domain_attribute(snapshot_, current_domain_id_, attr_name, &a_rel, &a_idx, &a_tc)) {
-                            uint8_t base_tc = a_tc & 0x7Fu;
-                            if (base_tc == 0x06u || base_tc == 0x07u) {
-                                double rhs_val = (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT)
-                                    ? rhs->float_val
-                                    : static_cast<double>(rhs->int_val);
-                                if (base_tc == 0x07u) {
-                                    state.registers[2] = std::bit_cast<uint64_t>(rhs_val);
-                                    state.register_types[2] = TYPE_DOUBLE;
-                                } else {
-                                    float fval = static_cast<float>(rhs_val);
-                                    uint32_t fbits = 0;
-                                    std::memcpy(&fbits, &fval, sizeof(float));
-                                    state.registers[2] = fbits;
-                                    state.register_types[2] = TYPE_FLOAT;
-                                }
-                                std::vector<impulse_instruction_t> f_insts;
-                                f_insts.push_back({OP_LOAD_COLUMN_VECTOR, 0, 1, static_cast<uint32_t>(a_rel | (static_cast<uint32_t>(a_idx) << 16))});
-                                if (op == "==" || op == ">" || op == "<") {
-                                    uint8_t cmp_op = (op == ">") ? OP_VEC_CMP_GT : ((op == "<") ? OP_VEC_CMP_LT : OP_VEC_CMP_EQ);
-                                    f_insts.push_back({cmp_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
-                                    f_insts.push_back({OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
-                                } else if (op == "!=") {
-                                    f_insts.push_back({OP_VEC_CMP_EQ, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
-                                    f_insts.push_back({OP_SET_DIFFERENCE, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
-                                } else {
-                                    uint8_t strict_op = (op == ">=") ? OP_VEC_CMP_GT : OP_VEC_CMP_LT;
-                                    f_insts.push_back({strict_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
-                                    f_insts.push_back({OP_VEC_CMP_EQ, 0, 4, static_cast<uint32_t>(1 | (2 << 8))});
-                                    f_insts.push_back({OP_SET_UNION, 0, 3, static_cast<uint32_t>(3 | (4 << 16))});
-                                    f_insts.push_back({OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
-                                }
-                                f_insts.push_back({OP_HALT, 0, 0, 0});
-                                state.pc = 0;
-                                impulse_vm_execute(f_insts.data(), f_insts.size(), &state, 0);
-                                handled_by_vm = true;
-                            }
-                        }
-                    }
-                }
-                if (!handled_by_vm && state.register_types[0] == TYPE_BITSET_HANDLE) {
-                    uint64_t handle = state.registers[0];
-                    for (uint32_t u = 0; u < max_n; ++u) {
-                        if (impulse_vm_context_bitset_test(ctx, handle, u)) {
-                            std::unordered_map<std::string, double> f_attrs;
-                            std::unordered_map<std::string, int64_t> i_attrs;
-                            populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
-                            if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt, 1ULL, &i_attrs, &f_attrs)) {
-                                impulse_vm_context_bitset_remove(ctx, handle, u);
-                            }
-                        }
+                uint64_t handle = state.registers[0];
+                uint32_t step_n = get_domain_node_count(snapshot_, step_dom);
+                auto dom_attrs = build_domain_attr_cache(snapshot_, step_dom);
+                std::vector<uint32_t> active_u;
+                extract_active_bits(ctx->bitsets[handle], active_u);
+                for (uint32_t u : active_u) {
+                    if (u >= step_n ||
+                        !impulse::cel::CelKleeneEvaluator::eval_filter_bool(
+                            opt, [&](const std::string& aname) { return dom_attrs.resolve(u, aname); })) {
+                        impulse_vm_context_bitset_remove(ctx, handle, u);
                     }
                 }
             }
@@ -624,16 +803,18 @@ std::vector<uint64_t> Traversal::collect() const {
             auto ast = p.parse_expression();
             if (ast && state.register_types[0] == TYPE_BITSET_HANDLE) {
                 auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
-                uint64_t handle = state.registers[0];
-                for (uint32_t u = 0; u < max_n; ++u) {
-                    if (impulse_vm_context_bitset_test(ctx, handle, u)) {
-                        std::unordered_map<std::string, double> f_attrs;
-                        std::unordered_map<std::string, int64_t> i_attrs;
-                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
-                        double v = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
-                        if (opt_ast->kind == impulse::cel::AstKind::BINARY_OP &&
-                            (opt_ast->text == "==" || opt_ast->text == "!=" || opt_ast->text == "<" ||
-                             opt_ast->text == "<=" || opt_ast->text == ">" || opt_ast->text == ">=") && v == 0.0) {
+                if (opt_ast->kind == impulse::cel::AstKind::BINARY_OP &&
+                    (opt_ast->text == "==" || opt_ast->text == "!=" || opt_ast->text == "<" ||
+                     opt_ast->text == "<=" || opt_ast->text == ">" || opt_ast->text == ">=")) {
+                    uint64_t handle = state.registers[0];
+                    uint32_t step_n = get_domain_node_count(snapshot_, step_dom);
+                    auto dom_attrs = build_domain_attr_cache(snapshot_, step_dom);
+                    std::vector<uint32_t> active_u;
+                    extract_active_bits(ctx->bitsets[handle], active_u);
+                    for (uint32_t u : active_u) {
+                        if (u >= step_n ||
+                            !impulse::cel::CelKleeneEvaluator::eval_filter_bool(
+                                opt_ast, [&](const std::string& aname) { return dom_attrs.resolve(u, aname); })) {
                             impulse_vm_context_bitset_remove(ctx, handle, u);
                         }
                     }
@@ -642,11 +823,14 @@ std::vector<uint64_t> Traversal::collect() const {
         }
     }
 
+    uint32_t final_max_n = get_domain_node_count(snapshot_, step_dom);
     std::vector<uint64_t> out;
     if (state.register_types[0] == TYPE_BITSET_HANDLE) {
-        uint64_t handle = state.registers[0];
-        for (uint32_t u = 0; u < max_n; ++u) {
-            if (impulse_vm_context_bitset_test(ctx, handle, u)) {
+        std::vector<uint32_t> active_u;
+        extract_active_bits(ctx->bitsets[state.registers[0]], active_u);
+        out.reserve(active_u.size());
+        for (uint32_t u : active_u) {
+            if (u < final_max_n) {
                 out.push_back(u);
             }
         }
@@ -657,6 +841,41 @@ std::vector<uint64_t> Traversal::collect() const {
 
 std::vector<std::string> Traversal::collectKeys() const {
     auto nodes = collect();
+    if (nodes.empty() || !snapshot_) return {};
+
+    impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
+    if (ctx) {
+        impulse_vm_state_t state{};
+        state.query_context = ctx;
+        std::vector<uint64_t> words(ctx->words_per_bitset, 0ULL);
+        for (uint64_t u : nodes) {
+            size_t w = static_cast<size_t>(u / 64);
+            if (w < words.size()) {
+                words[w] |= (1ULL << (u % 64));
+            }
+        }
+        impulse_instruction_t prog[3] = {
+            {OP_INIT_INPUT_SET, 0, 0, 0},
+            {OP_MAP_DENSE_TO_KEYS, 0, 1, static_cast<uint32_t>(0 | (static_cast<uint32_t>(current_domain_id_) << 8))},
+            {OP_HALT, 0, 0, 0}
+        };
+        if (impulse_vm_execute(prog, 3, &state, reinterpret_cast<uint64_t>(words.data())) == IMPULSE_VM_OK &&
+            state.register_types[1] == TYPE_STRING_VECTOR) {
+            size_t h_s = static_cast<size_t>(state.registers[1]);
+            const auto& svec = ctx->string_vectors[h_s];
+            if (svec.size() == nodes.size()) {
+                std::vector<std::string> vm_keys;
+                vm_keys.reserve(svec.size());
+                for (const char* s : svec) {
+                    vm_keys.emplace_back(s ? s : "");
+                }
+                impulse_vm_context_destroy(ctx);
+                return vm_keys;
+            }
+        }
+        impulse_vm_context_destroy(ctx);
+    }
+
     std::vector<std::string> keys;
     keys.reserve(nodes.size());
     for (uint64_t u : nodes) {
@@ -667,6 +886,61 @@ std::vector<std::string> Traversal::collectKeys() const {
 
 size_t Traversal::count() const {
     return collect().size();
+}
+
+std::optional<double> Traversal::reduceAttr(const std::string& attr_or_cel_expr, ReducerOp op) const {
+    auto active = collect();
+    if (!snapshot_) {
+        if (op == ReducerOp::SUM || op == ReducerOp::COUNT) return 0.0;
+        return std::nullopt;
+    }
+    if (op == ReducerOp::COUNT) {
+        return static_cast<double>(active.size());
+    }
+    if (active.empty()) {
+        if (op == ReducerOp::SUM) return 0.0;
+        return std::nullopt;
+    }
+
+    auto dom_attrs = build_domain_attr_cache(snapshot_, current_domain_id_);
+    impulse::cel::Parser parser(attr_or_cel_expr);
+    auto ast = parser.parse_expression();
+    auto opt = ast ? impulse::cel::AstOptimizer::optimize(ast) : nullptr;
+
+    size_t non_null_count = 0;
+    double sum_val = 0.0;
+    double min_val = 0.0;
+    double max_val = 0.0;
+
+    for (uint64_t u : active) {
+        impulse::cel::CelValue cv = opt
+            ? impulse::cel::CelKleeneEvaluator::eval(
+                  opt, [&](const std::string& aname) { return dom_attrs.resolve(u, aname); })
+            : dom_attrs.resolve(u, attr_or_cel_expr);
+        double dv = 0.0;
+        if (!cv.to_double(dv)) continue; // skip NULL / NaN
+        if (non_null_count == 0) {
+            min_val = dv;
+            max_val = dv;
+        } else {
+            if (dv < min_val) min_val = dv;
+            if (dv > max_val) max_val = dv;
+        }
+        sum_val += dv;
+        ++non_null_count;
+    }
+
+    if (non_null_count == 0) {
+        if (op == ReducerOp::SUM) return 0.0;
+        return std::nullopt;
+    }
+    switch (op) {
+        case ReducerOp::SUM: return sum_val;
+        case ReducerOp::MIN: return min_val;
+        case ReducerOp::MAX: return max_val;
+        case ReducerOp::AVG: return sum_val / static_cast<double>(non_null_count);
+        default: return std::nullopt;
+    }
 }
 
 std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_active_nodes) const {
@@ -681,7 +955,8 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
     uint32_t default_dim = 0;
     const void* raw_default = nullptr;
     if (resolve_named_attribute_buffer(snapshot_, "", &raw_default, &default_attr_bytes, &default_tc, &default_dim, current_domain_id_) &&
-        raw_default && ((default_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (default_tc & 0x7F) == 0x05)) {
+        raw_default && ((default_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 ||
+                        ((default_tc & 0x7F) == 0x05 && snapshot_->header.version == 9))) {
         default_attr_f32 = static_cast<const float*>(raw_default);
     }
     size_t default_count = default_attr_f32 ? (default_attr_bytes / sizeof(float)) : 0;
@@ -702,67 +977,42 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
         }
     }
 
+    auto dom_attrs = build_domain_attr_cache(snapshot_, current_domain_id_);
+
     for (const auto& step : steps_) {
         if (step.kind == Step::Kind::SCALE_STATE) {
             for (uint64_t u : active) {
                 if (u < max_n) state_vec[u] *= step.f32_arg;
             }
         } else if (step.kind == Step::Kind::MUL_ATTR) {
-            const void* raw_mul = nullptr;
-            uint64_t m_bytes = 0;
-            uint8_t m_tc = 0;
-            uint32_t m_dim = 0;
-            const float* m_f32 = nullptr;
-            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_mul, &m_bytes, &m_tc, &m_dim, current_domain_id_) &&
-                raw_mul && ((m_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (m_tc & 0x7F) == 0x05)) {
-                m_f32 = static_cast<const float*>(raw_mul);
-            } else {
-                m_f32 = default_attr_f32;
-                m_bytes = default_attr_bytes;
-            }
-            size_t m_count = m_f32 ? (m_bytes / sizeof(float)) : 0;
-            if (m_f32) {
+            if (!step.str1.empty()) {
                 for (uint64_t u : active) {
-                    if (u < max_n && u < m_count) state_vec[u] *= m_f32[u];
+                    if (u >= max_n) continue;
+                    double dv = 0.0;
+                    if (dom_attrs.resolve(u, step.str1).to_double(dv)) {
+                        state_vec[u] *= static_cast<float>(dv);
+                    } else {
+                        state_vec[u] = 0.0f;
+                    }
+                }
+            } else if (default_attr_f32) {
+                for (uint64_t u : active) {
+                    if (u < max_n && u < default_count) state_vec[u] *= default_attr_f32[u];
                 }
             }
         } else if (step.kind == Step::Kind::DIV_ATTR) {
-            const void* raw_div = nullptr;
-            uint64_t d_bytes = 0;
-            uint8_t d_tc = 0;
-            uint32_t d_dim = 0;
-            const float* d_f32 = nullptr;
-            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_div, &d_bytes, &d_tc, &d_dim, current_domain_id_) &&
-                raw_div && ((d_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (d_tc & 0x7F) == 0x05)) {
-                d_f32 = static_cast<const float*>(raw_div);
-            } else {
-                d_f32 = default_attr_f32;
-                d_bytes = default_attr_bytes;
-            }
-            size_t d_count = d_f32 ? (d_bytes / sizeof(float)) : 0;
-            if (d_f32) {
+            if (!step.str1.empty()) {
                 for (uint64_t u : active) {
-                    if (u < max_n && u < d_count && d_f32[u] != 0.0f) state_vec[u] /= d_f32[u];
-                }
-            }
-        } else if (step.kind == Step::Kind::FILTER_CEL) {
-            impulse::cel::Parser p(step.str1);
-            auto ast = p.parse_expression();
-            if (ast) {
-                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
-                std::vector<uint64_t> new_active;
-                for (uint64_t u : active) {
-                    std::unordered_map<std::string, double> f_attrs;
-                    std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
-                    if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, &i_attrs, &f_attrs)) {
-                        new_active.push_back(u);
-                    } else {
-                        if (u < max_n) state_vec[u] = 0.0f;
+                    if (u >= max_n) continue;
+                    double dv = 0.0;
+                    if (dom_attrs.resolve(u, step.str1).to_double(dv) && dv != 0.0) {
+                        state_vec[u] /= static_cast<float>(dv);
                     }
                 }
-                active = std::move(new_active);
-                if (out_active_nodes) *out_active_nodes = active;
+            } else if (default_attr_f32) {
+                for (uint64_t u : active) {
+                    if (u < max_n && u < default_count && default_attr_f32[u] != 0.0f) state_vec[u] /= default_attr_f32[u];
+                }
             }
         } else if (step.kind == Step::Kind::PROJECT_CEL) {
             impulse::cel::Parser p(step.str1);
@@ -770,15 +1020,16 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
             if (ast) {
                 auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
                 for (uint64_t u : active) {
-                    std::unordered_map<std::string, double> f_attrs;
-                    std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
-                    double val = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
-                    if (u < max_n) state_vec[u] = static_cast<float>(val);
+                    if (u >= max_n) continue;
+                    auto cv = impulse::cel::CelKleeneEvaluator::eval(
+                        opt_ast, [&](const std::string& aname) { return dom_attrs.resolve(u, aname); });
+                    double val = 0.0;
+                    state_vec[u] = cv.to_double(val) ? static_cast<float>(val) : 0.0f;
                 }
             }
         } else if (step.kind == Step::Kind::RERANK && snapshot_ && !step.float_vec.empty() && !active.empty()) {
             uint16_t aid = resolve_attr_or_index_id(snapshot_, step.str1, current_domain_id_);
+            uint16_t encoded_aid = static_cast<uint16_t>(((current_domain_id_ & 0xFFu) << 8) | (aid & 0xFFu));
             uint8_t metric_flag = static_cast<uint8_t>(step.u32_arg1 & 0x03U);
             impulse_vm_context_t* rctx = impulse_vm_context_create(snapshot_);
             if (rctx) {
@@ -786,22 +1037,20 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
                 rstate.query_context = rctx;
                 impulse_vm_context_bind_inline_data(rctx, step.float_vec.data(), step.float_vec.size() * sizeof(float));
 
-                impulse_instruction_t init0[2] = {{OP_INIT_INPUT_NODE, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
-                rstate.pc = 0;
-                impulse_vm_execute(init0, 2, &rstate, active[0]);
-                for (size_t i = 1; i < active.size(); ++i) {
-                    impulse_instruction_t add_u[3] = {
-                        {OP_INIT_INPUT_NODE, 0, 3, 0},
-                        {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
-                        {OP_HALT, 0, 0, 0}
-                    };
-                    rstate.pc = 0;
-                    impulse_vm_execute(add_u, 3, &rstate, active[i]);
+                std::vector<uint64_t> awords(rctx->words_per_bitset, 0ULL);
+                for (uint64_t u : active) {
+                    size_t w = static_cast<size_t>(u / 64);
+                    if (w < awords.size()) {
+                        awords[w] |= (1ULL << (u % 64));
+                    }
                 }
+                impulse_instruction_t init0[2] = {{OP_INIT_INPUT_SET, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
+                rstate.pc = 0;
+                impulse_vm_execute(init0, 2, &rstate, reinterpret_cast<uint64_t>(awords.data()));
 
                 impulse_instruction_t rprog[3] = {
                     {OP_LOAD_INLINE_ARRAY, 0, 1, static_cast<uint32_t>(0 | (static_cast<uint32_t>(step.float_vec.size()) << 16))},
-                    {OP_VECTOR_RERANK_DOT, metric_flag, 2, static_cast<uint32_t>(0 | (1 << 8) | (aid << 16))},
+                    {OP_VECTOR_RERANK_DOT, metric_flag, 2, static_cast<uint32_t>(0 | (1 << 8) | (static_cast<uint32_t>(encoded_aid) << 16))},
                     {OP_HALT, 0, 0, 0}
                 };
                 rstate.pc = 0;
@@ -854,18 +1103,16 @@ std::vector<std::pair<std::string, float>> Traversal::collectKeyValues() const {
     impulse_vm_state_t state{};
     state.query_context = ctx;
 
-    impulse_instruction_t init0[2] = {{OP_INIT_INPUT_NODE, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
-    state.pc = 0;
-    impulse_vm_execute(init0, 2, &state, active[0]);
-    for (size_t i = 1; i < active.size(); ++i) {
-        impulse_instruction_t add_u[3] = {
-            {OP_INIT_INPUT_NODE, 0, 3, 0},
-            {OP_SET_UNION, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
-            {OP_HALT, 0, 0, 0}
-        };
-        state.pc = 0;
-        impulse_vm_execute(add_u, 3, &state, active[i]);
+    std::vector<uint64_t> awords(ctx->words_per_bitset, 0ULL);
+    for (uint64_t u : active) {
+        size_t w = static_cast<size_t>(u / 64);
+        if (w < awords.size()) {
+            awords[w] |= (1ULL << (u % 64));
+        }
     }
+    impulse_instruction_t init0[2] = {{OP_INIT_INPUT_SET, 0, 0, 0}, {OP_HALT, 0, 0, 0}};
+    state.pc = 0;
+    impulse_vm_execute(init0, 2, &state, reinterpret_cast<uint64_t>(awords.data()));
 
     int h_fvec = impulse_vm_context_acquire_float_vector(ctx);
     if (h_fvec >= 0) {
@@ -905,6 +1152,7 @@ std::vector<std::pair<uint64_t, float>> Traversal::topK(size_t k) const {
     scored.reserve(active.size());
     for (uint64_t u : active) {
         float sc = (u < vec.size()) ? vec[u] : 0.0f;
+        if (std::isnan(sc)) continue;
         scored.emplace_back(u, sc);
     }
     std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {

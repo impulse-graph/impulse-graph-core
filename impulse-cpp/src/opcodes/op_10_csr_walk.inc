@@ -101,7 +101,7 @@ op_CSR_WALK: {
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr) {
+    if (!src_is_null && !slot.is_virtual && !slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
             size_t frontier_size = 0;
@@ -197,31 +197,57 @@ op_CSR_WALK: {
                 }
             }
         }
-    } else if (!src_is_null && !slot.offsets_ptr && slot.targets_ptr) {
+    } else if (!src_is_null && (slot.is_virtual || slot.is_raw_coo || (!slot.offsets_ptr && slot.targets_ptr))) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
-            for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
-                uint64_t word = bs_src.words[w];
-                while (word) {
-                    int bit = std::countr_zero(word);
-                    uint64_t u = w * 64 + bit;
-                    word &= word - 1;
-                    if (u < slot.node_count) {
-                        uint64_t target_node = slot.get_csr_target(u);
-                        if (target_node != 0xFFFFFFFF && target_node != 0xFFFF && target_node != ~0ULL) {
-                            bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+            if (!slot.is_virtual && !slot.is_raw_coo && !slot.offsets_ptr && slot.targets_ptr) {
+                uint64_t sent = slot.csr_sentinel();
+                for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
+                    uint64_t word = bs_src.words[w];
+                    while (word) {
+                        int bit = std::countr_zero(word);
+                        uint64_t u = w * 64 + bit;
+                        word &= word - 1;
+                        if (u < slot.node_count) {
+                            uint64_t target_node = slot.get_csr_target(u);
+                            if (target_node != sent) {
+                                bitset_add(bs_dst, target_node, vm_state->query_context->max_nodes);
+                            }
                         }
+                    }
+                }
+            } else {
+                walk_slot_forward_special(
+                    vm_state->query_context,
+                    rel,
+                    [&](uint64_t u) { return bitset_test(bs_src, u, vm_state->query_context->max_nodes); },
+                    0,
+                    bs_dst
+                );
+            }
+        } else if (src_is_vec) {
+            const uint64_t* vec_ptr = nullptr;
+            size_t vec_len = 0;
+            if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len) && vec_ptr) {
+                for (size_t k = 0; k < vec_len; ++k) {
+                    uint64_t u = vec_ptr[k];
+                    if (u != ~0ULL) {
+                        for_each_forward_target_of_node(
+                            vm_state->query_context,
+                            rel,
+                            u,
+                            [&](uint64_t v) { bitset_add(bs_dst, v, vm_state->query_context->max_nodes); }
+                        );
                     }
                 }
             }
         } else {
-            uint64_t u = scalar_src;
-            if (u < slot.node_count) {
-                uint64_t v = slot.get_csr_target(u);
-                if (v != 0xFFFFFFFF && v != 0xFFFF && v != ~0ULL) {
-                    bitset_add(bs_dst, v, vm_state->query_context->max_nodes);
-                }
-            }
+            for_each_forward_target_of_node(
+                vm_state->query_context,
+                rel,
+                scalar_src,
+                [&](uint64_t v) { bitset_add(bs_dst, v, vm_state->query_context->max_nodes); }
+            );
         }
     }
 
