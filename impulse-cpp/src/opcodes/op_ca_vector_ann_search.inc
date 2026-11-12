@@ -173,11 +173,16 @@ op_VECTOR_ANN_SEARCH: {
                 }
             }
 
-            if (vm_state->query_context->attribute_slots.empty() ||
-                v_vec_attr_id >= vm_state->query_context->attribute_slots[0].size()) {
+            const BoundAttributeSlot* attr_ptr = resolve_node_attribute_slot(
+                vm_state->query_context, v_domain_id, v_vec_attr_id
+            );
+            if (!attr_ptr && v_domain_id != 0) {
+                attr_ptr = resolve_node_attribute_slot(vm_state->query_context, 0, v_vec_attr_id);
+            }
+            if (!attr_ptr) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
-            const auto& attr = vm_state->query_context->attribute_slots[0][v_vec_attr_id];
+            const auto& attr = *attr_ptr;
             uint32_t attr_dim = std::max<uint32_t>(1u, attr.dimension);
             if (!attr.data_ptr || attr.data_bytes < v_node_count * static_cast<uint64_t>(attr_dim) * sizeof(float)) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

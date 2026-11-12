@@ -441,8 +441,39 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
         ctx->mock_edge_attrs[i].int_data.reserve(VM_MOCK_INIT_CAP);
     }
 
-    // Pre-index snapshot relations if a snapshot is present
+    // Pre-index snapshot domains and relations if a snapshot is present
     if (snapshot) {
+        uint16_t dom_count = impulse_snapshot_domain_count(snapshot);
+        ctx->domain_attribute_slots.resize(dom_count);
+        ctx->domain_key_attr_indices.resize(dom_count, 0xFFFF);
+        ctx->domain_node_counts.resize(dom_count, 0);
+        for (uint16_t d = 0; d < dom_count; ++d) {
+            impulse_domain_catalog_entry_t dentry{};
+            if (impulse_snapshot_get_domain_entry(snapshot, d, &dentry, nullptr) == IMPULSE_OK) {
+                ctx->domain_node_counts[d] = dentry.node_count;
+            }
+            ctx->domain_key_attr_indices[d] = impulse_snapshot_get_domain_key_attr_index(snapshot, d);
+            uint16_t dattr_count = impulse_snapshot_get_domain_attribute_count(snapshot, d);
+            ctx->domain_attribute_slots[d].resize(dattr_count);
+            for (uint16_t a = 0; a < dattr_count; ++a) {
+                const void* data = nullptr;
+                uint64_t data_bytes = 0;
+                const void* offsets = nullptr;
+                uint64_t offsets_bytes = 0;
+                uint8_t type_code = 0;
+                uint32_t dimension = 0;
+                impulse_snapshot_get_domain_attribute_buffers(
+                    snapshot, d, a, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+                );
+                ctx->domain_attribute_slots[d][a].data_ptr = data;
+                ctx->domain_attribute_slots[d][a].data_bytes = data_bytes;
+                ctx->domain_attribute_slots[d][a].offsets_ptr = offsets;
+                ctx->domain_attribute_slots[d][a].offsets_bytes = offsets_bytes;
+                ctx->domain_attribute_slots[d][a].type_code = type_code;
+                ctx->domain_attribute_slots[d][a].dimension = dimension;
+            }
+        }
+
         uint16_t rel_count = impulse_snapshot_relation_count(snapshot);
         ctx->slots.resize(rel_count);
         ctx->attribute_slots.resize(rel_count);
@@ -482,6 +513,8 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
             // Attributes
             impulse_relation_directory_entry_t rel_entry{};
             impulse_snapshot_get_relation_entry(snapshot, r, &rel_entry);
+            ctx->slots[r].src_domain_id = rel_entry.src_domain_id;
+            ctx->slots[r].tgt_domain_id = rel_entry.tgt_domain_id;
             uint16_t attr_count = rel_entry.attr_count;
             ctx->attribute_slots[r].resize(attr_count);
             for (uint16_t a = 0; a < attr_count; ++a) {
@@ -541,11 +574,13 @@ void impulse_vm_context_reset(impulse_vm_context_t* ctx) {
         if (ctx->string_vectors_allocated[i]) {
             ctx->string_vectors_allocated[i] = false;
             ctx->string_vectors[i].clear();
+            ctx->string_vector_owned[i].clear();
         }
         if (ctx->value_maps_allocated[i]) {
             ctx->value_maps_allocated[i] = false;
             ctx->value_maps[i].keys.clear();
             ctx->value_maps[i].values.clear();
+            ctx->value_maps[i].owned_keys.clear();
         }
     }
     for (size_t i = 0; i < VM_MAX_LANE_FRONTIER_HANDLES; ++i) {

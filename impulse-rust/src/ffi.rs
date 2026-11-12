@@ -371,4 +371,114 @@ extern "C" {
         seed_node: u64,
         out_result: *mut impulse_execution_result_t,
     ) -> i32;
+
+    // Secondary Non-Vector Index Construction C-ABI Functions (impulse_index.h)
+    pub fn impulse_index_build_permutation(
+        attr_data: *const std::ffi::c_void,
+        element_count: usize,
+        type_code: u8,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_permutation_range_query(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        min_val: f64,
+        max_val: f64,
+        attr_data: *const std::ffi::c_void,
+        out_node_ids: *mut u32,
+        max_nodes: usize,
+        out_count: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_build_zone_map(
+        attr_data: *const std::ffi::c_void,
+        element_count: usize,
+        type_code: u8,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_zone_map_filter(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        min_val: f64,
+        max_val: f64,
+        out_page_bitmask: *mut u64,
+        max_words: usize,
+        out_eligible_pages: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_build_inverted_bitset(
+        keys: *const *const c_char,
+        count: usize,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_inverted_bitset_lookup(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        query_key: *const c_char,
+        out_words: *mut *const u64,
+        out_num_words: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_build_minimal_perfect_hash(
+        keys: *const *const c_char,
+        count: usize,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_minimal_perfect_hash_lookup(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        query_key: *const c_char,
+        out_node_id: *mut u32,
+    ) -> i32;
+
+    pub fn impulse_index_build_trigram(
+        keys: *const *const c_char,
+        count: usize,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_trigram_search(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        query_str: *const c_char,
+        out_words: *mut u64,
+        max_words: usize,
+        out_num_words: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_build_domain_split(
+        keys: *const *const c_char,
+        count: usize,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_domain_split_lookup(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        domain_str: *const c_char,
+        out_words: *mut *const u64,
+        out_num_words: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_build_temporal_interval(
+        interval_data: *const std::ffi::c_void,
+        count: usize,
+        type_code: u8,
+        out_bytes: *mut *mut std::ffi::c_void,
+        out_size: *mut usize,
+    ) -> i32;
+    pub fn impulse_index_temporal_interval_query(
+        index_bytes: *const std::ffi::c_void,
+        index_size: usize,
+        target_time: u64,
+        out_node_ids: *mut u32,
+        max_nodes: usize,
+        out_count: *mut usize,
+    ) -> i32;
+
+    pub fn impulse_index_free(ptr: *mut std::ffi::c_void);
 }

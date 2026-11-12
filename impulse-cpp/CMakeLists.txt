@@ -114,6 +114,7 @@ install(TARGETS impulse_graph impulse_graph_static
 )
 install(FILES
     include/impulse_format_v0_9.h
+    include/impulse_format_v0_10.h
     include/impulse_graph.h
     include/impulse_assert.h
     include/impulse_hexio.h

@@ -16,6 +16,7 @@ pub struct InspectOptions<'a> {
     pub anonymize: bool,
     pub domain_filter: Option<&'a str>,
     pub relation_filter: Option<&'a str>,
+    pub page_map: bool,
 }
 
 pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error>> {
@@ -27,6 +28,7 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
             anonymize: false,
             domain_filter: None,
             relation_filter: None,
+            page_map: false,
         },
     )
 }
@@ -35,6 +37,10 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     let reader = SnapshotReader::open(file)?;
     let metadata = fs::metadata(file)?;
     let header = reader.header();
+
+    if opts.page_map {
+        return render_page_map(&reader, metadata.len(), opts.format, file);
+    }
 
     let domain_matches = |d_idx: usize, d: &impulse_graph::DomainInfo, anon_name: &str| -> bool {
         if let Some(f) = opts.domain_filter {
@@ -83,11 +89,28 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
             if !domain_matches(d_idx, d, &d_name) {
                 continue;
             }
+            let mut dom_attrs = Vec::new();
+            for (a_idx, a) in d.attributes.iter().enumerate() {
+                let a_name = if opts.anonymize {
+                    format!("DomAttrib_{}", a_idx + 1)
+                } else {
+                    a.name.clone()
+                };
+                dom_attrs.push(json!({
+                    "name": a_name,
+                    "type_code": a.type_code,
+                    "dimension": a.dimension,
+                    "data_offset": a.data_offset,
+                    "data_bytes": a.data_bytes,
+                }));
+            }
             domains.push(json!({
                 "domain_id": d.domain_id,
                 "name": d_name,
                 "key_type": format!("{:?}", d.key_type),
                 "node_count": d.node_count,
+                "key_attr_index": d.key_attr_index,
+                "attributes": dom_attrs,
             }));
         }
 
@@ -124,6 +147,11 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                 "src_domain_id": r.src_domain_id,
                 "tgt_domain_id": r.tgt_domain_id,
                 "encoding_id": r.encoding_id,
+                "node_id_width": r.node_id_width,
+                "section_features": r.section_features,
+                "has_csc": r.has_csc(),
+                "is_virtual": r.is_virtual(),
+                "virtual_component_ids": r.virtual_component_ids,
                 "name": r_name,
                 "node_count": r.node_count,
                 "edge_count": r.edge_count,
@@ -219,12 +247,17 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
         let custom_metadata = reader.get_metadata().unwrap_or_default();
         let index_count = header.index_count;
 
+        let ver_str_json = match header.version() {
+            10 => "0.10.0 (0x000A)".to_string(),
+            9 => "0.9.0 (0x0009)".to_string(),
+            v => format!("0.{}.0 (0x{:04X})", v, v),
+        };
         let output = json!({
             "file": file.to_string_lossy(),
             "size_bytes": metadata.len(),
             "header": {
                 "magic": format!("0x{:08X}", header.magic()),
-                "version": format!("0.9.0 (0x{:04X})", header.version()),
+                "version": ver_str_json,
                 "required_features": format!("0x{:016X}", header.required_features()),
                 "domain_count": header.domain_count(),
                 "relation_count": header.relation_count(),
@@ -246,10 +279,10 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     println!("File:              {}", file.display());
     println!("File Size:         {} bytes", metadata.len());
     println!("Magic:             0x{:08X} (IMPS)", header.magic());
-    let version_str = if header.version() == 9 {
-        "0.9.0 (0x0009)".to_string()
-    } else {
-        format!("0.9.0 (0x{:04X})", header.version())
+    let version_str = match header.version() {
+        10 => "0.10.0 (0x000A)".to_string(),
+        9 => "0.9.0 (0x0009)".to_string(),
+        v => format!("0.{}.0 (0x{:04X})", v, v),
     };
     println!("Version:           {}", version_str);
     println!(
@@ -262,7 +295,14 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
 
     // Domain Table
     let mut dom_table = Table::new();
-    dom_table.set_header(vec!["ID", "Domain Name", "Key Type", "Node Count"]);
+    dom_table.set_header(vec![
+        "ID",
+        "Domain Name",
+        "Key Type",
+        "Node Count",
+        "Attributes",
+        "Key Attr",
+    ]);
     for (d_idx, d) in reader.domains().iter().enumerate() {
         let d_name = if opts.anonymize {
             format!("Domain_{}", d_idx + 1)
@@ -272,11 +312,24 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
         if !domain_matches(d_idx, d, &d_name) {
             continue;
         }
+        let key_attr_str = if d.key_attr_index == 0xFFFF {
+            "-".to_string()
+        } else if let Some(ka) = d.attributes.get(d.key_attr_index as usize) {
+            if opts.anonymize {
+                format!("#{}", d.key_attr_index)
+            } else {
+                format!("{} (#{})", ka.name, d.key_attr_index)
+            }
+        } else {
+            format!("#{}", d.key_attr_index)
+        };
         dom_table.add_row(vec![
             d.domain_id.to_string(),
             d_name,
             format!("{:?}", d.key_type),
             d.node_count.to_string(),
+            d.attributes.len().to_string(),
+            key_attr_str,
         ]);
     }
     println!("--- DOMAIN CATALOG ---");
@@ -464,6 +517,37 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     if opts.verbose {
         println!();
         println!("--- VERBOSE SECTION OFFSETS & ATTRIBUTE DESCRIPTORS ---");
+        for (d_idx, d) in reader.domains().iter().enumerate() {
+            let d_name = if opts.anonymize {
+                format!("Domain_{}", d_idx + 1)
+            } else {
+                d.name.clone()
+            };
+            if !domain_matches(d_idx, d, &d_name) || d.attributes.is_empty() {
+                continue;
+            }
+            println!(
+                "  Domain #{}: Name='{}' | Nodes={}, KeyAttrIndex=0x{:04X}",
+                d.domain_id, d_name, d.node_count, d.key_attr_index
+            );
+            for (a_idx, a) in d.attributes.iter().enumerate() {
+                let a_name = if opts.anonymize {
+                    format!("DomAttrib_{}", a_idx + 1)
+                } else {
+                    a.name.clone()
+                };
+                let nullability = if (a.type_code & 0x80) != 0 {
+                    "[Nullable]"
+                } else {
+                    "[Non-Null]"
+                };
+                let base_type = a.type_code & 0x7F;
+                println!(
+                    "    Node Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
+                    a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                );
+            }
+        }
         for (r_idx, r) in reader.relations().iter().enumerate() {
             let r_name = if opts.anonymize {
                 format!("Relation_{}", r_idx + 1)
@@ -474,8 +558,8 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                 continue;
             }
             println!(
-                "  Relation #{}: Name='{}' | CSR Row Offsets Offset=0x{:X} ({} B), Column Indices Offset=0x{:X} ({} B)",
-                r.relation_id, r_name, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
+                "  Relation #{}: Name='{}' | features=0x{:04X}, width=u{}, CSR Row Offsets Offset=0x{:X} ({} B), Column Indices Offset=0x{:X} ({} B)",
+                r.relation_id, r_name, r.section_features, r.node_id_width as u32 * 8, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
             );
             for (a_idx, a) in r.attributes.iter().enumerate() {
                 let a_name = if opts.anonymize {
@@ -521,4 +605,330 @@ fn format_required_features(flags: u64) -> String {
         names.push("INDEX_DIRECTORY");
     }
     format!("0x{:016X} [{}]", flags, names.join(", "))
+}
+
+#[derive(Debug, Clone)]
+struct PageRegion {
+    start: u64,
+    bytes: u64,
+    alignment: u64,
+    name: String,
+}
+
+fn render_page_map(
+    reader: &SnapshotReader,
+    file_size: u64,
+    format: &str,
+    file_path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let mut regions = Vec::new();
+
+    // 1. Page 0 Header
+    regions.push(PageRegion {
+        start: 0,
+        bytes: 4096,
+        alignment: 4096,
+        name: "Page 0 Header (Active Baseline + Padding)".to_string(),
+    });
+
+    let slice = reader.as_bytes();
+    let header = reader.header();
+    let ver = header.version();
+    let dir_offset = if (ver == 9 || ver == 10) && header.footer_directory_offset() > 0 {
+        header.footer_directory_offset() as usize
+    } else {
+        header.data_offset() as usize
+    };
+
+    if dir_offset < slice.len() && (ver == 9 || ver == 10) {
+        let mut cur = dir_offset;
+        // String Table
+        if cur + 4 <= slice.len() {
+            let str_bytes = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
+            regions.push(PageRegion {
+                start: cur as u64,
+                bytes: (4 + str_bytes) as u64,
+                alignment: 128,
+                name: format!("Section 2.1 Shared String Table ({} bytes)", str_bytes),
+            });
+            cur += 4 + str_bytes;
+        }
+        let rem = cur % 128;
+        if rem != 0 {
+            cur += 128 - rem;
+        }
+
+        // Domain Catalog
+        let dom_count = header.domain_count() as usize;
+        let dom_bytes = if ver == 10 {
+            reader
+                .domains()
+                .iter()
+                .map(|d| {
+                    std::mem::size_of::<impulse_graph::spec::DomainCatalogEntry>()
+                        + d.attributes.len()
+                            * std::mem::size_of::<impulse_graph::spec::AttributeDescriptor>()
+                })
+                .sum()
+        } else {
+            dom_count * std::mem::size_of::<impulse_graph::spec::DomainCatalogEntryV09>()
+        };
+        if dom_bytes > 0 && cur + dom_bytes <= slice.len() {
+            regions.push(PageRegion {
+                start: cur as u64,
+                bytes: dom_bytes as u64,
+                alignment: 128,
+                name: format!("Section 2.2 Domain Catalog ({} entries)", dom_count),
+            });
+            cur += dom_bytes;
+        }
+        let rem = cur % 128;
+        if rem != 0 {
+            cur += 128 - rem;
+        }
+
+        // Relation Directory Table
+        let rel_count = header.relation_count() as usize;
+        let rel_start = cur;
+        for r in reader.relations() {
+            cur += std::mem::size_of::<impulse_graph::spec::RelationDirectoryEntry>();
+            cur += r.attributes.len() * std::mem::size_of::<impulse_graph::spec::AttributeDescriptor>();
+        }
+        if cur > rel_start && cur <= slice.len() {
+            regions.push(PageRegion {
+                start: rel_start as u64,
+                bytes: (cur - rel_start) as u64,
+                alignment: 128,
+                name: format!("Section 2.3 Relation Directory ({} relations)", rel_count),
+            });
+        }
+        let rem = cur % 128;
+        if rem != 0 {
+            cur += 128 - rem;
+        }
+
+        // Index Catalog Table
+        let idx_count = header.index_count as usize;
+        let idx_bytes = idx_count * std::mem::size_of::<impulse_graph::spec::IndexDirectoryEntry>();
+        if idx_bytes > 0 && cur + idx_bytes <= slice.len() {
+            regions.push(PageRegion {
+                start: cur as u64,
+                bytes: idx_bytes as u64,
+                alignment: 128,
+                name: format!("Section 2.4 Index Catalog ({} entries)", idx_count),
+            });
+        }
+    }
+
+    // Domain Node Attributes (Spec v0.10.0)
+    for d in reader.domains() {
+        for a in &d.attributes {
+            if a.offsets_bytes > 0 {
+                regions.push(PageRegion {
+                    start: a.offsets_offset,
+                    bytes: a.offsets_bytes,
+                    alignment: 128,
+                    name: format!("DomAttr '{}.{}' Var Offsets", d.name, a.name),
+                });
+            }
+            if a.data_bytes > 0 {
+                regions.push(PageRegion {
+                    start: a.data_offset,
+                    bytes: a.data_bytes,
+                    alignment: 128,
+                    name: format!("DomAttr '{}.{}' Payload", d.name, a.name),
+                });
+            }
+        }
+    }
+
+    // Relation Topology & Attributes
+    for r in reader.relations() {
+        if r.csr_row_off_bytes > 0 {
+            regions.push(PageRegion {
+                start: r.csr_row_off_offset,
+                bytes: r.csr_row_off_bytes,
+                alignment: 128,
+                name: format!("Rel '{}' CSR Row Offsets", r.name),
+            });
+        }
+        if r.csr_col_idx_bytes > 0 {
+            regions.push(PageRegion {
+                start: r.csr_col_idx_offset,
+                bytes: r.csr_col_idx_bytes,
+                alignment: 128,
+                name: format!("Rel '{}' CSR Col Indices", r.name),
+            });
+        }
+        if r.csc_row_off_bytes > 0 {
+            regions.push(PageRegion {
+                start: r.csc_row_off_offset,
+                bytes: r.csc_row_off_bytes,
+                alignment: 128,
+                name: format!("Rel '{}' CSC Row Offsets", r.name),
+            });
+        }
+        if r.csc_col_idx_bytes > 0 {
+            regions.push(PageRegion {
+                start: r.csc_col_idx_offset,
+                bytes: r.csc_col_idx_bytes,
+                alignment: 128,
+                name: format!("Rel '{}' CSC Col Indices", r.name),
+            });
+        }
+        for a in &r.attributes {
+            if a.offsets_bytes > 0 {
+                regions.push(PageRegion {
+                    start: a.offsets_offset,
+                    bytes: a.offsets_bytes,
+                    alignment: 128,
+                    name: format!("Attr '{}.{}' Var Offsets", r.name, a.name),
+                });
+            }
+            if a.data_bytes > 0 {
+                regions.push(PageRegion {
+                    start: a.data_offset,
+                    bytes: a.data_bytes,
+                    alignment: 128,
+                    name: format!("Attr '{}.{}' Payload", r.name, a.name),
+                });
+            }
+        }
+    }
+
+    // Index Data Blobs
+    for entry in reader.index_entries() {
+        if entry.data_bytes > 0 {
+            regions.push(PageRegion {
+                start: entry.data_offset,
+                bytes: entry.data_bytes,
+                alignment: 128,
+                name: format!("Index '{}' (type 0x{:02X}) Data", entry.name, entry.index_type),
+            });
+        }
+    }
+
+    // Metadata
+    if reader.metadata_bytes() > 0 {
+        regions.push(PageRegion {
+            start: reader.metadata_offset(),
+            bytes: reader.metadata_bytes(),
+            alignment: 16,
+            name: "Custom JSON Metadata Block".to_string(),
+        });
+    }
+
+    // Trailer
+    if file_size >= 16 {
+        regions.push(PageRegion {
+            start: file_size - 16,
+            bytes: 16,
+            alignment: 16,
+            name: "Footer Trailer (Magic + Length)".to_string(),
+        });
+    }
+
+    // Sort by start offset
+    regions.sort_by_key(|r| r.start);
+
+    // Compute slacks and totals
+    let mut total_payload_bytes: u64 = 0;
+    let mut total_slack_bytes: u64 = 0;
+    let mut items_json = Vec::new();
+
+    for i in 0..regions.len() {
+        let r = &regions[i];
+        total_payload_bytes += r.bytes;
+        let next_start = if i + 1 < regions.len() {
+            regions[i + 1].start
+        } else {
+            file_size
+        };
+        let end = r.start + r.bytes;
+        let slack = next_start.saturating_sub(end);
+        total_slack_bytes += slack;
+
+        let is_aligned = if r.alignment > 0 {
+            r.start % r.alignment == 0
+        } else {
+            true
+        };
+
+        if format.eq_ignore_ascii_case("json") {
+            items_json.push(json!({
+                "name": r.name,
+                "start_offset": r.start,
+                "end_offset": end,
+                "bytes": r.bytes,
+                "alignment": r.alignment,
+                "aligned": is_aligned,
+                "slack_bytes": slack,
+            }));
+        }
+    }
+
+    if format.eq_ignore_ascii_case("json") {
+        let output = json!({
+            "file": file_path.to_string_lossy(),
+            "file_size": file_size,
+            "total_payload_bytes": total_payload_bytes,
+            "total_slack_bytes": total_slack_bytes,
+            "padding_ratio_pct": if file_size > 0 { (total_slack_bytes as f64 / file_size as f64) * 100.0 } else { 0.0 },
+            "page_map": items_json,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!("=========================================================================");
+    println!("             IMPULSE GRAPH ENGINE SNAPSHOT PAGE MAP                      ");
+    println!("=========================================================================");
+    println!("File:      {}", file_path.display());
+    println!("File Size: {} bytes ({:.2} KB)", file_size, file_size as f64 / 1024.0);
+    println!();
+
+    let mut table = Table::new();
+    table.set_header(vec![
+        "Offset Range (Hex)", "Start (Dec)", "Size", "Align", "Slack", "Aligned?", "Section / Component",
+    ]);
+
+    for i in 0..regions.len() {
+        let r = &regions[i];
+        let next_start = if i + 1 < regions.len() {
+            regions[i + 1].start
+        } else {
+            file_size
+        };
+        let end = r.start + r.bytes;
+        let slack = next_start.saturating_sub(end);
+        let is_aligned = if r.alignment > 0 {
+            r.start % r.alignment == 0
+        } else {
+            true
+        };
+
+        table.add_row(vec![
+            format!("0x{:08X}..0x{:08X}", r.start, end),
+            r.start.to_string(),
+            format!("{} B", r.bytes),
+            format!("{} B", r.alignment),
+            format!("{} B", slack),
+            if is_aligned { "YES".to_string() } else { "NO".to_string() },
+            r.name.clone(),
+        ]);
+    }
+
+    println!("{}", table);
+    println!();
+    println!("Summary:");
+    println!("  Total Payload:  {} bytes ({:.2}%)",
+        total_payload_bytes,
+        if file_size > 0 { (total_payload_bytes as f64 / file_size as f64) * 100.0 } else { 0.0 }
+    );
+    println!("  Total Slack/Pad: {} bytes ({:.2}%)",
+        total_slack_bytes,
+        if file_size > 0 { (total_slack_bytes as f64 / file_size as f64) * 100.0 } else { 0.0 }
+    );
+
+    Ok(())
 }

@@ -9,6 +9,7 @@
 #ifndef IMPULSE_GRAPH_H
 #define IMPULSE_GRAPH_H
 
+#include "impulse_format_v0_10.h"
 #include "impulse_format_v0_9.h"
 
 #include <stdint.h>
@@ -22,18 +23,25 @@ extern "C" {
 /** Little-Endian Magic Constant: 'I' 'M' 'P' 'S' (0x494D5053) */
 #define IMPULSE_MAGIC 0x494D5053
 #define IMPULSE_VERSION_MAJOR 0
-#define IMPULSE_VERSION_MINOR 9
-#define IMPULSE_VERSION_PACKED 9
+#define IMPULSE_VERSION_MINOR 10
+#define IMPULSE_VERSION_PACKED 10
 #define IMPULSE_DEFAULT_DATA_OFFSET 4096
 
 /** @brief Domain Catalog Key Type Definitions */
 typedef enum impulse_key_type {
-    IMPULSE_KEY_TYPE_INT8   = 0x01,
-    IMPULSE_KEY_TYPE_INT16  = 0x02,
-    IMPULSE_KEY_TYPE_INT32  = 0x03,
-    IMPULSE_KEY_TYPE_INT64  = 0x04,
-    IMPULSE_KEY_TYPE_UUID   = 0x0A,
-    IMPULSE_KEY_TYPE_STRING = 0x0B
+    IMPULSE_KEY_TYPE_INT8    = 0x01,
+    IMPULSE_KEY_TYPE_INT16   = 0x02,
+    IMPULSE_KEY_TYPE_INT32   = 0x03,
+    IMPULSE_KEY_TYPE_INT64   = 0x04,
+    IMPULSE_KEY_TYPE_UINT8   = 0x05,
+    IMPULSE_KEY_TYPE_UINT16  = 0x06,
+    IMPULSE_KEY_TYPE_UINT32  = 0x07,
+    IMPULSE_KEY_TYPE_UINT64  = 0x08,
+    IMPULSE_KEY_TYPE_FLOAT32 = 0x09,
+    IMPULSE_KEY_TYPE_FLOAT64 = 0x0A,
+    IMPULSE_KEY_TYPE_UUID    = 0x0A, // Legacy v0.9.0 alias
+    IMPULSE_KEY_TYPE_STRING  = 0x0B,
+    IMPULSE_KEY_TYPE_UUID128 = 0x0C
 } impulse_key_type_t;
 
 /** @brief Primary CSR Topology Encoding Enums */
@@ -70,11 +78,12 @@ typedef enum impulse_status {
 /** @brief Stream Writer Callback Signature */
 typedef int32_t (*impulse_write_fn)(const void* data, size_t bytes, void* user_data);
 
-typedef impulse_snapshot_header_v0_9_t impulse_snapshot_header_t;
-typedef impulse_footer_trailer_v0_9_t impulse_footer_trailer_t;
-typedef impulse_domain_catalog_entry_v0_9_t impulse_domain_catalog_entry_t;
-typedef impulse_relation_directory_entry_v0_9_t impulse_relation_directory_entry_t;
-typedef impulse_attribute_descriptor_v0_9_t impulse_attribute_descriptor_t;
+typedef impulse_snapshot_header_v0_10_t impulse_snapshot_header_t;
+typedef impulse_footer_trailer_v0_10_t impulse_footer_trailer_t;
+typedef impulse_domain_catalog_entry_v0_10_t impulse_domain_catalog_entry_t;
+typedef impulse_relation_directory_entry_v0_10_t impulse_relation_directory_entry_t;
+typedef impulse_attribute_descriptor_v0_10_t impulse_attribute_descriptor_t;
+typedef impulse_index_directory_entry_v0_10_t impulse_index_directory_entry_t;
 
 #if defined(_WIN32) || defined(__CYGWIN__)
   #if defined(IMPULSE_BUILDING_DLL)
@@ -212,6 +221,17 @@ IMPULSE_API const char* impulse_get_last_error(void);
 IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features);
 IMPULSE_API impulse_writer_t* impulse_writer_create_stream(impulse_write_fn write_cb, void* user_data, uint64_t global_features);
 IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name);
+IMPULSE_API impulse_status_t impulse_writer_set_domain_node_count(impulse_writer_t* writer, uint16_t domain_index, uint64_t node_count);
+IMPULSE_API impulse_status_t impulse_writer_set_domain_key_attr(impulse_writer_t* writer, uint16_t domain_index, uint16_t key_attr_index);
+IMPULSE_API impulse_status_t impulse_writer_add_domain_attribute(
+    impulse_writer_t* writer,
+    uint16_t domain_index,
+    const char* name,
+    uint8_t type_code,
+    uint32_t dimension,
+    const void* data, uint64_t data_bytes,
+    const void* offsets, uint64_t offsets_bytes
+);
 IMPULSE_API impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
@@ -393,6 +413,38 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_name(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
     uint16_t attribute_index,
+    const char** out_name
+);
+
+// Node Domain Attribute Accessors (Spec v0.10.0)
+IMPULSE_API uint16_t impulse_snapshot_get_domain_attribute_count(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index
+);
+IMPULSE_API uint16_t impulse_snapshot_get_domain_key_attr_index(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index
+);
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_buffers(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    uint16_t attribute_index,
+    const void** out_data,
+    uint64_t* out_data_bytes,
+    const void** out_offsets,
+    uint64_t* out_offsets_bytes,
+    uint8_t* out_type_code,
+    uint32_t* out_dimension
+);
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_name(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    uint16_t attribute_index,
+    const char** out_name
+);
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_name(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
     const char** out_name
 );
 

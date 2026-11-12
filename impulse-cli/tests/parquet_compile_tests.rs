@@ -83,10 +83,11 @@ fn test_parquet_compile_nodes_edges_attributes() {
     let res = commands::compile::run(&manifest_path, &output_snapshot);
     assert!(res.is_ok(), "compile from Parquet failed: {:?}", res);
 
-    // 5. Inspect and validate compiled snapshot
+    // 5. Inspect and validate compiled snapshot (Spec v0.10.0 inline domain attributes)
     let reader = impulse_graph::SnapshotReader::open(&output_snapshot).unwrap();
+    assert_eq!(reader.header().version(), 10);
     assert_eq!(reader.header().domain_count(), 1);
-    assert_eq!(reader.relation_count(), 2);
+    assert_eq!(reader.relation_count(), 1);
 
     let rel_meta = reader
         .relations()
@@ -96,13 +97,8 @@ fn test_parquet_compile_nodes_edges_attributes() {
     assert_eq!(rel_meta.edge_count, 3);
     assert_eq!(rel_meta.attributes.len(), 1);
 
-    let node_rel_meta = reader
-        .relations()
-        .iter()
-        .find(|r| r.name == "User_nodes")
-        .expect("relation User_nodes should exist");
-    assert_eq!(node_rel_meta.edge_count, 0);
-    assert_eq!(node_rel_meta.attributes.len(), 1);
+    assert_eq!(reader.domains()[0].attributes.len(), 1);
+    assert_eq!(reader.domains()[0].attributes[0].name, "age");
 
     let age_data = reader
         .get_domain_attribute_data(0, "age")

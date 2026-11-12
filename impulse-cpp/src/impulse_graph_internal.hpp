@@ -11,6 +11,7 @@
 
 #include "impulse_graph.h"
 #include "impulse_assert.h"
+#include "impulse_format_v0_10.h"
 #include "impulse_format_v0_9.h"
 #include "impulse_sha256.h"
 
@@ -152,17 +153,27 @@ struct impulse_writer_index {
     uint64_t payload_feature_mask;
 };
 
+struct impulse_writer_attr {
+    std::string name;
+    uint8_t type_code;
+    uint32_t dimension;
+    std::vector<uint8_t> data;
+    std::vector<uint8_t> offsets;
+};
+
 struct impulse_snapshot {
     void* mmap_ptr = nullptr;
     size_t file_size = 0;
     impulse_snapshot_header_t header;
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
+    std::vector<std::vector<impulse_attribute_descriptor_t>> domain_attributes;
+    std::vector<std::vector<std::string>> domain_attribute_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::vector<std::string> relation_names;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
     std::vector<std::vector<std::string>> relation_attribute_names;
-    std::vector<impulse_index_directory_entry_v0_9_t> indexes;
+    std::vector<impulse_index_directory_entry_t> indexes;
     std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;
 
@@ -177,14 +188,6 @@ struct impulse_snapshot {
             file_size = 0;
         }
     }
-};
-
-struct impulse_writer_attr {
-    std::string name;
-    uint8_t type_code;
-    uint32_t dimension;
-    std::vector<uint8_t> data;
-    std::vector<uint8_t> offsets;
 };
 
 struct impulse_writer_relation {
@@ -209,6 +212,7 @@ struct impulse_writer {
     uint64_t global_features = 0;
     std::vector<impulse_domain_catalog_entry_t> domains;
     std::vector<std::string> domain_names;
+    std::vector<std::vector<impulse_writer_attr>> domain_attributes;
     std::vector<impulse_writer_relation> relations;
     std::vector<impulse_writer_index> indexes;
     std::unordered_map<std::string, std::string> metadata;

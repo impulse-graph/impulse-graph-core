@@ -38,23 +38,30 @@ op_MAP_DENSE_TO_KEYS: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     auto& svec = vm_state->query_context->string_vectors[h_dst];
+    auto& sowned = vm_state->query_context->string_vector_owned[h_dst];
     svec.clear();
+    sowned.clear();
 
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     uint8_t base_type = attr ? (attr->type_code & 0x7F) : 0;
     size_t max_nodes = vm_state->query_context->max_nodes;
+    size_t dom_rows = resolve_domain_row_count(vm_state->query_context, domain_id);
 
     auto add_key = [&](uint64_t u) {
         if (attr && attr->data_ptr && base_type == 0x0B) {
             const char* str_ptr = nullptr;
-            if (!attr->offsets_ptr) {
-                str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
-            } else {
-                const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
-                str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+            size_t str_len = 0;
+            if (extract_var_string_slice(*attr, dom_rows, u, &str_ptr, &str_len) && str_ptr) {
+                sowned.emplace_back(str_ptr, str_len);
+                svec.push_back(sowned.back().c_str());
             }
-            if (str_ptr) {
-                svec.push_back(str_ptr);
+        } else if (vm_state->query_context->snapshot) {
+            const void* kbytes = nullptr;
+            size_t klen = 0;
+            if (impulse_snapshot_resolve_dense_id(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), &kbytes, &klen) == IMPULSE_OK &&
+                kbytes) {
+                sowned.emplace_back(static_cast<const char*>(kbytes), klen);
+                svec.push_back(sowned.back().c_str());
             }
         }
     };

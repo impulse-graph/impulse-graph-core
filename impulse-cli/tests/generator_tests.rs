@@ -501,11 +501,11 @@ fn test_generate_with_synthetic_attributes() {
     let rel = &reader.relations()[0];
     assert_eq!(rel.attributes.len(), 3, "Must have 3 attributes generated");
     assert_eq!(rel.attributes[0].name, "weight");
-    assert_eq!(rel.attributes[0].type_code, 3); // f32
+    assert_eq!(rel.attributes[0].type_code, 0x06); // FLOAT32
     assert_eq!(rel.attributes[1].name, "timestamp");
-    assert_eq!(rel.attributes[1].type_code, 2); // i64
+    assert_eq!(rel.attributes[1].type_code, 0x04); // INT64
     assert_eq!(rel.attributes[2].name, "type");
-    assert_eq!(rel.attributes[2].type_code, 1); // i32
+    assert_eq!(rel.attributes[2].type_code, 0x03); // INT32
 
     let _ = fs::remove_dir_all(&test_dir);
 }

@@ -1,8 +1,8 @@
-//! Spec v0.9.0 Graph Data Generator for Impulse Tooling
+//! Spec v0.10.0 Graph Data Generator for Impulse Tooling
 //! Supports Graph500 (R-MAT), Social (Barabási-Albert & SBM), Erdős-Rényi, Grid, Tree, and Bipartite topologies.
 
 use crate::GenerateArgs;
-use impulse_graph::spec::KeyType;
+use impulse_graph::spec::{BaseDataType, KeyType};
 use impulse_graph::SnapshotWriter;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -35,7 +35,7 @@ struct GeneratedGraph {
 #[derive(Debug, Clone)]
 struct AttributeSpec {
     name: String,
-    type_code: u8, // 1: i32, 2: i64, 3: f32, 4: f64
+    type_code: u8, // BaseDataType: 0x03 Int32, 0x04 Int64, 0x06 Float32, 0x07 Float64
     dimension: u32,
 }
 
@@ -56,11 +56,11 @@ fn parse_attribute_specs(attrs_opt: Option<&str>) -> Vec<AttributeSpec> {
             };
 
             let type_code = match type_str.as_str() {
-                "i32" | "int32" | "int" => 1,
-                "i64" | "int64" | "long" | "timestamp" => 2,
-                "f32" | "float32" | "float" | "weight" => 3,
-                "f64" | "float64" | "double" => 4,
-                _ => 3,
+                "i32" | "int32" | "int" => BaseDataType::Int32 as u8,
+                "i64" | "int64" | "long" | "timestamp" => BaseDataType::Int64 as u8,
+                "f32" | "float32" | "float" | "weight" => BaseDataType::Float32 as u8,
+                "f64" | "float64" | "double" => BaseDataType::Float64 as u8,
+                _ => BaseDataType::Float32 as u8,
             };
 
             specs.push(AttributeSpec {
@@ -78,7 +78,7 @@ pub fn run(args: &GenerateArgs) -> Result<(), Box<dyn Error>> {
     let seed = args.seed.unwrap_or_else(|| rand::thread_rng().gen());
 
     println!("============================================================");
-    println!("  Impulse Graph Data Generator (Spec v0.9.0)");
+    println!("  Impulse Graph Data Generator (Spec v0.10.0)");
     println!("============================================================");
     println!("  Profile:         {}", args.profile);
     println!("  Output Target:   {}", args.output.display());
@@ -647,7 +647,7 @@ fn generate_bipartite(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, 
     })
 }
 
-/// Constructs a Spec v0.9.0 .imps binary snapshot directly from generated graph
+/// Constructs a Spec v0.10.0 .imps binary snapshot directly from generated graph
 fn write_imps_snapshot(
     graph: &GeneratedGraph,
     output_path: &Path,
@@ -656,7 +656,7 @@ fn write_imps_snapshot(
     args: &GenerateArgs,
 ) -> Result<(), Box<dyn Error>> {
     let include_csc = args.include_csc;
-    println!("  Constructing Spec v0.9.0 binary snapshot...");
+    println!("  Constructing Spec v0.10.0 binary snapshot...");
     let mut writer = SnapshotWriter::new(output_path.to_str().unwrap_or("snapshot.imps"));
 
     for (d_id, (name, &size)) in graph
@@ -749,14 +749,14 @@ fn write_imps_snapshot(
     for attr in attr_specs {
         let mut data_bytes = Vec::new();
         match attr.type_code {
-            1 => {
+            0x03 => {
                 // i32
                 for _ in 0..edge_count {
                     let v: i32 = rng.gen_range(0..10);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            2 => {
+            0x04 => {
                 // i64 timestamp
                 let base_ts = 1700000000i64;
                 for _ in 0..edge_count {
@@ -764,14 +764,14 @@ fn write_imps_snapshot(
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            3 => {
+            0x06 => {
                 // f32 weight
                 for _ in 0..edge_count {
                     let v: f32 = rng.gen_range(0.01..100.0);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            4 => {
+            0x07 => {
                 // f64 weight
                 for _ in 0..edge_count {
                     let v: f64 = rng.gen_range(0.01..100.0);
@@ -857,10 +857,10 @@ fn write_delimited(
         for attr in attr_specs {
             write!(writer, "{}", delimiter)?;
             match attr.type_code {
-                1 => write!(writer, "{}", rng.gen_range(0..10))?,
-                2 => write!(writer, "{}", 1700000000i64 + rng.gen_range(0..10_000_000))?,
-                3 => write!(writer, "{:.4}", rng.gen_range(0.01f32..100.0f32))?,
-                4 => write!(writer, "{:.6}", rng.gen_range(0.01f64..100.0f64))?,
+                0x03 => write!(writer, "{}", rng.gen_range(0..10))?,
+                0x04 => write!(writer, "{}", 1700000000i64 + rng.gen_range(0..10_000_000))?,
+                0x06 => write!(writer, "{:.4}", rng.gen_range(0.01f32..100.0f32))?,
+                0x07 => write!(writer, "{:.6}", rng.gen_range(0.01f64..100.0f64))?,
                 _ => write!(writer, "0")?,
             }
         }

@@ -46,20 +46,22 @@ op_COLLECT_VALUE_MAP: {
     auto& vmap = vm_state->query_context->value_maps[h_dst];
     vmap.keys.clear();
     vmap.values.clear();
+    vmap.owned_keys.clear();
 
     bool nodes_is_bitset = (vm_state->register_types[nodes_reg] == TYPE_BITSET_HANDLE);
     bool vals_is_double = (vm_state->register_types[vals_reg] == TYPE_DOUBLE_VECTOR);
     size_t max_nodes = vm_state->query_context->max_nodes;
+    size_t dom_rows = resolve_domain_row_count(vm_state->query_context, domain_id);
     uint8_t base_type = attr ? (attr->type_code & 0x7F) : 0;
 
     auto add_entry = [&](uint64_t u) {
         const char* str_ptr = nullptr;
         if (attr && attr->data_ptr && base_type == 0x0B) {
-            if (!attr->offsets_ptr) {
-                str_ptr = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
-            } else {
-                const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
-                str_ptr = static_cast<const char*>(attr->data_ptr) + offsets[u];
+            const char* raw_ptr = nullptr;
+            size_t raw_len = 0;
+            if (extract_var_string_slice(*attr, dom_rows, u, &raw_ptr, &raw_len) && raw_ptr) {
+                vmap.owned_keys.emplace_back(raw_ptr, raw_len);
+                str_ptr = vmap.owned_keys.back().c_str();
             }
         }
 
@@ -83,7 +85,8 @@ op_COLLECT_VALUE_MAP: {
             size_t klen = 0;
             if (impulse_snapshot_resolve_dense_id(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), &kbytes, &klen) == IMPULSE_OK &&
                 kbytes && klen > 0) {
-                str_ptr = static_cast<const char*>(kbytes);
+                vmap.owned_keys.emplace_back(static_cast<const char*>(kbytes), klen);
+                str_ptr = vmap.owned_keys.back().c_str();
             } else if (vmap.keys.size() < vmap.fallback_keys.size()) {
                 char* buf = vmap.fallback_keys[vmap.keys.size()].data();
                 std::snprintf(buf, 24, "%llu", static_cast<unsigned long long>(u));

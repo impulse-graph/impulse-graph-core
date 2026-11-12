@@ -1,4 +1,4 @@
-//! Spec v0.9.0 High-Performance Zero-Copy Reader Engine
+//! Spec v0.10.0 (with v0.9.0 dual-version compat) High-Performance Zero-Copy Reader Engine
 
 use crate::mmap::{MemoryMap, SharedMemoryMap};
 use crate::spec::*;
@@ -10,6 +10,8 @@ pub struct DomainInfo {
     pub key_type: KeyType,
     pub name: String,
     pub node_count: u64,
+    pub key_attr_index: u16,
+    pub attributes: Vec<AttributeInfo>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,12 +35,36 @@ pub struct RelationInfo {
     pub csc_col_idx_offset: u64,
     pub csc_col_idx_bytes: u64,
     pub attributes: Vec<AttributeInfo>,
+    pub virtual_component_ids: Vec<u16>,
 }
 
 impl RelationInfo {
     pub fn has_csc(&self) -> bool {
         (self.section_features & crate::spec::IMPULSE_SECTION_FEAT_INCLUDE_CSC) != 0
             || self.csc_row_off_bytes > 0
+            || self.csc_col_idx_bytes > 0
+    }
+
+    pub fn is_virtual(&self) -> bool {
+        (self.section_features & crate::spec::IMP_REL_FEATURE_VIRTUAL) != 0
+    }
+
+    pub fn cardinality_bits(&self) -> u64 {
+        self.section_features & crate::spec::IMP_REL_CARDINALITY_MASK
+    }
+
+    pub fn is_flat_forward(&self) -> bool {
+        !self.is_virtual()
+            && self.encoding_id != 3
+            && self.csr_row_off_bytes == 0
+            && self.csr_col_idx_bytes > 0
+    }
+
+    pub fn is_flat_reverse(&self) -> bool {
+        !self.is_virtual()
+            && self.encoding_id != 3
+            && self.csc_row_off_bytes == 0
+            && self.csc_col_idx_bytes > 0
     }
 }
 
@@ -56,6 +82,10 @@ pub struct AttributeInfo {
 impl AttributeInfo {
     pub fn base_type(&self) -> Option<BaseDataType> {
         BaseDataType::from_u8(self.type_code)
+    }
+
+    pub fn is_nullable(&self) -> bool {
+        (self.type_code & IMPULSE_NULLABLE_FLAG) != 0
     }
 }
 
@@ -165,12 +195,13 @@ impl SnapshotReader {
         }
 
         let ver = header.version();
-        if ver != IMPULSE_VERSION_PACKED && ver != 2 && ver != 0x0204 {
+        let is_modern = ver == IMPULSE_VERSION_PACKED || ver == IMPULSE_VERSION_V090;
+        if !is_modern && ver != 2 && ver != 0x0204 {
             crate::assert::check_well_formed(false, "Unsupported snapshot format version");
             return Err(ImpulseError::UnsupportedVersion);
         }
 
-        if ver == 9 {
+        if is_modern {
             let computed_crc = compute_crc16(&slice[0..0x3E]);
             if computed_crc != header.header_checksum() {
                 crate::assert::check_well_formed(false, "Snapshot header CRC-16 checksum mismatch");
@@ -178,7 +209,7 @@ impl SnapshotReader {
             }
         }
 
-        if ver == 9 && header.footer_directory_offset() > 0 {
+        if is_modern && header.footer_directory_offset() > 0 {
             let f_off = header.footer_directory_offset() as usize;
             let f_bytes = header.footer_directory_bytes() as usize;
             if f_off >= slice.len() || f_off.saturating_add(f_bytes) > slice.len() {
@@ -190,7 +221,7 @@ impl SnapshotReader {
             }
         }
 
-        let dir_offset = if ver == 9 && header.footer_directory_offset() > 0 {
+        let dir_offset = if is_modern && header.footer_directory_offset() > 0 {
             header.footer_directory_offset() as usize
         } else {
             header.data_offset() as usize
@@ -205,8 +236,8 @@ impl SnapshotReader {
 
         let domain_count = header.domain_count() as usize;
         let relation_count = header.relation_count() as usize;
-        let index_count = if ver == 9 {
-            header.index_count as usize
+        let index_count = if is_modern {
+            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(header.index_count)) as usize }
         } else {
             0
         };
@@ -214,7 +245,7 @@ impl SnapshotReader {
         let mut relations = Vec::with_capacity(relation_count);
         let mut index_entries = Vec::with_capacity(index_count);
 
-        if ver == 9 {
+        if is_modern {
             // Parse Shared String Table
             if cur + 4 > slice.len() {
                 return Err(ImpulseError::BufferOverflow);
@@ -251,26 +282,105 @@ impl SnapshotReader {
                 cur += 128 - rem;
             }
 
-            // Parse Domain Catalog Entries Array
+            // Parse Domain Catalog Entries Array (32B + inline AttributeDescriptors in v0.10.0; 16B in v0.9.0)
             for _d_idx in 0..domain_count {
-                if cur + std::mem::size_of::<DomainCatalogEntry>() > slice.len() {
-                    return Err(ImpulseError::BufferOverflow);
+                if ver == IMPULSE_VERSION_PACKED {
+                    if cur + std::mem::size_of::<DomainCatalogEntry>() > slice.len() {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+                    let dom_entry = unsafe {
+                        std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntry)
+                    };
+                    cur += std::mem::size_of::<DomainCatalogEntry>();
+
+                    let key_type = KeyType::from_u8_for_version(dom_entry.key_type(), ver)
+                        .ok_or(ImpulseError::InvalidArgument)?;
+                    let name = validate_and_get_string(dom_entry.name_offset() as usize)?;
+                    let attr_count = dom_entry.attr_count() as usize;
+                    let key_attr_index = dom_entry.key_attr_index();
+                    if key_attr_index != 0xFFFF && (key_attr_index as usize) >= attr_count {
+                        return Err(ImpulseError::InvalidArgument);
+                    }
+
+                    let mut attributes = Vec::with_capacity(attr_count);
+                    for _ in 0..attr_count {
+                        if cur + std::mem::size_of::<AttributeDescriptor>() > slice.len() {
+                            return Err(ImpulseError::BufferOverflow);
+                        }
+                        let attr_desc = unsafe {
+                            std::ptr::read_unaligned(
+                                slice[cur..].as_ptr() as *const AttributeDescriptor
+                            )
+                        };
+                        cur += std::mem::size_of::<AttributeDescriptor>();
+
+                        let attr_name =
+                            validate_and_get_string(attr_desc.name_offset() as usize)?;
+                        let data_off =
+                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_offset)) };
+                        let data_bytes =
+                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_bytes)) };
+                        let offs_off =
+                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_offset)) };
+                        let offs_bytes =
+                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_bytes)) };
+                        let dim =
+                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.dimension)) };
+
+                        if data_bytes > 0
+                            && (data_off as usize).saturating_add(data_bytes as usize) > slice.len()
+                        {
+                            return Err(ImpulseError::BufferOverflow);
+                        }
+                        if offs_bytes > 0
+                            && (offs_off as usize).saturating_add(offs_bytes as usize) > slice.len()
+                        {
+                            return Err(ImpulseError::BufferOverflow);
+                        }
+
+                        attributes.push(AttributeInfo {
+                            name: attr_name,
+                            type_code: attr_desc.type_code,
+                            dimension: dim,
+                            data_offset: data_off,
+                            data_bytes,
+                            offsets_offset: offs_off,
+                            offsets_bytes: offs_bytes,
+                        });
+                    }
+
+                    domains.push(DomainInfo {
+                        domain_id: dom_entry.domain_id(),
+                        key_type,
+                        name,
+                        node_count: dom_entry.node_count(),
+                        key_attr_index,
+                        attributes,
+                    });
+                } else {
+                    if cur + std::mem::size_of::<DomainCatalogEntryV09>() > slice.len() {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+                    let dom_entry = unsafe {
+                        std::ptr::read_unaligned(
+                            slice[cur..].as_ptr() as *const DomainCatalogEntryV09
+                        )
+                    };
+                    cur += std::mem::size_of::<DomainCatalogEntryV09>();
+
+                    let key_type = KeyType::from_u8_for_version(dom_entry.key_type(), ver)
+                        .ok_or(ImpulseError::InvalidArgument)?;
+                    let name = validate_and_get_string(dom_entry.name_offset() as usize)?;
+
+                    domains.push(DomainInfo {
+                        domain_id: dom_entry.domain_id(),
+                        key_type,
+                        name,
+                        node_count: dom_entry.node_count(),
+                        key_attr_index: 0xFFFF,
+                        attributes: Vec::new(),
+                    });
                 }
-                let dom_entry = unsafe {
-                    std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntry)
-                };
-                cur += std::mem::size_of::<DomainCatalogEntry>();
-
-                let key_type =
-                    KeyType::from_u8(dom_entry.key_type()).ok_or(ImpulseError::InvalidArgument)?;
-                let name = validate_and_get_string(dom_entry.name_offset() as usize)?;
-
-                domains.push(DomainInfo {
-                    domain_id: dom_entry.domain_id(),
-                    key_type,
-                    name,
-                    node_count: dom_entry.node_count(),
-                });
             }
 
             let rem = cur % 128;
@@ -314,6 +424,34 @@ impl SnapshotReader {
                 }
 
                 let rel_name = validate_and_get_string(rel_entry.name_offset() as usize)?;
+                let sec_feats = rel_entry.section_features();
+                let mut virtual_component_ids = Vec::new();
+                if (sec_feats & IMP_REL_FEATURE_VIRTUAL) != 0 {
+                    let comp_count =
+                        u16::from_le_bytes([rel_entry.reserved2[0], rel_entry.reserved2[1]])
+                            as usize;
+                    let first_id =
+                        u16::from_le_bytes([rel_entry.reserved2[2], rel_entry.reserved2[3]]);
+                    if comp_count > 10 || (comp_count > 0 && first_id == 0xFFFF) {
+                        let off = rel_entry.csr_col_idx_offset() as usize;
+                        let bytes = comp_count * 2;
+                        if off.saturating_add(bytes) <= slice.len() {
+                            for c in 0..comp_count {
+                                let p = off + c * 2;
+                                virtual_component_ids
+                                    .push(u16::from_le_bytes([slice[p], slice[p + 1]]));
+                            }
+                        }
+                    } else {
+                        for c in 0..comp_count.min(10) {
+                            let p = 2 + c * 2;
+                            virtual_component_ids.push(u16::from_le_bytes([
+                                rel_entry.reserved2[p],
+                                rel_entry.reserved2[p + 1],
+                            ]));
+                        }
+                    }
+                }
 
                 relations.push(RelationInfo {
                     relation_id: rel_entry.relation_id(),
@@ -325,7 +463,7 @@ impl SnapshotReader {
                     name: rel_name,
                     node_count: rel_entry.node_count(),
                     edge_count: rel_entry.edge_count(),
-                    section_features: rel_entry.section_features(),
+                    section_features: sec_feats,
                     csr_row_off_offset: rel_entry.csr_row_off_offset(),
                     csr_row_off_bytes: rel_entry.csr_row_off_bytes(),
                     csr_col_idx_offset: rel_entry.csr_col_idx_offset(),
@@ -335,6 +473,7 @@ impl SnapshotReader {
                     csc_col_idx_offset: rel_entry.csc_col_idx_offset,
                     csc_col_idx_bytes: rel_entry.csc_col_idx_bytes,
                     attributes,
+                    virtual_component_ids,
                 });
             }
 
@@ -397,7 +536,7 @@ impl SnapshotReader {
                 }
                 let dom_id = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap());
                 let key_t =
-                    KeyType::from_u8(slice[cur + 2]).ok_or(ImpulseError::InvalidArgument)?;
+                    KeyType::from_u8_for_version(slice[cur + 2], 9).ok_or(ImpulseError::InvalidArgument)?;
                 let name_off =
                     u32::from_le_bytes(slice[cur + 44..cur + 48].try_into().unwrap()) as usize;
                 let name_len =
@@ -417,6 +556,8 @@ impl SnapshotReader {
                     key_type: key_t,
                     name,
                     node_count: 0,
+                    key_attr_index: 0xFFFF,
+                    attributes: Vec::new(),
                 });
             }
 
@@ -468,6 +609,7 @@ impl SnapshotReader {
                     csc_col_idx_offset: 0,
                     csc_col_idx_bytes: 0,
                     attributes: Vec::new(),
+                    virtual_component_ids: Vec::new(),
                 });
             }
         }
@@ -527,6 +669,14 @@ impl SnapshotReader {
         &self.relations
     }
 
+    pub fn metadata_offset(&self) -> u64 {
+        self.metadata_offset
+    }
+
+    pub fn metadata_bytes(&self) -> u64 {
+        self.metadata_bytes
+    }
+
     pub fn get_relation_entry(&self, relation_index: u16) -> Option<&RelationInfo> {
         self.relations.get(relation_index as usize)
     }
@@ -567,6 +717,39 @@ impl SnapshotReader {
         let col_indices =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(col_indices)
+    }
+
+    pub fn get_col_indices_u16(&self, relation_index: usize) -> Result<&[u16], ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let slice = self.mmap.as_slice();
+        let start = rel.csr_col_idx_offset as usize;
+        let bytes = rel.csr_col_idx_bytes as usize;
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u16>()) {
+            return Err(ImpulseError::InvalidAlignment);
+        }
+        let col_indices =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u16, bytes / 2) };
+        Ok(col_indices)
+    }
+
+    pub fn get_col_indices_as_u32_vec(&self, relation_index: usize) -> Result<Vec<u32>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if rel.node_id_width == 2 {
+            let u16_slice = self.get_col_indices_u16(relation_index)?;
+            Ok(u16_slice.iter().map(|&x| x as u32).collect())
+        } else {
+            let u32_slice = self.get_col_indices(relation_index)?;
+            Ok(u32_slice.to_vec())
+        }
     }
 
     pub fn get_csc_row_offsets(
@@ -617,6 +800,53 @@ impl SnapshotReader {
         let col_indices =
             unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
         Ok(Some(col_indices))
+    }
+
+    pub fn get_csc_col_indices_u16(
+        &self,
+        relation_index: usize,
+    ) -> Result<Option<&[u16]>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if rel.csc_col_idx_bytes == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = rel.csc_col_idx_offset as usize;
+        let bytes = rel.csc_col_idx_bytes as usize;
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u16>()) {
+            return Err(ImpulseError::InvalidAlignment);
+        }
+        let col_indices =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u16, bytes / 2) };
+        Ok(Some(col_indices))
+    }
+
+    pub fn get_csc_col_indices_as_u32_vec(
+        &self,
+        relation_index: usize,
+    ) -> Result<Option<Vec<u32>>, ImpulseError> {
+        let rel = self
+            .relations
+            .get(relation_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if rel.csc_col_idx_bytes == 0 {
+            return Ok(None);
+        }
+        if rel.node_id_width == 2 {
+            Ok(self
+                .get_csc_col_indices_u16(relation_index)?
+                .map(|s| s.iter().map(|&x| x as u32).collect()))
+        } else {
+            Ok(self
+                .get_csc_col_indices(relation_index)?
+                .map(|s| s.to_vec()))
+        }
     }
 
     /// Parses and validates a 64-byte `VamanaHeader` (`IMP_INDEX_VAMANA_ANN = 8`) at `entry.data_offset`.
@@ -758,22 +988,42 @@ impl SnapshotReader {
         Ok(Some(&slice[start..start + bytes]))
     }
 
-    /// Reads a domain's Float32 vector attribute (`[node_count, dimension]`) by `attr_index` or `attr_name`.
-    /// Locates the appropriate relation and attribute index for a domain's Float32 vector attribute.
-    /// Prioritizes:
-    /// 1. Explicit `relation_hint` matching `r.relation_id`.
-    /// 2. Dedicated node carrier relation (`src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes"))`).
-    /// 3. Any carrier relation with `src == domain_id && (edge_count == 0 || name.ends_with("_nodes"))`.
-    /// 4. Any relation where `data_bytes == node_count * dim * 4` (matching domain node count).
-    /// 5. Any self-relation (`src == tgt == domain_id`).
-    /// 6. Fallback to any relation with `src_domain_id == domain_id`.
-    fn find_domain_float32_attribute(
+    /// Locates a domain's Float32 vector attribute (`[node_count, dimension]`), prioritizing
+    /// Spec v0.10.0 inline `DomainInfo.attributes` before legacy v0.9.0 carrier relations.
+    fn resolve_domain_float32_raw_slice(
         &self,
         domain_id: u16,
         relation_hint: Option<u16>,
         attr_index: Option<u16>,
         attr_name: Option<&str>,
-    ) -> Result<(usize, usize), ImpulseError> {
+    ) -> Result<(&AttributeInfo, u64, &[u8]), ImpulseError> {
+        // Pass 0: Spec v0.10.0 inline DomainInfo.attributes (when relation_hint is None or 0xFFFF)
+        if relation_hint.is_none() || relation_hint == Some(0xFFFF) {
+            if let Some((d_idx, dom)) = self
+                .domains
+                .iter()
+                .enumerate()
+                .find(|(_, d)| d.domain_id == domain_id)
+            {
+                for (a_idx, a) in dom.attributes.iter().enumerate() {
+                    if (a.type_code & IMPULSE_TYPE_MASK) != 6 {
+                        continue;
+                    }
+                    let matched = if let Some(name) = attr_name {
+                        a.name == name
+                    } else if let Some(target_idx) = attr_index {
+                        a_idx == target_idx as usize
+                    } else {
+                        a.dimension > 1
+                    };
+                    if matched {
+                        let raw = self.get_domain_attribute_by_index(d_idx, a_idx)?;
+                        return Ok((a, dom.node_count, raw));
+                    }
+                }
+            }
+        }
+
         let dom_node_count = self
             .domains
             .iter()
@@ -801,72 +1051,94 @@ impl SnapshotReader {
             None
         };
 
+        let mut found_rel_attr: Option<(usize, usize)> = None;
+
         // Pass 1: Explicit relation_hint matches
         if let Some(rel_id) = relation_hint {
             if rel_id != 0xFFFF {
                 if let Some(r_idx) = self.relations.iter().position(|r| r.relation_id == rel_id) {
                     if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                        return Ok((r_idx, a_idx));
+                        found_rel_attr = Some((r_idx, a_idx));
                     }
                 }
             }
         }
 
-        // Pass 2: Dedicated node carrier relation (src == tgt == domain_id && (edge_count == 0 || name.ends_with("_nodes")))
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id
-                && r.tgt_domain_id == domain_id
-                && (r.edge_count == 0 || r.name.ends_with("_nodes"))
-            {
-                if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                    return Ok((r_idx, a_idx));
-                }
-            }
-        }
-
-        // Pass 3: Any node carrier relation with src_domain_id == domain_id && (edge_count == 0 || name.ends_with("_nodes"))
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id && (r.edge_count == 0 || r.name.ends_with("_nodes")) {
-                if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                    return Ok((r_idx, a_idx));
-                }
-            }
-        }
-
-        // Pass 4: Any relation where data_bytes == node_count * dim * 4 (matching domain node count)
-        if let Some(nc) = dom_node_count {
+        // Pass 2: Dedicated node carrier relation
+        if found_rel_attr.is_none() {
             for (r_idx, r) in self.relations.iter().enumerate() {
-                if r.src_domain_id == domain_id {
+                if r.src_domain_id == domain_id
+                    && r.tgt_domain_id == domain_id
+                    && (r.edge_count == 0 || r.name.ends_with("_nodes"))
+                {
                     if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                        let a = &r.attributes[a_idx];
-                        let expected_bytes = nc * (a.dimension.max(1) as u64) * 4;
-                        if a.data_bytes == expected_bytes {
-                            return Ok((r_idx, a_idx));
+                        found_rel_attr = Some((r_idx, a_idx));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pass 3: Any node carrier relation with src_domain_id == domain_id
+        if found_rel_attr.is_none() {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id && (r.edge_count == 0 || r.name.ends_with("_nodes"))
+                {
+                    if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                        found_rel_attr = Some((r_idx, a_idx));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pass 4: Any relation where data_bytes == node_count * dim * 4
+        if found_rel_attr.is_none() {
+            if let Some(nc) = dom_node_count {
+                for (r_idx, r) in self.relations.iter().enumerate() {
+                    if r.src_domain_id == domain_id {
+                        if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                            let a = &r.attributes[a_idx];
+                            let expected_bytes = nc * (a.dimension.max(1) as u64) * 4;
+                            if a.data_bytes == expected_bytes {
+                                found_rel_attr = Some((r_idx, a_idx));
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Pass 5: Any self-relation (src == tgt == domain_id)
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
-                if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                    return Ok((r_idx, a_idx));
+        // Pass 5: Any self-relation
+        if found_rel_attr.is_none() {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id && r.tgt_domain_id == domain_id {
+                    if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                        found_rel_attr = Some((r_idx, a_idx));
+                        break;
+                    }
                 }
             }
         }
 
         // Pass 6: Fallback to any relation with src_domain_id == domain_id
-        for (r_idx, r) in self.relations.iter().enumerate() {
-            if r.src_domain_id == domain_id {
-                if let Some(a_idx) = match_attr_in_rel(r_idx) {
-                    return Ok((r_idx, a_idx));
+        if found_rel_attr.is_none() {
+            for (r_idx, r) in self.relations.iter().enumerate() {
+                if r.src_domain_id == domain_id {
+                    if let Some(a_idx) = match_attr_in_rel(r_idx) {
+                        found_rel_attr = Some((r_idx, a_idx));
+                        break;
+                    }
                 }
             }
         }
 
-        Err(ImpulseError::NotFound)
+        let (r_idx, a_idx) = found_rel_attr.ok_or(ImpulseError::NotFound)?;
+        let a = &self.relations[r_idx].attributes[a_idx];
+        let raw = self.get_attribute_data(r_idx, a_idx)?;
+        let nc = dom_node_count.unwrap_or(self.relations[r_idx].node_count);
+        Ok((a, nc, raw))
     }
 
     /// Reads a domain's Float32 vector attribute (`[node_count, dimension]`) by `attr_index` or `attr_name`.
@@ -887,10 +1159,19 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, Vec<f32>), ImpulseError> {
-        let (r_idx, a_idx) =
-            self.find_domain_float32_attribute(domain_id, relation_hint, attr_index, attr_name)?;
-        let a = &self.relations[r_idx].attributes[a_idx];
-        let raw = self.get_attribute_data(r_idx, a_idx)?;
+        let (a, entity_count, mut raw) = self.resolve_domain_float32_raw_slice(
+            domain_id,
+            relation_hint,
+            attr_index,
+            attr_name,
+        )?;
+        if a.is_nullable() {
+            let bm_bytes = align_128(entity_count.div_ceil(64) * 8) as usize;
+            if raw.len() < bm_bytes {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            raw = &raw[bm_bytes..];
+        }
         let dim = a.dimension.max(1) as usize;
         if !raw.len().is_multiple_of(4) {
             return Err(ImpulseError::InvalidArgument);
@@ -922,10 +1203,19 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, &[f32]), ImpulseError> {
-        let (r_idx, a_idx) =
-            self.find_domain_float32_attribute(domain_id, relation_hint, attr_index, attr_name)?;
-        let a = &self.relations[r_idx].attributes[a_idx];
-        let raw = self.get_attribute_data(r_idx, a_idx)?;
+        let (a, entity_count, mut raw) = self.resolve_domain_float32_raw_slice(
+            domain_id,
+            relation_hint,
+            attr_index,
+            attr_name,
+        )?;
+        if a.is_nullable() {
+            let bm_bytes = align_128(entity_count.div_ceil(64) * 8) as usize;
+            if raw.len() < bm_bytes {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            raw = &raw[bm_bytes..];
+        }
         let dim = a.dimension.max(1) as usize;
         if !raw.len().is_multiple_of(4) || !(raw.as_ptr() as usize).is_multiple_of(4) {
             return Err(ImpulseError::InvalidAlignment);
@@ -976,64 +1266,10 @@ impl SnapshotReader {
     }
 
     pub fn is_reachable(&self, relation_index: u16, src_id: u64, tgt_id: u64) -> bool {
-        let rel = match self.relations.get(relation_index as usize) {
-            Some(r) => r,
-            None => return false,
-        };
-
-        if src_id >= rel.node_count {
-            return false;
+        match self.get_neighbors(relation_index, src_id) {
+            Ok(nbrs) => nbrs.contains(&tgt_id),
+            Err(_) => false,
         }
-
-        let slice = self.mmap.as_slice();
-        let row_start = rel.csr_row_off_offset as usize;
-        let col_start = rel.csr_col_idx_offset as usize;
-        let row_bytes = rel.csr_row_off_bytes as usize;
-        let col_bytes = rel.csr_col_idx_bytes as usize;
-
-        if row_start
-            .checked_add(row_bytes)
-            .is_none_or(|end| end > slice.len())
-            || col_start
-                .checked_add(col_bytes)
-                .is_none_or(|end| end > slice.len())
-        {
-            return false;
-        }
-
-        if !(slice[row_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
-            || !(slice[col_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
-        {
-            return false;
-        }
-
-        let row_offsets = unsafe {
-            std::slice::from_raw_parts(
-                slice[row_start..].as_ptr() as *const u32,
-                rel.csr_row_off_bytes as usize / 4,
-            )
-        };
-
-        let col_indices = unsafe {
-            std::slice::from_raw_parts(
-                slice[col_start..].as_ptr() as *const u32,
-                rel.csr_col_idx_bytes as usize / 4,
-            )
-        };
-
-        let u = src_id as usize;
-        if u + 1 >= row_offsets.len() {
-            return false;
-        }
-
-        let start = row_offsets[u] as usize;
-        let end = row_offsets[u + 1] as usize;
-
-        if start > end || end > col_indices.len() {
-            return false;
-        }
-
-        col_indices[start..end].iter().any(|&v| v as u64 == tgt_id)
     }
 
     pub fn is_adjacent(
@@ -1050,63 +1286,76 @@ impl SnapshotReader {
         relation_index: u16,
         src_id: u64,
     ) -> Result<Vec<u64>, ImpulseError> {
-        let rel = self
-            .relations
-            .get(relation_index as usize)
-            .ok_or(ImpulseError::NotFound)?;
+        let r_idx = relation_index as usize;
+        let rel = self.relations.get(r_idx).ok_or(ImpulseError::NotFound)?;
+
+        if rel.is_virtual() {
+            let mut merged = Vec::new();
+            for &comp_rel_id in &rel.virtual_component_ids {
+                if let Some(comp_idx) = self
+                    .relations
+                    .iter()
+                    .position(|r| r.relation_id == comp_rel_id)
+                {
+                    if comp_idx != r_idx {
+                        if let Ok(sub) = self.get_neighbors(comp_idx as u16, src_id) {
+                            for v in sub {
+                                if !merged.contains(&v) {
+                                    merged.push(v);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(merged);
+        }
+
         if src_id >= rel.node_count {
             return Ok(Vec::new());
         }
 
-        let slice = self.mmap.as_slice();
-        let row_start = rel.csr_row_off_offset as usize;
-        let col_start = rel.csr_col_idx_offset as usize;
-        let row_bytes = rel.csr_row_off_bytes as usize;
-        let col_bytes = rel.csr_col_idx_bytes as usize;
-
-        if row_start
-            .checked_add(row_bytes)
-            .is_none_or(|end| end > slice.len())
-            || col_start
-                .checked_add(col_bytes)
-                .is_none_or(|end| end > slice.len())
-        {
-            return Err(ImpulseError::BufferOverflow);
+        if rel.is_flat_forward() {
+            let u = src_id as usize;
+            if rel.node_id_width == 2 {
+                let cols = self.get_col_indices_u16(r_idx)?;
+                if u >= cols.len() || cols[u] == 0xFFFF {
+                    return Ok(Vec::new());
+                }
+                return Ok(vec![cols[u] as u64]);
+            } else {
+                let cols = self.get_col_indices(r_idx)?;
+                if u >= cols.len() || cols[u] == u32::MAX {
+                    return Ok(Vec::new());
+                }
+                return Ok(vec![cols[u] as u64]);
+            }
         }
 
-        if !(slice[row_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
-            || !(slice[col_start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>())
-        {
-            return Err(ImpulseError::InvalidAlignment);
-        }
-
-        let row_offsets = unsafe {
-            std::slice::from_raw_parts(
-                slice[row_start..].as_ptr() as *const u32,
-                rel.csr_row_off_bytes as usize / 4,
-            )
-        };
-
-        let col_indices = unsafe {
-            std::slice::from_raw_parts(
-                slice[col_start..].as_ptr() as *const u32,
-                rel.csr_col_idx_bytes as usize / 4,
-            )
-        };
-
+        let row_offsets = self.get_row_offsets(r_idx)?;
         let u = src_id as usize;
         if u + 1 >= row_offsets.len() {
             return Ok(Vec::new());
         }
-
         let start = row_offsets[u] as usize;
         let end = row_offsets[u + 1] as usize;
-
-        if start > end || end > col_indices.len() {
+        if start > end {
             return Ok(Vec::new());
         }
 
-        Ok(col_indices[start..end].iter().map(|&v| v as u64).collect())
+        if rel.node_id_width == 2 {
+            let col_indices = self.get_col_indices_u16(r_idx)?;
+            if end > col_indices.len() {
+                return Ok(Vec::new());
+            }
+            Ok(col_indices[start..end].iter().map(|&v| v as u64).collect())
+        } else {
+            let col_indices = self.get_col_indices(r_idx)?;
+            if end > col_indices.len() {
+                return Ok(Vec::new());
+            }
+            Ok(col_indices[start..end].iter().map(|&v| v as u64).collect())
+        }
     }
 
     pub fn get_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
@@ -1212,11 +1461,149 @@ impl SnapshotReader {
         Ok(Some(offsets))
     }
 
+    pub fn get_domain_attribute_by_index(
+        &self,
+        domain_index: usize,
+        attribute_index: usize,
+    ) -> Result<&[u8], ImpulseError> {
+        let dom = self
+            .domains
+            .get(domain_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let attr = dom
+            .attributes
+            .get(attribute_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let slice = self.mmap.as_slice();
+        let start = attr.data_offset as usize;
+        let bytes = attr.data_bytes as usize;
+        if start.saturating_add(bytes) > slice.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        Ok(&slice[start..start + bytes])
+    }
+
+    pub fn get_domain_attribute_offsets_by_index(
+        &self,
+        domain_index: usize,
+        attribute_index: usize,
+    ) -> Result<Option<&[u32]>, ImpulseError> {
+        let dom = self
+            .domains
+            .get(domain_index)
+            .ok_or(ImpulseError::NotFound)?;
+        let attr = dom
+            .attributes
+            .get(attribute_index)
+            .ok_or(ImpulseError::NotFound)?;
+        if attr.offsets_bytes == 0 {
+            return Ok(None);
+        }
+        let slice = self.mmap.as_slice();
+        let start = attr.offsets_offset as usize;
+        let bytes = attr.offsets_bytes as usize;
+        if start.checked_add(bytes).is_none_or(|end| end > slice.len()) {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        if !(slice[start..].as_ptr() as usize).is_multiple_of(std::mem::align_of::<u32>()) {
+            return Err(ImpulseError::InvalidAlignment);
+        }
+        let offsets =
+            unsafe { std::slice::from_raw_parts(slice[start..].as_ptr() as *const u32, bytes / 4) };
+        Ok(Some(offsets))
+    }
+
+    /// Resolves a dense node ID (`0..node_count-1`) to its primary external key bytes in $O(1)$ time
+    /// via `DomainInfo.key_attr_index` (Spec v0.10.0 §5.1). Returns `Ok(None)` if no `key_attr_index`
+    /// is configured (`0xFFFF`) or if the key entry is marked NULL.
+    pub fn resolve_dense_id(
+        &self,
+        domain_id: u16,
+        dense_id: u32,
+    ) -> Result<Option<&[u8]>, ImpulseError> {
+        let (d_idx, dom) = self
+            .domains
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.domain_id == domain_id)
+            .ok_or(ImpulseError::NotFound)?;
+        if (dense_id as u64) >= dom.node_count {
+            return Err(ImpulseError::NotFound);
+        }
+        if dom.key_attr_index == 0xFFFF {
+            return Ok(None);
+        }
+        let a_idx = dom.key_attr_index as usize;
+        let attr = dom
+            .attributes
+            .get(a_idx)
+            .ok_or(ImpulseError::InvalidArgument)?;
+        let mut raw = self.get_domain_attribute_by_index(d_idx, a_idx)?;
+        let idx = dense_id as usize;
+
+        if attr.is_nullable() {
+            let raw_bm = dom.node_count.div_ceil(64) * 8;
+            let padded_bm = align_128(raw_bm) as usize;
+            if raw.len() < padded_bm || (idx >> 3) >= raw_bm as usize {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            if (raw[idx >> 3] & (1u8 << (idx & 7))) == 0 {
+                return Ok(None);
+            }
+            raw = &raw[padded_bm..];
+        }
+
+        let base = attr.base_type().ok_or(ImpulseError::InvalidArgument)?;
+        if base.is_variable() {
+            let offs = self
+                .get_domain_attribute_offsets_by_index(d_idx, a_idx)?
+                .ok_or(ImpulseError::InvalidArgument)?;
+            if idx + 1 >= offs.len() {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            let s = offs[idx] as usize;
+            let mut e = offs[idx + 1] as usize;
+            if s > e || e > raw.len() {
+                return Err(ImpulseError::BufferOverflow);
+            }
+            if base == BaseDataType::VarString && e > s && raw[e - 1] == 0 {
+                e -= 1;
+            }
+            return Ok(Some(&raw[s..e]));
+        }
+
+        let stride = base.element_byte_size() * (attr.dimension.max(1) as usize);
+        let start = idx
+            .checked_mul(stride)
+            .ok_or(ImpulseError::BufferOverflow)?;
+        let end = start
+            .checked_add(stride)
+            .ok_or(ImpulseError::BufferOverflow)?;
+        if end > raw.len() {
+            return Err(ImpulseError::BufferOverflow);
+        }
+        Ok(Some(&raw[start..end]))
+    }
+
     pub fn get_domain_attribute_data(
         &self,
         domain_id: u16,
         name: &str,
     ) -> Result<&[u8], ImpulseError> {
+        // Pass 0: Spec v0.10.0 inline DomainInfo.attributes
+        if let Some((d_idx, dom)) = self
+            .domains
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.domain_id == domain_id)
+        {
+            for (a_idx, a) in dom.attributes.iter().enumerate() {
+                if a.name == name {
+                    return self.get_domain_attribute_by_index(d_idx, a_idx);
+                }
+            }
+        }
+
         let dom_node_count = self
             .domains
             .iter()
@@ -1296,6 +1683,20 @@ impl SnapshotReader {
         domain_id: u16,
         name: &str,
     ) -> Result<Option<&[u32]>, ImpulseError> {
+        // Pass 0: Spec v0.10.0 inline DomainInfo.attributes
+        if let Some((d_idx, dom)) = self
+            .domains
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.domain_id == domain_id)
+        {
+            for (a_idx, a) in dom.attributes.iter().enumerate() {
+                if a.name == name {
+                    return self.get_domain_attribute_offsets_by_index(d_idx, a_idx);
+                }
+            }
+        }
+
         let dom_node_count = self
             .domains
             .iter()
@@ -1385,6 +1786,41 @@ impl SnapshotReader {
         let mut rel_map = std::collections::HashMap::new();
         let mut attr_map = std::collections::HashMap::new();
 
+        for (d_idx, dom) in self.domains.iter().enumerate() {
+            let dom_name = if dom.name.is_empty() {
+                format!("dom_{}", dom.domain_id)
+            } else {
+                dom.name.clone()
+            };
+            for (a_idx, a) in dom.attributes.iter().enumerate() {
+                if let Ok(mut data) = self.get_domain_attribute_by_index(d_idx, a_idx) {
+                    if a.is_nullable() {
+                        let bm = align_128(dom.node_count.div_ceil(64) * 8) as usize;
+                        if data.len() >= bm {
+                            data = &data[bm..];
+                        }
+                    }
+                    let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
+                    let attr_stats = match base_type {
+                        3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(
+                            &a.name, data,
+                        ),
+                        4 | 8 | 9 => crate::stats::AttributeStatisticsCalculator::calculate_int64(
+                            &a.name, data,
+                        ),
+                        6 => crate::stats::AttributeStatisticsCalculator::calculate_float32(
+                            &a.name, data,
+                        ),
+                        7 => crate::stats::AttributeStatisticsCalculator::calculate_float64(
+                            &a.name, data,
+                        ),
+                        _ => crate::stats::AttributeStatistics::empty(&a.name),
+                    };
+                    attr_map.insert(format!("{}.{}", dom_name, a.name), attr_stats);
+                }
+            }
+        }
+
         for (r_idx, r) in self.relations.iter().enumerate() {
             let stats = self.get_relation_statistics(r_idx)?;
             let rel_name = if r.name.is_empty() {
@@ -1395,13 +1831,19 @@ impl SnapshotReader {
             rel_map.insert(rel_name.clone(), stats);
 
             for (a_idx, a) in r.attributes.iter().enumerate() {
-                if let Ok(data) = self.get_attribute_data(r_idx, a_idx) {
+                if let Ok(mut data) = self.get_attribute_data(r_idx, a_idx) {
+                    if a.is_nullable() {
+                        let bm = align_128(r.edge_count.div_ceil(64) * 8) as usize;
+                        if data.len() >= bm {
+                            data = &data[bm..];
+                        }
+                    }
                     let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
                     let attr_stats = match base_type {
-                        1 | 3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(
+                        3 => crate::stats::AttributeStatisticsCalculator::calculate_int32(
                             &a.name, data,
                         ),
-                        2 | 4 => crate::stats::AttributeStatisticsCalculator::calculate_int64(
+                        4 | 8 | 9 => crate::stats::AttributeStatisticsCalculator::calculate_int64(
                             &a.name, data,
                         ),
                         6 => crate::stats::AttributeStatisticsCalculator::calculate_float32(
@@ -1424,10 +1866,5 @@ impl SnapshotReader {
             attribute_stats: attr_map,
             metadata_sketches: metadata,
         })
-    }
-
-    /// Initializes a fluent multi-hop graph traversal starting at `start_node`.
-    pub fn traverse(&self, start_node: u64) -> crate::traversal::Traversal<'_> {
-        crate::traversal::Traversal::new(self, start_node)
     }
 }

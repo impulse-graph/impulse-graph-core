@@ -74,22 +74,29 @@ op_GATHER_NODE_ATTR: {
                 dst_vec[i] = std::numeric_limits<float>::quiet_NaN();
             }
         }
-    } else if (domain < vm_state->query_context->attribute_slots.size() &&
-        attr_idx < vm_state->query_context->attribute_slots[domain].size() &&
-        vm_state->query_context->attribute_slots[domain][attr_idx].data_ptr) {
-        const auto& slot = vm_state->query_context->attribute_slots[domain][attr_idx];
-        const float* src_attr = static_cast<const float*>(slot.data_ptr);
-        size_t attr_n = std::min(N, static_cast<size_t>(slot.data_bytes / sizeof(float)));
+    } else if (const BoundAttributeSlot* slot_ptr = resolve_node_attribute_slot(vm_state->query_context, domain, attr_idx);
+               slot_ptr != nullptr) {
+        const auto& slot = *slot_ptr;
+        bool is_null = (slot.type_code & 0x80) != 0;
+        size_t dom_rows = resolve_domain_row_count(vm_state->query_context, domain);
+        size_t bm_bytes = is_null ? ((((dom_rows + 63) / 64) * 8 + 127) & ~size_t(127)) : 0;
+        const uint8_t* raw_b = static_cast<const uint8_t*>(slot.data_ptr);
+        const float* src_attr = (slot.data_bytes > bm_bytes)
+            ? reinterpret_cast<const float*>(raw_b + bm_bytes)
+            : nullptr;
+        size_t attr_n = src_attr ? std::min(N, static_cast<size_t>((slot.data_bytes - bm_bytes) / sizeof(float))) : 0;
         vm_state->query_context->float_vector_lengths[h_dst] = attr_n;
         if (front_is_bs) {
             const auto& bs = vm_state->query_context->bitsets[h_front];
             #pragma omp parallel for schedule(static)
             for (size_t i = 0; i < attr_n; ++i) {
-                dst_vec[i] = bs.test(i) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
+                bool valid = !is_null || (((raw_b[i >> 3] >> (i & 7)) & 1U) != 0U);
+                dst_vec[i] = (bs.test(i) && valid) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
             }
         } else {
             for (size_t i = 0; i < attr_n; ++i) {
-                dst_vec[i] = (i == front_scalar) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
+                bool valid = !is_null || (((raw_b[i >> 3] >> (i & 7)) & 1U) != 0U);
+                dst_vec[i] = (i == front_scalar && valid) ? src_attr[i] : std::numeric_limits<float>::quiet_NaN();
             }
         }
     } else {

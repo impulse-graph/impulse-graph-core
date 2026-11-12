@@ -5,7 +5,7 @@
 #include "impulse_graph.h"
 
 #ifndef IMPULSE_ATTR_TYPE_FLOAT32
-#define IMPULSE_ATTR_TYPE_FLOAT32 0x05
+#define IMPULSE_ATTR_TYPE_FLOAT32 0x06
 #endif
 
 #include <vector>

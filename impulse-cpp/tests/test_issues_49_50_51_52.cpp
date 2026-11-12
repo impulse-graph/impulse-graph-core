@@ -56,6 +56,8 @@ static void create_test_snapshot(const char* filepath) {
 
     impulse_status_t st = impulse_writer_add_domain(writer, 0, IMPULSE_KEY_TYPE_INT32, "User");
     T_ASSERT_EQ(st, IMPULSE_OK);
+    st = impulse_writer_set_domain_node_count(writer, 0, 4);
+    T_ASSERT_EQ(st, IMPULSE_OK);
 
     // Edges: 0 -> 1, 0 -> 2, 1 -> 2, 2 -> 3
     const uint32_t row_offsets[] = { 0, 2, 3, 4, 4 };
@@ -74,7 +76,7 @@ static void create_test_snapshot(const char* filepath) {
 
     // Float node attribute "score" for 4 nodes: [10.0, 20.0, 30.0, 40.0]
     const float scores[] = { 10.0f, 20.0f, 30.0f, 40.0f };
-    st = impulse_writer_add_attribute(
+    st = impulse_writer_add_domain_attribute(
         writer,
         0,
         "score",
@@ -87,7 +89,7 @@ static void create_test_snapshot(const char* filepath) {
 
     // Float node attribute "weight" for 4 nodes: [2.0, 4.0, 5.0, 8.0]
     const float weights[] = { 2.0f, 4.0f, 5.0f, 8.0f };
-    st = impulse_writer_add_attribute(
+    st = impulse_writer_add_domain_attribute(
         writer,
         0,
         "weight",

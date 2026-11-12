@@ -32,7 +32,10 @@ op_MAP_KEYS_TO_DENSE: {
     uint16_t domain_id = inst.payload & 0xFFFF;
     VALIDATE_REG(dst);
     if (!vm_state->query_context) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
-    if (domain_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (domain_id >= vm_state->query_context->domain_attribute_slots.size() &&
+        domain_id >= vm_state->query_context->attribute_slots.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
 
     const BoundAttributeSlot* attr = find_key_attribute(vm_state, domain_id);
 
@@ -47,39 +50,39 @@ op_MAP_KEYS_TO_DENSE: {
         const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
         if (input_keys && input_keys->keys && input_keys->count > 0) {
             uint8_t base_type = attr->type_code & 0x7F;
-            size_t node_count = vm_state->query_context->max_nodes;
+            size_t node_count = resolve_domain_row_count(vm_state->query_context, domain_id);
 
             for (size_t k = 0; k < input_keys->count; ++k) {
                 const char* target_key = input_keys->keys[k];
                 if (!target_key) continue;
+                size_t target_len = std::strlen(target_key);
 
                 for (size_t u = 0; u < node_count; ++u) {
                     bool is_match = false;
                     if (base_type == 0x0B) {
                         const char* key_val = nullptr;
-                        if (!attr->offsets_ptr) {
-                            key_val = static_cast<const char*>(attr->data_ptr) + u * attr->dimension;
-                        } else {
-                            const uint32_t* offsets = static_cast<const uint32_t*>(attr->offsets_ptr);
-                            key_val = static_cast<const char*>(attr->data_ptr) + offsets[u];
-                        }
-                        if (key_val) {
-                            if (!attr->offsets_ptr) {
-                                size_t target_len = std::strlen(target_key);
-                                size_t match_len = std::min<size_t>(target_len, static_cast<size_t>(attr->dimension));
-                                if (std::strncmp(key_val, target_key, match_len) == 0 &&
-                                    (target_len <= static_cast<size_t>(attr->dimension) || key_val[match_len] == '\0')) {
-                                    is_match = true;
-                                }
-                            } else if (std::strcmp(key_val, target_key) == 0) {
+                        size_t key_len = 0;
+                        if (extract_var_string_slice(*attr, node_count, u, &key_val, &key_len)) {
+                            if (key_len == target_len && (target_len == 0 || std::memcmp(key_val, target_key, target_len) == 0)) {
                                 is_match = true;
                             }
                         }
                     } else if (base_type == 0x03 || base_type == 0x04) {
-                        int64_t val = 0;
-                        if (base_type == 0x03) val = static_cast<const int32_t*>(attr->data_ptr)[u];
-                        else val = static_cast<const int64_t*>(attr->data_ptr)[u];
-                        
+                        const uint8_t* val_ptr = static_cast<const uint8_t*>(attr->data_ptr);
+                        uint64_t val_bytes = attr->data_bytes;
+                        if ((attr->type_code & 0x80) != 0) {
+                            uint64_t raw_bm = ((node_count + 63ULL) / 64ULL) * 8ULL;
+                            uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
+                            if (val_bytes < padded_bm || ((val_ptr[u >> 3] >> (u & 7u)) & 1u) == 0u) continue;
+                            val_ptr += padded_bm;
+                            val_bytes -= padded_bm;
+                        }
+                        size_t esz = (base_type == 0x03) ? 4 : 8;
+                        if ((u + 1) * esz > val_bytes) continue;
+                        int64_t val = (base_type == 0x03)
+                            ? static_cast<int64_t>(reinterpret_cast<const int32_t*>(val_ptr)[u])
+                            : reinterpret_cast<const int64_t*>(val_ptr)[u];
+
                         char* endptr = nullptr;
                         int64_t target_val = std::strtoll(target_key, &endptr, 10);
                         if (endptr != target_key && val == target_val) {

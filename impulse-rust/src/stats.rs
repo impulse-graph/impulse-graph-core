@@ -121,10 +121,10 @@ impl RelationStatisticsCalculator {
         let node_count = rel.node_count;
         let edge_count = rel.edge_count;
 
-        if node_count == 0 {
+        if node_count == 0 || rel.is_virtual() || rel.encoding_id == 1 {
             return Ok(RelationStatistics {
-                node_count: 0,
-                edge_count: 0,
+                node_count,
+                edge_count,
                 unique_source_nodes: 0,
                 max_out_degree: 0,
                 avg_out_degree: 0.0,
@@ -144,38 +144,66 @@ impl RelationStatisticsCalculator {
             });
         }
 
-        let row_offsets = reader.get_row_offsets(relation_index)?;
-        let col_indices = reader.get_col_indices(relation_index)?;
-
         let n = node_count as usize;
+        let tgt_n = reader
+            .domains()
+            .iter()
+            .find(|d| d.domain_id == rel.tgt_domain_id)
+            .map(|d| d.node_count as usize)
+            .filter(|&c| c > 0)
+            .unwrap_or(n);
+
         let mut out_degrees = vec![0u32; n];
-        let mut in_degrees = vec![0u32; n];
+        let mut in_degrees = vec![0u32; tgt_n];
+        let mut max_in_degree = 0u32;
 
-        let mut unique_source_nodes = 0u64;
-        let mut max_out_degree = 0u32;
-
-        if row_offsets.len() > n {
-            for i in 0..n {
-                let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
-                out_degrees[i] = deg;
-                if deg > 0 {
-                    unique_source_nodes += 1;
+        if rel.is_flat_forward() {
+            let sentinel = if rel.node_id_width == 2 {
+                0xFFFFu32
+            } else {
+                u32::MAX
+            };
+            let cols = reader.get_col_indices_as_u32_vec(relation_index)?;
+            for (u, &tgt) in cols.iter().take(n).enumerate() {
+                if tgt != sentinel {
+                    out_degrees[u] = 1;
+                    let v = tgt as usize;
+                    if v < tgt_n {
+                        in_degrees[v] += 1;
+                        if in_degrees[v] > max_in_degree {
+                            max_in_degree = in_degrees[v];
+                        }
+                    }
                 }
-                if deg > max_out_degree {
-                    max_out_degree = deg;
+            }
+        } else {
+            let row_offsets = reader.get_row_offsets(relation_index)?;
+            let col_indices = reader.get_col_indices_as_u32_vec(relation_index)?;
+            if row_offsets.len() > n {
+                for i in 0..n {
+                    let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
+                    out_degrees[i] = deg;
+                }
+            }
+            for &tgt in &col_indices {
+                let tgt_idx = tgt as usize;
+                if tgt_idx < tgt_n {
+                    in_degrees[tgt_idx] += 1;
+                    if in_degrees[tgt_idx] > max_in_degree {
+                        max_in_degree = in_degrees[tgt_idx];
+                    }
                 }
             }
         }
 
-        // Calculate in-degrees from target column indices
-        let mut max_in_degree = 0u32;
-        for &tgt in col_indices {
-            let tgt_idx = tgt as usize;
-            if tgt_idx < n {
-                in_degrees[tgt_idx] += 1;
-                if in_degrees[tgt_idx] > max_in_degree {
-                    max_in_degree = in_degrees[tgt_idx];
-                }
+        let mut unique_source_nodes = 0u64;
+        let mut max_out_degree = 0u32;
+        for &deg in &out_degrees {
+            if deg > 0 {
+                unique_source_nodes += 1;
+            }
+            if deg > max_out_degree {
+                max_out_degree = deg;
             }
         }
 
@@ -184,7 +212,11 @@ impl RelationStatisticsCalculator {
         } else {
             0.0
         };
-        let avg_in_degree = avg_out_degree;
+        let avg_in_degree = if tgt_n > 0 {
+            edge_count as f64 / tgt_n as f64
+        } else {
+            0.0
+        };
 
         // Standard deviation
         let mut sum_squared_diffs = 0.0;

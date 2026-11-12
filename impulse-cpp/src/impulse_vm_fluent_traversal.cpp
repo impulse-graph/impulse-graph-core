@@ -559,39 +559,50 @@ std::vector<uint64_t> Traversal::collect() const {
                     const auto& lhs = opt->children[0];
                     const auto& rhs = opt->children[1];
                     const std::string& op = opt->text;
-                    std::string attr_name = lhs->text;
-                    uint16_t a_rel = 0, a_idx = 0;
-                    uint8_t a_tc = 0;
-                    if (resolve_domain_attribute(snapshot_, current_domain_id_, attr_name, &a_rel, &a_idx, &a_tc)) {
-                        uint8_t base_tc = a_tc & 0x7Fu;
-                        double rhs_val = (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT)
-                            ? rhs->float_val
-                            : static_cast<double>(rhs->int_val);
-                        if (base_tc == 0x07u) {
-                            state.registers[2] = std::bit_cast<uint64_t>(rhs_val);
-                            state.register_types[2] = TYPE_DOUBLE;
-                        } else if (base_tc == 0x06u) {
-                            float fval = static_cast<float>(rhs_val);
-                            uint32_t fbits = 0;
-                            std::memcpy(&fbits, &fval, sizeof(float));
-                            state.registers[2] = fbits;
-                            state.register_types[2] = TYPE_FLOAT;
-                        } else {
-                            state.registers[2] = static_cast<uint64_t>(static_cast<int64_t>(rhs_val));
-                            state.register_types[2] = TYPE_INT64;
+                    if (lhs->kind == impulse::cel::AstKind::IDENTIFIER &&
+                        (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT || rhs->kind == impulse::cel::AstKind::LITERAL_INT) &&
+                        (op == "==" || op == "!=" || op == ">" || op == "<" || op == ">=" || op == "<=")) {
+                        std::string attr_name = lhs->text;
+                        uint16_t a_rel = 0, a_idx = 0;
+                        uint8_t a_tc = 0;
+                        if (resolve_domain_attribute(snapshot_, current_domain_id_, attr_name, &a_rel, &a_idx, &a_tc)) {
+                            uint8_t base_tc = a_tc & 0x7Fu;
+                            if (base_tc == 0x06u || base_tc == 0x07u) {
+                                double rhs_val = (rhs->kind == impulse::cel::AstKind::LITERAL_FLOAT)
+                                    ? rhs->float_val
+                                    : static_cast<double>(rhs->int_val);
+                                if (base_tc == 0x07u) {
+                                    state.registers[2] = std::bit_cast<uint64_t>(rhs_val);
+                                    state.register_types[2] = TYPE_DOUBLE;
+                                } else {
+                                    float fval = static_cast<float>(rhs_val);
+                                    uint32_t fbits = 0;
+                                    std::memcpy(&fbits, &fval, sizeof(float));
+                                    state.registers[2] = fbits;
+                                    state.register_types[2] = TYPE_FLOAT;
+                                }
+                                std::vector<impulse_instruction_t> f_insts;
+                                f_insts.push_back({OP_LOAD_COLUMN_VECTOR, 0, 1, static_cast<uint32_t>(a_rel | (static_cast<uint32_t>(a_idx) << 16))});
+                                if (op == "==" || op == ">" || op == "<") {
+                                    uint8_t cmp_op = (op == ">") ? OP_VEC_CMP_GT : ((op == "<") ? OP_VEC_CMP_LT : OP_VEC_CMP_EQ);
+                                    f_insts.push_back({cmp_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
+                                    f_insts.push_back({OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
+                                } else if (op == "!=") {
+                                    f_insts.push_back({OP_VEC_CMP_EQ, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
+                                    f_insts.push_back({OP_SET_DIFFERENCE, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
+                                } else {
+                                    uint8_t strict_op = (op == ">=") ? OP_VEC_CMP_GT : OP_VEC_CMP_LT;
+                                    f_insts.push_back({strict_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))});
+                                    f_insts.push_back({OP_VEC_CMP_EQ, 0, 4, static_cast<uint32_t>(1 | (2 << 8))});
+                                    f_insts.push_back({OP_SET_UNION, 0, 3, static_cast<uint32_t>(3 | (4 << 16))});
+                                    f_insts.push_back({OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))});
+                                }
+                                f_insts.push_back({OP_HALT, 0, 0, 0});
+                                state.pc = 0;
+                                impulse_vm_execute(f_insts.data(), f_insts.size(), &state, 0);
+                                handled_by_vm = true;
+                            }
                         }
-                        uint8_t cmp_op = OP_VEC_CMP_EQ;
-                        if (op == ">") cmp_op = OP_VEC_CMP_GT;
-                        else if (op == "<") cmp_op = OP_VEC_CMP_LT;
-                        impulse_instruction_t f_insts[4] = {
-                            {OP_LOAD_COLUMN_VECTOR, 0, 1, static_cast<uint32_t>(a_rel | (static_cast<uint32_t>(a_idx) << 16))},
-                            {cmp_op, 0, 3, static_cast<uint32_t>(1 | (2 << 8))},
-                            {OP_SET_INTERSECT, 0, 0, static_cast<uint32_t>(0 | (3 << 16))},
-                            {OP_HALT, 0, 0, 0}
-                        };
-                        state.pc = 0;
-                        impulse_vm_execute(f_insts, 4, &state, 0);
-                        handled_by_vm = true;
                     }
                 }
                 if (!handled_by_vm && state.register_types[0] == TYPE_BITSET_HANDLE) {
@@ -600,7 +611,7 @@ std::vector<uint64_t> Traversal::collect() const {
                         if (impulse_vm_context_bitset_test(ctx, handle, u)) {
                             std::unordered_map<std::string, double> f_attrs;
                             std::unordered_map<std::string, int64_t> i_attrs;
-                            populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                            populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
                             if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt, 1ULL, &i_attrs, &f_attrs)) {
                                 impulse_vm_context_bitset_remove(ctx, handle, u);
                             }
@@ -618,7 +629,7 @@ std::vector<uint64_t> Traversal::collect() const {
                     if (impulse_vm_context_bitset_test(ctx, handle, u)) {
                         std::unordered_map<std::string, double> f_attrs;
                         std::unordered_map<std::string, int64_t> i_attrs;
-                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                        populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
                         double v = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
                         if (opt_ast->kind == impulse::cel::AstKind::BINARY_OP &&
                             (opt_ast->text == "==" || opt_ast->text == "!=" || opt_ast->text == "<" ||
@@ -669,7 +680,7 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
     uint8_t default_tc = 0;
     uint32_t default_dim = 0;
     const void* raw_default = nullptr;
-    if (resolve_named_attribute_buffer(snapshot_, "", &raw_default, &default_attr_bytes, &default_tc, &default_dim) &&
+    if (resolve_named_attribute_buffer(snapshot_, "", &raw_default, &default_attr_bytes, &default_tc, &default_dim, current_domain_id_) &&
         raw_default && ((default_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (default_tc & 0x7F) == 0x05)) {
         default_attr_f32 = static_cast<const float*>(raw_default);
     }
@@ -702,7 +713,7 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
             uint8_t m_tc = 0;
             uint32_t m_dim = 0;
             const float* m_f32 = nullptr;
-            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_mul, &m_bytes, &m_tc, &m_dim) &&
+            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_mul, &m_bytes, &m_tc, &m_dim, current_domain_id_) &&
                 raw_mul && ((m_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (m_tc & 0x7F) == 0x05)) {
                 m_f32 = static_cast<const float*>(raw_mul);
             } else {
@@ -721,7 +732,7 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
             uint8_t d_tc = 0;
             uint32_t d_dim = 0;
             const float* d_f32 = nullptr;
-            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_div, &d_bytes, &d_tc, &d_dim) &&
+            if (resolve_named_attribute_buffer(snapshot_, step.str1, &raw_div, &d_bytes, &d_tc, &d_dim, current_domain_id_) &&
                 raw_div && ((d_tc & 0x7F) == IMPULSE_ATTR_TYPE_FLOAT32 || (d_tc & 0x7F) == 0x05)) {
                 d_f32 = static_cast<const float*>(raw_div);
             } else {
@@ -743,7 +754,7 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
                 for (uint64_t u : active) {
                     std::unordered_map<std::string, double> f_attrs;
                     std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
                     if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, 1ULL, &i_attrs, &f_attrs)) {
                         new_active.push_back(u);
                     } else {
@@ -761,13 +772,13 @@ std::vector<float> Traversal::evaluateStateVector(std::vector<uint64_t>* out_act
                 for (uint64_t u : active) {
                     std::unordered_map<std::string, double> f_attrs;
                     std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs);
+                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
                     double val = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, 1ULL, &f_attrs, &i_attrs);
                     if (u < max_n) state_vec[u] = static_cast<float>(val);
                 }
             }
         } else if (step.kind == Step::Kind::RERANK && snapshot_ && !step.float_vec.empty() && !active.empty()) {
-            uint16_t aid = resolve_attr_or_index_id(snapshot_, step.str1);
+            uint16_t aid = resolve_attr_or_index_id(snapshot_, step.str1, current_domain_id_);
             uint8_t metric_flag = static_cast<uint8_t>(step.u32_arg1 & 0x03U);
             impulse_vm_context_t* rctx = impulse_vm_context_create(snapshot_);
             if (rctx) {

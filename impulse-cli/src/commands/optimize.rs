@@ -73,7 +73,7 @@ pub fn run_with_options(
     // 1. Re-add domains and compute per-domain node permutations: (old_to_new, new_to_old)
     let mut domain_perms: HashMap<u16, (Vec<u32>, Vec<u32>)> = HashMap::new();
 
-    for d in reader.domains() {
+    for (d_idx, d) in reader.domains().iter().enumerate() {
         writer.add_domain(d.domain_id, d.key_type, &d.name);
         writer.set_domain_node_count(d.domain_id, d.node_count);
         let n = d.node_count as usize;
@@ -122,13 +122,55 @@ pub fn run_with_options(
             let id: Vec<u32> = (0..n as u32).collect();
             (id.clone(), id)
         });
+
+        // Permute & preserve Spec v0.10.0 inline domain attributes
+        if !opts.strip_properties {
+            let new_to_old = &perm.1;
+            for (attr_idx, attr) in d.attributes.iter().enumerate() {
+                let raw_data = reader.get_domain_attribute_by_index(d_idx, attr_idx)?;
+                let raw_offsets =
+                    reader.get_domain_attribute_offsets_by_index(d_idx, attr_idx)?;
+                let (new_data, new_offs) = permute_attribute_payload(
+                    attr.type_code,
+                    attr.dimension,
+                    raw_data,
+                    raw_offsets,
+                    new_to_old,
+                );
+                writer.add_attribute_to_domain(
+                    d.domain_id,
+                    &attr.name,
+                    attr.type_code,
+                    attr.dimension,
+                    new_data,
+                    new_offs,
+                );
+            }
+            if d.key_attr_index != 0xFFFF {
+                writer.set_domain_key_attr(d.domain_id, d.key_attr_index);
+            }
+        }
+
         domain_perms.insert(d.domain_id, perm);
     }
 
     // 2. Re-add relations with CSR/CSC remapping and multi-dimensional attribute permutation
     for (idx, rel) in reader.relations().iter().enumerate() {
-        let row_offsets = reader.get_row_offsets(idx)?;
-        let col_indices = reader.get_col_indices(idx)?;
+        if rel.is_virtual() {
+            writer.add_virtual_relation(
+                rel.src_domain_id,
+                rel.tgt_domain_id,
+                rel.node_count,
+                &rel.name,
+                rel.virtual_component_ids.clone(),
+            );
+            continue;
+        }
+
+        let (row_offsets_vec, col_indices_vec, _coo_opt) =
+            crate::commands::index::extract_relation_csr_and_coo(&reader, idx, rel)?;
+        let row_offsets = row_offsets_vec.as_slice();
+        let col_indices = col_indices_vec.as_slice();
         let src_n = rel.node_count as usize;
 
         let default_src_id: Vec<u32> = (0..src_n as u32).collect();
@@ -187,7 +229,13 @@ pub fn run_with_options(
             new_cols,
         );
         writer.set_relation_name(idx, &rel.name);
-        if opts.csc || rel.csc_row_off_bytes > 0 || rel.csc_col_idx_bytes > 0 {
+        writer.set_relation_widths(idx, rel.node_id_width, rel.edge_index_width);
+        writer.set_relation_encoding(idx, rel.encoding_id);
+        writer.set_relation_section_features(
+            idx,
+            rel.section_features & impulse_graph::spec::IMP_REL_CARDINALITY_MASK,
+        );
+        if opts.csc || rel.has_csc() {
             writer.set_relation_include_csc(idx, true);
         }
 
@@ -343,26 +391,43 @@ pub fn run_with_options(
                     quant_type: quant,
                     seed: 0x5641_4D41_2026_0009,
                 };
-                // Find attribute name by relation_id and attribute_index
-                let attr_name = reader
-                    .relations()
-                    .get(entry.relation_id as usize)
-                    .and_then(|r| r.attributes.get(entry.attribute_index as usize))
-                    .map(|a| a.name.clone())
-                    .or_else(|| {
-                        reader
-                            .relations()
-                            .iter()
-                            .find(|r| {
-                                r.src_domain_id == hdr.domain_id
-                                    && (r.edge_count == 0
-                                        || r.name.ends_with("_nodes")
-                                        || r.attributes.iter().any(|a| a.dimension > 1))
-                            })
-                            .and_then(|r| r.attributes.get(hdr.vec_attr_id as usize))
-                            .map(|a| a.name.clone())
-                    })
-                    .unwrap_or_else(|| "embedding".to_string());
+                // Find attribute name by domain_id/relation_id and attribute_index
+                let attr_name = if entry.relation_id == 0xFFFF {
+                    reader
+                        .domains()
+                        .iter()
+                        .find(|d| d.domain_id == hdr.domain_id)
+                        .and_then(|d| d.attributes.get(entry.attribute_index as usize))
+                        .map(|a| a.name.clone())
+                } else {
+                    reader
+                        .relations()
+                        .get(entry.relation_id as usize)
+                        .and_then(|r| r.attributes.get(entry.attribute_index as usize))
+                        .map(|a| a.name.clone())
+                }
+                .or_else(|| {
+                    reader
+                        .domains()
+                        .iter()
+                        .find(|d| d.domain_id == hdr.domain_id)
+                        .and_then(|d| d.attributes.get(hdr.vec_attr_id as usize))
+                        .map(|a| a.name.clone())
+                })
+                .or_else(|| {
+                    reader
+                        .relations()
+                        .iter()
+                        .find(|r| {
+                            r.src_domain_id == hdr.domain_id
+                                && (r.edge_count == 0
+                                    || r.name.ends_with("_nodes")
+                                    || r.attributes.iter().any(|a| a.dimension > 1))
+                        })
+                        .and_then(|r| r.attributes.get(hdr.vec_attr_id as usize))
+                        .map(|a| a.name.clone())
+                })
+                .unwrap_or_else(|| "embedding".to_string());
                 writer.add_vamana_index(hdr.domain_id, &attr_name, &entry.name, &cfg)?;
             } else {
                 let adj_slab = reader.get_vamana_adj_slab(&hdr)?;
@@ -440,8 +505,9 @@ fn attribute_element_byte_stride(type_code: u8, dimension: u32) -> usize {
     let base_bytes = match base_type {
         0x01 => 1,
         0x02 | 0x05 => 2,
-        0x03 | 0x06 | 0x0D => 4,
-        0x04 | 0x07 | 0x08 | 0x09 | 0x0E => 8,
+        0x03 | 0x06 => 4,
+        0x04 | 0x07 | 0x08 | 0x09 | 0x0D => 8,
+        0x0E => 16,
         0x0A => 1,
         _ => 0,
     };

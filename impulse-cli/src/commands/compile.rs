@@ -2,7 +2,10 @@ use crate::parquet_reader::{
     build_padded_validity_bitmap, read_parquet_column_data, read_parquet_id_strings,
     read_text_column_data, NativeColumn,
 };
-use impulse_graph::spec::KeyType;
+use impulse_graph::spec::{
+    KeyType, IMP_REL_CARDINALITY_1_1, IMP_REL_CARDINALITY_1_M, IMP_REL_CARDINALITY_M_1,
+    IMP_REL_CARDINALITY_M_N,
+};
 use impulse_graph::SnapshotWriter;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -19,6 +22,7 @@ struct Manifest {
     relations: Vec<RelationDef>,
     embeddings: Option<Vec<String>>,
     vector_indices: Option<Vec<String>>,
+    metadata: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +42,7 @@ struct DomainDef {
     file: Option<String>,
     format: Option<String>,
     id_column: Option<String>,
+    key_attribute: Option<String>,
     attributes: Option<Vec<AttributeDef>>,
 }
 
@@ -46,9 +51,12 @@ struct RelationDef {
     name: Option<String>,
     src_domain: u16,
     tgt_domain: u16,
-    #[allow(dead_code)]
     encoding: Option<String>,
-    file: String,
+    cardinality: Option<String>,
+    node_id_width: Option<u8>,
+    edge_index_width: Option<u8>,
+    virtual_components: Option<Vec<String>>,
+    file: Option<String>,
     format: Option<String>,
     src_column: Option<String>,
     tgt_column: Option<String>,
@@ -58,11 +66,37 @@ struct RelationDef {
 
 fn parse_key_type(s: &str) -> KeyType {
     match s.trim().to_lowercase().as_str() {
+        "int8" | "i8" => KeyType::Int8,
+        "int16" | "i16" => KeyType::Int16,
+        "int32" | "i32" | "int" | "integer" => KeyType::Int32,
+        "int64" | "i64" | "long" => KeyType::Int64,
+        "uint8" | "u8" => KeyType::Uint8,
+        "uint16" | "u16" => KeyType::Uint16,
+        "uint32" | "u32" => KeyType::Uint32,
+        "uint64" | "u64" => KeyType::Uint64,
+        "float32" | "f32" | "float" => KeyType::Float32,
+        "float64" | "f64" | "double" => KeyType::Float64,
         "string" | "str" | "utf8" | "text" | "var_string" => KeyType::String,
-        "uint64" | "u64" | "int64" | "i64" | "long" => KeyType::Int64,
-        "uuid" | "fixed_bytes" => KeyType::Uuid,
-        "uint16" | "u16" | "int16" | "i16" => KeyType::Int32,
+        "uuid" | "uuid128" | "fixed_bytes" => KeyType::Uuid128,
         _ => KeyType::Int32,
+    }
+}
+
+fn parse_cardinality_bits(s: &str) -> u64 {
+    match s.trim().to_lowercase().as_str() {
+        "m:1" | "m_1" | "many_to_one" => IMP_REL_CARDINALITY_M_1,
+        "1:m" | "1_m" | "one_to_many" => IMP_REL_CARDINALITY_1_M,
+        "1:1" | "1_1" | "one_to_one" => IMP_REL_CARDINALITY_1_1,
+        _ => IMP_REL_CARDINALITY_M_N,
+    }
+}
+
+fn parse_encoding_id(s: &str) -> u8 {
+    match s.trim().to_lowercase().as_str() {
+        "zstd" | "delta_vbyte" | "1" | "0x01" => 1,
+        "raw_u16" | "u16" | "2" | "0x02" => 2,
+        "coo" | "hybrid_16_32" | "3" | "0x03" => 3,
+        _ => 0,
     }
 }
 
@@ -81,19 +115,21 @@ fn is_parquet_file(file_path: &Path, format_opt: Option<&str>) -> bool {
 
 fn base_type_element_size(base_type: u8, dimension: u32) -> usize {
     let base_size = match base_type {
-        0x01 => 1, // INT8
-        0x02 => 2, // INT16
-        0x03 => 4, // INT32
-        0x04 => 8, // INT64
-        0x05 => 2, // FLOAT16
-        0x06 => 4, // FLOAT32
-        0x07 => 8, // FLOAT64
-        0x08 => 8, // TIMESTAMP_MS
-        0x09 => 8, // TIMESTAMP_NS
-        0x0A => 1, // FIXED_BYTES
+        0x01 => 1,  // INT8
+        0x02 => 2,  // INT16
+        0x03 => 4,  // INT32
+        0x04 => 8,  // INT64
+        0x05 => 2,  // FLOAT16
+        0x06 => 4,  // FLOAT32
+        0x07 => 8,  // FLOAT64
+        0x08 => 8,  // TIMESTAMP_MS
+        0x09 => 8,  // TIMESTAMP_NS
+        0x0A => 1,  // FIXED_BYTES
+        0x0D => 8,  // INTERVAL_SEC_32 (u32 start_sec, u32 duration_sec)
+        0x0E => 16, // INTERVAL_MS_64 (u64 start_ms, u64 duration_ms)
         _ => 4,
     };
-    base_size * (dimension as usize)
+    base_size * (dimension.max(1) as usize)
 }
 
 fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeColumn {
@@ -151,8 +187,6 @@ fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeCol
                 if start <= end && end <= raw_payload.len() {
                     new_payload.extend_from_slice(&raw_payload[start..end]);
                 }
-            } else {
-                new_payload.push(0);
             }
             new_offsets.push(new_payload.len() as u32);
         }
@@ -464,22 +498,28 @@ pub fn run_with_options(
         }
     }
 
-    // Validate relation uniqueness
+    if let Some(ref meta) = manifest.metadata {
+        if !meta.is_empty() {
+            writer.set_metadata(meta.clone());
+        }
+    }
+
+    // Validate relation uniqueness (keyed by endpoints, file, and explicit relation name)
     let mut seen_relations = std::collections::HashSet::new();
     for r in &manifest.relations {
-        if !seen_relations.insert((r.src_domain, r.tgt_domain, &r.file)) {
+        if !seen_relations.insert((r.src_domain, r.tgt_domain, &r.file, &r.name)) {
             return Err(format!(
-                "Duplicate relation definition in manifest for src_domain {} -> tgt_domain {} (file: {})",
-                r.src_domain, r.tgt_domain, r.file
+                "Duplicate relation definition in manifest for src_domain {} -> tgt_domain {} (name: {:?}, file: {:?})",
+                r.src_domain, r.tgt_domain, r.name, r.file
             )
             .into());
         }
     }
 
     struct CompiledRelation {
+        manifest_idx: usize,
         src_domain: u16,
         tgt_domain: u16,
-        src_domain_count: u32,
         edges_count: u64,
         row_offsets: Vec<u32>,
         col_indices: Vec<u32>,
@@ -487,72 +527,81 @@ pub fn run_with_options(
     }
 
     let mut compiled_relations = Vec::new();
+    let mut deferred_virtual_relations: Vec<usize> = Vec::new();
 
     // Process Relations and build Node Maps & Edge Attributes
-    for r in &manifest.relations {
-        let edge_file_path = base_dir.join(&r.file);
-        if !is_stdout {
-            println!("  Reading edge file: {}...", edge_file_path.display());
+    for (manifest_idx, r) in manifest.relations.iter().enumerate() {
+        if r.virtual_components.is_some() {
+            deferred_virtual_relations.push(manifest_idx);
+            continue;
         }
 
         let mut edges: Vec<(u32, u32, usize)> = Vec::new(); // (src_idx, tgt_idx, original_row_index)
         let mut raw_attr_cols: HashMap<String, NativeColumn> = HashMap::new();
 
-        let src_col = r.src_column.as_deref().unwrap_or("src");
-        let tgt_col = r.tgt_column.as_deref().unwrap_or("tgt");
-
-        if is_parquet_file(&edge_file_path, r.format.as_deref()) {
-            let src_keys = read_parquet_id_strings(&edge_file_path, src_col)?;
-            let tgt_keys = read_parquet_id_strings(&edge_file_path, tgt_col)?;
-
-            for i in 0..src_keys.len() {
-                let src_idx = {
-                    let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
-                    let next_idx = src_map.len() as u32;
-                    *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
-                };
-
-                let tgt_idx = {
-                    let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
-                    let next_idx = tgt_map.len() as u32;
-                    *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
-                };
-
-                edges.push((src_idx, tgt_idx, i));
+        if let Some(ref rel_file) = r.file {
+            let edge_file_path = base_dir.join(rel_file);
+            if !is_stdout {
+                println!("  Reading edge file: {}...", edge_file_path.display());
             }
 
-            if let Some(ref attrs) = r.attributes {
-                let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
-                    .iter()
-                    .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
-                    .collect();
-                raw_attr_cols = read_parquet_column_data(&edge_file_path, &reqs)?;
-            }
-        } else {
-            let (src_keys, tgt_keys) = read_text_edge_endpoints(&edge_file_path, src_col, tgt_col)?;
+            let src_col = r.src_column.as_deref().unwrap_or("src");
+            let tgt_col = r.tgt_column.as_deref().unwrap_or("tgt");
 
-            for i in 0..src_keys.len() {
-                let src_idx = {
-                    let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
-                    let next_idx = src_map.len() as u32;
-                    *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
-                };
+            if is_parquet_file(&edge_file_path, r.format.as_deref()) {
+                let src_keys = read_parquet_id_strings(&edge_file_path, src_col)?;
+                let tgt_keys = read_parquet_id_strings(&edge_file_path, tgt_col)?;
 
-                let tgt_idx = {
-                    let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
-                    let next_idx = tgt_map.len() as u32;
-                    *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
-                };
+                for i in 0..src_keys.len() {
+                    let src_idx = {
+                        let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
+                        let next_idx = src_map.len() as u32;
+                        *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
+                    };
 
-                edges.push((src_idx, tgt_idx, i));
-            }
+                    let tgt_idx = {
+                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
+                        let next_idx = tgt_map.len() as u32;
+                        *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
+                    };
 
-            if let Some(ref attrs) = r.attributes {
-                let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
-                    .iter()
-                    .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
-                    .collect();
-                raw_attr_cols = read_text_column_data(&edge_file_path, &reqs)?;
+                    edges.push((src_idx, tgt_idx, i));
+                }
+
+                if let Some(ref attrs) = r.attributes {
+                    let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                        .iter()
+                        .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                        .collect();
+                    raw_attr_cols = read_parquet_column_data(&edge_file_path, &reqs)?;
+                }
+            } else {
+                let (src_keys, tgt_keys) =
+                    read_text_edge_endpoints(&edge_file_path, src_col, tgt_col)?;
+
+                for i in 0..src_keys.len() {
+                    let src_idx = {
+                        let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
+                        let next_idx = src_map.len() as u32;
+                        *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
+                    };
+
+                    let tgt_idx = {
+                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
+                        let next_idx = tgt_map.len() as u32;
+                        *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
+                    };
+
+                    edges.push((src_idx, tgt_idx, i));
+                }
+
+                if let Some(ref attrs) = r.attributes {
+                    let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                        .iter()
+                        .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                        .collect();
+                    raw_attr_cols = read_text_column_data(&edge_file_path, &reqs)?;
+                }
             }
         }
 
@@ -588,9 +637,9 @@ pub fn run_with_options(
         }
 
         compiled_relations.push(CompiledRelation {
+            manifest_idx,
             src_domain: r.src_domain,
             tgt_domain: r.tgt_domain,
-            src_domain_count,
             edges_count: edges.len() as u64,
             row_offsets,
             col_indices,
@@ -608,28 +657,54 @@ pub fn run_with_options(
         writer.set_domain_node_count(d.id, node_count);
     }
 
-    // Add relations to SnapshotWriter
-    for (rel_idx, cr) in compiled_relations.into_iter().enumerate() {
+    // Add physical relations to SnapshotWriter
+    let mut rel_name_to_id: HashMap<String, u16> = HashMap::new();
+    for (rel_idx, mut cr) in compiled_relations.into_iter().enumerate() {
+        let r_def = &manifest.relations[cr.manifest_idx];
+        let final_src_count = domain_node_maps
+            .get(&cr.src_domain)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        while cr.row_offsets.len() < final_src_count + 1 {
+            cr.row_offsets.push(cr.edges_count as u32);
+        }
+
         writer.add_relation(
             cr.src_domain,
             cr.tgt_domain,
-            cr.src_domain_count as u64,
+            final_src_count as u64,
             cr.edges_count,
             cr.row_offsets,
             cr.col_indices,
         );
 
-        let default_rel_name = Path::new(&manifest.relations[rel_idx].file)
-            .file_stem()
+        let default_rel_name = r_def
+            .file
+            .as_deref()
+            .and_then(|f| Path::new(f).file_stem())
             .and_then(|s| s.to_str())
             .unwrap_or("RELATION");
-        let rel_name = manifest.relations[rel_idx]
-            .name
-            .as_deref()
-            .unwrap_or(default_rel_name);
+        let rel_name = r_def.name.as_deref().unwrap_or(default_rel_name);
         writer.set_relation_name(rel_idx, rel_name);
-        if manifest.relations[rel_idx].include_csc.unwrap_or(false) {
+        rel_name_to_id.insert(rel_name.to_string(), rel_idx as u16);
+
+        if r_def.include_csc.unwrap_or(false) {
             writer.set_relation_include_csc(rel_idx, true);
+        }
+
+        let mut node_w = r_def.node_id_width.unwrap_or(4);
+        let edge_w = r_def.edge_index_width.unwrap_or(4);
+        if let Some(ref enc_str) = r_def.encoding {
+            let enc_id = parse_encoding_id(enc_str);
+            writer.set_relation_encoding(rel_idx, enc_id);
+            if enc_id == 2 && r_def.node_id_width.is_none() {
+                node_w = 2;
+            }
+        }
+        writer.set_relation_widths(rel_idx, node_w, edge_w);
+
+        if let Some(ref card_str) = r_def.cardinality {
+            writer.set_relation_section_features(rel_idx, parse_cardinality_bits(card_str));
         }
 
         for attr in cr.attributes {
@@ -644,8 +719,55 @@ pub fn run_with_options(
         }
     }
 
-    // Add domain attributes to SnapshotWriter (attaches to existing relation or creates carrier)
+    // Add virtual super-relations (Spec v0.10.0 §2.4 IMP_REL_FEATURE_VIRTUAL)
+    for manifest_idx in deferred_virtual_relations {
+        let r_def = &manifest.relations[manifest_idx];
+        let v_name = r_def.name.as_deref().unwrap_or("VIRTUAL_RELATION");
+        let comp_names = r_def.virtual_components.as_ref().unwrap();
+        let mut comp_ids = Vec::with_capacity(comp_names.len());
+        for cname in comp_names {
+            let cid = rel_name_to_id.get(cname).copied().ok_or_else(|| {
+                format!(
+                    "Virtual relation '{}' references unknown physical relation '{}'",
+                    v_name, cname
+                )
+            })?;
+            comp_ids.push(cid);
+        }
+        let src_node_count = domain_node_maps
+            .get(&r_def.src_domain)
+            .map(|m| m.len() as u64)
+            .unwrap_or(0);
+        let v_idx = writer.add_virtual_relation(
+            r_def.src_domain,
+            r_def.tgt_domain,
+            src_node_count,
+            v_name,
+            comp_ids,
+        );
+        rel_name_to_id.insert(v_name.to_string(), v_idx as u16);
+    }
+
+    // Add inline domain attributes to SnapshotWriter & resolve key_attr_index (Spec v0.10.0 §5.1)
+    let mut domain_key_attr_indices: HashMap<u16, u16> = HashMap::new();
     for d in &manifest.domains {
+        let id_col = d.id_column.as_deref().unwrap_or("id");
+        let mut resolved_key_attr: Option<u16> = None;
+
+        if let Some(ref attr_defs) = d.attributes {
+            for (idx, ad) in attr_defs.iter().enumerate() {
+                if let Some(ref explicit_key_attr) = d.key_attribute {
+                    if ad.name == *explicit_key_attr {
+                        resolved_key_attr = Some(idx as u16);
+                        break;
+                    }
+                } else if ad.column == id_col {
+                    resolved_key_attr = Some(idx as u16);
+                    break;
+                }
+            }
+        }
+
         if let Some(domain_attrs) = compiled_domain_attributes.remove(&d.id) {
             for attr in domain_attrs {
                 writer.add_attribute_to_domain(
@@ -657,6 +779,11 @@ pub fn run_with_options(
                     attr.offsets,
                 );
             }
+        }
+
+        if let Some(k_idx) = resolved_key_attr {
+            writer.set_domain_key_attr(d.id, k_idx);
+            domain_key_attr_indices.insert(d.id, k_idx);
         }
     }
 
@@ -774,10 +901,11 @@ pub fn run_with_options(
         index_data.extend_from_slice(&string_pool);
         index_data.extend_from_slice(&table);
 
+        let key_attr_idx = domain_key_attr_indices.get(&d.id).copied().unwrap_or(0);
         writer.add_index(
             d.id,
             0xFFFF,
-            0,
+            key_attr_idx,
             4, // IMP_INDEX_MINIMAL_PERFECT_HASH
             "_domain_index",
             index_data,
