@@ -77,43 +77,8 @@
                                        sPayloadLow < IMP_VM_STREAM_REG_COUNT);
                         float v = s_regs[sPayloadLow];
                         IMPULSE_TESTCASE(v <= 0.0f);
-                        float res = v;
-                        switch (sPayloadHigh) {
-                            case OP_AF_UNARY_ABS:           res = std::abs(v); break;
-                            case OP_AF_UNARY_SQRT:          res = std::sqrt(v); break;
-                            case OP_AF_UNARY_RSQRT:         res = 1.0f / std::sqrt(v); break;
-                            case OP_AF_UNARY_CBRT:          res = std::copysign(std::pow(std::abs(v), 1.0f / 3.0f), v); break;
-                            case OP_AF_UNARY_EXP:           res = std::exp(v); break;
-                            case OP_AF_UNARY_EXP2:          res = std::exp2(v); break;
-                            case OP_AF_UNARY_EXP10:         res = std::pow(10.0f, v); break;
-                            case OP_AF_UNARY_EXPM1:         res = std::expm1(v); break;
-                            case OP_AF_UNARY_LOG:           res = std::log(v); break;
-                            case OP_AF_UNARY_LOG2:          res = std::log2(v); break;
-                            case OP_AF_UNARY_LOG10:         res = std::log10(v); break;
-                            case OP_AF_UNARY_LOG1P:         res = std::log1p(v); break;
-                            case OP_AF_UNARY_SIN:           res = std::sin(v); break;
-                            case OP_AF_UNARY_COS:           res = std::cos(v); break;
-                            case OP_AF_UNARY_TAN:           res = std::tan(v); break;
-                            case OP_AF_UNARY_ASIN:          res = std::asin(v); break;
-                            case OP_AF_UNARY_ACOS:          res = std::acos(v); break;
-                            case OP_AF_UNARY_ATAN:          res = std::atan(v); break;
-                            case OP_AF_UNARY_SINC:          res = (std::abs(v) < OP_AF_SINC_EPSILON) ? 1.0f : (std::sin(v) / v); break;
-                            case OP_AF_UNARY_SINH:          res = std::sinh(v); break;
-                            case OP_AF_UNARY_COSH:          res = std::cosh(v); break;
-                            case OP_AF_UNARY_TANH:          res = std::tanh(v); break;
-                            case OP_AF_UNARY_FLOOR:         res = std::floor(v); break;
-                            case OP_AF_UNARY_CEIL:          res = std::ceil(v); break;
-                            case OP_AF_UNARY_ROUND_HALF_UP: res = std::floor(v + 0.5f); break;
-                            case OP_AF_UNARY_RELU:          res = (v > 0.0f) ? v : 0.0f; break;
-                            case OP_AF_UNARY_LEAKY_RELU:    res = (v > 0.0f) ? v : OP_AF_LEAKY_RELU_ALPHA * v; break;
-                            case OP_AF_UNARY_SIGMOID:       res = 1.0f / (1.0f + std::exp(-v)); break;
-                            case OP_AF_UNARY_GELU:          res = 0.5f * v * (1.0f + std::tanh(OP_AF_GELU_SQRT_2_OVER_PI * (v + OP_AF_GELU_CUBIC_COEFF * v * v * v))); break;
-                            case OP_AF_UNARY_SILU:          res = v / (1.0f + std::exp(-v)); break;
-                            case OP_AF_UNARY_SOFTPLUS:      res = std::log(1.0f + std::exp(v)); break;
-                            case OP_AF_UNARY_ISNAN:         res = std::isnan(v) ? 1.0f : 0.0f; break;
-                            case OP_AF_UNARY_ISINF:         res = std::isinf(v) ? 1.0f : 0.0f; break;
-                            case OP_AF_UNARY_ISFINITE:      res = std::isfinite(v) ? 1.0f : 0.0f; break;
-                        }
-                        s_regs[sDst] = res;
+                        IMPULSE_TESTCASE(std::isnan(v));
+                        IMPULSE_TESTCASE(sPayloadHigh == OP_AF_UNARY_ISNAN);
+                        s_regs[sDst] = impulse_math_unary_f32(static_cast<uint8_t>(sPayloadHigh), v);
                         break;
                     }

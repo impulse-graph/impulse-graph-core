@@ -62,6 +62,12 @@ op_LANE_REDUCE_ATTR: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         const auto& lf = vm_state->query_context->lane_frontiers[h_src];
+        uint32_t k = lf.num_lanes;
+        size_t n_nodes = lf.lanes.size();
+        IMPULSE_ASSERT(k <= IMP_VM_MAX_LANES);
+        IMPULSE_TESTCASE(k == 0u);
+        IMPULSE_TESTCASE(k == IMP_VM_MAX_LANES);
+        IMPULSE_TESTCASE(red_op == IMP_LANE_REDUCE_COUNT);
 
         const auto* ma_ptr = !attr_is_reg ? find_mock_node_attr(vm_state->query_context, attr_or_reg) : nullptr;
         auto get_attr_val = [&](size_t u) -> float {
@@ -87,52 +93,99 @@ op_LANE_REDUCE_ATTR: {
             } else {
                 if (ma_ptr) {
                     const auto& ma = *ma_ptr;
+                    if (ma.has_mask && !ma.mask.test(u)) {
+                        return std::numeric_limits<float>::quiet_NaN();
+                    }
                     if (u < ma.float_data.size()) return ma.float_data[u];
                     if (u < ma.int_data.size()) return static_cast<float>(ma.int_data[u]);
                     return 0.0f;
                 }
-                auto read_slot_float = [&](const BoundAttributeSlot& slot, float& out_f) -> bool {
+                auto read_slot_float = [&](const BoundAttributeSlot& slot, size_t row_cnt, float& out_f) -> bool {
+                    const bool is_null = IMP_ATTR_IS_NULLABLE(slot.type_code);
+                    IMPULSE_TESTCASE(is_null);
+                    const size_t eff_rows = (row_cnt > 0u) ? row_cnt : 1u;
+                    const size_t bmap_bytes = is_null ? static_cast<size_t>(IMP_VALIDITY_PADDED_BYTES(eff_rows)) : 0u;
+                    const uint8_t* raw_ptr = static_cast<const uint8_t*>(slot.data_ptr);
+                    if (bmap_bytes > 0u) {
+                        if ((u >> 3) >= slot.data_bytes || bmap_bytes > slot.data_bytes) return false;
+                        if (!IMP_VALIDITY_IS_VALID(raw_ptr, u)) {
+                            out_f = std::numeric_limits<float>::quiet_NaN();
+                            return true;
+                        }
+                    }
+                    const uint8_t* val_ptr = raw_ptr + bmap_bytes;
                     uint8_t base_t = IMP_ATTR_BASE_TYPE(slot.type_code);
-                    if (base_t == IMP_TYPE_CODE_FLOAT32 && (u + 1) * sizeof(float) <= slot.data_bytes) {
-                        out_f = static_cast<const float*>(slot.data_ptr)[u];
+                    if ((base_t == IMP_TYPE_CODE_FLOAT32 || base_t == IMP_LEGACY_V09_FLOAT32) &&
+                        bmap_bytes + (u + 1u) * sizeof(float) <= slot.data_bytes) {
+                        out_f = reinterpret_cast<const float*>(val_ptr)[u];
                         return true;
-                    } else if (base_t == IMP_TYPE_CODE_FLOAT64 && (u + 1) * sizeof(double) <= slot.data_bytes) {
-                        out_f = static_cast<float>(static_cast<const double*>(slot.data_ptr)[u]);
+                    } else if (base_t == IMP_TYPE_CODE_FLOAT64 &&
+                               bmap_bytes + (u + 1u) * sizeof(double) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const double*>(val_ptr)[u]);
                         return true;
-                    } else if (base_t == IMP_LEGACY_V09_FLOAT32 && (u + 1) * sizeof(float) <= slot.data_bytes) {
-                        out_f = static_cast<const float*>(slot.data_ptr)[u];
+                    } else if (base_t == IMP_TYPE_CODE_INT32 &&
+                               bmap_bytes + (u + 1u) * sizeof(int32_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const int32_t*>(val_ptr)[u]);
                         return true;
-                    } else if (base_t == IMP_TYPE_CODE_INT32 && (u + 1) * sizeof(int32_t) <= slot.data_bytes) {
-                        out_f = static_cast<float>(static_cast<const int32_t*>(slot.data_ptr)[u]);
+                    } else if (base_t == IMP_TYPE_CODE_INT64 &&
+                               bmap_bytes + (u + 1u) * sizeof(int64_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const int64_t*>(val_ptr)[u]);
                         return true;
-                    } else if (base_t == IMP_TYPE_CODE_INT64 && (u + 1) * sizeof(int64_t) <= slot.data_bytes) {
-                        out_f = static_cast<float>(static_cast<const int64_t*>(slot.data_ptr)[u]);
+                    } else if (base_t == IMP_TYPE_CODE_UINT32 &&
+                               bmap_bytes + (u + 1u) * sizeof(uint32_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const uint32_t*>(val_ptr)[u]);
+                        return true;
+                    } else if (base_t == IMP_TYPE_CODE_UINT64 &&
+                               bmap_bytes + (u + 1u) * sizeof(uint64_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const uint64_t*>(val_ptr)[u]);
+                        return true;
+                    } else if (base_t == IMP_TYPE_CODE_INT16 &&
+                               bmap_bytes + (u + 1u) * sizeof(int16_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const int16_t*>(val_ptr)[u]);
+                        return true;
+                    } else if (base_t == IMP_TYPE_CODE_UINT16 &&
+                               bmap_bytes + (u + 1u) * sizeof(uint16_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const uint16_t*>(val_ptr)[u]);
+                        return true;
+                    } else if (base_t == IMP_TYPE_CODE_INT8 &&
+                               bmap_bytes + (u + 1u) * sizeof(int8_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(reinterpret_cast<const int8_t*>(val_ptr)[u]);
+                        return true;
+                    } else if (base_t == IMP_TYPE_CODE_UINT8 &&
+                               bmap_bytes + (u + 1u) * sizeof(uint8_t) <= slot.data_bytes) {
+                        out_f = static_cast<float>(val_ptr[u]);
                         return true;
                     }
                     return false;
                 };
-                for (const auto& dom_attrs : vm_state->query_context->domain_attribute_slots) {
+                for (size_t dom_idx = 0; dom_idx < vm_state->query_context->domain_attribute_slots.size(); ++dom_idx) {
+                    const auto& dom_attrs = vm_state->query_context->domain_attribute_slots[dom_idx];
                     if (attr_or_reg < dom_attrs.size() && dom_attrs[attr_or_reg].data_ptr) {
+                        size_t row_cnt = (dom_idx < vm_state->query_context->domain_node_counts.size() &&
+                                          vm_state->query_context->domain_node_counts[dom_idx] > 0)
+                            ? static_cast<size_t>(vm_state->query_context->domain_node_counts[dom_idx])
+                            : n_nodes;
                         float v = 0.0f;
-                        if (read_slot_float(dom_attrs[attr_or_reg], v)) return v;
+                        if (read_slot_float(dom_attrs[attr_or_reg], row_cnt, v)) return v;
                     }
                 }
-                for (const auto& dom_attrs : vm_state->query_context->attribute_slots) {
+                for (size_t rel_idx = 0; rel_idx < vm_state->query_context->attribute_slots.size(); ++rel_idx) {
+                    const auto& dom_attrs = vm_state->query_context->attribute_slots[rel_idx];
                     if (attr_or_reg < dom_attrs.size() && dom_attrs[attr_or_reg].data_ptr) {
+                        size_t row_cnt = (rel_idx < vm_state->query_context->domain_node_counts.size() &&
+                                          vm_state->query_context->domain_node_counts[rel_idx] > 0)
+                            ? static_cast<size_t>(vm_state->query_context->domain_node_counts[rel_idx])
+                            : ((rel_idx < vm_state->query_context->slots.size() &&
+                                vm_state->query_context->slots[rel_idx].node_count > 0)
+                                ? static_cast<size_t>(vm_state->query_context->slots[rel_idx].node_count)
+                                : n_nodes);
                         float v = 0.0f;
-                        if (read_slot_float(dom_attrs[attr_or_reg], v)) return v;
+                        if (read_slot_float(dom_attrs[attr_or_reg], row_cnt, v)) return v;
                     }
                 }
                 return static_cast<float>(u);
             }
         };
-
-        uint32_t k = lf.num_lanes;
-        size_t n_nodes = lf.lanes.size();
-        IMPULSE_ASSERT(k <= IMP_VM_MAX_LANES);
-        IMPULSE_TESTCASE(k == 0u);
-        IMPULSE_TESTCASE(k == IMP_VM_MAX_LANES);
-        IMPULSE_TESTCASE(red_op == IMP_LANE_REDUCE_COUNT);
 
         if (red_op == BINARY_OP_ARGMIN || red_op == BINARY_OP_ARGMAX) {
             int h_out = acquire_node_vector(vm_state->query_context);
@@ -154,6 +207,8 @@ op_LANE_REDUCE_ATTR: {
                 uint64_t w = lf.lanes[u] & lf.active_mask;
                 if (w == 0ULL) continue;
                 float v = get_attr_val(u);
+                IMPULSE_TESTCASE(std::isnan(v));
+                if (std::isnan(v)) continue;
                 uint64_t m = w;
                 while (m != 0ULL) {
                     uint32_t b = static_cast<uint32_t>(std::countr_zero(m));
@@ -168,9 +223,16 @@ op_LANE_REDUCE_ATTR: {
                 }
             }
 
+            bool any_found = false;
+            for (uint32_t b = 0; b < k; ++b) {
+                if (out_vec[b] != IMP_INVALID_NODE_U64) {
+                    any_found = true;
+                    break;
+                }
+            }
             vm_state->registers[dst] = static_cast<uint64_t>(h_out);
             vm_state->register_types[dst] = TYPE_UINT64_VECTOR;
-            IMP_VM_SET_ZF(vm_state, k == 0u);
+            IMP_VM_SET_ZF(vm_state, !any_found);
         } else {
             int h_out = acquire_float_vector(vm_state->query_context);
             if (h_out < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -179,6 +241,7 @@ op_LANE_REDUCE_ATTR: {
             auto& out_vec = vm_state->query_context->float_vectors[h_out];
 
             std::array<bool, IMP_VM_MAX_LANES> seen{};
+            bool any_touched = false;
             for (uint32_t b = 0; b < k; ++b) {
                 if (red_op == BINARY_OP_MUL) out_vec[b] = 1.0f;
                 else if (red_op == BINARY_OP_MIN) out_vec[b] = std::numeric_limits<float>::infinity();
@@ -189,12 +252,16 @@ op_LANE_REDUCE_ATTR: {
             for (size_t u = 0; u < n_nodes; ++u) {
                 uint64_t w = lf.lanes[u] & lf.active_mask;
                 if (w == 0ULL) continue;
-                float v = (red_op == IMP_LANE_REDUCE_COUNT) ? 1.0f : get_attr_val(u);
+                float attr_v = get_attr_val(u);
+                IMPULSE_TESTCASE(std::isnan(attr_v));
+                if (std::isnan(attr_v)) continue;
+                float v = (red_op == IMP_LANE_REDUCE_COUNT) ? 1.0f : attr_v;
                 uint64_t m = w;
                 while (m != 0ULL) {
                     uint32_t b = static_cast<uint32_t>(std::countr_zero(m));
                     if (b < k) {
                         seen[b] = true;
+                        any_touched = true;
                         if (red_op == BINARY_OP_ADD || red_op == IMP_LANE_REDUCE_COUNT) out_vec[b] += v;
                         else if (red_op == BINARY_OP_MUL) out_vec[b] *= v;
                         else if (red_op == BINARY_OP_MIN) { if (v < out_vec[b]) out_vec[b] = v; }
@@ -211,7 +278,7 @@ op_LANE_REDUCE_ATTR: {
 
             vm_state->registers[dst] = static_cast<uint64_t>(h_out);
             vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
-            IMP_VM_SET_ZF(vm_state, k == 0u);
+            IMP_VM_SET_ZF(vm_state, !any_touched);
         }
     }
     vm_state->pc++;
