@@ -33,7 +33,9 @@ op_FIXPOINT_KLEENE_STAR: {
 
     if (rel >= vm_state->query_context->slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.offsets_ptr || !slot.targets_ptr) return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    if (!vm_state->query_context->snapshot && !slot.offsets_ptr && !slot.targets_ptr) {
+        return IMPULSE_VM_ERR_NULL_SNAPSHOT;
+    }
 
     uint8_t src_type = vm_state->register_types[src];
     uint64_t src_val = vm_state->registers[src];
@@ -74,7 +76,9 @@ op_FIXPOINT_KLEENE_STAR: {
         }
 
         bool changed = true;
-        size_t max_iter = 1000;
+        size_t max_iter = vm_state->query_context->has_fixpoint_max_hops
+            ? static_cast<size_t>(vm_state->query_context->fixpoint_max_hops)
+            : 1000u;
         while (changed && max_iter-- > 0) {
             if (vm_state->query_context && vm_state->query_context->fuel_enabled) {
                 if (vm_state->query_context->fuel == 0) {
@@ -87,19 +91,29 @@ op_FIXPOINT_KLEENE_STAR: {
             next_f.clear();
             changed = false;
 
-            #pragma omp parallel for schedule(static)
-            for (size_t u = 0; u < N; ++u) {
-                if (frontier.test(u)) {
-                    uint64_t start = slot.get_csr_offset(u);
-                    uint64_t end = slot.get_csr_offset(u + 1);
-                    for (uint64_t e = start; e < end; ++e) {
-                        uint64_t v = slot.get_csr_target(e);
-                        if (!reached.test(v) && v < vm_state->query_context->max_nodes) {
-                            #pragma omp atomic
-                            next_f.words[v >> 6] |= (1ULL << (v & 63));
+            if (!slot.is_virtual && !slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+                #pragma omp parallel for schedule(static)
+                for (size_t u = 0; u < N; ++u) {
+                    if (frontier.test(u)) {
+                        uint64_t start = slot.get_csr_offset(u);
+                        uint64_t end = slot.get_csr_offset(u + 1);
+                        for (uint64_t e = start; e < end; ++e) {
+                            uint64_t v = slot.get_csr_target(e);
+                            if (!reached.test(v) && v < vm_state->query_context->max_nodes) {
+                                #pragma omp atomic
+                                next_f.words[v >> 6] |= (1ULL << (v & 63));
+                            }
                         }
                     }
                 }
+            } else {
+                walk_slot_forward_special(
+                    vm_state->query_context,
+                    rel,
+                    [&](uint64_t u) { return frontier.test(static_cast<size_t>(u)); },
+                    0,
+                    next_f
+                );
             }
 
             for (size_t w = 0; w < words; ++w) {

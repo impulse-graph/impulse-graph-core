@@ -308,6 +308,9 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_issues_49_50_51_52 tests/test_issues_49_50_51_52.cpp)
     target_link_libraries(test_issues_49_50_51_52 PRIVATE impulse_graph_static)
     add_test(NAME test_issues_49_50_51_52 COMMAND test_issues_49_50_51_52)
+
+    add_executable(kleisli_json_runner tests/kleisli_json_runner.cpp)
+    target_link_libraries(kleisli_json_runner PRIVATE impulse_graph_static)
 endif()
 
 # --- Examples ------------------------------------------------------------

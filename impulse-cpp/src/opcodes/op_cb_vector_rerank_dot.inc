@@ -83,18 +83,40 @@ op_VECTOR_RERANK_DOT: {
         if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, 0);
         const std::vector<float>* mock_embs = (ma_ptr && !ma_ptr->float_data.empty()) ? &ma_ptr->float_data : nullptr;
 
-        const float* snap_embs = nullptr;
-        size_t snap_emb_floats = 0;
+        const uint8_t* snap_raw = nullptr;
+        uint64_t snap_bytes = 0;
+        const uint8_t* snap_bm = nullptr;
+        uint64_t snap_bm_raw_bytes = 0;
+        uint8_t snap_base_tc = 0;
+        uint16_t snap_ver = 9;
         size_t snap_dim = q_len;
+        size_t snap_dom_rows = 0;
         if (!mock_embs && vm_state->query_context->snapshot) {
-            const BoundAttributeSlot* emb_slot = resolve_node_attribute_slot(vm_state->query_context, 0, attr_id);
-            if (!emb_slot && attr_id != 0) {
+            snap_ver = impulse_snapshot_version(vm_state->query_context->snapshot);
+            uint16_t dom_id = (attr_id >> 8) & 0xFFu;
+            uint16_t local_aid = attr_id & 0xFFu;
+            const BoundAttributeSlot* emb_slot = resolve_node_attribute_slot(vm_state->query_context, dom_id, local_aid);
+            if (!emb_slot && dom_id == 0 && local_aid != 0) {
                 emb_slot = resolve_node_attribute_slot(vm_state->query_context, 0, 0);
             }
             if (emb_slot && emb_slot->data_ptr) {
-                snap_embs = static_cast<const float*>(emb_slot->data_ptr);
-                snap_emb_floats = emb_slot->data_bytes / sizeof(float);
+                snap_dom_rows = resolve_domain_row_count(vm_state->query_context, dom_id);
+                snap_raw = static_cast<const uint8_t*>(emb_slot->data_ptr);
+                snap_bytes = emb_slot->data_bytes;
+                snap_base_tc = static_cast<uint8_t>(emb_slot->type_code & 0x7Fu);
                 if (emb_slot->dimension > 0) snap_dim = emb_slot->dimension;
+                if ((emb_slot->type_code & 0x80u) != 0) {
+                    snap_bm_raw_bytes = ((snap_dom_rows + 63ULL) / 64ULL) * 8ULL;
+                    uint64_t padded_bm = (snap_bm_raw_bytes + 127ULL) & ~127ULL;
+                    if (snap_bytes >= padded_bm) {
+                        snap_bm = snap_raw;
+                        snap_raw += padded_bm;
+                        snap_bytes -= padded_bm;
+                    } else {
+                        snap_raw = nullptr;
+                        snap_bytes = 0;
+                    }
+                }
             }
         }
 
@@ -103,6 +125,9 @@ op_VECTOR_RERANK_DOT: {
             if (metric_flag == 0) { // MetricDot
                 return impulse_simd_dot_product_f32(q_vec.data(), v, d_len);
             } else if (metric_flag == 1) { // MetricL2 (negative squared L2)
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
                 float sum_sq = 0.0f;
                 for (size_t i = 0; i < d_len; ++i) {
                     float d = q_vec[i] - v[i];
@@ -130,13 +155,54 @@ op_VECTOR_RERANK_DOT: {
         size_t out_len = std::min(cands.size(), scores.size());
         vm_state->query_context->float_vector_lengths[h_out] = out_len;
 
+        std::vector<float> unpack_buf;
         for (size_t i = 0; i < out_len; ++i) {
             size_t u = cands[i];
             float score = 0.0f;
             if (mock_embs && q_len > 0 && (u + 1) * q_len <= mock_embs->size()) {
                 score = eval_metric_score(mock_embs->data() + u * q_len, q_len);
-            } else if (snap_embs && snap_dim > 0 && (u + 1) * snap_dim <= snap_emb_floats) {
-                score = eval_metric_score(snap_embs + u * snap_dim, snap_dim);
+            } else if (snap_raw && snap_dim > 0) {
+                if (snap_bm != nullptr) {
+                    if ((u >> 3) >= snap_bm_raw_bytes || ((snap_bm[u >> 3] >> (u & 7u)) & 1u) == 0u) {
+                        scores[i] = std::numeric_limits<float>::quiet_NaN();
+                        continue;
+                    }
+                }
+                bool is_f16 = (snap_base_tc == 0x05 && snap_ver >= 10) ||
+                              (snap_base_tc == 0x0E && snap_dom_rows > 0 &&
+                               snap_bytes >= snap_dom_rows * snap_dim * 2ULL &&
+                               snap_bytes < snap_dom_rows * snap_dim * 4ULL);
+                if (is_f16) {
+                    if ((u + 1ULL) * snap_dim * 2ULL <= snap_bytes) {
+                        unpack_buf.resize(snap_dim);
+                        const auto* h_ptr = reinterpret_cast<const uint16_t*>(snap_raw) + u * snap_dim;
+                        for (size_t k = 0; k < snap_dim; ++k) {
+                            unpack_buf[k] = impulse_fp16_to_fp32(h_ptr[k]);
+                        }
+                        score = eval_metric_score(unpack_buf.data(), snap_dim);
+                    } else {
+                        score = std::numeric_limits<float>::quiet_NaN();
+                    }
+                } else if (snap_base_tc == 0x07) {
+                    if ((u + 1ULL) * snap_dim * 8ULL <= snap_bytes) {
+                        unpack_buf.resize(snap_dim);
+                        const auto* d_ptr = reinterpret_cast<const double*>(snap_raw) + u * snap_dim;
+                        for (size_t k = 0; k < snap_dim; ++k) {
+                            unpack_buf[k] = static_cast<float>(d_ptr[k]);
+                        }
+                        score = eval_metric_score(unpack_buf.data(), snap_dim);
+                    } else {
+                        score = std::numeric_limits<float>::quiet_NaN();
+                    }
+                } else {
+                    size_t snap_emb_floats = snap_bytes / sizeof(float);
+                    if ((u + 1ULL) * snap_dim <= snap_emb_floats) {
+                        const auto* f_ptr = reinterpret_cast<const float*>(snap_raw) + u * snap_dim;
+                        score = eval_metric_score(f_ptr, snap_dim);
+                    } else {
+                        score = std::numeric_limits<float>::quiet_NaN();
+                    }
+                }
             } else {
                 score = (q_len > 0) ? q_vec[0] : 0.0f;
             }

@@ -154,8 +154,16 @@ static GraphCatalog build_catalog_from_snapshot(const impulse_snapshot_t* snapsh
     for (uint16_t i = 0; i < rel_count; ++i) {
         impulse_relation_directory_entry_t entry{};
         if (impulse_snapshot_get_relation_entry(snapshot, i, &entry) == IMPULSE_OK) {
-            std::string rel_name = "rel_" + std::to_string(i);
-            catalog.register_relation(rel_name, i);
+            double mult = (entry.node_count > 0)
+                ? (static_cast<double>(entry.edge_count) / static_cast<double>(entry.node_count))
+                : 1.0;
+            std::string fallback_name = "rel_" + std::to_string(i);
+            catalog.register_relation(fallback_name, i, mult);
+            const char* actual_name = nullptr;
+            if (impulse_snapshot_get_relation_name(snapshot, i, &actual_name) == IMPULSE_OK &&
+                actual_name != nullptr && actual_name[0] != '\0') {
+                catalog.register_relation(actual_name, i, mult);
+            }
         }
     }
 

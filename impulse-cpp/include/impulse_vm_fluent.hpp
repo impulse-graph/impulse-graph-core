@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 
 namespace impulse::vm {
@@ -396,8 +397,10 @@ public:
                     bool has_projected_values = false);
 
     [[nodiscard]] uint32_t laneCount() const { return lane_count_; }
+    [[nodiscard]] uint32_t wordsPerLane() const { return words_per_lane_; }
     [[nodiscard]] uint32_t domainNodeCount() const { return domain_node_count_; }
     [[nodiscard]] uint16_t domainId() const { return domain_id_; }
+    [[nodiscard]] const std::vector<uint64_t>& rawWordsPerNode() const { return words_per_node_; }
 
     [[nodiscard]] uint64_t laneMaskFor(uint32_t node_id) const;
     [[nodiscard]] uint32_t lanePopcountFor(uint32_t node_id) const;
@@ -420,11 +423,11 @@ public:
     [[nodiscard]] std::vector<std::pair<std::string, uint32_t>> keysWithQuorum(uint32_t min_lanes) const;
 
     [[nodiscard]] std::vector<std::pair<uint32_t, uint32_t>> findSetCoverPairs(uint64_t target_mask = ~0ULL) const;
-    [[nodiscard]] std::vector<uint32_t> findGreedySetCover(uint64_t target_mask = ~0ULL, uint32_t max_nodes = 8) const;
+    [[nodiscard]] std::vector<uint32_t> findGreedySetCover(uint64_t target_mask = ~0ULL, uint32_t max_nodes = 64) const;
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> findKeySetCoverPairs(
         const std::vector<std::string>& required_keys = {}) const;
     [[nodiscard]] std::vector<std::string> findGreedyKeySetCover(
-        const std::vector<std::string>& required_keys = {}, uint32_t max_nodes = 8) const;
+        const std::vector<std::string>& required_keys = {}, uint32_t max_nodes = 64) const;
 
     [[nodiscard]] std::vector<std::pair<uint64_t, float>> topKWithQuorum(
         uint32_t min_lanes, size_t k, const std::vector<float>& query_vector,
@@ -464,7 +467,7 @@ public:
     Traversal& inPredicate(const std::string& relation, const std::string& edge_cel_predicate);
     Traversal& out2Hop(const std::string& rel1, const std::string& rel2);
     Traversal& repeat(int iterations, const std::string& relation);
-    Traversal& repeatUntilStable(const std::string& relation);
+    Traversal& repeatUntilStable(const std::string& relation, uint32_t max_hops = 1024);
 
     // --- In-Domain Filters, Projections & Temporal ---
     Traversal& filter(const std::string& node_cel_predicate);
@@ -502,6 +505,7 @@ public:
     [[nodiscard]] std::vector<std::pair<uint64_t, float>> topK(size_t k) const;
     [[nodiscard]] std::vector<std::pair<std::string, float>> topKKeys(size_t k) const;
     [[nodiscard]] size_t count() const;
+    [[nodiscard]] std::optional<double> reduceAttr(const std::string& attr_or_cel_expr, ReducerOp op) const;
     [[nodiscard]] double reduceSum() const;
     [[nodiscard]] double walkReduceSum(const std::string& relation, const std::string& attr_name = "") const;
     [[nodiscard]] double reduceMin() const;
@@ -563,17 +567,24 @@ public:
     // --- Hop & Fixed-Point Transitions ---
     MultiLaneTraversal& out(const std::string& relation);
     MultiLaneTraversal& out(const std::string& relation, const std::string& edge_cel_predicate);
+    MultiLaneTraversal& outPredicate(const std::string& relation, const std::string& edge_cel_predicate);
     MultiLaneTraversal& out(const std::vector<std::string>& relations);
     MultiLaneTraversal& out(std::initializer_list<std::string> relations) { return out(std::vector<std::string>(relations)); }
     MultiLaneTraversal& in(const std::string& relation);
     MultiLaneTraversal& in(const std::string& relation, const std::string& edge_cel_predicate);
+    MultiLaneTraversal& inPredicate(const std::string& relation, const std::string& edge_cel_predicate);
     MultiLaneTraversal& in(const std::vector<std::string>& relations);
     MultiLaneTraversal& in(std::initializer_list<std::string> relations) { return in(std::vector<std::string>(relations)); }
     MultiLaneTraversal& both(const std::string& relation);
     MultiLaneTraversal& both(const std::vector<std::string>& relations);
     MultiLaneTraversal& both(std::initializer_list<std::string> relations) { return both(std::vector<std::string>(relations)); }
     MultiLaneTraversal& repeat(int iterations, const std::string& relation);
-    MultiLaneTraversal& repeatUntilStable(const std::string& relation);
+    MultiLaneTraversal& repeatUntilStable(const std::string& relation, uint32_t max_hops = 1024);
+
+    // --- Frontier Set Algebra ---
+    MultiLaneTraversal& unionWith(const MultiLaneTraversal& other);
+    MultiLaneTraversal& intersect(const MultiLaneTraversal& other);
+    MultiLaneTraversal& difference(const MultiLaneTraversal& other);
 
     // --- In-Domain Filters, CEL Mask Mutation & Bit-Lane Pruning ---
     MultiLaneTraversal& filter(const std::string& node_cel_predicate);
@@ -582,6 +593,7 @@ public:
     MultiLaneTraversal& pruneDeniedBy(const std::string& deny_relation);
     MultiLaneTraversal& pruneHubs(uint16_t max_degree, uint8_t min_quorum);
     MultiLaneTraversal& whereQuorum(uint8_t min_lanes);
+    MultiLaneTraversal& whereQuorum(uint8_t min_lanes, uint64_t required_mask, uint64_t forbidden_mask = 0ULL);
     MultiLaneTraversal& whereMask(uint64_t required_any_mask, uint64_t forbidden_mask = 0ULL);
 
     // --- Named-Set High-Level Helpers (No Raw Hex Bitmasks Needed) ---
@@ -604,25 +616,34 @@ public:
     [[nodiscard]] std::vector<std::string> argMaxKeysPerLane(const std::string& node_attribute) const;
     [[nodiscard]] std::vector<bool> checkAllNodesReachedPerLane() const;
     [[nodiscard]] SteinerSubgraph toSteinerSubgraph(uint8_t min_concept_quorum) const;
+    [[nodiscard]] uint16_t currentDomainId() const { return current_domain_id_; }
 
 private:
     struct LaneStep {
         enum class Kind {
             OUT, IN, BOTH, OUT_MULTI, IN_MULTI, BOTH_MULTI,
+            OUT_PREDICATE, IN_PREDICATE,
             REPEAT, REPEAT_UNTIL_STABLE,
+            SET_UNION, SET_INTERSECT, SET_DIFFERENCE,
             FILTER_CEL, PROJECT_CEL, PRUNE_WHERE_CEL, PRUNE_DENIED_BY, PRUNE_HUBS,
-            WHERE_QUORUM, WHERE_MASK, MUST_HIT_AT_LEAST, MUST_AVOID_ALL
+            WHERE_QUORUM, WHERE_QUORUM_MASK, WHERE_MASK, MUST_HIT_AT_LEAST, MUST_AVOID_ALL
         } kind;
         std::string str_arg;
+        std::string str_arg2;
+        uint32_t u32_arg{0};
         uint16_t u16_arg{0};
         uint8_t u8_arg{0};
         uint64_t mask_req{0};
         uint64_t mask_forbid{0};
         std::vector<uint32_t> lane_indices;
         std::vector<std::string> rel_names;
+        std::vector<uint64_t> other_words;
+        uint32_t other_words_per_lane{0};
+        uint32_t other_node_count{0};
     };
 
     const impulse_snapshot_t* snapshot_{nullptr};
+    uint16_t initial_domain_id_{0};
     uint16_t current_domain_id_{0};
     InitMode mode_{InitMode::SEEDS};
     std::vector<uint64_t> seeds_;

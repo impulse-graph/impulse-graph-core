@@ -295,15 +295,26 @@ MultiLaneTraversal::MultiLaneTraversal(const impulse_snapshot_t* snapshot,
                                        uint16_t outage_rel_id,
                                        std::vector<std::vector<uint32_t>> tripped_edges_per_lane)
     : snapshot_(snapshot),
+      initial_domain_id_(domain_id),
       current_domain_id_(domain_id),
       mode_(mode),
       seeds_(std::move(seeds)),
       lane_keys_(std::move(lane_keys)),
       group_pairs_(std::move(group_pairs)),
       outage_rel_id_(outage_rel_id),
-      tripped_edges_per_lane_(std::move(tripped_edges_per_lane)) {}
+      tripped_edges_per_lane_(std::move(tripped_edges_per_lane)) {
+    if (mode_ == InitMode::GROUPS && seeds_.empty() && !group_pairs_.empty()) {
+        uint32_t max_g = 0;
+        for (const auto& gp : group_pairs_) {
+            if (gp.second > max_g) max_g = gp.second;
+        }
+        seeds_.assign(static_cast<size_t>(max_g) + 1, 0ULL);
+    }
+}
 
 MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
     LaneStep s{};
     s.kind = LaneStep::Kind::OUT;
     s.str_arg = relation;
@@ -311,12 +322,27 @@ MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation) {
     return *this;
 }
 
-MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation, const std::string& /*edge_cel_predicate*/) {
-    return out(relation);
+MultiLaneTraversal& MultiLaneTraversal::out(const std::string& relation, const std::string& edge_cel_predicate) {
+    return outPredicate(relation, edge_cel_predicate);
+}
+
+MultiLaneTraversal& MultiLaneTraversal::outPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
+    LaneStep s{};
+    s.kind = LaneStep::Kind::OUT_PREDICATE;
+    s.str_arg = relation;
+    s.str_arg2 = edge_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
 }
 
 MultiLaneTraversal& MultiLaneTraversal::out(const std::vector<std::string>& relations) {
     if (relations.size() == 1) return out(relations[0]);
+    if (!relations.empty()) {
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relations[0]);
+        current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
+    }
     LaneStep s{};
     s.kind = LaneStep::Kind::OUT_MULTI;
     s.rel_names = relations;
@@ -325,6 +351,8 @@ MultiLaneTraversal& MultiLaneTraversal::out(const std::vector<std::string>& rela
 }
 
 MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
     LaneStep s{};
     s.kind = LaneStep::Kind::IN;
     s.str_arg = relation;
@@ -332,12 +360,27 @@ MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation) {
     return *this;
 }
 
-MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation, const std::string& /*edge_cel_predicate*/) {
-    return in(relation);
+MultiLaneTraversal& MultiLaneTraversal::in(const std::string& relation, const std::string& edge_cel_predicate) {
+    return inPredicate(relation, edge_cel_predicate);
+}
+
+MultiLaneTraversal& MultiLaneTraversal::inPredicate(const std::string& relation, const std::string& edge_cel_predicate) {
+    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+    current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
+    LaneStep s{};
+    s.kind = LaneStep::Kind::IN_PREDICATE;
+    s.str_arg = relation;
+    s.str_arg2 = edge_cel_predicate;
+    steps_.push_back(std::move(s));
+    return *this;
 }
 
 MultiLaneTraversal& MultiLaneTraversal::in(const std::vector<std::string>& relations) {
     if (relations.size() == 1) return in(relations[0]);
+    if (!relations.empty()) {
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relations[0]);
+        current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, true);
+    }
     LaneStep s{};
     s.kind = LaneStep::Kind::IN_MULTI;
     s.rel_names = relations;
@@ -363,18 +406,59 @@ MultiLaneTraversal& MultiLaneTraversal::both(const std::vector<std::string>& rel
 }
 
 MultiLaneTraversal& MultiLaneTraversal::repeat(int iterations, const std::string& relation) {
+    uint16_t reps = static_cast<uint16_t>(std::max(0, iterations));
+    if (reps > 0) {
+        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, relation);
+        for (uint16_t it = 0; it < reps; ++it) {
+            current_domain_id_ = advance_domain_id(snapshot_, current_domain_id_, rid, false);
+        }
+    }
     LaneStep s{};
     s.kind = LaneStep::Kind::REPEAT;
     s.str_arg = relation;
-    s.u16_arg = static_cast<uint16_t>(std::max(0, iterations));
+    s.u16_arg = reps;
     steps_.push_back(std::move(s));
     return *this;
 }
 
-MultiLaneTraversal& MultiLaneTraversal::repeatUntilStable(const std::string& relation) {
+MultiLaneTraversal& MultiLaneTraversal::repeatUntilStable(const std::string& relation, uint32_t max_hops) {
     LaneStep s{};
     s.kind = LaneStep::Kind::REPEAT_UNTIL_STABLE;
     s.str_arg = relation;
+    s.u32_arg = max_hops;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::unionWith(const MultiLaneTraversal& other) {
+    auto ores = other.collect();
+    LaneStep s{};
+    s.kind = LaneStep::Kind::SET_UNION;
+    s.other_words = ores.rawWordsPerNode();
+    s.other_words_per_lane = ores.wordsPerLane();
+    s.other_node_count = ores.domainNodeCount();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::intersect(const MultiLaneTraversal& other) {
+    auto ores = other.collect();
+    LaneStep s{};
+    s.kind = LaneStep::Kind::SET_INTERSECT;
+    s.other_words = ores.rawWordsPerNode();
+    s.other_words_per_lane = ores.wordsPerLane();
+    s.other_node_count = ores.domainNodeCount();
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
+MultiLaneTraversal& MultiLaneTraversal::difference(const MultiLaneTraversal& other) {
+    auto ores = other.collect();
+    LaneStep s{};
+    s.kind = LaneStep::Kind::SET_DIFFERENCE;
+    s.other_words = ores.rawWordsPerNode();
+    s.other_words_per_lane = ores.wordsPerLane();
+    s.other_node_count = ores.domainNodeCount();
     steps_.push_back(std::move(s));
     return *this;
 }
@@ -428,6 +512,16 @@ MultiLaneTraversal& MultiLaneTraversal::whereQuorum(uint8_t min_lanes) {
     return *this;
 }
 
+MultiLaneTraversal& MultiLaneTraversal::whereQuorum(uint8_t min_lanes, uint64_t required_mask, uint64_t forbidden_mask) {
+    LaneStep s{};
+    s.kind = LaneStep::Kind::WHERE_QUORUM_MASK;
+    s.u8_arg = min_lanes;
+    s.mask_req = required_mask;
+    s.mask_forbid = forbidden_mask;
+    steps_.push_back(std::move(s));
+    return *this;
+}
+
 MultiLaneTraversal& MultiLaneTraversal::whereMask(uint64_t required_any_mask, uint64_t forbidden_mask) {
     LaneStep s{};
     s.kind = LaneStep::Kind::WHERE_MASK;
@@ -468,22 +562,40 @@ MultiLaneTraversal& MultiLaneTraversal::mustAvoidAll(const std::vector<std::stri
 }
 
 MultiLaneResult MultiLaneTraversal::collect() const {
-    uint32_t N = get_domain_node_count(snapshot_, current_domain_id_);
+    uint32_t final_N = get_domain_node_count(snapshot_, current_domain_id_);
     uint32_t K = static_cast<uint32_t>(seeds_.size());
     uint32_t words_per_lane = (K + 63U) / 64U;
-    std::vector<uint64_t> words_per_node(static_cast<size_t>(N) * words_per_lane, 0ULL);
-    std::vector<float> proj_values(N, 0.0f);
+    std::vector<uint64_t> words_per_node(static_cast<size_t>(final_N) * words_per_lane, 0ULL);
+    std::vector<float> proj_values(final_N, 0.0f);
     bool has_projected = false;
 
-    if (!snapshot_ || N == 0 || K == 0) {
-        return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+    if (!snapshot_ || K == 0 || words_per_lane == 0) {
+        return MultiLaneResult(snapshot_, current_domain_id_, final_N, K, lane_keys_, std::move(words_per_node));
     }
 
-    // Execute in batches of <= 64 lanes through ImpulseVM (OP_LANE_*)
     impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);
     if (!ctx) {
-        return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node));
+        return MultiLaneResult(snapshot_, current_domain_id_, final_N, K, lane_keys_, std::move(words_per_node));
     }
+
+    uint32_t init_N = get_domain_node_count(snapshot_, initial_domain_id_);
+    size_t max_snap_nodes = std::max<size_t>(impulse_snapshot_max_node_count(snapshot_), std::max<size_t>(init_N, final_N));
+
+    // Maintain one live VM lane-frontier handle per 64-lane batch so cross-lane and hop steps interleave in exact order
+    std::vector<int> batch_handles(words_per_lane, -1);
+
+    auto rebuild_active_words = [](VmLaneFrontier& lf) {
+        size_t n = lf.lanes.size();
+        size_t wcnt = (n + 63) / 64;
+        lf.active_words.assign(wcnt, 0ULL);
+        for (size_t u = 0; u < n; ++u) {
+            uint64_t m = lf.lanes[u] & lf.active_mask;
+            lf.lanes[u] = m;
+            if (m != 0ULL) {
+                lf.active_words[u >> 6] |= (1ULL << (u & 63));
+            }
+        }
+    };
 
     for (uint32_t batch_idx = 0; batch_idx < words_per_lane; ++batch_idx) {
         uint32_t lane_start = batch_idx * 64U;
@@ -492,16 +604,16 @@ MultiLaneResult MultiLaneTraversal::collect() const {
         impulse_vm_state_t state{};
         state.query_context = ctx;
 
-        // Build inline data section with batch_k seed uint32_t values
         std::vector<uint32_t> inline_u32;
         std::vector<uint32_t> group_u32;
         if (mode_ == InitMode::SEEDS || mode_ == InitMode::OUTAGES) {
             for (uint32_t b = 0; b < batch_k; ++b) {
-                inline_u32.push_back(static_cast<uint32_t>(seeds_[lane_start + b]));
+                uint64_t su = seeds_[lane_start + b];
+                inline_u32.push_back((su < init_N) ? static_cast<uint32_t>(su) : UINT32_MAX);
             }
         } else if (mode_ == InitMode::GROUPS) {
             for (const auto& gp : group_pairs_) {
-                if (gp.second >= lane_start && gp.second < lane_start + batch_k) {
+                if (gp.first < init_N && gp.second >= lane_start && gp.second < lane_start + batch_k) {
                     inline_u32.push_back(gp.first);
                     group_u32.push_back(gp.second - lane_start);
                 }
@@ -531,181 +643,484 @@ MultiLaneResult MultiLaneTraversal::collect() const {
 
         impulse_vm_context_bind_inline_data(ctx, inline_u32.data(), inline_u32.size() * sizeof(uint32_t));
 
-        std::vector<impulse_instruction_t> prog;
+        std::vector<impulse_instruction_t> init_prog;
         uint32_t seed_u32_count = static_cast<uint32_t>(group_offset_bytes / sizeof(uint32_t));
-        // R1 <- inline node array of seeds/group_nodes
-        prog.push_back(impulse_instruction_t{
+        init_prog.push_back(impulse_instruction_t{
             OP_LOAD_INLINE_ARRAY, 1, 1,
             static_cast<uint32_t>(0 | (seed_u32_count << 16))
         });
 
         if (mode_ == InitMode::GROUPS) {
-            prog.push_back(impulse_instruction_t{
+            init_prog.push_back(impulse_instruction_t{
                 OP_LOAD_INLINE_ARRAY, 1, 2,
                 static_cast<uint32_t>(static_cast<uint16_t>(group_offset_bytes) |
                                       (static_cast<uint32_t>(group_u32_count) << 16))
             });
-            prog.push_back(impulse_instruction_t{
+            init_prog.push_back(impulse_instruction_t{
                 OP_LANE_INIT_GROUPS, 0, 0,
                 static_cast<uint32_t>(1 | (2 << 8) | (batch_k << 16))
             });
         } else {
-            prog.push_back(impulse_instruction_t{
+            init_prog.push_back(impulse_instruction_t{
                 OP_LANE_INIT_SEEDS, 0, 0, 1
             });
         }
 
         if (mode_ == InitMode::OUTAGES && outage_pairs_u32_count > 0) {
-            prog.push_back(impulse_instruction_t{
+            init_prog.push_back(impulse_instruction_t{
                 OP_LOAD_INLINE_ARRAY, 0, 2,
                 static_cast<uint32_t>(static_cast<uint16_t>(outage_pairs_offset_bytes) |
                                       (static_cast<uint32_t>(outage_pairs_u32_count / 2) << 16))
             });
-            prog.push_back(impulse_instruction_t{
+            init_prog.push_back(impulse_instruction_t{
                 OP_LANE_SET_EDGE_MASK, 1, 0,
                 static_cast<uint32_t>(0 | (2 << 8) | (static_cast<uint32_t>(outage_rel_id_) << 16))
             });
         }
+        init_prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
 
-        // Execute hop & hub pruning steps on batch frontier R0
-        for (const auto& step : steps_) {
-            if (step.kind == LaneStep::Kind::OUT) {
-                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
-                prog.push_back(impulse_instruction_t{
-                    OP_LANE_CSR_WALK, 0, 0,
-                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
-                });
-            } else if (step.kind == LaneStep::Kind::IN) {
-                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
-                prog.push_back(impulse_instruction_t{
-                    OP_LANE_CSC_WALK, 0, 0,
-                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
-                });
-            } else if (step.kind == LaneStep::Kind::BOTH || step.kind == LaneStep::Kind::OUT_MULTI ||
-                       step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
-                std::vector<std::pair<uint16_t, bool>> branches;
-                if (step.kind == LaneStep::Kind::BOTH) {
-                    uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
-                    branches.emplace_back(rid, false);
-                    branches.emplace_back(rid, true);
-                } else {
-                    for (const auto& rname : step.rel_names) {
-                        uint16_t rid = resolve_relation_id_by_name(snapshot_, current_domain_id_, rname);
-                        if (step.kind == LaneStep::Kind::OUT_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
-                            branches.emplace_back(rid, false);
-                        }
-                        if (step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
-                            branches.emplace_back(rid, true);
-                        }
-                    }
-                }
-                if (!branches.empty()) {
-                    prog.push_back(impulse_instruction_t{
-                        static_cast<uint8_t>(branches[0].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 3,
-                        static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[0].first) << 16))
-                    });
-                    for (size_t bi = 1; bi < branches.size(); ++bi) {
-                        prog.push_back(impulse_instruction_t{
-                            static_cast<uint8_t>(branches[bi].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 4,
-                            static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[bi].first) << 16))
-                        });
-                        prog.push_back(impulse_instruction_t{
-                            OP_SET_UNION, 0, 3,
-                            static_cast<uint32_t>(3 | (4 << 16))
-                        });
-                    }
-                    prog.push_back(impulse_instruction_t{OP_MOV, 0, 0, 3});
-                }
-            } else if (step.kind == LaneStep::Kind::REPEAT) {
-                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
-                for (uint16_t it = 0; it < step.u16_arg; ++it) {
-                    prog.push_back(impulse_instruction_t{
-                        OP_LANE_CSR_WALK, 0, 0,
-                        static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
-                    });
-                }
-            } else if (step.kind == LaneStep::Kind::REPEAT_UNTIL_STABLE) {
-                uint16_t rel_id = resolve_relation_id_by_name(snapshot_, current_domain_id_, step.str_arg);
-                prog.push_back(impulse_instruction_t{
-                    OP_LANE_CSR_WALK, 1, 0,
-                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))
-                });
-            } else if (step.kind == LaneStep::Kind::PRUNE_HUBS && words_per_lane == 1) {
-                prog.push_back(impulse_instruction_t{
-                    OP_LANE_PRUNE_MASK, 2, 0,
-                    static_cast<uint32_t>(0 | (static_cast<uint32_t>(step.u16_arg) << 8) | (static_cast<uint32_t>(step.u8_arg) << 24))
-                });
+        if (impulse_vm_execute(init_prog.data(), init_prog.size(), &state, 0) == IMPULSE_VM_OK &&
+            state.register_types[0] == TYPE_LANE_FRONTIER) {
+            int h_lf = static_cast<int>(state.registers[0]);
+            batch_handles[batch_idx] = h_lf;
+            auto& lf = ctx->lane_frontiers[h_lf];
+            if (lf.lanes.size() < max_snap_nodes) {
+                lf.lanes.resize(max_snap_nodes, 0ULL);
             }
-        }
-        prog.push_back(impulse_instruction_t{OP_HALT, 0, 0, 0});
-
-        impulse_vm_status_t st = impulse_vm_execute(prog.data(), prog.size(), &state, 0);
-        if (st == IMPULSE_VM_OK && state.register_types[0] == TYPE_LANE_FRONTIER) {
-            size_t l_handle = static_cast<size_t>(state.registers[0]);
-            const uint64_t* lane_data = impulse_vm_context_lane_frontier_data(ctx, l_handle);
-            size_t lane_nodes = impulse_vm_context_lane_frontier_node_count(ctx, l_handle);
-            uint64_t act_mask = impulse_vm_context_lane_frontier_active_mask(ctx, l_handle);
-            if (lane_data != nullptr) {
-                size_t copy_n = std::min<size_t>(N, lane_nodes);
-                for (size_t u = 0; u < copy_n; ++u) {
-                    words_per_node[u * words_per_lane + batch_idx] = (lane_data[u] & act_mask);
-                }
+            for (size_t u = init_N; u < lf.lanes.size(); ++u) {
+                lf.lanes[u] = 0ULL;
             }
+            rebuild_active_words(lf);
         }
-        impulse_vm_context_release_lane_frontier(ctx, 0);
     }
 
-    impulse_vm_context_destroy(ctx);
+    auto exec_batch_vm_step = [&](uint32_t batch_idx, const impulse_instruction_t* insts, size_t cnt) {
+        int old_h = batch_handles[batch_idx];
+        if (old_h < 0) return;
+        impulse_vm_state_t st{};
+        st.query_context = ctx;
+        st.registers[0] = static_cast<uint64_t>(old_h);
+        st.register_types[0] = TYPE_LANE_FRONTIER;
+        st.pc = 0;
+        if (impulse_vm_execute(insts, cnt, &st, 0) == IMPULSE_VM_OK &&
+            st.register_types[0] == TYPE_LANE_FRONTIER) {
+            int new_h = static_cast<int>(st.registers[0]);
+            batch_handles[batch_idx] = new_h;
+            if (old_h != new_h) {
+                impulse_vm_context_release_lane_frontier(ctx, static_cast<size_t>(old_h));
+            }
+        }
+    };
 
-    // Apply cross-lane filters (.whereQuorum, .whereMask, .mustHitAtLeast, .mustAvoidAll, .filter, .pruneWhere, .project)
+    uint16_t step_dom = initial_domain_id_;
     for (const auto& step : steps_) {
-        if (step.kind == LaneStep::Kind::WHERE_QUORUM) {
-            for (uint32_t u = 0; u < N; ++u) {
-                uint32_t pc = 0;
-                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
-                for (uint32_t w = 0; w < words_per_lane; ++w) pc += static_cast<uint32_t>(std::popcount(row[w]));
-                if (pc < step.u8_arg) {
-                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+        uint32_t step_N = get_domain_node_count(snapshot_, step_dom);
+
+        if (step.kind == LaneStep::Kind::OUT) {
+            uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+            impulse_instruction_t insts[2] = {
+                {OP_LANE_CSR_WALK, 0, 0, static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            for (uint32_t b = 0; b < words_per_lane; ++b) exec_batch_vm_step(b, insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
+        } else if (step.kind == LaneStep::Kind::IN) {
+            uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+            impulse_instruction_t insts[2] = {
+                {OP_LANE_CSC_WALK, 0, 0, static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            for (uint32_t b = 0; b < words_per_lane; ++b) exec_batch_vm_step(b, insts, 2);
+            step_dom = advance_domain_id(snapshot_, step_dom, rel_id, true);
+        } else if (step.kind == LaneStep::Kind::BOTH || step.kind == LaneStep::Kind::OUT_MULTI ||
+                   step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+            std::vector<std::pair<uint16_t, bool>> branches;
+            if (step.kind == LaneStep::Kind::BOTH) {
+                uint16_t rid = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+                branches.emplace_back(rid, false);
+                branches.emplace_back(rid, true);
+            } else {
+                for (const auto& rname : step.rel_names) {
+                    uint16_t rid = resolve_relation_id_by_name(snapshot_, step_dom, rname);
+                    if (step.kind == LaneStep::Kind::OUT_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+                        branches.emplace_back(rid, false);
+                    }
+                    if (step.kind == LaneStep::Kind::IN_MULTI || step.kind == LaneStep::Kind::BOTH_MULTI) {
+                        branches.emplace_back(rid, true);
+                    }
                 }
+            }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                int h_cur = batch_handles[b];
+                if (h_cur < 0) continue;
+                if (branches.empty()) {
+                    auto& lf = ctx->lane_frontiers[h_cur];
+                    std::fill(lf.lanes.begin(), lf.lanes.end(), 0ULL);
+                    std::fill(lf.active_words.begin(), lf.active_words.end(), 0ULL);
+                    continue;
+                }
+                impulse_vm_state_t st{};
+                st.query_context = ctx;
+                st.registers[0] = static_cast<uint64_t>(h_cur);
+                st.register_types[0] = TYPE_LANE_FRONTIER;
+
+                impulse_instruction_t w0[2] = {
+                    {static_cast<uint8_t>(branches[0].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 3,
+                     static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[0].first) << 16))},
+                    {OP_HALT, 0, 0, 0}
+                };
+                st.pc = 0;
+                if (impulse_vm_execute(w0, 2, &st, 0) != IMPULSE_VM_OK || st.register_types[3] != TYPE_LANE_FRONTIER) {
+                    continue;
+                }
+                int h_acc = static_cast<int>(st.registers[3]);
+                for (size_t bi = 1; bi < branches.size(); ++bi) {
+                    impulse_instruction_t wi[2] = {
+                        {static_cast<uint8_t>(branches[bi].second ? OP_LANE_CSC_WALK : OP_LANE_CSR_WALK), 0, 4,
+                         static_cast<uint32_t>(0 | (static_cast<uint32_t>(branches[bi].first) << 16))},
+                        {OP_HALT, 0, 0, 0}
+                    };
+                    st.pc = 0;
+                    if (impulse_vm_execute(wi, 2, &st, 0) == IMPULSE_VM_OK && st.register_types[4] == TYPE_LANE_FRONTIER) {
+                        int h_br = static_cast<int>(st.registers[4]);
+                        auto& lf_acc = ctx->lane_frontiers[h_acc];
+                        const auto& lf_br = ctx->lane_frontiers[h_br];
+                        if (lf_acc.lanes.size() < lf_br.lanes.size()) {
+                            lf_acc.lanes.resize(lf_br.lanes.size(), 0ULL);
+                        }
+                        for (size_t u = 0; u < lf_br.lanes.size(); ++u) {
+                            lf_acc.lanes[u] |= (lf_br.lanes[u] & lf_acc.active_mask);
+                        }
+                        rebuild_active_words(lf_acc);
+                        impulse_vm_context_release_lane_frontier(ctx, static_cast<size_t>(h_br));
+                        st.registers[4] = 0;
+                        st.register_types[4] = TYPE_NULL;
+                    }
+                }
+                batch_handles[b] = h_acc;
+                if (h_cur != h_acc) {
+                    impulse_vm_context_release_lane_frontier(ctx, static_cast<size_t>(h_cur));
+                }
+            }
+            if (!branches.empty()) {
+                if (step.kind == LaneStep::Kind::OUT_MULTI) {
+                    step_dom = advance_domain_id(snapshot_, step_dom, branches[0].first, false);
+                } else if (step.kind == LaneStep::Kind::IN_MULTI) {
+                    step_dom = advance_domain_id(snapshot_, step_dom, branches[0].first, true);
+                }
+            }
+        } else if (step.kind == LaneStep::Kind::OUT_PREDICATE || step.kind == LaneStep::Kind::IN_PREDICATE) {
+            bool is_rev = (step.kind == LaneStep::Kind::IN_PREDICATE);
+            uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+            uint16_t next_dom = advance_domain_id(snapshot_, step_dom, rel_id, is_rev);
+            uint32_t next_N = get_domain_node_count(snapshot_, next_dom);
+
+            impulse::cel::Parser parser(step.str_arg2);
+            auto ast = parser.parse_expression();
+            auto opt = ast ? impulse::cel::AstOptimizer::optimize(ast) : nullptr;
+
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                int h_cur = batch_handles[b];
+                if (h_cur < 0) continue;
+                auto& lf_src = ctx->lane_frontiers[h_cur];
+                std::vector<uint64_t> dst_lanes(std::max<size_t>(lf_src.lanes.size(), next_N), 0ULL);
+
+                auto eval_lane_rel = [&](auto& self, uint16_t rid, uint32_t depth) -> void {
+                    if (depth > 8 || rid >= ctx->slots.size()) return;
+                    const auto& slot = ctx->slots[rid];
+                    if (slot.is_virtual) {
+                        for (uint16_t cid : slot.virtual_children) {
+                            self(self, cid, depth + 1);
+                        }
+                        return;
+                    }
+                    auto edge_attrs = build_relation_attr_cache(snapshot_, rid);
+                    auto test_edge = [&](uint64_t edge_idx) -> bool {
+                        if (!opt) return false;
+                        return impulse::cel::CelKleeneEvaluator::eval_filter_bool(
+                            opt, [&](const std::string& aname) { return edge_attrs.resolve(edge_idx, aname); });
+                    };
+
+                    if (!is_rev) {
+                        if (slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+                            for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                                uint64_t u = slot.get_raw_coo_src(e);
+                                if (u >= step_N || u >= lf_src.lanes.size()) continue;
+                                uint64_t mu = lf_src.lanes[u] & lf_src.active_mask;
+                                if (mu != 0ULL && test_edge(e)) {
+                                    uint64_t v = slot.get_csr_target(e);
+                                    if (v < next_N && v < dst_lanes.size()) dst_lanes[v] |= mu;
+                                }
+                            }
+                        } else if (slot.offsets_ptr && slot.targets_ptr) {
+                            uint64_t lim_u = std::min<uint64_t>({static_cast<uint64_t>(step_N), slot.node_count, lf_src.lanes.size()});
+                            for (uint64_t u = 0; u < lim_u; ++u) {
+                                uint64_t mu = lf_src.lanes[u] & lf_src.active_mask;
+                                if (mu == 0ULL) continue;
+                                uint64_t start = slot.get_csr_offset(u);
+                                uint64_t end = std::min<uint64_t>(slot.get_csr_offset(u + 1), slot.edge_count);
+                                for (uint64_t e = start; e < end; ++e) {
+                                    if (test_edge(e)) {
+                                        uint64_t v = slot.get_csr_target(e);
+                                        if (v < next_N && v < dst_lanes.size()) dst_lanes[v] |= mu;
+                                    }
+                                }
+                            }
+                        } else if (!slot.offsets_ptr && slot.targets_ptr) {
+                            uint64_t sent = slot.csr_sentinel();
+                            uint64_t edge_rank = 0;
+                            for (uint64_t u = 0; u < slot.node_count; ++u) {
+                                uint64_t v = slot.get_csr_target(u);
+                                if (v != sent) {
+                                    uint64_t eidx = (slot.edge_count == slot.node_count) ? u : edge_rank;
+                                    edge_rank++;
+                                    if (u < step_N && u < lf_src.lanes.size()) {
+                                        uint64_t mu = lf_src.lanes[u] & lf_src.active_mask;
+                                        if (mu != 0ULL && v < next_N && v < dst_lanes.size() && test_edge(eidx)) {
+                                            dst_lanes[v] |= mu;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if (slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+                            uint64_t lim_v = std::min<uint64_t>({static_cast<uint64_t>(step_N), slot.csc_node_count, lf_src.lanes.size()});
+                            for (uint64_t v = 0; v < lim_v; ++v) {
+                                uint64_t mv = lf_src.lanes[v] & lf_src.active_mask;
+                                if (mv == 0ULL) continue;
+                                uint64_t start = slot.get_csc_offset(v);
+                                uint64_t end = std::min<uint64_t>(slot.get_csc_offset(v + 1), slot.edge_count);
+                                for (uint64_t ce = start; ce < end; ++ce) {
+                                    uint64_t csr_e = (ce < slot.csc_to_csr_edge_idx.size()) ? slot.csc_to_csr_edge_idx[ce] : ce;
+                                    if (test_edge(csr_e)) {
+                                        uint64_t u = slot.get_csc_target(ce);
+                                        if (u < next_N && u < dst_lanes.size()) dst_lanes[u] |= mv;
+                                    }
+                                }
+                            }
+                        } else if (slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+                            for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                                uint64_t v = slot.get_csr_target(e);
+                                if (v >= step_N || v >= lf_src.lanes.size()) continue;
+                                uint64_t mv = lf_src.lanes[v] & lf_src.active_mask;
+                                if (mv != 0ULL && test_edge(e)) {
+                                    uint64_t u = slot.get_raw_coo_src(e);
+                                    if (u < next_N && u < dst_lanes.size()) dst_lanes[u] |= mv;
+                                }
+                            }
+                        } else if (slot.offsets_ptr && slot.targets_ptr) {
+                            for (uint64_t u = 0; u < slot.node_count && u < next_N && u < dst_lanes.size(); ++u) {
+                                uint64_t start = slot.get_csr_offset(u);
+                                uint64_t end = std::min<uint64_t>(slot.get_csr_offset(u + 1), slot.edge_count);
+                                for (uint64_t e = start; e < end; ++e) {
+                                    uint64_t v = slot.get_csr_target(e);
+                                    if (v >= step_N || v >= lf_src.lanes.size()) continue;
+                                    uint64_t mv = lf_src.lanes[v] & lf_src.active_mask;
+                                    if (mv != 0ULL && test_edge(e)) {
+                                        dst_lanes[u] |= mv;
+                                    }
+                                }
+                            }
+                        } else if (!slot.offsets_ptr && slot.targets_ptr) {
+                            uint64_t sent = slot.csr_sentinel();
+                            uint64_t edge_rank = 0;
+                            for (uint64_t u = 0; u < slot.node_count; ++u) {
+                                uint64_t v = slot.get_csr_target(u);
+                                if (v != sent) {
+                                    uint64_t eidx = (slot.edge_count == slot.node_count) ? u : edge_rank;
+                                    edge_rank++;
+                                    if (u < next_N && u < dst_lanes.size() && v < step_N && v < lf_src.lanes.size()) {
+                                        uint64_t mv = lf_src.lanes[v] & lf_src.active_mask;
+                                        if (mv != 0ULL && test_edge(eidx)) {
+                                            dst_lanes[u] |= mv;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+                            uint64_t sent = slot.csc_sentinel();
+                            uint64_t edge_rank = 0;
+                            for (uint64_t v = 0; v < slot.csc_node_count; ++v) {
+                                uint64_t u = slot.get_csc_target(v);
+                                if (u != sent) {
+                                    uint64_t eidx = (slot.edge_count == slot.csc_node_count) ? v : edge_rank;
+                                    edge_rank++;
+                                    if (v < step_N && v < lf_src.lanes.size() && u < next_N && u < dst_lanes.size()) {
+                                        uint64_t mv = lf_src.lanes[v] & lf_src.active_mask;
+                                        if (mv != 0ULL && test_edge(eidx)) {
+                                            dst_lanes[u] |= mv;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                eval_lane_rel(eval_lane_rel, rel_id, 0);
+                lf_src.lanes = std::move(dst_lanes);
+                rebuild_active_words(lf_src);
+            }
+            step_dom = next_dom;
+        } else if (step.kind == LaneStep::Kind::REPEAT) {
+            uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+            impulse_instruction_t insts[2] = {
+                {OP_LANE_CSR_WALK, 0, 0, static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            for (uint16_t it = 0; it < step.u16_arg; ++it) {
+                for (uint32_t b = 0; b < words_per_lane; ++b) exec_batch_vm_step(b, insts, 2);
+                step_dom = advance_domain_id(snapshot_, step_dom, rel_id, false);
+            }
+        } else if (step.kind == LaneStep::Kind::REPEAT_UNTIL_STABLE) {
+            uint16_t rel_id = resolve_relation_id_by_name(snapshot_, step_dom, step.str_arg);
+            ctx->fixpoint_max_hops = step.u32_arg;
+            ctx->has_fixpoint_max_hops = true;
+            impulse_instruction_t insts[2] = {
+                {OP_LANE_CSR_WALK, 0x04, 0, static_cast<uint32_t>(0 | (static_cast<uint32_t>(rel_id) << 16))},
+                {OP_HALT, 0, 0, 0}
+            };
+            for (uint32_t b = 0; b < words_per_lane; ++b) exec_batch_vm_step(b, insts, 2);
+            ctx->has_fixpoint_max_hops = false;
+            ctx->fixpoint_max_hops = 0;
+        } else if (step.kind == LaneStep::Kind::PRUNE_HUBS && words_per_lane == 1) {
+            impulse_instruction_t insts[2] = {
+                {OP_LANE_PRUNE_MASK, 2, 0,
+                 static_cast<uint32_t>(0 | (static_cast<uint32_t>(step.u16_arg) << 8) | (static_cast<uint32_t>(step.u8_arg) << 24))},
+                {OP_HALT, 0, 0, 0}
+            };
+            exec_batch_vm_step(0, insts, 2);
+        } else if (step.kind == LaneStep::Kind::SET_UNION || step.kind == LaneStep::Kind::SET_INTERSECT ||
+                   step.kind == LaneStep::Kind::SET_DIFFERENCE) {
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                int h_cur = batch_handles[b];
+                if (h_cur < 0) continue;
+                auto& lf = ctx->lane_frontiers[h_cur];
+                if (lf.lanes.size() < step_N) lf.lanes.resize(step_N, 0ULL);
+                for (uint32_t u = 0; u < step_N; ++u) {
+                    uint64_t ow = (u < step.other_node_count && b < step.other_words_per_lane)
+                        ? step.other_words[static_cast<size_t>(u) * step.other_words_per_lane + b]
+                        : 0ULL;
+                    if (step.kind == LaneStep::Kind::SET_UNION) {
+                        lf.lanes[u] = (lf.lanes[u] | ow) & lf.active_mask;
+                    } else if (step.kind == LaneStep::Kind::SET_INTERSECT) {
+                        lf.lanes[u] = (lf.lanes[u] & ow) & lf.active_mask;
+                    } else {
+                        lf.lanes[u] = (lf.lanes[u] & ~ow) & lf.active_mask;
+                    }
+                }
+                for (size_t u = step_N; u < lf.lanes.size(); ++u) lf.lanes[u] = 0ULL;
+                rebuild_active_words(lf);
+            }
+        } else if (step.kind == LaneStep::Kind::WHERE_QUORUM) {
+            for (uint32_t u = 0; u < step_N; ++u) {
+                uint32_t pc = 0;
+                for (uint32_t b = 0; b < words_per_lane; ++b) {
+                    int h = batch_handles[b];
+                    if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                        pc += static_cast<uint32_t>(std::popcount(ctx->lane_frontiers[h].lanes[u] & ctx->lane_frontiers[h].active_mask));
+                    }
+                }
+                if (pc < step.u8_arg) {
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                            ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                        }
+                    }
+                }
+            }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
+            }
+        } else if (step.kind == LaneStep::Kind::WHERE_QUORUM_MASK) {
+            for (uint32_t u = 0; u < step_N; ++u) {
+                uint64_t m0 = 0ULL;
+                if (batch_handles[0] >= 0 && u < ctx->lane_frontiers[batch_handles[0]].lanes.size()) {
+                    m0 = ctx->lane_frontiers[batch_handles[0]].lanes[u] & ctx->lane_frontiers[batch_handles[0]].active_mask;
+                }
+                uint32_t pc = static_cast<uint32_t>(std::popcount(m0 & step.mask_req));
+                if (pc < step.u8_arg || (m0 & step.mask_forbid) != 0ULL) {
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                            ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                        }
+                    }
+                }
+            }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
             }
         } else if (step.kind == LaneStep::Kind::WHERE_MASK) {
-            for (uint32_t u = 0; u < N; ++u) {
-                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
-                uint64_t m0 = row[0];
+            for (uint32_t u = 0; u < step_N; ++u) {
+                uint64_t m0 = 0ULL;
+                if (batch_handles[0] >= 0 && u < ctx->lane_frontiers[batch_handles[0]].lanes.size()) {
+                    m0 = ctx->lane_frontiers[batch_handles[0]].lanes[u] & ctx->lane_frontiers[batch_handles[0]].active_mask;
+                }
                 if ((m0 & step.mask_req) == 0ULL || (m0 & step.mask_forbid) != 0ULL) {
-                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                            ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                        }
+                    }
                 }
             }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
+            }
         } else if (step.kind == LaneStep::Kind::MUST_HIT_AT_LEAST) {
-            for (uint32_t u = 0; u < N; ++u) {
-                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+            for (uint32_t u = 0; u < step_N; ++u) {
                 uint32_t hits = 0;
                 for (uint32_t lb : step.lane_indices) {
                     uint32_t w = lb / 64U;
-                    uint32_t b = lb % 64U;
-                    if (w < words_per_lane && ((row[w] >> b) & 1ULL) != 0ULL) {
-                        hits++;
+                    uint32_t bit = lb % 64U;
+                    if (w < words_per_lane && batch_handles[w] >= 0) {
+                        const auto& lf = ctx->lane_frontiers[batch_handles[w]];
+                        if (u < lf.lanes.size() && (((lf.lanes[u] & lf.active_mask) >> bit) & 1ULL) != 0ULL) {
+                            hits++;
+                        }
                     }
                 }
                 if (hits < step.u8_arg) {
-                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                            ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                        }
+                    }
                 }
             }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
+            }
         } else if (step.kind == LaneStep::Kind::MUST_AVOID_ALL) {
-            for (uint32_t u = 0; u < N; ++u) {
-                uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+            for (uint32_t u = 0; u < step_N; ++u) {
                 bool hit_forbid = false;
                 for (uint32_t lb : step.lane_indices) {
                     uint32_t w = lb / 64U;
-                    uint32_t b = lb % 64U;
-                    if (w < words_per_lane && ((row[w] >> b) & 1ULL) != 0ULL) {
-                        hit_forbid = true;
-                        break;
+                    uint32_t bit = lb % 64U;
+                    if (w < words_per_lane && batch_handles[w] >= 0) {
+                        const auto& lf = ctx->lane_frontiers[batch_handles[w]];
+                        if (u < lf.lanes.size() && (((lf.lanes[u] & lf.active_mask) >> bit) & 1ULL) != 0ULL) {
+                            hit_forbid = true;
+                            break;
+                        }
                     }
                 }
                 if (hit_forbid) {
-                    for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                            ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                        }
+                    }
                 }
+            }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
             }
         } else if (step.kind == LaneStep::Kind::FILTER_CEL || step.kind == LaneStep::Kind::PRUNE_WHERE_CEL ||
                    step.kind == LaneStep::Kind::PROJECT_CEL) {
@@ -713,37 +1128,74 @@ MultiLaneResult MultiLaneTraversal::collect() const {
             auto ast = p.parse_expression();
             if (ast) {
                 auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
-                for (uint32_t u = 0; u < N; ++u) {
-                    uint64_t* row = &words_per_node[static_cast<size_t>(u) * words_per_lane];
+                auto dom_attrs = build_domain_attr_cache(snapshot_, step_dom);
+                std::vector<uint64_t> row_buf(words_per_lane, 0ULL);
+                if (step.kind == LaneStep::Kind::PROJECT_CEL && proj_values.size() < step_N) {
+                    proj_values.resize(step_N, 0.0f);
+                }
+                for (uint32_t u = 0; u < step_N; ++u) {
                     bool is_active = false;
-                    for (uint32_t w = 0; w < words_per_lane; ++w) {
-                        if (row[w] != 0ULL) { is_active = true; break; }
+                    for (uint32_t b = 0; b < words_per_lane; ++b) {
+                        int h = batch_handles[b];
+                        uint64_t wval = (h >= 0 && u < ctx->lane_frontiers[h].lanes.size())
+                            ? (ctx->lane_frontiers[h].lanes[u] & ctx->lane_frontiers[h].active_mask)
+                            : 0ULL;
+                        row_buf[b] = wval;
+                        if (wval != 0ULL) is_active = true;
                     }
                     if (!is_active && step.kind != LaneStep::Kind::PROJECT_CEL) continue;
 
-                    std::unordered_map<std::string, double> f_attrs;
-                    std::unordered_map<std::string, int64_t> i_attrs;
-                    populate_node_attrs(snapshot_, u, f_attrs, i_attrs, current_domain_id_);
-
+                    auto resolve_fn = [&](const std::string& aname) { return dom_attrs.resolve(u, aname); };
                     if (step.kind == LaneStep::Kind::FILTER_CEL) {
-                        if (!impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row, words_per_lane, &i_attrs, &f_attrs)) {
-                            for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                        if (!impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
+                            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                                int h = batch_handles[b];
+                                if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                                    ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                                }
+                            }
                         }
                     } else if (step.kind == LaneStep::Kind::PRUNE_WHERE_CEL) {
-                        if (impulse::cel::CelMultiLaneEvaluator::eval_bool(opt_ast, row, words_per_lane, &i_attrs, &f_attrs)) {
-                            for (uint32_t w = 0; w < words_per_lane; ++w) row[w] = 0ULL;
+                        if (impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
+                            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                                int h = batch_handles[b];
+                                if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                                    ctx->lane_frontiers[h].lanes[u] = 0ULL;
+                                }
+                            }
                         }
                     } else if (step.kind == LaneStep::Kind::PROJECT_CEL) {
-                        double v = impulse::cel::CelMultiLaneEvaluator::eval_double(opt_ast, row, words_per_lane, &f_attrs, &i_attrs);
-                        proj_values[u] = static_cast<float>(v);
+                        auto cv = impulse::cel::CelKleeneEvaluator::eval(opt_ast, resolve_fn, row_buf.data(), words_per_lane);
+                        double dv = 0.0;
+                        proj_values[u] = cv.to_double(dv) ? static_cast<float>(dv) : 0.0f;
                         has_projected = true;
                     }
+                }
+                for (uint32_t b = 0; b < words_per_lane; ++b) {
+                    if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
                 }
             }
         }
     }
 
-    return MultiLaneResult(snapshot_, current_domain_id_, N, K, lane_keys_, std::move(words_per_node), std::move(proj_values), has_projected);
+    // Materialize final multi-lane words for final_N nodes in step_dom
+    final_N = get_domain_node_count(snapshot_, step_dom);
+    words_per_node.assign(static_cast<size_t>(final_N) * words_per_lane, 0ULL);
+    proj_values.resize(final_N, 0.0f);
+
+    for (uint32_t b = 0; b < words_per_lane; ++b) {
+        int h = batch_handles[b];
+        if (h < 0) continue;
+        const auto& lf = ctx->lane_frontiers[h];
+        size_t copy_n = std::min<size_t>(final_N, lf.lanes.size());
+        for (size_t u = 0; u < copy_n; ++u) {
+            words_per_node[u * words_per_lane + b] = (lf.lanes[u] & lf.active_mask);
+        }
+        impulse_vm_context_release_lane_frontier(ctx, static_cast<size_t>(h));
+    }
+
+    impulse_vm_context_destroy(ctx);
+    return MultiLaneResult(snapshot_, step_dom, final_N, K, lane_keys_, std::move(words_per_node), std::move(proj_values), has_projected);
 }
 
 Traversal MultiLaneTraversal::toQuorumTraversal(uint8_t min_lanes) const {
@@ -1053,15 +1505,17 @@ SteinerSubgraph MultiLaneTraversal::toSteinerSubgraph(uint8_t min_concept_quorum
     for (uint32_t u = 0; u < N; ++u) {
         node_mask[u] = res.laneMaskFor(u);
     }
-    if (mode_ == InitMode::SEEDS || mode_ == InitMode::OUTAGES) {
-        for (size_t b = 0; b < seeds_.size() && b < 64; ++b) {
-            uint64_t u = seeds_[b];
-            if (u < N) node_mask[u] |= (1ULL << b);
-        }
-    } else if (mode_ == InitMode::GROUPS) {
-        for (const auto& gp : group_pairs_) {
-            if (gp.first < N && gp.second < 64) {
-                node_mask[gp.first] |= (1ULL << gp.second);
+    if (initial_domain_id_ == current_domain_id_) {
+        if (mode_ == InitMode::SEEDS || mode_ == InitMode::OUTAGES) {
+            for (size_t b = 0; b < seeds_.size() && b < 64; ++b) {
+                uint64_t u = seeds_[b];
+                if (u < N) node_mask[u] |= (1ULL << b);
+            }
+        } else if (mode_ == InitMode::GROUPS) {
+            for (const auto& gp : group_pairs_) {
+                if (gp.first < N && gp.second < 64) {
+                    node_mask[gp.first] |= (1ULL << gp.second);
+                }
             }
         }
     }

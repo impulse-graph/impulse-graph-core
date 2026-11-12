@@ -116,17 +116,8 @@ op_LANE_REDUCE_ATTR: {
                 }
                 for (const auto& dom_attrs : vm_state->query_context->attribute_slots) {
                     if (attr_or_reg < dom_attrs.size() && dom_attrs[attr_or_reg].data_ptr) {
-                        const auto& slot = dom_attrs[attr_or_reg];
-                        uint8_t base_t = slot.type_code & 0x7F;
-                        if (base_t == 0x05 && (u + 1) * sizeof(float) <= slot.data_bytes) {
-                            return static_cast<const float*>(slot.data_ptr)[u];
-                        } else if (base_t == 0x06 && (u + 1) * sizeof(double) <= slot.data_bytes) {
-                            return static_cast<float>(static_cast<const double*>(slot.data_ptr)[u]);
-                        } else if (base_t == 0x03 && (u + 1) * sizeof(int32_t) <= slot.data_bytes) {
-                            return static_cast<float>(static_cast<const int32_t*>(slot.data_ptr)[u]);
-                        } else if (base_t == 0x04 && (u + 1) * sizeof(int64_t) <= slot.data_bytes) {
-                            return static_cast<float>(static_cast<const int64_t*>(slot.data_ptr)[u]);
-                        }
+                        float v = 0.0f;
+                        if (read_slot_float(dom_attrs[attr_or_reg], v)) return v;
                     }
                 }
                 return static_cast<float>(u);

@@ -98,15 +98,51 @@ struct BoundRelationSlot {
     const void* csc_targets_ptr = nullptr;
     uint16_t    src_domain_id = 0;
     uint16_t    tgt_domain_id = 0;
+    uint8_t     encoding_id = 0;
     uint8_t     node_id_width = 4;
     uint8_t     edge_index_width = 4;
     uint8_t     csc_node_id_width = 4;
     uint8_t     csc_edge_index_width = 4;
+    uint8_t     raw_coo_src_width = 4;
+    bool        is_virtual = false;
+    bool        is_raw_coo = false;
+    uint64_t    section_features = 0;
     uint64_t    node_count = 0;
+    uint64_t    tgt_node_count = 0;
     uint64_t    csc_node_count = 0;
     uint64_t    edge_count = 0;
+    std::vector<uint16_t> virtual_children;
+    std::vector<uint32_t> csc_to_csr_edge_idx;
     std::vector<uint32_t> dynamic_csc_offsets;
     std::vector<uint32_t> dynamic_csc_targets;
+
+    inline uint64_t csr_sentinel() const {
+        if (node_id_width == 2 || node_id_width == 16) return 0xFFFFULL;
+        if (node_id_width == 8 || node_id_width == 64) return UINT64_MAX;
+        return 0xFFFFFFFFULL;
+    }
+
+    inline uint64_t csc_sentinel() const {
+        if (csc_node_id_width == 2 || csc_node_id_width == 16) return 0xFFFFULL;
+        if (csc_node_id_width == 8 || csc_node_id_width == 64) return UINT64_MAX;
+        return 0xFFFFFFFFULL;
+    }
+
+    inline uint64_t get_raw_coo_src(uint64_t edge_idx) const {
+        if (!offsets_ptr) return 0;
+        if (raw_coo_src_width == 2 || raw_coo_src_width == 16) {
+            return static_cast<const uint16_t*>(offsets_ptr)[edge_idx];
+        } else if (raw_coo_src_width == 8 || raw_coo_src_width == 64) {
+            return static_cast<const uint64_t*>(offsets_ptr)[edge_idx];
+        }
+        return static_cast<const uint32_t*>(offsets_ptr)[edge_idx];
+    }
+
+    inline bool has_any_topology() const {
+        return is_virtual || offsets_ptr != nullptr || targets_ptr != nullptr ||
+               csc_offsets_ptr != nullptr || csc_targets_ptr != nullptr ||
+               !dynamic_csc_offsets.empty();
+    }
 
     inline uint64_t get_csr_offset(uint64_t u) const {
         if (!offsets_ptr) return 0;
@@ -212,7 +248,11 @@ struct impulse_vm_context {
     std::vector<std::vector<BoundAttributeSlot>> attribute_slots;
     std::vector<std::vector<BoundAttributeSlot>> domain_attribute_slots;
     std::vector<uint16_t> domain_key_attr_indices;
+    std::vector<uint8_t> domain_key_types;
     std::vector<uint64_t> domain_node_counts;
+
+    uint32_t fixpoint_max_hops = 0;
+    bool has_fixpoint_max_hops = false;
 
     // Pre-allocated float and double vectors for VM operations
     std::array<std::vector<float>, VM_MAX_VECTOR_HANDLES> float_vectors;
@@ -508,8 +548,19 @@ inline size_t resolve_multilane_node_count(const impulse_vm_context_t* ctx, int 
     if (!ctx) return std::max<size_t>(64, min_needed);
     size_t best = 0;
     if (rel_id >= 0 && static_cast<size_t>(rel_id) < ctx->slots.size()) {
-        best = std::max<size_t>(best, ctx->slots[rel_id].node_count);
-        best = std::max<size_t>(best, ctx->slots[rel_id].csc_node_count);
+        const auto& s = ctx->slots[rel_id];
+        best = std::max<size_t>(best, s.node_count);
+        best = std::max<size_t>(best, s.tgt_node_count);
+        best = std::max<size_t>(best, s.csc_node_count);
+        if (s.is_virtual) {
+            for (uint16_t cid : s.virtual_children) {
+                if (cid < ctx->slots.size()) {
+                    best = std::max<size_t>(best, ctx->slots[cid].node_count);
+                    best = std::max<size_t>(best, ctx->slots[cid].tgt_node_count);
+                    best = std::max<size_t>(best, ctx->slots[cid].csc_node_count);
+                }
+            }
+        }
     }
     if (best == 0) {
         for (const auto& slot : ctx->slots) {
@@ -836,6 +887,362 @@ inline void extract_active_bits(const VmBitSet& bs, std::vector<uint32_t>& out_b
 #endif
             out_bits.push_back(static_cast<uint32_t>(w * 64 + tz));
             val &= val - 1;
+        }
+    }
+}
+
+inline float impulse_fp16_to_fp32(uint16_t h) {
+    uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+    uint32_t exp  = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x03FFu;
+    uint32_t bits = 0;
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign;
+        } else {
+            exp = 1;
+            while ((mant & 0x0400u) == 0) {
+                mant <<= 1;
+                --exp;
+            }
+            mant &= 0x03FFu;
+            bits = sign | ((exp + (127u - 15u)) << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1Fu) {
+        bits = sign | 0x7F800000u | (mant << 13);
+    } else {
+        bits = sign | ((exp + (127u - 15u)) << 23) | (mant << 13);
+    }
+    float out = 0.0f;
+    std::memcpy(&out, &bits, sizeof(float));
+    return out;
+}
+
+inline bool format_snapshot_node_key(
+    const impulse_snapshot_t* snap,
+    uint16_t domain_id,
+    uint32_t node_id,
+    std::string& out_str
+) {
+    if (!snap) return false;
+    const void* key_bytes = nullptr;
+    size_t key_len = 0;
+    if (impulse_snapshot_resolve_dense_id(snap, domain_id, node_id, &key_bytes, &key_len) != IMPULSE_OK || !key_bytes) {
+        return false;
+    }
+
+    impulse_domain_catalog_entry_t dom{};
+    if (impulse_snapshot_get_domain_entry(snap, domain_id, &dom, nullptr) != IMPULSE_OK || dom.key_attr_index == 0xFFFF) {
+        out_str.assign(static_cast<const char*>(key_bytes), key_len);
+        return true;
+    }
+
+    const void* d = nullptr;
+    uint64_t db = 0;
+    const void* o = nullptr;
+    uint64_t ob = 0;
+    uint8_t tc = 0;
+    uint32_t dim = 1;
+    if (impulse_snapshot_get_domain_attribute_buffers(snap, domain_id, dom.key_attr_index, &d, &db, &o, &ob, &tc, &dim) != IMPULSE_OK) {
+        out_str.assign(static_cast<const char*>(key_bytes), key_len);
+        return true;
+    }
+
+    uint8_t base_type = static_cast<uint8_t>(tc & 0x7Fu);
+    if (base_type == 0x0B || (base_type == 0x09 && o != nullptr)) {
+        out_str.assign(static_cast<const char*>(key_bytes), key_len);
+        return true;
+    }
+    if (base_type == 0x0A) {
+        const auto* b = static_cast<const uint8_t*>(key_bytes);
+        if (key_len == 16) {
+            char buf[40];
+            std::snprintf(
+                buf, sizeof(buf),
+                "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            );
+            out_str.assign(buf, 36);
+            return true;
+        }
+        out_str.clear();
+        out_str.reserve(key_len * 2);
+        for (size_t i = 0; i < key_len; ++i) {
+            char hex[4];
+            std::snprintf(hex, sizeof(hex), "%02x", b[i]);
+            out_str.append(hex, 2);
+        }
+        return true;
+    }
+
+    switch (base_type) {
+        case 0x01: {
+            if (key_len < 1) return false;
+            if (dom.key_type == 5) {
+                uint8_t v = 0;
+                std::memcpy(&v, key_bytes, 1);
+                out_str = std::to_string(static_cast<unsigned>(v));
+            } else {
+                int8_t v = 0;
+                std::memcpy(&v, key_bytes, 1);
+                out_str = std::to_string(static_cast<int>(v));
+            }
+            return true;
+        }
+        case 0x11: {
+            if (key_len < 1) return false;
+            uint8_t v = 0;
+            std::memcpy(&v, key_bytes, 1);
+            out_str = std::to_string(static_cast<unsigned>(v));
+            return true;
+        }
+        case 0x02: {
+            if (key_len < 2) return false;
+            if (dom.key_type == 6) {
+                uint16_t v = 0;
+                std::memcpy(&v, key_bytes, 2);
+                out_str = std::to_string(v);
+            } else {
+                int16_t v = 0;
+                std::memcpy(&v, key_bytes, 2);
+                out_str = std::to_string(v);
+            }
+            return true;
+        }
+        case 0x12: {
+            if (key_len < 2) return false;
+            uint16_t v = 0;
+            std::memcpy(&v, key_bytes, 2);
+            out_str = std::to_string(v);
+            return true;
+        }
+        case 0x03: {
+            if (key_len < 4) return false;
+            if (dom.key_type == 7) {
+                uint32_t v = 0;
+                std::memcpy(&v, key_bytes, 4);
+                out_str = std::to_string(v);
+            } else {
+                int32_t v = 0;
+                std::memcpy(&v, key_bytes, 4);
+                out_str = std::to_string(v);
+            }
+            return true;
+        }
+        case 0x13: {
+            if (key_len < 4) return false;
+            uint32_t v = 0;
+            std::memcpy(&v, key_bytes, 4);
+            out_str = std::to_string(v);
+            return true;
+        }
+        case 0x04:
+        case 0x08:
+        case 0x09:
+        case 0x0D: {
+            if (key_len < 8) return false;
+            if (dom.key_type == 8) {
+                uint64_t v = 0;
+                std::memcpy(&v, key_bytes, 8);
+                out_str = std::to_string(v);
+            } else {
+                int64_t v = 0;
+                std::memcpy(&v, key_bytes, 8);
+                out_str = std::to_string(v);
+            }
+            return true;
+        }
+        case 0x14: {
+            if (key_len < 8) return false;
+            uint64_t v = 0;
+            std::memcpy(&v, key_bytes, 8);
+            out_str = std::to_string(v);
+            return true;
+        }
+        default:
+            out_str.assign(static_cast<const char*>(key_bytes), key_len);
+            return true;
+    }
+}
+
+template <typename EmitFn>
+inline void for_each_forward_target_of_node(
+    const impulse_vm_context_t* ctx,
+    uint16_t rel_id,
+    uint64_t u,
+    EmitFn&& emit,
+    int depth = 0
+) {
+    if (!ctx || rel_id >= ctx->slots.size() || depth > 4) return;
+    const auto& slot = ctx->slots[rel_id];
+    if (slot.is_virtual) {
+        for (uint16_t child : slot.virtual_children) {
+            for_each_forward_target_of_node(ctx, child, u, emit, depth + 1);
+        }
+        return;
+    }
+    if (slot.is_raw_coo) {
+        if (slot.offsets_ptr && slot.targets_ptr) {
+            for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                if (slot.get_raw_coo_src(e) == u) {
+                    emit(slot.get_csr_target(e));
+                }
+            }
+        }
+        return;
+    }
+    if (slot.offsets_ptr && slot.targets_ptr) {
+        if (u < slot.node_count) {
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t e = start; e < end; ++e) {
+                emit(slot.get_csr_target(e));
+            }
+        }
+    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+        if (u < slot.node_count) {
+            uint64_t v = slot.get_csr_target(u);
+            if (v != slot.csr_sentinel()) {
+                emit(v);
+            }
+        }
+    }
+}
+
+template <typename TestActiveFn>
+inline void walk_slot_forward_special(
+    const impulse_vm_context_t* ctx,
+    uint16_t rel_id,
+    TestActiveFn&& is_src_active,
+    uint64_t max_src_hint,
+    VmBitSet& bs_dst,
+    int depth = 0
+) {
+    if (!ctx || rel_id >= ctx->slots.size() || depth > 4) return;
+    const auto& slot = ctx->slots[rel_id];
+    if (slot.is_virtual) {
+        for (uint16_t child : slot.virtual_children) {
+            walk_slot_forward_special(ctx, child, is_src_active, max_src_hint, bs_dst, depth + 1);
+        }
+        return;
+    }
+    if (slot.is_raw_coo) {
+        if (slot.offsets_ptr && slot.targets_ptr) {
+            for (uint64_t e = 0; e < slot.edge_count; ++e) {
+                uint64_t u = slot.get_raw_coo_src(e);
+                if (is_src_active(u)) {
+                    bitset_add(bs_dst, slot.get_csr_target(e), ctx->max_nodes);
+                }
+            }
+        }
+        return;
+    }
+    uint64_t bound = (max_src_hint > 0) ? std::min<uint64_t>(slot.node_count, max_src_hint) : slot.node_count;
+    if (slot.offsets_ptr && slot.targets_ptr) {
+        for (uint64_t u = 0; u < bound; ++u) {
+            if (is_src_active(u)) {
+                uint64_t start = slot.get_csr_offset(u);
+                uint64_t end   = slot.get_csr_offset(u + 1);
+                for (uint64_t e = start; e < end; ++e) {
+                    bitset_add(bs_dst, slot.get_csr_target(e), ctx->max_nodes);
+                }
+            }
+        }
+    } else if (!slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t sent = slot.csr_sentinel();
+        for (uint64_t u = 0; u < bound; ++u) {
+            if (is_src_active(u)) {
+                uint64_t v = slot.get_csr_target(u);
+                if (v != sent) {
+                    bitset_add(bs_dst, v, ctx->max_nodes);
+                }
+            }
+        }
+    }
+}
+
+template <typename TestActiveFn>
+inline void walk_slot_reverse_special(
+    const impulse_vm_context_t* ctx,
+    uint16_t rel_id,
+    TestActiveFn&& is_tgt_active,
+    uint64_t max_tgt_hint,
+    VmBitSet& bs_dst,
+    const uint64_t* unv_words = nullptr,
+    int depth = 0
+) {
+    if (!ctx || rel_id >= ctx->slots.size() || depth > 4) return;
+    const auto& slot = ctx->slots[rel_id];
+    if (slot.is_virtual) {
+        for (uint16_t child : slot.virtual_children) {
+            walk_slot_reverse_special(ctx, child, is_tgt_active, max_tgt_hint, bs_dst, unv_words, depth + 1);
+        }
+        return;
+    }
+    auto allow_src = [&](uint64_t u) -> bool {
+        if (!unv_words) return true;
+        size_t w = static_cast<size_t>(u >> 6);
+        return (w < ctx->words_per_bitset) && ((unv_words[w] & (1ULL << (u & 63))) != 0);
+    };
+    uint64_t csc_bound = (slot.csc_node_count > 0)
+        ? slot.csc_node_count
+        : ((slot.tgt_node_count > 0) ? slot.tgt_node_count : slot.node_count);
+    uint64_t bound = (max_tgt_hint > 0) ? std::min<uint64_t>(csc_bound, max_tgt_hint) : csc_bound;
+
+    if ((slot.csc_offsets_ptr && slot.csc_targets_ptr) || !slot.dynamic_csc_offsets.empty()) {
+        for (uint64_t v = 0; v < bound; ++v) {
+            if (is_tgt_active(v)) {
+                uint64_t start = slot.get_csc_offset(v);
+                uint64_t end   = slot.get_csc_offset(v + 1);
+                for (uint64_t idx = start; idx < end; ++idx) {
+                    uint64_t u = slot.get_csc_target(idx);
+                    if (allow_src(u)) {
+                        bitset_add(bs_dst, u, ctx->max_nodes);
+                    }
+                }
+            }
+        }
+    } else if (!slot.csc_offsets_ptr && slot.csc_targets_ptr) {
+        uint64_t sent = slot.csc_sentinel();
+        for (uint64_t v = 0; v < bound; ++v) {
+            if (is_tgt_active(v)) {
+                uint64_t u = slot.get_csc_target(v);
+                if (u != sent && allow_src(u)) {
+                    bitset_add(bs_dst, u, ctx->max_nodes);
+                }
+            }
+        }
+    } else if (slot.is_raw_coo && slot.offsets_ptr && slot.targets_ptr) {
+        for (uint64_t e = 0; e < slot.edge_count; ++e) {
+            uint64_t v = slot.get_csr_target(e);
+            if (is_tgt_active(v)) {
+                uint64_t u = slot.get_raw_coo_src(e);
+                if (allow_src(u)) {
+                    bitset_add(bs_dst, u, ctx->max_nodes);
+                }
+            }
+        }
+    } else if (ctx->snapshot && slot.offsets_ptr && slot.targets_ptr) {
+        for (uint64_t u = 0; u < slot.node_count; ++u) {
+            if (!allow_src(u)) continue;
+            uint64_t start = slot.get_csr_offset(u);
+            uint64_t end   = slot.get_csr_offset(u + 1);
+            for (uint64_t idx = start; idx < end; ++idx) {
+                if (is_tgt_active(slot.get_csr_target(idx))) {
+                    bitset_add(bs_dst, u, ctx->max_nodes);
+                    break;
+                }
+            }
+        }
+    } else if (ctx->snapshot && !slot.offsets_ptr && slot.targets_ptr) {
+        uint64_t sent = slot.csr_sentinel();
+        for (uint64_t u = 0; u < slot.node_count; ++u) {
+            if (!allow_src(u)) continue;
+            uint64_t v = slot.get_csr_target(u);
+            if (v != sent && is_tgt_active(v)) {
+                bitset_add(bs_dst, u, ctx->max_nodes);
+            }
         }
     }
 }

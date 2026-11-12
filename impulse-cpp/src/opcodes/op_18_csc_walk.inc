@@ -44,8 +44,7 @@ op_CSC_WALK: {
         vm_state->pc++;
     } else {
         bool unv_is_valid_rel = (unv < vm_state->query_context->slots.size()) &&
-            (vm_state->query_context->slots[unv].csc_offsets_ptr != nullptr ||
-             !vm_state->query_context->slots[unv].dynamic_csc_offsets.empty());
+            vm_state->query_context->slots[unv].has_any_topology();
         if (rel == 0 && (inst.payload >> 24) == 0 && (unv_is_valid_rel || vm_state->register_types[unv] != TYPE_BITSET_HANDLE)) {
             rel = (inst.payload >> 16) & 0xFFFF;
             unv = 0;
@@ -56,8 +55,8 @@ op_CSC_WALK: {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     const auto& slot = vm_state->query_context->slots[rel];
-    if (!slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty() &&
-        !(vm_state->query_context->snapshot && slot.offsets_ptr && slot.targets_ptr)) {
+    if (!vm_state->query_context->snapshot &&
+        !slot.csc_offsets_ptr && slot.dynamic_csc_offsets.empty() && !slot.csc_targets_ptr) {
         return IMPULSE_VM_ERR_NULL_SNAPSHOT;
     }
 
@@ -79,21 +78,38 @@ op_CSC_WALK: {
         ? vm_state->query_context->bitsets[vm_state->registers[unv]].words : nullptr;
 
     int h_dst = -1;
+    bool accum = (inst.flags & IMPULSE_VM_OP_FLAG_ACCUMULATE) != 0;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
-        h_dst = static_cast<int>(vm_state->registers[dst]);
-        if (dst == src || dst == unv) {
+        int h_existing = static_cast<int>(vm_state->registers[dst]);
+        if ((dst == src && src_is_bitset) || (unv > 0 && dst == unv && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)) {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
+            if (accum) {
+                const auto& bs_existing = vm_state->query_context->bitsets[h_existing];
+                auto& bs_new = vm_state->query_context->bitsets[h_dst];
+                for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
+                    bs_new.words[i] = bs_existing.words[i];
+                }
+            } else {
+                vm_state->query_context->bitsets[h_dst].clear();
+            }
+        } else if (accum) {
+            h_dst = h_existing;
+        } else {
+            h_dst = h_existing;
+            vm_state->query_context->bitsets[h_dst].clear();
         }
-        vm_state->query_context->bitsets[h_dst].clear();
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         vm_state->query_context->bitsets[h_dst].clear();
+        if (accum && (vm_state->register_types[dst] == TYPE_NODE_ID || vm_state->register_types[dst] == TYPE_INT64)) {
+            bitset_add(vm_state->query_context->bitsets[h_dst], vm_state->registers[dst], vm_state->query_context->max_nodes);
+        }
     }
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
@@ -102,9 +118,12 @@ op_CSC_WALK: {
     int num_threads = vm_state->query_context->max_threads;
     (void)num_threads;
 #endif
-    uint64_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
+    uint64_t csc_bound = (slot.csc_node_count > 0)
+        ? slot.csc_node_count
+        : ((slot.tgt_node_count > 0) ? slot.tgt_node_count : slot.node_count);
 
-    if (!src_is_null && ((slot.csc_offsets_ptr && slot.csc_targets_ptr) || !slot.dynamic_csc_offsets.empty())) {
+    if (!src_is_null && !slot.is_virtual &&
+        ((slot.csc_offsets_ptr && slot.csc_targets_ptr) || !slot.dynamic_csc_offsets.empty())) {
         if (unv_words != nullptr) {
             // GraphBLAS Bottom-Up BFS: unv is the candidate target set v, src is the source frontier u
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -210,7 +229,22 @@ op_CSC_WALK: {
                         word &= word - 1;
                         if (v < csc_bound) {
                             uint64_t u = slot.get_csc_target(v);
-                            if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
+                            if (u != slot.csc_sentinel()) {
+                                bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
+                            }
+                        }
+                    }
+                }
+            } else if (src_is_vec) {
+                const uint64_t* vec_ptr = nullptr;
+                size_t vec_len = 0;
+                uint64_t sent = slot.csc_sentinel();
+                if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len) && vec_ptr) {
+                    for (size_t k = 0; k < vec_len; ++k) {
+                        uint64_t v = vec_ptr[k];
+                        if (v != ~0ULL && v < csc_bound) {
+                            uint64_t u = slot.get_csc_target(v);
+                            if (u != sent) {
                                 bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                             }
                         }
@@ -220,38 +254,42 @@ op_CSC_WALK: {
                 uint64_t v = scalar_src;
                 if (v < csc_bound) {
                     uint64_t u = slot.get_csc_target(v);
-                    if (u != 0xFFFFFFFF && u != 0xFFFF && u != ~0ULL) {
+                    if (u != slot.csc_sentinel()) {
                         bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
                     }
                 }
             }
         }
-    } else if (!src_is_null && vm_state->query_context->snapshot && slot.offsets_ptr && slot.targets_ptr) {
-        for (uint64_t u = 0; u < slot.node_count; ++u) {
-            uint64_t start = slot.get_csr_offset(u);
-            uint64_t end   = slot.get_csr_offset(u + 1);
-            for (uint64_t idx = start; idx < end; ++idx) {
-                uint64_t v = slot.get_csr_target(idx);
-                bool hit = false;
-                if (src_is_bitset) {
-                    hit = bitset_test(vm_state->query_context->bitsets[h_src], v, vm_state->query_context->max_nodes);
-                } else if (src_is_vec) {
-                    const uint64_t* vec_ptr = nullptr;
-                    size_t vec_len = 0;
-                    if (get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len)) {
-                        for (size_t k = 0; k < vec_len; ++k) {
-                            if (vec_ptr[k] == v) { hit = true; break; }
-                        }
-                    }
-                } else {
-                    hit = (v == scalar_src);
-                }
-                if (hit) {
-                    bitset_add(bs_dst, u, vm_state->query_context->max_nodes);
-                    break;
-                }
-            }
+    } else if (!src_is_null) {
+        const uint64_t* vec_ptr = nullptr;
+        size_t vec_len = 0;
+        if (src_is_vec) {
+            get_node_vector_slice(vm_state->query_context, vm_state->registers[src], &vec_ptr, &vec_len);
         }
+        walk_slot_reverse_special(
+            vm_state->query_context,
+            rel,
+            [&](uint64_t v) -> bool {
+                if (src_is_bitset) {
+                    return bitset_test(vm_state->query_context->bitsets[h_src], v, vm_state->query_context->max_nodes);
+                }
+                if (src_is_vec) {
+                    if (!vec_ptr) return false;
+                    for (size_t k = 0; k < vec_len; ++k) {
+                        if (vec_ptr[k] == v) return true;
+                    }
+                    return false;
+                }
+                return (v == scalar_src);
+            },
+            0,
+            bs_dst,
+            unv_words
+        );
+    }
+
+    if (dst == src && src_is_bitset) {
+        release_bitset(vm_state->query_context, h_src);
     }
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);

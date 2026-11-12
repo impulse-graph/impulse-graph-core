@@ -48,21 +48,26 @@ op_MAP_DENSE_TO_KEYS: {
     size_t dom_rows = resolve_domain_row_count(vm_state->query_context, domain_id);
 
     auto add_key = [&](uint64_t u) {
+        if (vm_state->query_context->snapshot) {
+            std::string formatted;
+            if (format_snapshot_node_key(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), formatted)) {
+                sowned.push_back(std::move(formatted));
+                svec.push_back(sowned.back().c_str());
+                return;
+            }
+        }
         if (attr && attr->data_ptr && base_type == 0x0B) {
             const char* str_ptr = nullptr;
             size_t str_len = 0;
             if (extract_var_string_slice(*attr, dom_rows, u, &str_ptr, &str_len) && str_ptr) {
                 sowned.emplace_back(str_ptr, str_len);
                 svec.push_back(sowned.back().c_str());
+                return;
             }
-        } else if (vm_state->query_context->snapshot) {
-            const void* kbytes = nullptr;
-            size_t klen = 0;
-            if (impulse_snapshot_resolve_dense_id(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), &kbytes, &klen) == IMPULSE_OK &&
-                kbytes) {
-                sowned.emplace_back(static_cast<const char*>(kbytes), klen);
-                svec.push_back(sowned.back().c_str());
-            }
+        }
+        if (vm_state->query_context->snapshot) {
+            sowned.push_back(std::to_string(u));
+            svec.push_back(sowned.back().c_str());
         }
     };
 
