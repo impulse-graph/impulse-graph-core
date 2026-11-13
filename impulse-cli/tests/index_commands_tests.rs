@@ -65,8 +65,14 @@ fn test_index_list_add_drop_lifecycle() {
     let entries = reader_indexed.index_entries();
     assert_eq!(entries.len(), initial_count + 2);
     // Find the newly added entries
-    let perm_entry = entries.iter().find(|e| e.index_type == 0x01).expect("Permutation index not found");
-    let zone_entry = entries.iter().find(|e| e.index_type == 0x02).expect("ZoneMap index not found");
+    let perm_entry = entries
+        .iter()
+        .find(|e| e.index_type == 0x01)
+        .expect("Permutation index not found");
+    let zone_entry = entries
+        .iter()
+        .find(|e| e.index_type == 0x02)
+        .expect("ZoneMap index not found");
     assert_eq!(perm_entry.index_type, 0x01);
     assert_eq!(zone_entry.index_type, 0x02);
 
@@ -85,7 +91,10 @@ fn test_index_list_add_drop_lifecycle() {
     assert!(drop_one_res.is_ok(), "Drop one failed: {:?}", drop_one_res);
     let reader_drop_one = SnapshotReader::open(&dropped_one_snap).unwrap();
     assert_eq!(reader_drop_one.index_entries().len(), initial_count + 1);
-    assert!(reader_drop_one.index_entries().iter().all(|e| e.name != perm_entry.name));
+    assert!(reader_drop_one
+        .index_entries()
+        .iter()
+        .all(|e| e.name != perm_entry.name));
 
     // 3b. Drop by type: drop zonemap
     let dropped_type_snap = test_dir.join("dropped_type.imps");
@@ -96,19 +105,21 @@ fn test_index_list_add_drop_lifecycle() {
         Some("zonemap"),
         false,
     );
-    assert!(drop_type_res.is_ok(), "Drop type failed: {:?}", drop_type_res);
+    assert!(
+        drop_type_res.is_ok(),
+        "Drop type failed: {:?}",
+        drop_type_res
+    );
     let reader_drop_type = SnapshotReader::open(&dropped_type_snap).unwrap();
     assert_eq!(reader_drop_type.index_entries().len(), initial_count);
-    assert!(reader_drop_type.index_entries().iter().all(|e| e.index_type != 0x02));
+    assert!(reader_drop_type
+        .index_entries()
+        .iter()
+        .all(|e| e.index_type != 0x02));
 
     // 4. Drop all
-    let drop_all_res = commands::index::drop(
-        &dropped_type_snap,
-        &dropped_all_snap,
-        None,
-        None,
-        true,
-    );
+    let drop_all_res =
+        commands::index::drop(&dropped_type_snap, &dropped_all_snap, None, None, true);
     assert!(drop_all_res.is_ok(), "Drop all failed: {:?}", drop_all_res);
     let reader_drop_all = SnapshotReader::open(&dropped_all_snap).unwrap();
     assert_eq!(reader_drop_all.index_entries().len(), 0);

@@ -40,7 +40,13 @@ pub fn list(snapshot_path: &Path, format: &str) -> Result<(), Box<dyn Error>> {
 
     let mut table = Table::new();
     table.set_header(vec![
-        "ID", "Name", "Type", "Domain", "Rel/Attr", "Data Offset", "Data Bytes",
+        "ID",
+        "Name",
+        "Type",
+        "Domain",
+        "Rel/Attr",
+        "Data Offset",
+        "Data Bytes",
     ]);
 
     for (i, entry) in entries.iter().enumerate() {
@@ -48,7 +54,10 @@ pub fn list(snapshot_path: &Path, format: &str) -> Result<(), Box<dyn Error>> {
         let rel_attr_str = if entry.relation_id == 0xFFFF {
             format!("NodeAttr #{}", entry.attribute_index)
         } else {
-            format!("Rel #{} / Attr #{}", entry.relation_id, entry.attribute_index)
+            format!(
+                "Rel #{} / Attr #{}",
+                entry.relation_id, entry.attribute_index
+            )
         };
 
         table.add_row(vec![
@@ -66,11 +75,7 @@ pub fn list(snapshot_path: &Path, format: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn add(
-    input_path: &Path,
-    output_path: &Path,
-    specs: &[String],
-) -> Result<(), Box<dyn Error>> {
+pub fn add(input_path: &Path, output_path: &Path, specs: &[String]) -> Result<(), Box<dyn Error>> {
     println!(
         "Adding {} index(es) to snapshot: {} -> {}",
         specs.len(),
@@ -109,7 +114,10 @@ pub fn add(
     }
 
     writer.finalize()?;
-    println!("SUCCESS: Added indexes and generated {}", output_path.display());
+    println!(
+        "SUCCESS: Added indexes and generated {}",
+        output_path.display()
+    );
     Ok(())
 }
 
@@ -152,7 +160,10 @@ pub fn drop(
 
         if should_drop {
             dropped_count += 1;
-            println!("  [DROPPED] Index '{}' (type 0x{:02X})", entry.name, entry.index_type);
+            println!(
+                "  [DROPPED] Index '{}' (type 0x{:02X})",
+                entry.name, entry.index_type
+            );
         } else {
             kept_count += 1;
             let start = entry.data_offset as usize;
@@ -173,7 +184,12 @@ pub fn drop(
     }
 
     writer.finalize()?;
-    println!("SUCCESS: Dropped {} index(es), kept {} index(es) -> {}", dropped_count, kept_count, output_path.display());
+    println!(
+        "SUCCESS: Dropped {} index(es), kept {} index(es) -> {}",
+        dropped_count,
+        kept_count,
+        output_path.display()
+    );
     Ok(())
 }
 
@@ -243,7 +259,9 @@ fn replay_snapshot_into_writer(
 
         for (a_idx, a) in r.attributes.iter().enumerate() {
             let data = reader.get_attribute_data(r_idx, a_idx)?.to_vec();
-            let offsets = reader.get_attribute_offsets(r_idx, a_idx)?.map(|o| o.to_vec());
+            let offsets = reader
+                .get_attribute_offsets(r_idx, a_idx)?
+                .map(|o| o.to_vec());
             writer.add_attribute_to_relation(
                 r_idx,
                 &a.name,
@@ -317,7 +335,11 @@ fn build_and_add_index(
     // e.g., "User.embedding:vamana:R=32:L=64:metric=cosine:quant=sq8:name=User_emb_sq8"
     let parts: Vec<&str> = spec_str.split(':').collect();
     if parts.len() < 2 {
-        return Err(format!("Invalid index spec '{}'. Must be 'Target.attr:type[:params]'", spec_str).into());
+        return Err(format!(
+            "Invalid index spec '{}'. Must be 'Target.attr:type[:params]'",
+            spec_str
+        )
+        .into());
     }
 
     let target_pair: Vec<&str> = parts[0].split('.').collect();
@@ -343,56 +365,104 @@ fn build_and_add_index(
         .iter()
         .enumerate()
         .find(|(_, d)| d.name == entity_name || d.domain_id.to_string() == entity_name);
-    let relation_opt = reader.relations().iter().enumerate().find(|(_, r)| r.name == entity_name || r.relation_id.to_string() == entity_name);
+    let relation_opt = reader
+        .relations()
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.name == entity_name || r.relation_id.to_string() == entity_name);
 
     if domain_opt.is_none() && relation_opt.is_none() {
         return Err(format!("Entity '{}' not found in domains or relations", entity_name).into());
     }
 
-    let (domain_id, relation_id, attr_idx, attr_info, attr_payload, attr_offsets, elem_row_count) = if let Some((dom_idx, dom)) = domain_opt {
-        // 1. Spec v0.10.0 inline DomainCatalogEntry attributes
-        let mut found = None;
-        for (a_idx, a) in dom.attributes.iter().enumerate() {
-            if a.name == attr_name {
-                let raw = reader.get_domain_attribute_by_index(dom_idx, a_idx)?;
-                let offs = reader.get_domain_attribute_offsets_by_index(dom_idx, a_idx)?;
-                let payload = strip_nullable_bitmap(a.type_code, dom.node_count as usize, raw);
-                found = Some((dom.domain_id, 0xFFFFu16, a_idx as u16, a.clone(), payload, offs, dom.node_count as usize));
-                break;
+    let (domain_id, relation_id, attr_idx, attr_info, attr_payload, attr_offsets, elem_row_count) =
+        if let Some((dom_idx, dom)) = domain_opt {
+            // 1. Spec v0.10.0 inline DomainCatalogEntry attributes
+            let mut found = None;
+            for (a_idx, a) in dom.attributes.iter().enumerate() {
+                if a.name == attr_name {
+                    let raw = reader.get_domain_attribute_by_index(dom_idx, a_idx)?;
+                    let offs = reader.get_domain_attribute_offsets_by_index(dom_idx, a_idx)?;
+                    let payload = strip_nullable_bitmap(a.type_code, dom.node_count as usize, raw);
+                    found = Some((
+                        dom.domain_id,
+                        0xFFFFu16,
+                        a_idx as u16,
+                        a.clone(),
+                        payload,
+                        offs,
+                        dom.node_count as usize,
+                    ));
+                    break;
+                }
             }
-        }
-        // 2. Fallback to v0.9.0 carrier relations
-        if found.is_none() {
-            for (r_idx, r) in reader.relations().iter().enumerate() {
-                if r.src_domain_id == dom.domain_id {
-                    for (a_idx, a) in r.attributes.iter().enumerate() {
-                        if a.name == attr_name {
-                            let raw = reader.get_attribute_data(r_idx, a_idx)?;
-                            let offs = reader.get_attribute_offsets(r_idx, a_idx)?;
-                            let payload = strip_nullable_bitmap(a.type_code, dom.node_count as usize, raw);
-                            found = Some((dom.domain_id, 0xFFFFu16, a_idx as u16, a.clone(), payload, offs, dom.node_count as usize));
-                            break;
+            // 2. Fallback to v0.9.0 carrier relations
+            if found.is_none() {
+                for (r_idx, r) in reader.relations().iter().enumerate() {
+                    if r.src_domain_id == dom.domain_id {
+                        for (a_idx, a) in r.attributes.iter().enumerate() {
+                            if a.name == attr_name {
+                                let raw = reader.get_attribute_data(r_idx, a_idx)?;
+                                let offs = reader.get_attribute_offsets(r_idx, a_idx)?;
+                                let payload = strip_nullable_bitmap(
+                                    a.type_code,
+                                    dom.node_count as usize,
+                                    raw,
+                                );
+                                found = Some((
+                                    dom.domain_id,
+                                    0xFFFFu16,
+                                    a_idx as u16,
+                                    a.clone(),
+                                    payload,
+                                    offs,
+                                    dom.node_count as usize,
+                                ));
+                                break;
+                            }
                         }
                     }
+                    if found.is_some() {
+                        break;
+                    }
                 }
-                if found.is_some() { break; }
             }
-        }
-        found.ok_or_else(|| format!("Domain attribute '{}.{}' not found", entity_name, attr_name))?
-    } else {
-        let (r_idx, rel) = relation_opt.unwrap();
-        let a_idx = rel.attributes.iter().position(|a| a.name == attr_name).ok_or_else(|| {
-            format!("Relation attribute '{}.{}' not found", entity_name, attr_name)
-        })?;
-        let a = rel.attributes[a_idx].clone();
-        let raw = reader.get_attribute_data(r_idx, a_idx)?;
-        let offs = reader.get_attribute_offsets(r_idx, a_idx)?;
-        let payload = strip_nullable_bitmap(a.type_code, rel.edge_count as usize, raw);
-        (rel.src_domain_id, rel.relation_id, a_idx as u16, a, payload, offs, rel.edge_count as usize)
-    };
+            found.ok_or_else(|| {
+                format!("Domain attribute '{}.{}' not found", entity_name, attr_name)
+            })?
+        } else {
+            let (r_idx, rel) = relation_opt.unwrap();
+            let a_idx = rel
+                .attributes
+                .iter()
+                .position(|a| a.name == attr_name)
+                .ok_or_else(|| {
+                    format!(
+                        "Relation attribute '{}.{}' not found",
+                        entity_name, attr_name
+                    )
+                })?;
+            let a = rel.attributes[a_idx].clone();
+            let raw = reader.get_attribute_data(r_idx, a_idx)?;
+            let offs = reader.get_attribute_offsets(r_idx, a_idx)?;
+            let payload = strip_nullable_bitmap(a.type_code, rel.edge_count as usize, raw);
+            (
+                rel.src_domain_id,
+                rel.relation_id,
+                a_idx as u16,
+                a,
+                payload,
+                offs,
+                rel.edge_count as usize,
+            )
+        };
 
-    let idx_name = custom_idx_name.unwrap_or_else(|| format!("{}_{}_{}", entity_name, attr_name, index_type_str));
-    println!("  Building {} index '{}' for {}.{}...", index_type_str, idx_name, entity_name, attr_name);
+    let idx_name = custom_idx_name
+        .unwrap_or_else(|| format!("{}_{}_{}", entity_name, attr_name, index_type_str));
+    println!(
+        "  Building {} index '{}' for {}.{}...",
+        index_type_str, idx_name, entity_name, attr_name
+    );
 
     match index_type_str.as_str() {
         "permutation" | "0x01" | "1" => {
@@ -667,7 +737,9 @@ fn matches_index_type(type_code: u8, filter: &str) -> bool {
         "domain_split" => type_code == IMP_INDEX_DOMAIN_SPLIT_BITSET,
         "temporal_interval" | "temporal" => type_code == IMP_INDEX_TEMPORAL_INTERVAL,
         "vamana" | "vamana_ann" | "ann" | "vector" => type_code == IMP_INDEX_VAMANA_ANN,
-        _ => index_type_to_string(type_code).to_lowercase().contains(&clean),
+        _ => index_type_to_string(type_code)
+            .to_lowercase()
+            .contains(&clean),
     }
 }
 

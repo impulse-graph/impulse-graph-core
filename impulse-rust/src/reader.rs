@@ -314,18 +314,22 @@ impl SnapshotReader {
                         };
                         cur += std::mem::size_of::<AttributeDescriptor>();
 
-                        let attr_name =
-                            validate_and_get_string(attr_desc.name_offset() as usize)?;
-                        let data_off =
-                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_offset)) };
-                        let data_bytes =
-                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_bytes)) };
-                        let offs_off =
-                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_offset)) };
-                        let offs_bytes =
-                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_bytes)) };
-                        let dim =
-                            unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.dimension)) };
+                        let attr_name = validate_and_get_string(attr_desc.name_offset() as usize)?;
+                        let data_off = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_offset))
+                        };
+                        let data_bytes = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_bytes))
+                        };
+                        let offs_off = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_offset))
+                        };
+                        let offs_bytes = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_bytes))
+                        };
+                        let dim = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.dimension))
+                        };
 
                         if data_bytes > 0
                             && (data_off as usize).saturating_add(data_bytes as usize) > slice.len()
@@ -535,8 +539,8 @@ impl SnapshotReader {
                     return Err(ImpulseError::BufferOverflow);
                 }
                 let dom_id = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap());
-                let key_t =
-                    KeyType::from_u8_for_version(slice[cur + 2], 9).ok_or(ImpulseError::InvalidArgument)?;
+                let key_t = KeyType::from_u8_for_version(slice[cur + 2], 9)
+                    .ok_or(ImpulseError::InvalidArgument)?;
                 let name_off =
                     u32::from_le_bytes(slice[cur + 44..cur + 48].try_into().unwrap()) as usize;
                 let name_len =
@@ -738,7 +742,10 @@ impl SnapshotReader {
         Ok(col_indices)
     }
 
-    pub fn get_col_indices_as_u32_vec(&self, relation_index: usize) -> Result<Vec<u32>, ImpulseError> {
+    pub fn get_col_indices_as_u32_vec(
+        &self,
+        relation_index: usize,
+    ) -> Result<Vec<u32>, ImpulseError> {
         let rel = self
             .relations
             .get(relation_index)
@@ -1159,12 +1166,8 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, Vec<f32>), ImpulseError> {
-        let (a, entity_count, mut raw) = self.resolve_domain_float32_raw_slice(
-            domain_id,
-            relation_hint,
-            attr_index,
-            attr_name,
-        )?;
+        let (a, entity_count, mut raw) =
+            self.resolve_domain_float32_raw_slice(domain_id, relation_hint, attr_index, attr_name)?;
         if a.is_nullable() {
             let bm_bytes = align_128(entity_count.div_ceil(64) * 8) as usize;
             if raw.len() < bm_bytes {
@@ -1203,12 +1206,8 @@ impl SnapshotReader {
         attr_index: Option<u16>,
         attr_name: Option<&str>,
     ) -> Result<(usize, usize, &[f32]), ImpulseError> {
-        let (a, entity_count, mut raw) = self.resolve_domain_float32_raw_slice(
-            domain_id,
-            relation_hint,
-            attr_index,
-            attr_name,
-        )?;
+        let (a, entity_count, mut raw) =
+            self.resolve_domain_float32_raw_slice(domain_id, relation_hint, attr_index, attr_name)?;
         if a.is_nullable() {
             let bm_bytes = align_128(entity_count.div_ceil(64) * 8) as usize;
             if raw.len() < bm_bytes {

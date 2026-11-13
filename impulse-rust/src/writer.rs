@@ -160,7 +160,14 @@ impl SnapshotWriter {
         component_rel_ids: Vec<u16>,
     ) -> usize {
         let idx = self.relations.len();
-        self.add_relation(src_domain_id, tgt_domain_id, node_count, 0, Vec::new(), Vec::new());
+        self.add_relation(
+            src_domain_id,
+            tgt_domain_id,
+            node_count,
+            0,
+            Vec::new(),
+            Vec::new(),
+        );
         self.relations[idx].name = name.to_string();
         self.relations[idx].section_features |= IMP_REL_FEATURE_VIRTUAL;
         self.relations[idx].virtual_component_ids = component_rel_ids;
@@ -304,7 +311,15 @@ impl SnapshotWriter {
         name: &str,
         data: Vec<u8>,
     ) {
-        self.add_index_with_mask(domain_id, relation_id, attribute_index, index_type, name, data, 0);
+        self.add_index_with_mask(
+            domain_id,
+            relation_id,
+            attribute_index,
+            index_type,
+            name,
+            data,
+            0,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -521,11 +536,12 @@ impl SnapshotWriter {
                         continue;
                     }
                     if rel.src_domain_id == dom.domain_id {
-                        let out_count = if rel.coo_src_indices.is_none() && rel.row_offsets.len() > 1 {
-                            (rel.row_offsets.len() - 1) as u64
-                        } else {
-                            rel.node_count
-                        };
+                        let out_count =
+                            if rel.coo_src_indices.is_none() && rel.row_offsets.len() > 1 {
+                                (rel.row_offsets.len() - 1) as u64
+                            } else {
+                                rel.node_count
+                            };
                         inferred = inferred.max(out_count);
                     }
                     if rel.tgt_domain_id == dom.domain_id {
@@ -534,8 +550,12 @@ impl SnapshotWriter {
                         } else {
                             u32::MAX
                         };
-                        if let Some(max_tgt) =
-                            rel.col_indices.iter().copied().filter(|&v| v != sentinel).max()
+                        if let Some(max_tgt) = rel
+                            .col_indices
+                            .iter()
+                            .copied()
+                            .filter(|&v| v != sentinel)
+                            .max()
                         {
                             inferred = inferred.max((max_tgt as u64) + 1);
                         }
@@ -549,7 +569,8 @@ impl SnapshotWriter {
                             }
                         } else if (attr.type_code & IMPULSE_NULLABLE_FLAG) == 0 {
                             if let Some(bt) = BaseDataType::from_u8(attr.type_code) {
-                                let stride = bt.element_byte_size() * (attr.dimension.max(1) as usize);
+                                let stride =
+                                    bt.element_byte_size() * (attr.dimension.max(1) as usize);
                                 if stride > 0 {
                                     inferred = inferred.max((attr.data.len() / stride) as u64);
                                 }
@@ -630,8 +651,7 @@ impl SnapshotWriter {
         dir_len += self.indexes.len() * std::mem::size_of::<IndexDirectoryEntry>();
 
         let aligned_dir_table_len = align_4k(dir_len as u64) as usize;
-        let payload_base_offset =
-            IMPULSE_DEFAULT_DATA_OFFSET as u64 + aligned_dir_table_len as u64;
+        let payload_base_offset = IMPULSE_DEFAULT_DATA_OFFSET as u64 + aligned_dir_table_len as u64;
 
         // 2. Serialize Payload Blocks (Node Domain Attribute Blocks -> Relation Blocks -> Index Blocks)
         let mut payload = Vec::new();
@@ -818,74 +838,75 @@ impl SnapshotWriter {
                             .unwrap_or(rel.node_count)
                     }) as usize;
 
-                let (csc_row_offsets, csc_col_indices) =
-                    if let Some((ref c_rows, ref c_cols)) = rel.csc_override {
-                        (c_rows.clone(), c_cols.clone())
+                let (csc_row_offsets, csc_col_indices) = if let Some((ref c_rows, ref c_cols)) =
+                    rel.csc_override
+                {
+                    (c_rows.clone(), c_cols.clone())
+                } else {
+                    // Collect directed pairs (u, v) from forward representation
+                    let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(rel.edge_count as usize);
+                    if let Some(ref srcs) = rel.coo_src_indices {
+                        for (&u, &v) in srcs.iter().zip(rel.col_indices.iter()) {
+                            pairs.push((u, v));
+                        }
+                    } else if rel.row_offsets.is_empty() {
+                        for (u, &v) in rel.col_indices.iter().enumerate() {
+                            if v != sentinel {
+                                pairs.push((u as u32, v));
+                            }
+                        }
                     } else {
-                        // Collect directed pairs (u, v) from forward representation
-                        let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(rel.edge_count as usize);
-                        if let Some(ref srcs) = rel.coo_src_indices {
-                            for (&u, &v) in srcs.iter().zip(rel.col_indices.iter()) {
-                                pairs.push((u, v));
-                            }
-                        } else if rel.row_offsets.is_empty() {
-                            for (u, &v) in rel.col_indices.iter().enumerate() {
-                                if v != sentinel {
-                                    pairs.push((u as u32, v));
-                                }
-                            }
+                        let src_n = if rel.node_count > 0 {
+                            rel.node_count as usize
                         } else {
-                            let src_n = if rel.node_count > 0 {
-                                rel.node_count as usize
-                            } else {
-                                rel.row_offsets.len().saturating_sub(1)
-                            };
-                            let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
-                            let num_edges = rel.col_indices.len();
-                            for u in 0..max_u {
-                                let start = rel.row_offsets[u] as usize;
-                                let end = (rel.row_offsets[u + 1] as usize).min(num_edges);
-                                for &v in &rel.col_indices[start..end] {
-                                    pairs.push((u as u32, v));
-                                }
+                            rel.row_offsets.len().saturating_sub(1)
+                        };
+                        let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
+                        let num_edges = rel.col_indices.len();
+                        for u in 0..max_u {
+                            let start = rel.row_offsets[u] as usize;
+                            let end = (rel.row_offsets[u + 1] as usize).min(num_edges);
+                            for &v in &rel.col_indices[start..end] {
+                                pairs.push((u as u32, v));
                             }
                         }
+                    }
 
-                        if want_flat_rev {
-                            let mut flat_rev = vec![sentinel; tgt_node_count];
-                            for &(u, v) in &pairs {
-                                let v_idx = v as usize;
-                                if v_idx < tgt_node_count && flat_rev[v_idx] == sentinel {
-                                    flat_rev[v_idx] = u;
-                                }
+                    if want_flat_rev {
+                        let mut flat_rev = vec![sentinel; tgt_node_count];
+                        for &(u, v) in &pairs {
+                            let v_idx = v as usize;
+                            if v_idx < tgt_node_count && flat_rev[v_idx] == sentinel {
+                                flat_rev[v_idx] = u;
                             }
-                            (Vec::new(), flat_rev)
-                        } else {
-                            let mut c_row = vec![0u32; tgt_node_count + 1];
-                            for &(_u, v) in &pairs {
-                                let v_idx = v as usize;
-                                if v_idx < tgt_node_count {
-                                    c_row[v_idx + 1] += 1;
-                                }
-                            }
-                            for v in 0..tgt_node_count {
-                                c_row[v + 1] += c_row[v];
-                            }
-                            let mut write_heads = c_row.clone();
-                            let mut c_col = vec![0u32; pairs.len()];
-                            for &(u, v) in &pairs {
-                                let v_idx = v as usize;
-                                if v_idx < tgt_node_count {
-                                    let pos = write_heads[v_idx] as usize;
-                                    if pos < c_col.len() {
-                                        c_col[pos] = u;
-                                    }
-                                    write_heads[v_idx] += 1;
-                                }
-                            }
-                            (c_row, c_col)
                         }
-                    };
+                        (Vec::new(), flat_rev)
+                    } else {
+                        let mut c_row = vec![0u32; tgt_node_count + 1];
+                        for &(_u, v) in &pairs {
+                            let v_idx = v as usize;
+                            if v_idx < tgt_node_count {
+                                c_row[v_idx + 1] += 1;
+                            }
+                        }
+                        for v in 0..tgt_node_count {
+                            c_row[v + 1] += c_row[v];
+                        }
+                        let mut write_heads = c_row.clone();
+                        let mut c_col = vec![0u32; pairs.len()];
+                        for &(u, v) in &pairs {
+                            let v_idx = v as usize;
+                            if v_idx < tgt_node_count {
+                                let pos = write_heads[v_idx] as usize;
+                                if pos < c_col.len() {
+                                    c_col[pos] = u;
+                                }
+                                write_heads[v_idx] += 1;
+                            }
+                        }
+                        (c_row, c_col)
+                    }
+                };
 
                 if csc_row_offsets.is_empty() {
                     rel.csc_row_off_offset = 0;

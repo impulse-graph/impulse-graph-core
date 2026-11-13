@@ -128,8 +128,7 @@ pub fn run_with_options(
             let new_to_old = &perm.1;
             for (attr_idx, attr) in d.attributes.iter().enumerate() {
                 let raw_data = reader.get_domain_attribute_by_index(d_idx, attr_idx)?;
-                let raw_offsets =
-                    reader.get_domain_attribute_offsets_by_index(d_idx, attr_idx)?;
+                let raw_offsets = reader.get_domain_attribute_offsets_by_index(d_idx, attr_idx)?;
                 let (new_data, new_offs) = permute_attribute_payload(
                     attr.type_code,
                     attr.dimension,

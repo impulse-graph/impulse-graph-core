@@ -4,7 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn setup_test_workspace(sub: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("impulse_roundtrip_test_{}_{}", sub, rand::random::<u32>()));
+    let dir = std::env::temp_dir().join(format!(
+        "impulse_roundtrip_test_{}_{}",
+        sub,
+        rand::random::<u32>()
+    ));
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -36,7 +40,10 @@ fn assert_dirs_equal(dir1: &Path, dir2: &Path) {
         if b1 != b2 {
             let s1 = String::from_utf8_lossy(&b1);
             let s2 = String::from_utf8_lossy(&b2);
-            panic!("File {:?} differed between export 1 and export 2!\n--- Exp1:\n{}\n--- Exp2:\n{}", rel_path, s1, s2);
+            panic!(
+                "File {:?} differed between export 1 and export 2!\n--- Exp1:\n{}\n--- Exp2:\n{}",
+                rel_path, s1, s2
+            );
         }
     }
 }
@@ -120,7 +127,8 @@ fn test_roundtrip_idempotency_erdos_renyi_csv() {
         public_key: None,
         quick_check: false,
     };
-    commands::validate::run_with_options(&rebuilt_imps, &val_opts).expect("validate rebuilt failed");
+    commands::validate::run_with_options(&rebuilt_imps, &val_opts)
+        .expect("validate rebuilt failed");
 
     // 5. Export 2 (CSV)
     commands::export::run(&rebuilt_imps, &exp2_dir, "csv").expect("export 2 failed");
@@ -195,7 +203,8 @@ fn test_roundtrip_idempotency_bipartite_parquet() {
         public_key: None,
         quick_check: false,
     };
-    commands::validate::run_with_options(&rebuilt_imps, &val_opts).expect("validate rebuilt failed");
+    commands::validate::run_with_options(&rebuilt_imps, &val_opts)
+        .expect("validate rebuilt failed");
 
     // 5. Export 2 (Parquet)
     commands::export::run(&rebuilt_imps, &exp2_dir, "parquet").expect("export 2 failed");

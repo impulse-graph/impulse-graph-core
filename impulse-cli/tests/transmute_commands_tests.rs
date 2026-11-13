@@ -5,7 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 
 fn setup_test_workspace(sub: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("impulse_transmute_test_{}_{}", sub, rand::random::<u32>()));
+    let dir = std::env::temp_dir().join(format!(
+        "impulse_transmute_test_{}_{}",
+        sub,
+        rand::random::<u32>()
+    ));
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -79,7 +83,10 @@ fn test_transmute_compact_csc_meta_rename_virtual() {
         drop_domain: None,
         drop_relation: None,
         drop_attr: None,
-        set_meta: Some(vec!["author=impulse_team".to_string(), "dataset=test_net".to_string()]),
+        set_meta: Some(vec![
+            "author=impulse_team".to_string(),
+            "dataset=test_net".to_string(),
+        ]),
         delete_meta: None,
         clear_meta: false,
     };
@@ -95,7 +102,10 @@ fn test_transmute_compact_csc_meta_rename_virtual() {
     let rel_links = &r_trans.relations()[0];
     assert_eq!(rel_links.name, "LINKS");
     assert!(rel_links.has_csc(), "CSC should be enabled");
-    assert_eq!(rel_links.node_id_width, 2, "node_id_width should be compacted to u16");
+    assert_eq!(
+        rel_links.node_id_width, 2,
+        "node_id_width should be compacted to u16"
+    );
 
     let rel_two_hop = &r_trans.relations()[1];
     assert_eq!(rel_two_hop.name, "TWO_HOP");
@@ -105,7 +115,10 @@ fn test_transmute_compact_csc_meta_rename_virtual() {
     let meta = r_trans.get_metadata().expect("get metadata failed");
     assert_eq!(meta.get("author").map(|s| s.as_str()), Some("impulse_team"));
     assert_eq!(meta.get("dataset").map(|s| s.as_str()), Some("test_net"));
-    assert!(meta.contains_key("multiplicity.LINKS"), "Multiplicity for LINKS must be set in metadata");
+    assert!(
+        meta.contains_key("multiplicity.LINKS"),
+        "Multiplicity for LINKS must be set in metadata"
+    );
 
     // 4. Validate transmuted snapshot with deep audit
     let val_opts = commands::validate::ValidateOptions {
@@ -117,8 +130,10 @@ fn test_transmute_compact_csc_meta_rename_virtual() {
     commands::validate::run_with_options(&transmuted_imps, &val_opts).expect("validate failed");
 
     // 5. Test Sample on transmuted snapshot
-    commands::sample::run(&transmuted_imps, Some("Vertex"), None, 5, 0, "text").expect("sample text failed");
-    commands::sample::run(&transmuted_imps, None, Some("LINKS"), 5, 0, "json").expect("sample json failed");
+    commands::sample::run(&transmuted_imps, Some("Vertex"), None, 5, 0, "text")
+        .expect("sample text failed");
+    commands::sample::run(&transmuted_imps, None, Some("LINKS"), 5, 0, "json")
+        .expect("sample json failed");
 
     let _ = fs::remove_dir_all(&test_dir);
 }

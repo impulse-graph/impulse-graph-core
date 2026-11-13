@@ -31,10 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         is_temp = false;
         snapshot_path
     } else {
-        println!(
-            "[INFO] '{}' not found in local paths.",
-            snapshot_path
-        );
+        println!("[INFO] '{}' not found in local paths.", snapshot_path);
         println!("[INFO] Generating fallback in-memory sample social graph...");
         is_temp = true;
 
@@ -71,7 +68,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = t0.elapsed();
 
     println!("   -> Traversal Latency: {:.2?}", elapsed);
-    println!("   -> ImpulseVM Return Code: {}, Row Count: {}", rc, result.row_count);
+    println!(
+        "   -> ImpulseVM Return Code: {}, Row Count: {}",
+        rc, result.row_count
+    );
 
     // ------------------------------------------------------------------------
     // Step 2: Immediate Neighbors Inspection via SnapshotReader

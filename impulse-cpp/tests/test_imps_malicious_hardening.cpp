@@ -18,11 +18,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <unistd.h>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#define IMP_HARDEN_GETPID() _getpid()
+#else
+#include <unistd.h>
+#define IMP_HARDEN_GETPID() ::getpid()
+#endif
 
 #define HARDEN_CHECK(cond, msg)                                                                   \
     do {                                                                                          \
@@ -63,7 +70,8 @@ void align_vec(std::vector<uint8_t>& buf, size_t align) {
 }
 
 std::string temp_imps_path(const char* tag) {
-    return std::string("/tmp/impulse_malicious_") + tag + "_" + std::to_string(::getpid()) + ".imps";
+    std::string fname = std::string("impulse_malicious_") + tag + "_" + std::to_string(IMP_HARDEN_GETPID()) + ".imps";
+    return (std::filesystem::temp_directory_path() / fname).string();
 }
 
 void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
@@ -80,7 +88,10 @@ struct ScopedTempFile {
     explicit ScopedTempFile(const char* tag, const std::vector<uint8_t>& bytes) : path(temp_imps_path(tag)) {
         write_bytes(path, bytes);
     }
-    ~ScopedTempFile() { ::unlink(path.c_str()); }
+    ~ScopedTempFile() {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
 };
 
 /**
@@ -832,7 +843,10 @@ void test_deterministic_500_mutation_fuzz() {
         impulse_snapshot_close(snap);
     }
 
-    ::unlink(path.c_str());
+    {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
     std::cout << "        Fuzz summary: " << rejected_cleanly << " rejected cleanly, "
               << opened_ok << " benign mutations opened & queried with 0 crashes." << std::endl;
     HARDEN_CHECK(rejected_cleanly > 100, "Fuzzer must exercise error paths");

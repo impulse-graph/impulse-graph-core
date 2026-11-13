@@ -15,6 +15,41 @@
 #include "impulse_assert.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
+
+/**
+ * Portable 64-bit unsigned overflow-checked addition & multiplication
+ * (uses compiler intrinsics on Clang/GCC and defined unsigned arithmetic on MSVC).
+ * Returns true if arithmetic overflow occurred, false otherwise.
+ */
+static inline bool impulse_u64_add_overflow(uint64_t a, uint64_t b, uint64_t* out) {
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_add_overflow)
+    return __builtin_add_overflow(a, b, out);
+#  endif
+#elif defined(__GNUC__) && (__GNUC__ >= 5)
+    return __builtin_add_overflow(a, b, out);
+#endif
+    uint64_t sum = a + b;
+    *out = sum;
+    return sum < a;
+}
+
+static inline bool impulse_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) {
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_mul_overflow)
+    return __builtin_mul_overflow(a, b, out);
+#  endif
+#elif defined(__GNUC__) && (__GNUC__ >= 5)
+    return __builtin_mul_overflow(a, b, out);
+#endif
+    if (a != 0ULL && b > (UINT64_MAX / a)) {
+        *out = 0ULL;
+        return true;
+    }
+    *out = a * b;
+    return false;
+}
 
 /* ========================================================================= */
 /* 1. Register File, Stream Shader, & Multi-Lane Architectural Bounds        */

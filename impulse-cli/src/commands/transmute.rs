@@ -72,7 +72,11 @@ pub struct TransmuteArgs {
 }
 
 pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
-    println!("Transmuting snapshot: {} -> {}", args.input.display(), args.output.display());
+    println!(
+        "Transmuting snapshot: {} -> {}",
+        args.input.display(),
+        args.output.display()
+    );
 
     let reader = SnapshotReader::open(&args.input)?;
     let mut writer = SnapshotWriter::new(args.output.to_str().unwrap());
@@ -157,7 +161,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             println!("  [DROP] Domain '{}' (ID={})", d.name, d.domain_id);
             continue;
         }
-        let final_name = domain_renames.get(&d.name).cloned().unwrap_or_else(|| d.name.clone());
+        let final_name = domain_renames
+            .get(&d.name)
+            .cloned()
+            .unwrap_or_else(|| d.name.clone());
         let new_id = next_new_domain_id;
         next_new_domain_id += 1;
         domain_id_map.insert(d.domain_id, new_id);
@@ -176,9 +183,7 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                 .get(&a.name)
                 .cloned()
                 .unwrap_or_else(|| a.name.clone());
-            let data = reader
-                .get_domain_attribute_by_index(d_idx, a_idx)?
-                .to_vec();
+            let data = reader.get_domain_attribute_by_index(d_idx, a_idx)?.to_vec();
             let offsets = reader
                 .get_domain_attribute_offsets_by_index(d_idx, a_idx)?
                 .map(|s| s.to_vec());
@@ -199,7 +204,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             writer.set_domain_key_attr(new_id, ka);
         }
 
-        println!("  [KEEP] Domain '{}' -> '{}' (ID: {} -> {}, Nodes: {})", d.name, final_name, d.domain_id, new_id, d.node_count);
+        println!(
+            "  [KEEP] Domain '{}' -> '{}' (ID: {} -> {}, Nodes: {})",
+            d.name, final_name, d.domain_id, new_id, d.node_count
+        );
     }
 
     // 3. Metadata processing
@@ -230,7 +238,9 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             println!("  [DROP] Relation '{}'", r.name);
             continue;
         }
-        if !domain_id_map.contains_key(&r.src_domain_id) || !domain_id_map.contains_key(&r.tgt_domain_id) {
+        if !domain_id_map.contains_key(&r.src_domain_id)
+            || !domain_id_map.contains_key(&r.tgt_domain_id)
+        {
             println!("  [DROP] Relation '{}' (references dropped domain)", r.name);
             continue;
         }
@@ -242,7 +252,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
     for (r_idx, r) in &kept_relations {
         let new_src = domain_id_map[&r.src_domain_id];
         let new_tgt = domain_id_map[&r.tgt_domain_id];
-        let final_name = rel_renames.get(&r.name).cloned().unwrap_or_else(|| r.name.clone());
+        let final_name = rel_renames
+            .get(&r.name)
+            .cloned()
+            .unwrap_or_else(|| r.name.clone());
 
         if r.is_virtual() {
             let remapped_comps: Vec<u16> = r
@@ -300,7 +313,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             };
             card_bits = inferred_bits;
             metadata.insert(format!("multiplicity.{}", final_name), mult.to_string());
-            println!("  [MULTIPLICITY] Relation '{}': {} (max_out={}, max_in={})", final_name, mult, max_out, max_in);
+            println!(
+                "  [MULTIPLICITY] Relation '{}': {} (max_out={}, max_in={})",
+                final_name, mult, max_out, max_in
+            );
         }
 
         // Add relation
@@ -332,7 +348,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             let max_col = col_indices.iter().copied().max().unwrap_or(0);
             if max_col < 65535 && tgt_node_count <= 65535 && r.node_count <= 65535 {
                 writer.set_relation_widths(next_new_rel_idx, 2, 4);
-                println!("  [COMPACT] Relation '{}': downcasted node_id_width -> u16", final_name);
+                println!(
+                    "  [COMPACT] Relation '{}': downcasted node_id_width -> u16",
+                    final_name
+                );
             } else {
                 writer.set_relation_widths(next_new_rel_idx, 4, 4);
             }
@@ -346,9 +365,14 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                 println!("  [DROP] Attribute '{}.{}'", final_name, a.name);
                 continue;
             }
-            let final_attr_name = attr_renames.get(&a.name).cloned().unwrap_or_else(|| a.name.clone());
+            let final_attr_name = attr_renames
+                .get(&a.name)
+                .cloned()
+                .unwrap_or_else(|| a.name.clone());
             let data = reader.get_attribute_data(*r_idx, a_idx)?.to_vec();
-            let offsets = reader.get_attribute_offsets(*r_idx, a_idx)?.map(|s| s.to_vec());
+            let offsets = reader
+                .get_attribute_offsets(*r_idx, a_idx)?
+                .map(|s| s.to_vec());
 
             writer.add_attribute_to_relation(
                 next_new_rel_idx,
@@ -378,10 +402,18 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                     let rel_b_name = rel_b_name.trim();
 
                     let find_a = kept_relations.iter().find(|(_, r)| {
-                        rel_renames.get(&r.name).map(|s| s.as_str()).unwrap_or(&r.name) == rel_a_name
+                        rel_renames
+                            .get(&r.name)
+                            .map(|s| s.as_str())
+                            .unwrap_or(&r.name)
+                            == rel_a_name
                     });
                     let find_b = kept_relations.iter().find(|(_, r)| {
-                        rel_renames.get(&r.name).map(|s| s.as_str()).unwrap_or(&r.name) == rel_b_name
+                        rel_renames
+                            .get(&r.name)
+                            .map(|s| s.as_str())
+                            .unwrap_or(&r.name)
+                            == rel_b_name
                     });
 
                     if let (Some((idx_a, rel_a)), Some((idx_b, rel_b))) = (find_a, find_b) {
@@ -435,7 +467,10 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                         );
                         next_new_rel_idx += 1;
                     } else {
-                        eprintln!("  [WARN] Could not find relations '{}' or '{}' for virtual join", rel_a_name, rel_b_name);
+                        eprintln!(
+                            "  [WARN] Could not find relations '{}' or '{}' for virtual join",
+                            rel_a_name, rel_b_name
+                        );
                     }
                 }
             }

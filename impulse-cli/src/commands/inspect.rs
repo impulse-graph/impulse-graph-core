@@ -692,7 +692,8 @@ fn render_page_map(
         let rel_start = cur;
         for r in reader.relations() {
             cur += std::mem::size_of::<impulse_graph::spec::RelationDirectoryEntry>();
-            cur += r.attributes.len() * std::mem::size_of::<impulse_graph::spec::AttributeDescriptor>();
+            cur += r.attributes.len()
+                * std::mem::size_of::<impulse_graph::spec::AttributeDescriptor>();
         }
         if cur > rel_start && cur <= slice.len() {
             regions.push(PageRegion {
@@ -803,7 +804,10 @@ fn render_page_map(
                 start: entry.data_offset,
                 bytes: entry.data_bytes,
                 alignment: 128,
-                name: format!("Index '{}' (type 0x{:02X}) Data", entry.name, entry.index_type),
+                name: format!(
+                    "Index '{}' (type 0x{:02X}) Data",
+                    entry.name, entry.index_type
+                ),
             });
         }
     }
@@ -884,12 +888,22 @@ fn render_page_map(
     println!("             IMPULSE GRAPH ENGINE SNAPSHOT PAGE MAP                      ");
     println!("=========================================================================");
     println!("File:      {}", file_path.display());
-    println!("File Size: {} bytes ({:.2} KB)", file_size, file_size as f64 / 1024.0);
+    println!(
+        "File Size: {} bytes ({:.2} KB)",
+        file_size,
+        file_size as f64 / 1024.0
+    );
     println!();
 
     let mut table = Table::new();
     table.set_header(vec![
-        "Offset Range (Hex)", "Start (Dec)", "Size", "Align", "Slack", "Aligned?", "Section / Component",
+        "Offset Range (Hex)",
+        "Start (Dec)",
+        "Size",
+        "Align",
+        "Slack",
+        "Aligned?",
+        "Section / Component",
     ]);
 
     for i in 0..regions.len() {
@@ -913,7 +927,11 @@ fn render_page_map(
             format!("{} B", r.bytes),
             format!("{} B", r.alignment),
             format!("{} B", slack),
-            if is_aligned { "YES".to_string() } else { "NO".to_string() },
+            if is_aligned {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
             r.name.clone(),
         ]);
     }
@@ -921,13 +939,23 @@ fn render_page_map(
     println!("{}", table);
     println!();
     println!("Summary:");
-    println!("  Total Payload:  {} bytes ({:.2}%)",
+    println!(
+        "  Total Payload:  {} bytes ({:.2}%)",
         total_payload_bytes,
-        if file_size > 0 { (total_payload_bytes as f64 / file_size as f64) * 100.0 } else { 0.0 }
+        if file_size > 0 {
+            (total_payload_bytes as f64 / file_size as f64) * 100.0
+        } else {
+            0.0
+        }
     );
-    println!("  Total Slack/Pad: {} bytes ({:.2}%)",
+    println!(
+        "  Total Slack/Pad: {} bytes ({:.2}%)",
         total_slack_bytes,
-        if file_size > 0 { (total_slack_bytes as f64 / file_size as f64) * 100.0 } else { 0.0 }
+        if file_size > 0 {
+            (total_slack_bytes as f64 / file_size as f64) * 100.0
+        } else {
+            0.0
+        }
     );
 
     Ok(())
