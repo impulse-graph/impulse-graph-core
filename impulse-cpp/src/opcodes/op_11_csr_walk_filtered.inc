@@ -73,10 +73,8 @@ op_CSR_WALK_FILTERED: {
     bool src_is_null = (vm_state->register_types[src] == TYPE_NULL && !IMP_INST_HAS_FLAG(inst, IMPULSE_VM_OP_FLAG_INPUT_SEED));
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
-    if (src_is_bitset &&
-        (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->bitsets.size() ||
-         vm_state->query_context->bitsets[h_src].words == nullptr)) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    if (src_is_bitset) {
+        IMP_REQUIRE_BITSET_HANDLE(vm_state, h_src);
     }
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
 
