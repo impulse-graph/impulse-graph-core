@@ -129,7 +129,10 @@ pub fn run_with_options(
         .map(|(_, n, _, _)| *n)
         .unwrap_or(total_tensors);
 
-    let mut writer = SnapshotWriter::new(output_path.to_str().unwrap());
+    let output_str = output_path
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
     writer.add_domain(0, KeyType::String, domain_name);
     writer.set_domain_node_count(0, primary_node_count as u64);
 
@@ -147,6 +150,11 @@ pub fn run_with_options(
                 dim,
                 f32_bytes,
                 None,
+            );
+        } else {
+            eprintln!(
+                "  [WARNING] Skipping tensor '{}': row count {} != primary_node_count {}",
+                attr_name, n_rows, primary_node_count
             );
         }
     }

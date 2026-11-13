@@ -407,6 +407,16 @@ pub fn write_npy(
     num_vectors: usize,
     dimension: usize,
 ) -> Result<(), Box<dyn Error>> {
+    let expected = num_vectors.saturating_mul(dimension);
+    if vectors.len() < expected {
+        return Err(format!(
+            "write_fvecs: vectors slice too short ({} < {} * {})",
+            vectors.len(),
+            num_vectors,
+            dimension
+        )
+        .into());
+    }
     let mut f = File::create(path)?;
     let dict = format!(
         "{{'descr': '<f4', 'fortran_order': False, 'shape': ({}, {}), }}",
@@ -422,8 +432,18 @@ pub fn write_npy(
     if pad > 0 {
         f.write_all(&vec![b' '; pad])?;
     }
+    let expected = num_vectors.saturating_mul(dimension);
+    if vectors.len() < expected {
+        return Err(format!(
+            "write_npy: vectors slice too short ({} < {} * {})",
+            vectors.len(),
+            num_vectors,
+            dimension
+        )
+        .into());
+    }
     f.write_all(b"\n")?;
-    for &v in &vectors[..num_vectors * dimension] {
+    for &v in &vectors[..expected] {
         f.write_all(&v.to_le_bytes())?;
     }
     f.flush()?;
@@ -491,6 +511,16 @@ pub fn write_fvecs(
     num_vectors: usize,
     dimension: usize,
 ) -> Result<(), Box<dyn Error>> {
+    let expected = num_vectors.saturating_mul(dimension);
+    if vectors.len() < expected {
+        return Err(format!(
+            "write_fvecs: vectors slice too short ({} < {} * {})",
+            vectors.len(),
+            num_vectors,
+            dimension
+        )
+        .into());
+    }
     let mut f = File::create(path)?;
     let dim_u32 = dimension as u32;
     for u in 0..num_vectors {
@@ -898,9 +928,16 @@ pub fn load_delimited_embeddings(
         } else if rec.len() == 1
             || (rec.len() == 2
                 && id_col_idx.is_some()
-                && (rec[1].contains('[') || rec[1].contains(';') || rec[1].contains(' ')))
+                && {
+                    let vec_idx = if id_col_idx == Some(1) { 0 } else { 1 };
+                    rec[vec_idx].contains('[') || rec[vec_idx].contains(';') || rec[vec_idx].contains(' ')
+                })
         {
-            let vec_cell = if rec.len() == 1 { &rec[0] } else { &rec[1] };
+            let vec_cell = if rec.len() == 1 || id_col_idx == Some(1) {
+                &rec[0]
+            } else {
+                &rec[1]
+            };
             parse_inline_vector_str(vec_cell)?
         } else {
             // Wide numeric columns (skipping id_col_idx if present)

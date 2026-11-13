@@ -259,23 +259,24 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
             continue;
         }
 
-        // Check for Label definition (e.g. "loop_start:")
+        // Strip optional "0xNN:" PC prefix before checking for label definitions
         let mut instr_text = clean_line;
-        if let Some((label_name, remaining)) = clean_line.split_once(':') {
+        if let Some((first, second)) = instr_text.split_once(':') {
+            if first.trim().starts_with("0x") {
+                instr_text = second.trim();
+                if instr_text.is_empty() {
+                    continue;
+                }
+            }
+        }
+
+        // Check for Label definition (e.g. "loop_start:")
+        if let Some((label_name, remaining)) = instr_text.split_once(':') {
             let label = label_name.trim().to_string();
             labels.insert(label, pc);
             instr_text = remaining.trim();
             if instr_text.is_empty() {
                 continue; // line had only a label
-            }
-        }
-
-        // Parse Instruction
-        // Example: OP_CSR_WALK R4, R0, REL_0
-        // Or: 0x00: OP_CSR_WALK R4, R0, REL_0 (strip PC prefix if present)
-        if let Some((first, second)) = instr_text.split_once(':') {
-            if first.trim().starts_with("0x") {
-                instr_text = second.trim();
             }
         }
 
@@ -486,6 +487,12 @@ fn resolve_single_val(
             .trim_start_matches("DOMAIN_")
             .trim_start_matches("ATTR_");
         return Ok(suffix.parse::<u32>().unwrap_or(0));
+    }
+    if trimmed.starts_with('+') || trimmed.starts_with('-') {
+        let delta: i32 = trimmed
+            .parse()
+            .map_err(|_| format!("Invalid relative jump offset: {}", trimmed))?;
+        return Ok(delta as u32);
     }
     trimmed
         .parse::<u32>()

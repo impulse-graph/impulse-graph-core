@@ -61,18 +61,21 @@ pub fn run_with_options(file: &Path, opts: &ValidateOptions<'_>) -> Result<(), B
 
     let reader = SnapshotReader::open(file)?;
 
-    // Alignment Check (128-byte hardware alignment rule)
-    if opts.strict_alignment {
-        let data = fs::read(file)?;
-        let ptr_addr = data.as_ptr() as usize;
-        if !ptr_addr.is_multiple_of(128) {
-            println!("  [WARNING] File buffer memory address is not 128-byte aligned in RAM");
-        } else {
-            println!("  [OK] 128-byte hardware memory alignment verified");
-        }
-    }
-
     validate_reader(&reader, file_len, opts)?;
+
+    // Alignment Check (128-byte hardware file-offset alignment rule)
+    if opts.strict_alignment {
+        for (idx, rel) in reader.relations().iter().enumerate() {
+            if rel.csr_row_off_offset > 0 && rel.csr_row_off_offset % 128 != 0 {
+                return Err(format!(
+                    "Relation #{}: CSR row offsets file offset 0x{:X} is not 128-byte aligned",
+                    idx, rel.csr_row_off_offset
+                )
+                .into());
+            }
+        }
+        println!("  [OK] 128-byte hardware file-offset alignment verified");
+    }
 
     // Ed25519 Signature Verification
     if let Some(pub_key_path) = opts.public_key {
@@ -234,12 +237,16 @@ pub fn validate_reader(
                 )
                 .into());
             }
-            if rel.csr_row_off_offset + rel.csr_row_off_bytes > file_len {
+            let end_off = rel
+                .csr_row_off_offset
+                .checked_add(rel.csr_row_off_bytes)
+                .ok_or_else(|| {
+                    format!("Relation #{}: CSR row offsets offset + bytes overflows u64", idx)
+                })?;
+            if end_off > file_len {
                 return Err(format!(
                     "Relation #{}: CSR row offsets end 0x{:X} exceeds file length {}",
-                    idx,
-                    rel.csr_row_off_offset + rel.csr_row_off_bytes,
-                    file_len
+                    idx, end_off, file_len
                 )
                 .into());
             }
