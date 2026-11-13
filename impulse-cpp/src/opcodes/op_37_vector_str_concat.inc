@@ -32,6 +32,10 @@ op_VECTOR_STR_CONCAT: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_37_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_37_ALLOWED_AUX1_TYPES);
+    if (vm_state->register_types[src1] != TYPE_STRING_VECTOR ||
+        vm_state->register_types[src2] != TYPE_STRING_VECTOR) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     int h_dst = acquire_string_vector(vm_state->query_context);
     if (h_dst < 0) {

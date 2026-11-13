@@ -36,6 +36,9 @@ op_LOAD_COLUMN_VECTOR: {
 
     const BoundAttributeSlot* slot_ptr = resolve_node_attribute_slot(vm_state->query_context, domain_or_rel, attr_idx);
     IMPULSE_TESTCASE(slot_ptr != nullptr);
+    if (slot_ptr == nullptr) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     if (slot_ptr != nullptr) {
         const auto& slot = *slot_ptr;
         const uint8_t base_tc = IMP_ATTR_BASE_TYPE(slot.type_code);
