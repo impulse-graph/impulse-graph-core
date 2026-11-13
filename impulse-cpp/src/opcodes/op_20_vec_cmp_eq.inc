@@ -46,6 +46,9 @@ op_VEC_CMP_EQ: {
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
+    if (type1 == TYPE_NULL || type2 == TYPE_NULL) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(src1 == src2);
     IMPULSE_TESTCASE(type1 == TYPE_DOUBLE_VECTOR);
     IMPULSE_TESTCASE(type1 == type2);

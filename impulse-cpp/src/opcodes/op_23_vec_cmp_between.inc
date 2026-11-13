@@ -51,6 +51,9 @@ op_VEC_CMP_BETWEEN: {
     uint64_t val_min = vm_state->registers[r_min];
     uint8_t type_max = vm_state->register_types[r_max];
     uint64_t val_max = vm_state->registers[r_max];
+    if (type_vec == TYPE_NULL || type_min == TYPE_NULL || type_max == TYPE_NULL) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(type_vec == TYPE_DOUBLE_VECTOR);
     IMPULSE_TESTCASE(r_min == r_max);
 
