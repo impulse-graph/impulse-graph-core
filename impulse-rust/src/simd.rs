@@ -59,6 +59,9 @@ pub fn vector_sum_f32(a: &[f32], b: &[f32]) -> Vec<f32> {
 /// Computes dynamic architecture-independent SIMD sorted array intersection.
 pub fn intersect_sorted_u32(a: &[u32], b: &[u32]) -> Vec<u32> {
     let max_len = a.len().min(b.len());
+    if max_len == 0 {
+        return Vec::new();
+    }
     let mut out = vec![0u32; max_len];
     let mut out_count: usize = 0;
 
@@ -71,7 +74,7 @@ pub fn intersect_sorted_u32(a: &[u32], b: &[u32]) -> Vec<u32> {
             out.as_mut_ptr(),
             &mut out_count,
         );
-        if status == 0 {
+        if status == 0 && out_count <= max_len {
             out.truncate(out_count);
             return out;
         }

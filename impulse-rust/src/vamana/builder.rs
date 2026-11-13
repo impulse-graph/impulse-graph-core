@@ -822,6 +822,12 @@ pub fn permute_vamana_index(
     let mut new_adj_slab = vec![0u8; n * row_stride];
     for (new_u, &old_u_u32) in new_to_old.iter().enumerate().take(n) {
         let old_u = old_u_u32 as usize;
+        if old_u >= n {
+            return Err(format!(
+                "new_to_old[{}] = {} out of bounds for n = {}",
+                new_u, old_u, n
+            ));
+        }
         let old_row_off = old_u * row_stride;
         let new_row_off = new_u * row_stride;
         let deg = u32::from_le_bytes(
@@ -835,9 +841,20 @@ pub fn permute_vamana_index(
 
         for j in 0..deg_clamped {
             let nb_off = old_row_off + (j + 1) * 4;
-            let old_nb =
-                u32::from_le_bytes(old_adj_slab[nb_off..nb_off + 4].try_into().unwrap()) as usize;
-            let new_nb = old_to_new[old_nb];
+            let old_nb_u32 =
+                u32::from_le_bytes(old_adj_slab[nb_off..nb_off + 4].try_into().unwrap());
+            let new_nb = if old_nb_u32 == 0xFFFF_FFFF {
+                0xFFFF_FFFF
+            } else {
+                let old_nb = old_nb_u32 as usize;
+                if old_nb >= n {
+                    return Err(format!(
+                        "Vamana neighbor ID {} at node {} out of bounds for n = {}",
+                        old_nb, old_u, n
+                    ));
+                }
+                old_to_new[old_nb]
+            };
             let dst_off = new_row_off + (j + 1) * 4;
             new_adj_slab[dst_off..dst_off + 4].copy_from_slice(&new_nb.to_le_bytes());
         }
@@ -864,7 +881,14 @@ pub fn permute_vamana_index(
     }
 
     let new_medoid = if n > 0 {
-        old_to_new[old_hdr.medoid_node_id as usize]
+        let old_medoid = old_hdr.medoid_node_id as usize;
+        if old_medoid >= n {
+            return Err(format!(
+                "Vamana medoid_node_id {} out of bounds for n = {}",
+                old_medoid, n
+            ));
+        }
+        old_to_new[old_medoid]
     } else {
         0
     };

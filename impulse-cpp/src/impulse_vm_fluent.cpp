@@ -462,10 +462,10 @@ QueryBuilder& QueryBuilder::repeat(int count, const std::function<void(QueryBuil
 QueryBuilder& QueryBuilder::repeatUntilStable(const std::function<void(QueryBuilder&)>& body) {
     size_t start_idx = instructions_.size();
     body(*this);
-    size_t end_idx = instructions_.size();
 
-    int32_t offset = static_cast<int32_t>(start_idx) - static_cast<int32_t>(end_idx);
-    emit(OP_STABLE_CHECK, 0, 0, static_cast<uint32_t>(offset));
+    emit(OP_STABLE_CHECK, 0, current_reg_, current_reg_);
+    int32_t offset = static_cast<int32_t>(start_idx) - static_cast<int32_t>(instructions_.size());
+    emit(OP_JNZ, 0, 0, static_cast<uint32_t>(offset));
     return *this;
 }
 

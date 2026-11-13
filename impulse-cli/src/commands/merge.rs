@@ -12,7 +12,10 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
     );
 
     let base_reader = SnapshotReader::open(base)?;
-    let mut writer = SnapshotWriter::new(output.to_str().unwrap());
+    let output_str = output
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
 
     // 1. Copy base domains & Spec v0.10.0 inline attributes
     for (d_idx, d) in base_reader.domains().iter().enumerate() {
@@ -39,11 +42,16 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
         }
     }
 
-    // 2. Map domain names to IDs
+    // 2. Map domain names to IDs and track node counts across base + deltas
     let mut domain_name_to_id: HashMap<String, u16> = base_reader
         .domains()
         .iter()
         .map(|d| (d.name.clone(), d.domain_id))
+        .collect();
+    let mut domain_node_counts: HashMap<u16, usize> = base_reader
+        .domains()
+        .iter()
+        .map(|d| (d.domain_id, d.node_count as usize))
         .collect();
 
     // 3. Integrate new domains from deltas
@@ -56,6 +64,7 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
                 next_domain_id += 1;
                 writer.add_domain(id, d.key_type, &d.name);
                 writer.set_domain_node_count(id, d.node_count);
+                domain_node_counts.insert(id, d.node_count as usize);
                 for (a_idx, a) in d.attributes.iter().enumerate() {
                     let data = delta_reader
                         .get_domain_attribute_by_index(d_idx, a_idx)?
@@ -185,12 +194,7 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
         edges.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
         let max_u = edges.iter().map(|e| e.0).max().map(|u| u + 1).unwrap_or(0) as usize;
-        let dom_n = base_reader
-            .domains()
-            .iter()
-            .find(|d| d.domain_id == src_dom)
-            .map(|d| d.node_count as usize)
-            .unwrap_or(max_u);
+        let dom_n = domain_node_counts.get(&src_dom).copied().unwrap_or(max_u);
         let n = dom_n.max(max_u);
 
         let mut row_offsets = vec![0u32; n + 1];

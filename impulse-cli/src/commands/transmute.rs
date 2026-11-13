@@ -79,7 +79,11 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
     );
 
     let reader = SnapshotReader::open(&args.input)?;
-    let mut writer = SnapshotWriter::new(args.output.to_str().unwrap());
+    let output_str = args
+        .output
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
 
     // 1. Parse renames and drops
     let mut domain_renames: HashMap<String, String> = HashMap::new();
@@ -417,27 +421,37 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                     });
 
                     if let (Some((idx_a, rel_a)), Some((idx_b, rel_b))) = (find_a, find_b) {
+                        if rel_a.tgt_domain_id != rel_b.src_domain_id {
+                            return Err(format!(
+                                "Cannot synthesize virtual relation '{} o {}': domain mismatch (tgt_domain {} != src_domain {})",
+                                rel_a_name, rel_b_name, rel_a.tgt_domain_id, rel_b.src_domain_id
+                            ).into());
+                        }
                         let rows_a = reader.get_row_offsets(*idx_a)?;
                         let cols_a = reader.get_col_indices_as_u32_vec(*idx_a)?;
                         let rows_b = reader.get_row_offsets(*idx_b)?;
                         let cols_b = reader.get_col_indices_as_u32_vec(*idx_b)?;
 
-                        let src_nodes = rel_a.node_count as usize;
+                        let src_nodes = (rel_a.node_count as usize).min(rows_a.len().saturating_sub(1));
                         let mut new_row_offsets = Vec::with_capacity(src_nodes + 1);
                         let mut new_col_indices = Vec::new();
                         new_row_offsets.push(0u32);
 
                         for u in 0..src_nodes {
                             let mut neighbors = HashSet::new();
-                            let start_a = rows_a[u] as usize;
-                            let end_a = rows_a[u + 1] as usize;
-                            for &v in &cols_a[start_a..end_a] {
-                                let v_idx = v as usize;
-                                if v_idx + 1 < rows_b.len() {
-                                    let start_b = rows_b[v_idx] as usize;
-                                    let end_b = rows_b[v_idx + 1] as usize;
-                                    for &w in &cols_b[start_b..end_b] {
-                                        neighbors.insert(w);
+                            let start_a = (rows_a[u] as usize).min(cols_a.len());
+                            let end_a = (rows_a[u + 1] as usize).min(cols_a.len());
+                            if start_a <= end_a {
+                                for &v in &cols_a[start_a..end_a] {
+                                    let v_idx = v as usize;
+                                    if v_idx + 1 < rows_b.len() {
+                                        let start_b = (rows_b[v_idx] as usize).min(cols_b.len());
+                                        let end_b = (rows_b[v_idx + 1] as usize).min(cols_b.len());
+                                        if start_b <= end_b {
+                                            for &w in &cols_b[start_b..end_b] {
+                                                neighbors.insert(w);
+                                            }
+                                        }
                                     }
                                 }
                             }

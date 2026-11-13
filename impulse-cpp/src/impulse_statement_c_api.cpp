@@ -708,7 +708,7 @@ const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_id
 }
 
 bool impulse_stmt_column_is_null(const impulse_stmt_t* stmt, uint32_t col_idx, size_t row_idx) {
-    if (!stmt || col_idx >= stmt->columns.size()) return true;
+    if (!stmt || col_idx >= stmt->columns.size() || row_idx >= stmt->row_count) return true;
     const auto& col = stmt->columns[col_idx];
     if (!col.is_nullable || !col.null_bitmap) return false;
     return (col.null_bitmap[row_idx >> 6] & (1ULL << (row_idx & 63))) == 0;
@@ -730,9 +730,7 @@ impulse_status_t impulse_exec(
         return rc;
     }
 
-    if (seed_node > 0) {
-        impulse_stmt_bind_node(stmt, "$seed", seed_node);
-    }
+    impulse_stmt_bind_node(stmt, "$seed", seed_node);
 
     // Allocate persistent execution buffer stored on stmt or heap
     size_t buf_size = impulse_stmt_buffer_size(stmt);
@@ -810,7 +808,11 @@ IMPULSE_API int impulse_execute_compiled_query(
     void* state_ptr,
     uint64_t input_seed
 ) {
-    if (!query || !state_ptr) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (!query || !state_ptr || !query->bytecode ||
+        query->instruction_count > SIZE_MAX / sizeof(impulse_instruction_t) ||
+        query->bytecode_length < query->instruction_count * sizeof(impulse_instruction_t)) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
     impulse_vm_state_t* state = reinterpret_cast<impulse_vm_state_t*>(state_ptr);
     try {
         impulse_vm_context_t* temp_ctx = nullptr;

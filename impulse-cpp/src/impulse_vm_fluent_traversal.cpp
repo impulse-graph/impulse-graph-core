@@ -501,6 +501,9 @@ std::vector<uint64_t> Traversal::collect() const {
                 b_prog.push_back({OP_MOV, 0, 0, 5});
                 b_prog.push_back({OP_HALT, 0, 0, 0});
                 exec_r0_step(b_prog.data(), b_prog.size());
+                if (state.register_types[5] == TYPE_BITSET_HANDLE && state.registers[5] != state.registers[0]) {
+                    release_bitset(ctx, static_cast<int>(state.registers[5]));
+                }
                 if (state.register_types[6] == TYPE_BITSET_HANDLE && state.registers[6] != state.registers[0]) {
                     release_bitset(ctx, static_cast<int>(state.registers[6]));
                 }

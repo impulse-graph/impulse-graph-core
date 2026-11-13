@@ -36,7 +36,8 @@ static inline int impulse_hexio_read_buf(const uint8_t* buf, size_t buf_len,
                                          size_t offset, size_t count,
                                          char* out_hex, size_t out_hex_cap) {
     static const char kHexDigits[] = "0123456789ABCDEF";
-    if (!buf || !out_hex || offset + count > buf_len || out_hex_cap < count * 2 + 1) {
+    if (!buf || !out_hex || offset > buf_len || count > buf_len - offset ||
+        count > (SIZE_MAX - 1) / 2 || out_hex_cap < count * 2 + 1) {
         return -1;
     }
     for (size_t i = 0; i < count; ++i) {

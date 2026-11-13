@@ -677,6 +677,9 @@ private:
                 ctx.instructions.push_back(begin);
 
                 int shader_pc_start = static_cast<int>(ctx.instructions.size());
+                if (shader_pc_start > 255) {
+                    throw std::runtime_error("Edge stream shader PC start exceeds 8-bit flags limit (255)");
+                }
                 ctx.instructions[walk_idx].flags = static_cast<uint8_t>(shader_pc_start);
 
                 int next_sreg = 0;
@@ -948,9 +951,11 @@ private:
             auto n = std::static_pointer_cast<ScmLaneSetEdgeMask>(step);
             impulse_instruction_t inst{};
             inst.opcode = OP_LANE_SET_EDGE_MASK;
+            inst.flags = 1; // OP_C2_FLAG_SET_FROM_REG
             inst.dst_reg = n->dst_reg;
             uint16_t rel_id = static_cast<uint16_t>(std::max(0, n->physical_rel_id));
-            inst.payload = static_cast<uint32_t>(n->pairs_reg & 0xFFFF) |
+            inst.payload = static_cast<uint32_t>(ctx.result_reg & 0xFF) |
+                           (static_cast<uint32_t>(n->pairs_reg & 0xFF) << 8) |
                            (static_cast<uint32_t>(rel_id) << 16);
             ctx.instructions.push_back(inst);
             ctx.result_reg = inst.dst_reg;

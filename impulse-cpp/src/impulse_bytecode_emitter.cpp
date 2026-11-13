@@ -28,6 +28,9 @@ static int emit_stream_expr(const AstPtr& expr, std::vector<impulse_instruction_
             auto sym = std::static_pointer_cast<ScmSymbol>(list->elements[0]);
             std::string op = sym->name;
             if (op == "stream-cmp-gt" || op == "vec-cmp-gt") {
+                if (list->elements.size() < 3) {
+                    throw std::runtime_error("ImpScheme stream-cmp-gt requires 2 operands");
+                }
                 int lhs = emit_stream_expr(list->elements[1], instr_list, alloc, snapshot);
                 int rhs = emit_stream_expr(list->elements[2], instr_list, alloc, snapshot);
                 int dst = alloc.allocate();
@@ -46,6 +49,9 @@ static int emit_stream_expr(const AstPtr& expr, std::vector<impulse_instruction_
                 instr_list.push_back(inst);
                 return dst;
             } else if (op == "stream-logic-and" || op == "mask-and") {
+                if (list->elements.size() < 3) {
+                    throw std::runtime_error("ImpScheme stream-logic-and requires 2 operands");
+                }
                 int lhs = emit_stream_expr(list->elements[1], instr_list, alloc, snapshot);
                 int rhs = emit_stream_expr(list->elements[2], instr_list, alloc, snapshot);
                 int dst = alloc.allocate();
@@ -139,7 +145,7 @@ static short emit_sub_steps(const std::vector<AstPtr>& sub_steps, const impulse_
 
             int payload = ((rel_id & 0xFFFF) << 16) | (src_reg & 0xFFFF);
             impulse_instruction_t inst{};
-            inst.opcode = OP_CSR_WALK;
+            inst.opcode = (walk->direction == WalkDirection::REVERSE_CSC) ? OP_CSC_WALK : OP_CSR_WALK;
             inst.dst_reg = dst_reg;
             inst.payload = payload;
             instr_list.push_back(inst);
@@ -208,7 +214,10 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                     begin.opcode = OP_STREAM_FUNC_BEGIN;
                     instr_list.push_back(begin);
                     
-                    int shader_pc_start = instr_list.size();
+                    int shader_pc_start = static_cast<int>(instr_list.size());
+                    if (shader_pc_start > 255) {
+                        throw std::runtime_error("Edge stream shader PC start exceeds 8-bit flags limit (255)");
+                    }
                     instr_list[walk_instr_idx].flags = (uint8_t)shader_pc_start;
                     
                     StreamRegisterAllocator s_reg_alloc;
@@ -451,7 +460,8 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                             impulse_instruction_t decr{};
                             decr.opcode = OP_LOOP_DECR;
                             decr.dst_reg = count_reg;
-                            decr.payload = (uint32_t)loop_start_pc;
+                            decr.payload = static_cast<uint32_t>(
+                                static_cast<int32_t>(loop_start_pc) - static_cast<int32_t>(instr_list.size()));
                             instr_list.push_back(decr);
                         } else {
                             long loop_start_pc = instr_list.size();
@@ -466,7 +476,8 @@ impulse_vm_program_t ImpOpsBytecodeEmitter::emit(
                             
                             impulse_instruction_t jnz{};
                             jnz.opcode = OP_JNZ;
-                            jnz.payload = (uint32_t)loop_start_pc;
+                            jnz.payload = static_cast<uint32_t>(
+                                static_cast<int32_t>(loop_start_pc) - static_cast<int32_t>(instr_list.size()));
                             instr_list.push_back(jnz);
                         }
                     } else if (op_name == "project-expression") {
