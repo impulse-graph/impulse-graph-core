@@ -413,7 +413,7 @@ public:
         size_t count = 0;
         const uint64_t* ptr = impulse_vm_context_get_collected_nodes(ctx_, &count);
         if (!ptr || count == 0) return py::array_t<uint64_t>(0);
-        return py::array_t<uint64_t>(count, ptr);
+        return py::array_t<uint64_t>(count, ptr, py::cast(this));
     }
 
     impulse_vm_context_t* raw_handle() const { return ctx_; }
@@ -427,7 +427,7 @@ public:
         const float* ptr = impulse_vm_context_get_float_vector(ctx_, handle);
         size_t sz = vector_size();
         if (!ptr || sz == 0) return py::array_t<float>(0);
-        return py::array_t<float>(sz, ptr);
+        return py::array_t<float>(sz, ptr, py::cast(this));
     }
 
     py::array_t<double> get_double_vector(size_t handle) const {
@@ -435,7 +435,7 @@ public:
         const double* ptr = impulse_vm_context_get_double_vector(ctx_, handle);
         size_t sz = vector_size();
         if (!ptr || sz == 0) return py::array_t<double>(0);
-        return py::array_t<double>(sz, ptr);
+        return py::array_t<double>(sz, ptr, py::cast(this));
     }
 
     int acquire_bitset() {
@@ -509,7 +509,7 @@ public:
         const uint64_t* ptr = impulse_vm_context_get_node_vector(ctx_, handle);
         size_t sz = impulse_vm_context_node_vector_size(ctx_, handle);
         if (!ptr || sz == 0) return py::array_t<uint64_t>(0);
-        return py::array_t<uint64_t>(sz, ptr);
+        return py::array_t<uint64_t>(sz, ptr, py::cast(this));
     }
 
     int acquire_string_vector() {

@@ -113,8 +113,26 @@ private:
             tgt_id = GetUint64(info[2]);
         } else {
             // 4 arguments format: srcDomain, srcId, tgtDomain, tgtId
+            uint16_t src_domain = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
             src_id = GetUint64(info[1]);
+            uint16_t tgt_domain = static_cast<uint16_t>(info[2].As<Napi::Number>().Uint32Value());
             tgt_id = GetUint64(info[3]);
+
+            uint16_t rel_count = impulse_snapshot_relation_count(snapshot_);
+            bool found = false;
+            for (uint16_t i = 0; i < rel_count; ++i) {
+                impulse_relation_directory_entry_t entry;
+                if (impulse_snapshot_get_relation_entry(snapshot_, i, &entry) == IMPULSE_OK &&
+                    entry.src_domain_id == src_domain &&
+                    entry.tgt_domain_id == tgt_domain) {
+                    relation_index = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return Napi::Boolean::New(env, false);
+            }
         }
 
         IMPULSE_ASSERT(snapshot_ != nullptr);
@@ -285,6 +303,7 @@ public:
         Napi::Function func = DefineClass(env, "VmContext", {
             InstanceMethod("destroy", &NodeVmContext::Destroy),
             InstanceMethod("vectorSize", &NodeVmContext::VectorSize),
+            InstanceMethod("bitsetWordCount", &NodeVmContext::BitsetWordCount),
             InstanceMethod("acquireBitset", &NodeVmContext::AcquireBitset),
             InstanceMethod("releaseBitset", &NodeVmContext::ReleaseBitset),
             InstanceMethod("bitsetAdd", &NodeVmContext::BitsetAdd),
@@ -361,6 +380,12 @@ private:
         Napi::Env env = info.Env();
         if (!ctx_) return Napi::Number::New(env, 0);
         return Napi::Number::New(env, impulse_vm_context_get_vector_size(ctx_));
+    }
+
+    Napi::Value BitsetWordCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!ctx_) return Napi::Number::New(env, 0);
+        return Napi::Number::New(env, impulse_vm_context_get_bitset_word_count(ctx_));
     }
 
     Napi::Value AcquireBitset(const Napi::CallbackInfo& info) {
@@ -688,10 +713,16 @@ public:
         return exports;
     }
 
-    static Napi::Object CreateInstance(Napi::Env env, const impulse::vm::QueryResult& res) {
+    static Napi::Object CreateInstance(
+        Napi::Env env,
+        const impulse::vm::QueryResult& res,
+        std::shared_ptr<impulse_vm_context_t> owned_ctx = nullptr) {
         Napi::Object obj = constructor.New({});
         NodeQueryResult* ptr = Napi::ObjectWrap<NodeQueryResult>::Unwrap(obj);
-        if (ptr) ptr->res_ = res;
+        if (ptr) {
+            ptr->res_ = res;
+            ptr->owned_ctx_ = std::move(owned_ctx);
+        }
         return obj;
     }
 
@@ -705,14 +736,23 @@ private:
 
     Napi::Value TestBitset(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
+        if (info.Length() == 1 && owned_ctx_) {
+            uint64_t node_id = GetUint64(info[0]);
+            return Napi::Boolean::New(env, res_.testBitset(owned_ctx_.get(), node_id));
+        }
         if (info.Length() < 2) return Napi::Boolean::New(env, false);
 
-        Napi::Object ctx_obj = info[0].As<Napi::Object>();
-        NodeVmContext* ctx = Napi::ObjectWrap<NodeVmContext>::Unwrap(ctx_obj);
-        if (!ctx || !ctx->RawContext()) return Napi::Boolean::New(env, false);
+        const impulse_vm_context_t* raw_ctx = nullptr;
+        if (info[0].IsObject()) {
+            Napi::Object ctx_obj = info[0].As<Napi::Object>();
+            NodeVmContext* ctx = Napi::ObjectWrap<NodeVmContext>::Unwrap(ctx_obj);
+            if (ctx) raw_ctx = ctx->RawContext();
+        }
+        if (!raw_ctx) raw_ctx = owned_ctx_.get();
+        if (!raw_ctx) return Napi::Boolean::New(env, false);
 
         uint64_t node_id = GetUint64(info[1]);
-        return Napi::Boolean::New(env, res_.testBitset(ctx->RawContext(), node_id));
+        return Napi::Boolean::New(env, res_.testBitset(raw_ctx, node_id));
     }
 
     Napi::Value GetStatus(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), res_.status); }
@@ -721,6 +761,7 @@ private:
     Napi::Value GetRawValue(const Napi::CallbackInfo& info) { return Napi::BigInt::New(info.Env(), res_.raw_value); }
 
     impulse::vm::QueryResult res_;
+    std::shared_ptr<impulse_vm_context_t> owned_ctx_;
 };
 
 Napi::FunctionReference NodeQueryResult::constructor;
@@ -785,8 +826,8 @@ private:
     Napi::Value ExecuteWithContext(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
         if (!compiled_) { Napi::Error::New(env, "Uninitialized query").ThrowAsJavaScriptException(); return env.Null(); }
-        if (info.Length() < 2) {
-            Napi::TypeError::New(env, "Context and State arguments required").ThrowAsJavaScriptException();
+        if (info.Length() < 2 || !info[0].IsObject() || !info[1].IsObject()) {
+            Napi::TypeError::New(env, "Context and State object arguments required").ThrowAsJavaScriptException();
             return env.Null();
         }
 
@@ -1254,7 +1295,11 @@ Napi::Value ExecuteBytecode(const Napi::CallbackInfo& info) {
     size_t inst_count = byte_len / sizeof(impulse_instruction_t);
     const impulse_instruction_t* instructions = reinterpret_cast<const impulse_instruction_t*>(bc_bytes);
 
-    impulse_vm_context_t* ctx = impulse_vm_context_create(snap_obj->RawSnapshot());
+    std::shared_ptr<impulse_vm_context_t> ctx(
+        impulse_vm_context_create(snap_obj->RawSnapshot()),
+        [](impulse_vm_context_t* ptr) {
+            if (ptr) impulse_vm_context_destroy(ptr);
+        });
     if (!ctx) {
         Napi::Error::New(env, "Failed to create VM context").ThrowAsJavaScriptException();
         return env.Null();
@@ -1263,7 +1308,7 @@ Napi::Value ExecuteBytecode(const Napi::CallbackInfo& info) {
 
     alignas(64) impulse_vm_state_t state;
     std::memset(&state, 0, sizeof(impulse_vm_state_t));
-    state.query_context = ctx;
+    state.query_context = ctx.get();
 
     IMPULSE_ASSERT(instructions != nullptr);
     impulse_vm_status_t status = impulse_vm_execute(instructions, inst_count, &state, input_param);
@@ -1278,8 +1323,7 @@ Napi::Value ExecuteBytecode(const Napi::CallbackInfo& info) {
         res.raw_value = state.registers[res.result_register];
     }
 
-    impulse_vm_context_destroy(ctx);
-    return NodeQueryResult::CreateInstance(env, res);
+    return NodeQueryResult::CreateInstance(env, res, std::move(ctx));
 }
 
 // ============================================================================

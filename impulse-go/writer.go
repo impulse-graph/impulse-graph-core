@@ -180,6 +180,7 @@ func (w *Writer) Finalize() error {
 	}
 
 	status := C.impulse_writer_finalize(w.ptr)
+	C.impulse_writer_destroy(w.ptr)
 	w.ptr = nil
 	if status != C.IMPULSE_OK {
 		return Status(status)

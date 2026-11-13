@@ -103,6 +103,26 @@ class CypherQuery:
             else:
                 self.return_var = ret_str.split()[0]
 
+    def _resolve_seed_node(self, snapshot: "Snapshot", raw_seed: Union[int, str]) -> int:
+        if isinstance(raw_seed, int):
+            return raw_seed
+        if isinstance(raw_seed, str):
+            if raw_seed.isdigit():
+                return int(raw_seed)
+            domain_id = 0
+            if self.steps:
+                t_tmp = Traversal(snapshot, catalog=self.catalog)
+                direction, rel = self.steps[0]
+                rel_id = t_tmp._resolve_rel(rel)
+                rel_info = snapshot.get_relation(rel_id)
+                domain_id = (
+                    rel_info["src_domain_id"]
+                    if direction == "out"
+                    else rel_info["tgt_domain_id"]
+                )
+            return int(snapshot.resolve_dense_id(domain_id, raw_seed))
+        return int(raw_seed)
+
     def build_traversal(
         self, snapshot: "Snapshot", params: Optional[Dict[str, Any]] = None
     ) -> Traversal:
@@ -110,12 +130,12 @@ class CypherQuery:
         seed_node = 0
 
         if self.seed_param_name and self.seed_param_name in params:
-            seed_node = int(params[self.seed_param_name])
+            seed_node = self._resolve_seed_node(snapshot, params[self.seed_param_name])
         elif self.seed_literal is not None:
-            seed_node = int(self.seed_literal)
+            seed_node = self._resolve_seed_node(snapshot, self.seed_literal)
         elif params:
             # Fallback to first parameter value
-            seed_node = int(next(iter(params.values())))
+            seed_node = self._resolve_seed_node(snapshot, next(iter(params.values())))
 
         t = Traversal(snapshot, start_node=seed_node, catalog=self.catalog)
         for direction, rel in self.steps:

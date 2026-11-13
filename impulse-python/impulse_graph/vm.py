@@ -72,10 +72,9 @@ except ImportError:
         _native_parse_cel = None
         _native_optimize_cel = None
         opcodes = None
-    RegisterType = None
-    VmStatus = None
-    Instruction = None
-    opcodes = None
+        RegisterType = None
+        VmStatus = None
+        Instruction = None
 
 
 class VmContext:

@@ -99,4 +99,42 @@ func TestVMExecutionAndContext(t *testing.T) {
 	if state.GetRegister(0) != 0 {
 		t.Errorf("expected R0 register value 0, got %d", state.GetRegister(0))
 	}
+
+	// 4. Verify QueryBuilder opcode & payload parity
+	qb := impulse.NewQueryBuilder().
+		InputNode(0).
+		WalkEdge(3, 1).
+		WalkEdgeFiltered(3, 2, 4).
+		Degree(3, 5).
+		CscWalk(3, 6).
+		SetDifference(1, 2, 7).
+		MxV(3, 4, 8).
+		CollectBitset(8)
+	bc := qb.Compile()
+	if bc[0].Opcode != 0x02 {
+		t.Errorf("expected InputNode opcode 0x02, got 0x%02X", bc[0].Opcode)
+	}
+	if bc[1].Payload != ((3 << 16) | 0) {
+		t.Errorf("expected WalkEdge payload 0x%X, got 0x%X", (3<<16)|0, bc[1].Payload)
+	}
+	if bc[2].Payload != ((3 << 16) | (2 << 8) | 1) {
+		t.Errorf("expected WalkEdgeFiltered payload 0x%X, got 0x%X", (3<<16)|(2<<8)|1, bc[2].Payload)
+	}
+	if bc[5].Payload != ((2 << 16) | 1) {
+		t.Errorf("expected SetDifference payload 0x%X, got 0x%X", (2<<16)|1, bc[5].Payload)
+	}
+	if bc[6].Payload != ((3 << 8) | 4) {
+		t.Errorf("expected MxV payload 0x%X, got 0x%X", (3<<8)|4, bc[6].Payload)
+	}
+	if bc[7].Payload != 8 {
+		t.Errorf("expected CollectBitset payload 8, got %d", bc[7].Payload)
+	}
+	if bc[8].Opcode != 0x00 {
+		t.Errorf("expected Halt opcode 0x00, got 0x%02X", bc[8].Opcode)
+	}
+
+	// 5. Verify RelationIndex does not match nonexistent relation names
+	if _, ok := snap.RelationIndex("NON_EXISTENT_RELATION"); ok {
+		t.Errorf("expected RelationIndex to return false for unknown relation")
+	}
 }

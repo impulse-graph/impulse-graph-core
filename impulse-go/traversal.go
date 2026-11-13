@@ -3,6 +3,8 @@ package impulse
 import (
 	"encoding/binary"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"unsafe"
 )
@@ -215,6 +217,9 @@ func (s *Snapshot) ProjectFloat32Column(relationIndex, attributeIndex uint16, no
 	}
 
 	results := make([]float32, len(nodeIDs))
+	if len(data) < 4 {
+		return results, nil
+	}
 	floatSlice := unsafe.Slice((*float32)(unsafe.Pointer(&data[0])), len(data)/4)
 	for i, id := range nodeIDs {
 		if int(id) < len(floatSlice) {
@@ -241,6 +246,14 @@ func (s *Snapshot) ProjectInt64Column(relationIndex, attributeIndex uint16, node
 	return results, nil
 }
 
+var (
+	cypherMatchRe = regexp.MustCompile(`(?is)MATCH\s+(.+?)(?:\s+WHERE|\s+RETURN|$)`)
+	cypherStartRe = regexp.MustCompile(`^\((\w+)(?::\w+)?\)`)
+	cypherStepRe  = regexp.MustCompile(`(\<-|-\>|-)\s*\[(?::(?:` + "`" + `([^` + "`" + `]+)` + "`" + `|([\w:]+)))?(?:\*(\d+))?\]\s*(-\>|\<-|-)\s*\((?:(\w+)(?::\w+)?)?\)`)
+	cypherWhereRe = regexp.MustCompile(`(?is)WHERE\s+(.+?)(?:\s+RETURN|$)`)
+	cypherPredRe  = regexp.MustCompile(`(\w+)\.(?:id|name|dense_id)\s*(?:=|==)\s*(?:\$(\w+)|(\d+))`)
+)
+
 // Cypher executes a declarative openCypher match statement over the snapshot with optional projections.
 func (s *Snapshot) Cypher(query string, params map[string]float64) ([]uint64, error) {
 	trimmed := strings.TrimSpace(query)
@@ -248,10 +261,71 @@ func (s *Snapshot) Cypher(query string, params map[string]float64) ([]uint64, er
 		return nil, fmt.Errorf("invalid Cypher statement: must start with MATCH")
 	}
 
+	matchM := cypherMatchRe.FindStringSubmatch(trimmed)
+	if len(matchM) < 2 {
+		return nil, fmt.Errorf("invalid Cypher statement: missing MATCH pattern")
+	}
+	pattern := strings.TrimSpace(matchM[1])
+	startM := cypherStartRe.FindStringSubmatch(pattern)
+	if len(startM) < 2 {
+		return nil, fmt.Errorf("invalid Cypher path start node: %q", pattern)
+	}
+	seedVar := startM[1]
+
+	var startNode uint64
+	if whereM := cypherWhereRe.FindStringSubmatch(trimmed); len(whereM) >= 2 {
+		if predM := cypherPredRe.FindStringSubmatch(whereM[1]); len(predM) >= 4 && predM[1] == seedVar {
+			if predM[2] != "" {
+				if val, ok := params[predM[2]]; ok {
+					startNode = uint64(val)
+				}
+			} else if predM[3] != "" {
+				if v, err := strconv.ParseUint(predM[3], 10, 64); err == nil {
+					startNode = v
+				}
+			}
+		}
+	} else if len(params) > 0 {
+		for _, v := range params {
+			startNode = uint64(v)
+			break
+		}
+	}
+
+	stepMatches := cypherStepRe.FindAllStringSubmatch(pattern, -1)
+	steps := make([]traversalStep, 0, len(stepMatches))
+	for _, sm := range stepMatches {
+		leftArrow, relQuoted, relUnquoted, hopsStr, rightArrow := sm[1], sm[2], sm[3], sm[4], sm[5]
+		relName := relQuoted
+		if relName == "" {
+			relName = relUnquoted
+		}
+		if relName == "" {
+			return nil, fmt.Errorf("Impulse Graph requires typed relationship patterns (e.g. -[:Rel]->)")
+		}
+		dir := DirectionOut
+		if leftArrow == "<-" && rightArrow == "-" {
+			dir = DirectionIn
+		}
+		hops := 1
+		if hopsStr != "" {
+			if h, err := strconv.Atoi(hopsStr); err == nil && h > 0 {
+				hops = h
+			}
+		}
+		for h := 0; h < hops; h++ {
+			steps = append(steps, traversalStep{relationName: relName, direction: dir})
+		}
+	}
+
+	if len(steps) == 0 {
+		return nil, fmt.Errorf("Cypher query produced no traversal steps: %q", query)
+	}
+
 	t := &Traversal{
 		snapshot:   s,
-		startNode:  0,
-		steps:      make([]traversalStep, 0),
+		startNode:  startNode,
+		steps:      steps,
 		params:     make(map[string]float64),
 		projection: make([]string, 0),
 	}
