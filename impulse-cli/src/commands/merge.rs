@@ -107,7 +107,10 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
                 }
             }
         }
-        merged_relations.insert(r_name, (r.src_domain_id, r.tgt_domain_id, edges, r.has_csc()));
+        merged_relations.insert(
+            r_name,
+            (r.src_domain_id, r.tgt_domain_id, edges, r.has_csc()),
+        );
     }
 
     // Overlay delta relations
@@ -123,11 +126,23 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
                 r.name.clone()
             };
 
-            let src_name = delta_reader.domains().iter().find(|d| d.domain_id == r.src_domain_id).map(|d| &d.name);
-            let tgt_name = delta_reader.domains().iter().find(|d| d.domain_id == r.tgt_domain_id).map(|d| &d.name);
+            let src_name = delta_reader
+                .domains()
+                .iter()
+                .find(|d| d.domain_id == r.src_domain_id)
+                .map(|d| &d.name);
+            let tgt_name = delta_reader
+                .domains()
+                .iter()
+                .find(|d| d.domain_id == r.tgt_domain_id)
+                .map(|d| &d.name);
 
-            let effective_src_id = src_name.and_then(|n| domain_name_to_id.get(n).copied()).unwrap_or(r.src_domain_id);
-            let effective_tgt_id = tgt_name.and_then(|n| domain_name_to_id.get(n).copied()).unwrap_or(r.tgt_domain_id);
+            let effective_src_id = src_name
+                .and_then(|n| domain_name_to_id.get(n).copied())
+                .unwrap_or(r.src_domain_id);
+            let effective_tgt_id = tgt_name
+                .and_then(|n| domain_name_to_id.get(n).copied())
+                .unwrap_or(r.tgt_domain_id);
 
             let (row_offsets, col_indices, _) =
                 crate::commands::index::extract_relation_csr_and_coo(&delta_reader, r_idx, r)?;
@@ -154,17 +169,27 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
                     *csc_flag = true;
                 }
             } else {
-                merged_relations.insert(r_name, (effective_src_id, effective_tgt_id, delta_edges, r.has_csc()));
+                merged_relations.insert(
+                    r_name,
+                    (effective_src_id, effective_tgt_id, delta_edges, r.has_csc()),
+                );
             }
         }
     }
 
     // Write merged relations to snapshot
-    for (rel_idx, (name, (src_dom, tgt_dom, mut edges, include_csc))) in merged_relations.into_iter().enumerate() {
+    for (rel_idx, (name, (src_dom, tgt_dom, mut edges, include_csc))) in
+        merged_relations.into_iter().enumerate()
+    {
         edges.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
         let max_u = edges.iter().map(|e| e.0).max().map(|u| u + 1).unwrap_or(0) as usize;
-        let dom_n = base_reader.domains().iter().find(|d| d.domain_id == src_dom).map(|d| d.node_count as usize).unwrap_or(max_u);
+        let dom_n = base_reader
+            .domains()
+            .iter()
+            .find(|d| d.domain_id == src_dom)
+            .map(|d| d.node_count as usize)
+            .unwrap_or(max_u);
         let n = dom_n.max(max_u);
 
         let mut row_offsets = vec![0u32; n + 1];
@@ -178,7 +203,14 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
             row_offsets[i + 1] += row_offsets[i];
         }
 
-        writer.add_relation(src_dom, tgt_dom, n as u64, col_indices.len() as u64, row_offsets, col_indices);
+        writer.add_relation(
+            src_dom,
+            tgt_dom,
+            n as u64,
+            col_indices.len() as u64,
+            row_offsets,
+            col_indices,
+        );
         writer.set_relation_name(rel_idx, &name);
         if include_csc {
             writer.set_relation_include_csc(rel_idx, true);
@@ -201,6 +233,9 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
     }
 
     writer.finalize()?;
-    println!("SUCCESS: Successfully merged snapshots into {}", output.display());
+    println!(
+        "SUCCESS: Successfully merged snapshots into {}",
+        output.display()
+    );
     Ok(())
 }

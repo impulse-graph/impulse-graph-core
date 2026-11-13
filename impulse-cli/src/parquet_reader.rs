@@ -895,23 +895,39 @@ pub fn decode_hex_or_uuid_bytes(s: &str) -> Vec<u8> {
 }
 
 fn parse_u32_pair(s: &str) -> (u32, u32) {
-    let clean = s.trim().trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
+    let clean = s
+        .trim()
+        .trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
     if clean.is_empty() {
         return (0, 0);
     }
     let parts: Vec<&str> = clean.split([':', ';', ',']).collect();
-    let a = parts.first().and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
-    let b = parts.get(1).and_then(|p| p.trim().parse::<u32>().ok()).unwrap_or(0);
+    let a = parts
+        .first()
+        .and_then(|p| p.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    let b = parts
+        .get(1)
+        .and_then(|p| p.trim().parse::<u32>().ok())
+        .unwrap_or(0);
     (a, b)
 }
 
 fn parse_u64_pair(s: &str) -> (u64, u64) {
-    let clean = s.trim().trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
+    let clean = s
+        .trim()
+        .trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
     if clean.is_empty() {
         return (0, 0);
     }
     let parts: Vec<&str> = clean.split([':', ';', ',']).collect();
-    let a = parts.first().and_then(|p| p.trim().parse::<u64>().ok()).unwrap_or(0);
-    let b = parts.get(1).and_then(|p| p.trim().parse::<u64>().ok()).unwrap_or(0);
+    let a = parts
+        .first()
+        .and_then(|p| p.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let b = parts
+        .get(1)
+        .and_then(|p| p.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     (a, b)
 }

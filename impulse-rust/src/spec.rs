@@ -328,14 +328,14 @@ const_assert_eq!(std::mem::size_of::<DomainCatalogEntryV09>(), 16);
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct DomainCatalogEntry {
-    pub domain_id: u16,        // 0x00..0x01
-    pub key_type: u8,          // 0x02
-    pub reserved: u8,          // 0x03
-    pub name_offset: u32,      // 0x04..0x07 (Offset into Shared String Table)
-    pub node_count: u64,       // 0x08..0x0F
-    pub attr_count: u16,       // 0x10..0x11
-    pub key_attr_index: u16,   // 0x12..0x13 (0xFFFF if none)
-    pub reserved2: [u8; 12],   // 0x14..0x1F (Pads struct to 32 Bytes)
+    pub domain_id: u16,      // 0x00..0x01
+    pub key_type: u8,        // 0x02
+    pub reserved: u8,        // 0x03
+    pub name_offset: u32,    // 0x04..0x07 (Offset into Shared String Table)
+    pub node_count: u64,     // 0x08..0x0F
+    pub attr_count: u16,     // 0x10..0x11
+    pub key_attr_index: u16, // 0x12..0x13 (0xFFFF if none)
+    pub reserved2: [u8; 12], // 0x14..0x1F (Pads struct to 32 Bytes)
 }
 
 impl DomainCatalogEntry {

@@ -4,6 +4,9 @@
  *        Multi-Layout Sweeps (CSR, CSC, COO, DENSE), Functional Optics & Fixpoint Engine.
  */
 
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #undef NDEBUG
 #include "impulse_vm.h"
 #include "impulse_graph.h"
@@ -14,7 +17,9 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
+#include <string>
 #ifdef _WIN32
 #include <process.h>
 #define IMP_GETPID() _getpid()
@@ -899,8 +904,9 @@ static void test_nullable_vectors_and_monoidic_reducers() {
     //         OP_LOAD_COLUMN_VECTOR (0x80) -> OP_VEC_MATH_UNARY (0x2D)
     //         -> OP_EXTRACT_VALIDITY (0x3C) -> OP_COALESCE (0x3B) + OP_LANE_REDUCE_ATTR (0xC8)
     // -----------------------------------------------------------------------
-    char snap_path[256];
-    std::snprintf(snap_path, sizeof(snap_path), "/tmp/impulse_test_nan_null_%d.imps", static_cast<int>(IMP_GETPID()));
+    std::string snap_path_str = (std::filesystem::temp_directory_path() /
+                                 ("impulse_test_nan_null_" + std::to_string(static_cast<int>(IMP_GETPID())) + ".imps")).string();
+    const char* snap_path = snap_path_str.c_str();
     {
         // 6 nodes: valid mask bits = 0b101101 = 0x2D (nodes 0, 2, 3, 5 valid; nodes 1, 4 NULL!)
         // Values at [0..5]: [-9.0, 999.0(NULL), 4.0, 16.0, 888.0(NULL), -4.0]

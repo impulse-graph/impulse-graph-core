@@ -588,10 +588,10 @@ impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapsh
                 uint64_t std_csr_bytes = 0;
                 if (is_modern && rel_entry.encoding_id == 3 &&
                     ctx->slots[r].offsets_ptr != nullptr &&
-                    !__builtin_mul_overflow(edge_count, 4ULL, &coo_row_bytes) &&
+                    !impulse_u64_mul_overflow(edge_count, 4ULL, &coo_row_bytes) &&
                     rel_entry.csr_row_off_bytes == coo_row_bytes &&
-                    !__builtin_add_overflow(node_count, 1ULL, &n_plus_1) &&
-                    !__builtin_mul_overflow(n_plus_1, edge_w_bytes, &std_csr_bytes)) {
+                    !impulse_u64_add_overflow(node_count, 1ULL, &n_plus_1) &&
+                    !impulse_u64_mul_overflow(n_plus_1, edge_w_bytes, &std_csr_bytes)) {
                     if (rel_entry.csr_row_off_bytes != std_csr_bytes) {
                         ctx->slots[r].is_raw_coo = true;
                         ctx->slots[r].raw_coo_src_width = 4;

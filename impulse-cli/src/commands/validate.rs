@@ -153,10 +153,7 @@ pub fn validate_reader(
         )
         .into());
     }
-    println!(
-        "  [OK] Header Magic & Version (IMPS v0.{}.0)",
-        ver
-    );
+    println!("  [OK] Header Magic & Version (IMPS v0.{}.0)", ver);
 
     // 2. Domain Catalog & Inline Node Attribute Alignment Checks (Spec v0.10.0 §2.2 / §3)
     for dom in reader.domains() {
@@ -364,15 +361,12 @@ pub fn validate_reader(
                 .into());
             }
             for &comp_id in &rel.virtual_component_ids {
-                let comp = reader
-                    .relations()
-                    .get(comp_id as usize)
-                    .ok_or_else(|| {
-                        format!(
-                            "Relation #{} ('{}'): Virtual component relation ID {} out of bounds",
-                            idx, rel.name, comp_id
-                        )
-                    })?;
+                let comp = reader.relations().get(comp_id as usize).ok_or_else(|| {
+                    format!(
+                        "Relation #{} ('{}'): Virtual component relation ID {} out of bounds",
+                        idx, rel.name, comp_id
+                    )
+                })?;
                 if comp.is_virtual() {
                     return Err(format!(
                         "Relation #{} ('{}'): Virtual relation cannot reference nested virtual relation {}",
@@ -380,7 +374,8 @@ pub fn validate_reader(
                     )
                     .into());
                 }
-                if comp.src_domain_id != rel.src_domain_id || comp.tgt_domain_id != rel.tgt_domain_id
+                if comp.src_domain_id != rel.src_domain_id
+                    || comp.tgt_domain_id != rel.tgt_domain_id
                 {
                     return Err(format!(
                         "Relation #{} ('{}'): Virtual component #{} domain pair ({}, {}) mismatches ({}, {})",

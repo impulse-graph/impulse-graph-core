@@ -36,15 +36,21 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
     let is_json = opts.format.eq_ignore_ascii_case("json");
 
     // Case 1: Sample specified domain, or if neither domain nor relation specified and domains exist
-    let should_sample_domain = opts.domain.is_some() || (opts.relation.is_none() && reader.domain_count() > 0);
+    let should_sample_domain =
+        opts.domain.is_some() || (opts.relation.is_none() && reader.domain_count() > 0);
     // Case 2: Sample specified relation, or if neither domain nor relation specified and relations exist
-    let should_sample_relation = opts.relation.is_some() || (opts.domain.is_none() && reader.relation_count() > 0);
+    let should_sample_relation =
+        opts.relation.is_some() || (opts.domain.is_none() && reader.relation_count() > 0);
 
     let mut json_results = json!({});
 
     if should_sample_domain {
         let domain_target = opts.domain.unwrap_or_else(|| {
-            reader.domains().first().map(|d| d.name.as_str()).unwrap_or("")
+            reader
+                .domains()
+                .first()
+                .map(|d| d.name.as_str())
+                .unwrap_or("")
         });
 
         let dom_opt = reader.domains().iter().enumerate().find(|(_, d)| {
@@ -59,13 +65,16 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
             // Fetch string keys if available
             let mut keys = Vec::new();
             if let Ok(data) = reader.get_domain_attribute_data(d.domain_id, "_key") {
-                if let Ok(Some(offsets)) = reader.get_domain_attribute_offsets(d.domain_id, "_key") {
+                if let Ok(Some(offsets)) = reader.get_domain_attribute_offsets(d.domain_id, "_key")
+                {
                     for i in start..end {
                         if i + 1 < offsets.len() {
                             let s = offsets[i] as usize;
                             let e = offsets[i + 1] as usize;
                             if s <= e && e <= data.len() {
-                                keys.push(std::str::from_utf8(&data[s..e]).unwrap_or("").to_string());
+                                keys.push(
+                                    std::str::from_utf8(&data[s..e]).unwrap_or("").to_string(),
+                                );
                             } else {
                                 keys.push(i.to_string());
                             }
@@ -106,7 +115,8 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
                             if a.name == "_key" {
                                 continue;
                             }
-                            if let Ok(data) = reader.get_attribute_data(r.relation_id as usize, a_idx)
+                            if let Ok(data) =
+                                reader.get_attribute_data(r.relation_id as usize, a_idx)
                             {
                                 let offsets = reader
                                     .get_attribute_offsets(r.relation_id as usize, a_idx)
@@ -142,8 +152,14 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
                     "rows": rows,
                 });
             } else {
-                println!("=== DOMAIN SAMPLE: '{}' (ID: {}, Total Nodes: {}) ===", d.name, d.domain_id, n);
-                println!("Displaying dense IDs {}..{} (Limit: {}, Offset: {})", start, end, opts.limit, opts.offset);
+                println!(
+                    "=== DOMAIN SAMPLE: '{}' (ID: {}, Total Nodes: {}) ===",
+                    d.name, d.domain_id, n
+                );
+                println!(
+                    "Displaying dense IDs {}..{} (Limit: {}, Offset: {})",
+                    start, end, opts.limit, opts.offset
+                );
 
                 let mut table = Table::new();
                 let mut headers = vec!["dense_id".to_string(), "key".to_string()];
@@ -170,11 +186,17 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
 
     if should_sample_relation {
         let rel_target = opts.relation.unwrap_or_else(|| {
-            reader.relations().first().map(|r| r.name.as_str()).unwrap_or("")
+            reader
+                .relations()
+                .first()
+                .map(|r| r.name.as_str())
+                .unwrap_or("")
         });
 
         let rel_opt = reader.relations().iter().enumerate().find(|(r_idx, r)| {
-            r.name.eq_ignore_ascii_case(rel_target) || r.relation_id.to_string() == rel_target || r_idx.to_string() == rel_target
+            r.name.eq_ignore_ascii_case(rel_target)
+                || r.relation_id.to_string() == rel_target
+                || r_idx.to_string() == rel_target
         });
 
         if let Some((r_idx, r)) = rel_opt {
@@ -190,8 +212,14 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
             let end = (start + opts.limit).min(m);
 
             // Source domain name & keys
-            let src_dom = reader.domains().iter().find(|d| d.domain_id == r.src_domain_id);
-            let tgt_dom = reader.domains().iter().find(|d| d.domain_id == r.tgt_domain_id);
+            let src_dom = reader
+                .domains()
+                .iter()
+                .find(|d| d.domain_id == r.src_domain_id);
+            let tgt_dom = reader
+                .domains()
+                .iter()
+                .find(|d| d.domain_id == r.tgt_domain_id);
             let src_dom_name = src_dom.map(|d| d.name.as_str()).unwrap_or("?");
             let tgt_dom_name = tgt_dom.map(|d| d.name.as_str()).unwrap_or("?");
 
@@ -233,12 +261,21 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
                     "rows": rows,
                 });
             } else {
-                println!("=== RELATION SAMPLE: '{}' (ID: {}, {} -> {}, Total Edges: {}) ===",
-                    r.name, r.relation_id, src_dom_name, tgt_dom_name, m);
-                println!("Displaying edge indices {}..{} (Limit: {}, Offset: {})", start, end, opts.limit, opts.offset);
+                println!(
+                    "=== RELATION SAMPLE: '{}' (ID: {}, {} -> {}, Total Edges: {}) ===",
+                    r.name, r.relation_id, src_dom_name, tgt_dom_name, m
+                );
+                println!(
+                    "Displaying edge indices {}..{} (Limit: {}, Offset: {})",
+                    start, end, opts.limit, opts.offset
+                );
 
                 let mut table = Table::new();
-                let mut headers = vec!["edge_idx".to_string(), "src_id".to_string(), "tgt_id".to_string()];
+                let mut headers = vec![
+                    "edge_idx".to_string(),
+                    "src_id".to_string(),
+                    "tgt_id".to_string(),
+                ];
                 for (attr, _, _) in &attr_cols {
                     headers.push(attr.name.clone());
                 }
@@ -247,7 +284,8 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
                 for edge_idx in start..end {
                     let src_id = find_source_node(edge_idx, row_offsets);
                     let tgt_id = col_indices[edge_idx];
-                    let mut row = vec![edge_idx.to_string(), src_id.to_string(), tgt_id.to_string()];
+                    let mut row =
+                        vec![edge_idx.to_string(), src_id.to_string(), tgt_id.to_string()];
                     for (attr, data, offsets) in &attr_cols {
                         let val = format_attribute_val(attr, data, *offsets, edge_idx, m);
                         row.push(val_to_string(&val));
@@ -308,7 +346,10 @@ fn format_attribute_val(
         };
         let byte_pos = row_idx / 8;
         let bit_pos = row_idx % 8;
-        if byte_pos < bitmap_bytes && byte_pos < raw_data.len() && (raw_data[byte_pos] & (1 << bit_pos)) == 0 {
+        if byte_pos < bitmap_bytes
+            && byte_pos < raw_data.len()
+            && (raw_data[byte_pos] & (1 << bit_pos)) == 0
+        {
             return Value::Null;
         }
         if padded_bm <= raw_data.len() {
@@ -344,11 +385,15 @@ fn format_attribute_val(
             let mut vec_vals = Vec::with_capacity(dim.min(5));
             for i in 0..dim.min(5) {
                 let byte_off = start + i * 4;
-                let f = f32::from_le_bytes(data[byte_off..byte_off + 4].try_into().unwrap_or([0; 4]));
+                let f =
+                    f32::from_le_bytes(data[byte_off..byte_off + 4].try_into().unwrap_or([0; 4]));
                 vec_vals.push(f);
             }
             if dim > 5 {
-                return json!(format!("[{:.3}, {:.3}, ... (dim={})]", vec_vals[0], vec_vals[1], dim));
+                return json!(format!(
+                    "[{:.3}, {:.3}, ... (dim={})]",
+                    vec_vals[0], vec_vals[1], dim
+                ));
             } else {
                 return json!(vec_vals);
             }
@@ -361,7 +406,11 @@ fn format_attribute_val(
             if row_idx < data.len() {
                 json!(data[row_idx] as i8)
             } else {
-                if is_nullable { Value::Null } else { json!(0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0)
+                }
             }
         }
         0x02 => {
@@ -370,7 +419,11 @@ fn format_attribute_val(
                 let v = i16::from_le_bytes(data[start..start + 2].try_into().unwrap_or([0; 2]));
                 json!(v)
             } else {
-                if is_nullable { Value::Null } else { json!(0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0)
+                }
             }
         }
         0x03 => {
@@ -379,7 +432,11 @@ fn format_attribute_val(
                 let v = i32::from_le_bytes(data[start..start + 4].try_into().unwrap_or([0; 4]));
                 json!(v)
             } else {
-                if is_nullable { Value::Null } else { json!(0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0)
+                }
             }
         }
         0x04 | 0x08 | 0x09 => {
@@ -388,7 +445,11 @@ fn format_attribute_val(
                 let v = i64::from_le_bytes(data[start..start + 8].try_into().unwrap_or([0; 8]));
                 json!(v)
             } else {
-                if is_nullable { Value::Null } else { json!(0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0)
+                }
             }
         }
         0x06 => {
@@ -397,7 +458,11 @@ fn format_attribute_val(
                 let v = f32::from_le_bytes(data[start..start + 4].try_into().unwrap_or([0; 4]));
                 json!(v)
             } else {
-                if is_nullable { Value::Null } else { json!(0.0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0.0)
+                }
             }
         }
         0x07 => {
@@ -406,7 +471,11 @@ fn format_attribute_val(
                 let v = f64::from_le_bytes(data[start..start + 8].try_into().unwrap_or([0; 8]));
                 json!(v)
             } else {
-                if is_nullable { Value::Null } else { json!(0.0) }
+                if is_nullable {
+                    Value::Null
+                } else {
+                    json!(0.0)
+                }
             }
         }
         _ => json!(""),

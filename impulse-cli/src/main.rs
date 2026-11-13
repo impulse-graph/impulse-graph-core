@@ -1,6 +1,8 @@
 use clap::Parser;
 use impulse_graph_tooling::commands;
-use impulse_graph_tooling::{Cli, Commands, CompilerCommands, CryptoCommands, IndexCommands, SnapshotCommands};
+use impulse_graph_tooling::{
+    Cli, Commands, CompilerCommands, CryptoCommands, IndexCommands, SnapshotCommands,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();

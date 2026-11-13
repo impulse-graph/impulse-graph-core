@@ -95,7 +95,12 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
         let dom_rel_path = format!("domains/{}", dom_file_name);
         let dom_out_path = domains_dir.join(&dom_file_name);
 
-        println!("  Exporting Domain '{}' (N={}) -> {}", d.name, n, dom_out_path.display());
+        println!(
+            "  Exporting Domain '{}' (N={}) -> {}",
+            d.name,
+            n,
+            dom_out_path.display()
+        );
 
         // Collect Spec v0.10.0 inline domain attributes (falling back to v0.9.0 carrier relations)
         let mut dom_attrs: Vec<impulse_graph::AttributeInfo> = d.attributes.clone();
@@ -171,7 +176,11 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
                 name: a.name.clone(),
                 column: a.name.clone(),
                 type_name: type_str,
-                dimension: if a.dimension > 1 { Some(a.dimension) } else { None },
+                dimension: if a.dimension > 1 {
+                    Some(a.dimension)
+                } else {
+                    None
+                },
             });
         }
 
@@ -180,16 +189,36 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
             name: d.name.clone(),
             key_type: format!("{:?}", d.key_type).to_lowercase(),
             file: dom_rel_path,
-            format: if is_parquet { "parquet".into() } else { "csv".into() },
+            format: if is_parquet {
+                "parquet".into()
+            } else {
+                "csv".into()
+            },
             id_column: "id".to_string(),
             attributes: attr_defs,
         });
 
         // Write Domain File
         if is_parquet {
-            export_domain_parquet(&dom_out_path, &keys_list, &dom_attrs, &reader, d.domain_id, n)?;
+            export_domain_parquet(
+                &dom_out_path,
+                &keys_list,
+                &dom_attrs,
+                &reader,
+                d.domain_id,
+                n,
+            )?;
         } else {
-            export_domain_text(&dom_out_path, &keys_list, &dom_attrs, &reader, d.domain_id, n, is_jsonl, is_csv)?;
+            export_domain_text(
+                &dom_out_path,
+                &keys_list,
+                &dom_attrs,
+                &reader,
+                d.domain_id,
+                n,
+                is_jsonl,
+                is_csv,
+            )?;
         }
     }
 
@@ -211,7 +240,12 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
         let rel_rel_path = format!("relations/{}", rel_file_name);
         let rel_out_path = relations_dir.join(&rel_file_name);
 
-        println!("  Exporting Relation '{}' (E={}) -> {}", rel_name, r.edge_count, rel_out_path.display());
+        println!(
+            "  Exporting Relation '{}' (E={}) -> {}",
+            rel_name,
+            r.edge_count,
+            rel_out_path.display()
+        );
 
         let (row_offsets_vec, col_indices_vec, _) =
             crate::commands::index::extract_relation_csr_and_coo(&reader, r_idx, r)?;
@@ -246,7 +280,11 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
                 name: a.name.clone(),
                 column: a.name.clone(),
                 type_name: type_str,
-                dimension: if a.dimension > 1 { Some(a.dimension) } else { None },
+                dimension: if a.dimension > 1 {
+                    Some(a.dimension)
+                } else {
+                    None
+                },
             });
         }
 
@@ -255,7 +293,11 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
             src_domain: r.src_domain_id,
             tgt_domain: r.tgt_domain_id,
             file: rel_rel_path,
-            format: if is_parquet { "parquet".into() } else { "csv".into() },
+            format: if is_parquet {
+                "parquet".into()
+            } else {
+                "csv".into()
+            },
             src_column: "src".to_string(),
             tgt_column: "tgt".to_string(),
             include_csc: if r.has_csc() { Some(true) } else { None },
@@ -266,7 +308,16 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
         if is_parquet {
             export_relation_parquet(&rel_out_path, r, row_offsets, col_indices, &reader, r_idx)?;
         } else {
-            export_relation_text(&rel_out_path, r, row_offsets, col_indices, &reader, r_idx, is_jsonl, is_csv)?;
+            export_relation_text(
+                &rel_out_path,
+                r,
+                row_offsets,
+                col_indices,
+                &reader,
+                r_idx,
+                is_jsonl,
+                is_csv,
+            )?;
         }
     }
 
@@ -280,7 +331,10 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
     let manifest_file = File::create(&manifest_path)?;
     serde_json::to_writer_pretty(BufWriter::new(manifest_file), &manifest)?;
 
-    println!("SUCCESS: Exported snapshot and generated round-trip manifest to {}", manifest_path.display());
+    println!(
+        "SUCCESS: Exported snapshot and generated round-trip manifest to {}",
+        manifest_path.display()
+    );
     Ok(())
 }
 
@@ -313,7 +367,9 @@ fn export_domain_text(
             let mut map = serde_json::Map::new();
             map.insert("id".to_string(), serde_json::Value::String(key.clone()));
             for a in attrs {
-                if a.name == "_key" { continue; }
+                if a.name == "_key" {
+                    continue;
+                }
                 if let Ok(val) = extract_attribute_string_value(reader, domain_id, a, u) {
                     map.insert(a.name.clone(), serde_json::Value::String(val));
                 }
@@ -322,8 +378,11 @@ fn export_domain_text(
         } else {
             write!(writer, "{}", key)?;
             for a in attrs {
-                if a.name == "_key" { continue; }
-                let val = extract_attribute_string_value(reader, domain_id, a, u).unwrap_or_default();
+                if a.name == "_key" {
+                    continue;
+                }
+                let val =
+                    extract_attribute_string_value(reader, domain_id, a, u).unwrap_or_default();
                 write!(writer, "{}{}", sep, val)?;
             }
             writeln!(writer)?;
@@ -357,16 +416,26 @@ fn export_relation_text(
 
     let mut edge_counter = 0;
     for u in 0..rel.node_count as usize {
-        if u + 1 >= row_offsets.len() { break; }
+        if u + 1 >= row_offsets.len() {
+            break;
+        }
         let start = row_offsets[u] as usize;
         let end = (row_offsets[u + 1] as usize).min(col_indices.len());
         for &v in &col_indices[start..end] {
             if is_jsonl {
                 let mut map = serde_json::Map::new();
-                map.insert("src".to_string(), serde_json::Value::Number(serde_json::Number::from(u)));
-                map.insert("tgt".to_string(), serde_json::Value::Number(serde_json::Number::from(v)));
+                map.insert(
+                    "src".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(u)),
+                );
+                map.insert(
+                    "tgt".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(v)),
+                );
                 for (a_idx, a) in rel.attributes.iter().enumerate() {
-                    if let Ok(val) = extract_edge_attribute_string_value(reader, rel_idx, a_idx, edge_counter, a) {
+                    if let Ok(val) =
+                        extract_edge_attribute_string_value(reader, rel_idx, a_idx, edge_counter, a)
+                    {
                         map.insert(a.name.clone(), serde_json::Value::String(val));
                     }
                 }
@@ -374,7 +443,14 @@ fn export_relation_text(
             } else {
                 write!(writer, "{}{}{}", u, sep, v)?;
                 for (a_idx, a) in rel.attributes.iter().enumerate() {
-                    let val = extract_edge_attribute_string_value(reader, rel_idx, a_idx, edge_counter, a).unwrap_or_default();
+                    let val = extract_edge_attribute_string_value(
+                        reader,
+                        rel_idx,
+                        a_idx,
+                        edge_counter,
+                        a,
+                    )
+                    .unwrap_or_default();
                     write!(writer, "{}{}", sep, val)?;
                 }
                 writeln!(writer)?;
@@ -406,7 +482,11 @@ fn extract_attribute_string_value(
     let (valid_bitmap, actual_data) = if is_nullable {
         let word_count = n_nodes.div_ceil(64);
         let bitmap_bytes = word_count * 8;
-        let padded_bitmap_bytes = if bitmap_bytes == 0 { 0 } else { (bitmap_bytes + 127) & !127 };
+        let padded_bitmap_bytes = if bitmap_bytes == 0 {
+            0
+        } else {
+            (bitmap_bytes + 127) & !127
+        };
         if data.len() >= padded_bitmap_bytes {
             (&data[0..bitmap_bytes], &data[padded_bitmap_bytes..])
         } else {
@@ -471,7 +551,9 @@ fn extract_attribute_string_value(
                 for d in 0..dim {
                     let off = start + d * 4;
                     if off + 4 <= actual_data.len() {
-                        vals.push(f32::from_le_bytes(actual_data[off..off + 4].try_into()?).to_string());
+                        vals.push(
+                            f32::from_le_bytes(actual_data[off..off + 4].try_into()?).to_string(),
+                        );
                     }
                 }
                 Ok(vals.join(";"))
@@ -522,7 +604,11 @@ fn extract_edge_attribute_string_value(
     let (valid_bitmap, actual_data) = if is_nullable {
         let word_count = m_edges.div_ceil(64);
         let bitmap_bytes = word_count * 8;
-        let padded_bitmap_bytes = if bitmap_bytes == 0 { 0 } else { (bitmap_bytes + 127) & !127 };
+        let padded_bitmap_bytes = if bitmap_bytes == 0 {
+            0
+        } else {
+            (bitmap_bytes + 127) & !127
+        };
         if data.len() >= padded_bitmap_bytes {
             (&data[0..bitmap_bytes], &data[padded_bitmap_bytes..])
         } else {
@@ -550,7 +636,8 @@ fn extract_edge_attribute_string_value(
         }
         0x02 => {
             if (edge_idx + 1) * 2 <= actual_data.len() {
-                let v = i16::from_le_bytes(actual_data[edge_idx * 2..(edge_idx + 1) * 2].try_into()?);
+                let v =
+                    i16::from_le_bytes(actual_data[edge_idx * 2..(edge_idx + 1) * 2].try_into()?);
                 Ok(v.to_string())
             } else {
                 Ok("0".into())
@@ -558,7 +645,8 @@ fn extract_edge_attribute_string_value(
         }
         0x03 => {
             if (edge_idx + 1) * 4 <= actual_data.len() {
-                let v = i32::from_le_bytes(actual_data[edge_idx * 4..(edge_idx + 1) * 4].try_into()?);
+                let v =
+                    i32::from_le_bytes(actual_data[edge_idx * 4..(edge_idx + 1) * 4].try_into()?);
                 Ok(v.to_string())
             } else {
                 Ok("0".into())
@@ -566,7 +654,8 @@ fn extract_edge_attribute_string_value(
         }
         0x04 | 0x08 | 0x09 => {
             if (edge_idx + 1) * 8 <= actual_data.len() {
-                let v = i64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
+                let v =
+                    i64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
                 Ok(v.to_string())
             } else {
                 Ok("0".into())
@@ -576,7 +665,9 @@ fn extract_edge_attribute_string_value(
             let dim = a.dimension.max(1) as usize;
             if dim == 1 {
                 if (edge_idx + 1) * 4 <= actual_data.len() {
-                    let v = f32::from_le_bytes(actual_data[edge_idx * 4..(edge_idx + 1) * 4].try_into()?);
+                    let v = f32::from_le_bytes(
+                        actual_data[edge_idx * 4..(edge_idx + 1) * 4].try_into()?,
+                    );
                     Ok(v.to_string())
                 } else {
                     Ok("0.0".into())
@@ -587,7 +678,9 @@ fn extract_edge_attribute_string_value(
                 for d in 0..dim {
                     let off = start + d * 4;
                     if off + 4 <= actual_data.len() {
-                        vals.push(f32::from_le_bytes(actual_data[off..off + 4].try_into()?).to_string());
+                        vals.push(
+                            f32::from_le_bytes(actual_data[off..off + 4].try_into()?).to_string(),
+                        );
                     }
                 }
                 Ok(vals.join(";"))
@@ -595,7 +688,8 @@ fn extract_edge_attribute_string_value(
         }
         0x07 => {
             if (edge_idx + 1) * 8 <= actual_data.len() {
-                let v = f64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
+                let v =
+                    f64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
                 Ok(v.to_string())
             } else {
                 Ok("0.0".into())
@@ -628,7 +722,9 @@ fn export_domain_parquet(
 ) -> Result<(), Box<dyn Error>> {
     let mut fields = vec![Field::new("id", DataType::Utf8, false)];
     for a in attrs {
-        if a.name == "_key" { continue; }
+        if a.name == "_key" {
+            continue;
+        }
         let base_t = a.type_code & IMPULSE_TYPE_MASK;
         let is_nullable = (a.type_code & 0x80) != 0;
         let dt = match base_t {
@@ -638,7 +734,10 @@ fn export_domain_parquet(
             0x04 => DataType::Int64,
             0x06 => {
                 if a.dimension > 1 {
-                    DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), a.dimension as i32)
+                    DataType::FixedSizeList(
+                        Arc::new(Field::new("item", DataType::Float32, false)),
+                        a.dimension as i32,
+                    )
                 } else {
                     DataType::Float32
                 }
@@ -663,14 +762,20 @@ fn export_domain_parquet(
 
     // 2. Attributes
     for a in attrs {
-        if a.name == "_key" { continue; }
+        if a.name == "_key" {
+            continue;
+        }
         let base_t = a.type_code & IMPULSE_TYPE_MASK;
         match base_t {
             0x01 => {
                 let mut b = Int8Builder::with_capacity(node_count);
                 for u in 0..node_count {
                     let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i8>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i8>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -678,7 +783,11 @@ fn export_domain_parquet(
                 let mut b = Int16Builder::with_capacity(node_count);
                 for u in 0..node_count {
                     let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i16>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i16>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -686,7 +795,11 @@ fn export_domain_parquet(
                 let mut b = Int32Builder::with_capacity(node_count);
                 for u in 0..node_count {
                     let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i32>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i32>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -694,7 +807,11 @@ fn export_domain_parquet(
                 let mut b = Int64Builder::with_capacity(node_count);
                 for u in 0..node_count {
                     let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i64>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i64>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -706,7 +823,10 @@ fn export_domain_parquet(
                         let s = extract_attribute_string_value(reader, domain_id, a, u)?;
                         let parts: Vec<&str> = s.split(';').collect();
                         for d in 0..dim {
-                            let f = parts.get(d).and_then(|p| p.parse::<f32>().ok()).unwrap_or(0.0);
+                            let f = parts
+                                .get(d)
+                                .and_then(|p| p.parse::<f32>().ok())
+                                .unwrap_or(0.0);
                             item_builder.append_value(f);
                         }
                     }
@@ -722,7 +842,11 @@ fn export_domain_parquet(
                     let mut b = Float32Builder::with_capacity(node_count);
                     for u in 0..node_count {
                         let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                        if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<f32>().unwrap_or(0.0)); }
+                        if s.is_empty() {
+                            b.append_null();
+                        } else {
+                            b.append_value(s.parse::<f32>().unwrap_or(0.0));
+                        }
                     }
                     columns.push(Arc::new(b.finish()));
                 }
@@ -731,7 +855,11 @@ fn export_domain_parquet(
                 let mut b = Float64Builder::with_capacity(node_count);
                 for u in 0..node_count {
                     let s = extract_attribute_string_value(reader, domain_id, a, u)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<f64>().unwrap_or(0.0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<f64>().unwrap_or(0.0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -788,7 +916,9 @@ fn export_relation_parquet(
     let mut tgt_builder = UInt32Builder::with_capacity(edge_count);
 
     for u in 0..rel.node_count as usize {
-        if u + 1 >= row_offsets.len() { break; }
+        if u + 1 >= row_offsets.len() {
+            break;
+        }
         let start = row_offsets[u] as usize;
         let end = (row_offsets[u + 1] as usize).min(col_indices.len());
         for &v in &col_indices[start..end] {
@@ -809,7 +939,11 @@ fn export_relation_parquet(
                 let mut b = Int8Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
                     let s = extract_edge_attribute_string_value(reader, rel_idx, a_idx, e, a)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i8>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i8>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -817,7 +951,11 @@ fn export_relation_parquet(
                 let mut b = Int32Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
                     let s = extract_edge_attribute_string_value(reader, rel_idx, a_idx, e, a)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i32>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i32>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -825,7 +963,11 @@ fn export_relation_parquet(
                 let mut b = Int64Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
                     let s = extract_edge_attribute_string_value(reader, rel_idx, a_idx, e, a)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<i64>().unwrap_or(0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<i64>().unwrap_or(0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -833,7 +975,11 @@ fn export_relation_parquet(
                 let mut b = Float32Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
                     let s = extract_edge_attribute_string_value(reader, rel_idx, a_idx, e, a)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<f32>().unwrap_or(0.0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<f32>().unwrap_or(0.0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }
@@ -841,7 +987,11 @@ fn export_relation_parquet(
                 let mut b = Float64Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
                     let s = extract_edge_attribute_string_value(reader, rel_idx, a_idx, e, a)?;
-                    if s.is_empty() { b.append_null(); } else { b.append_value(s.parse::<f64>().unwrap_or(0.0)); }
+                    if s.is_empty() {
+                        b.append_null();
+                    } else {
+                        b.append_value(s.parse::<f64>().unwrap_or(0.0));
+                    }
                 }
                 columns.push(Arc::new(b.finish()));
             }

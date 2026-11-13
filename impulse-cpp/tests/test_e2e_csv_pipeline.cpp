@@ -1494,7 +1494,7 @@ int main() {
     std::cout << "=========================================================================\n";
 
     fs::path suite_dir = locate_e2e_suite_dir();
-    fs::path imps_path = "/tmp/e2e_core_test.imps";
+    fs::path imps_path = fs::temp_directory_path() / "e2e_core_test.imps";
     std::cout << "[Config] E2E Fixture Suite Dir : " << suite_dir.string() << "\n";
     std::cout << "[Config] Snapshot Output Path  : " << imps_path.string() << "\n";
 

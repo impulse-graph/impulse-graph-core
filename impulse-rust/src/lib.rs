@@ -177,7 +177,6 @@ mod tests {
         let _ = fs::remove_file(TEST_FILE);
     }
 
-
     #[test]
     fn test_relation_statistics_calculation_and_supernode_detection() {
         const STATS_TEST_FILE: &str = "__impulse_stats_test.imps";
@@ -900,8 +899,14 @@ mod tests {
         assert_eq!(reader.header().version(), 10);
 
         // Verify §5.1 Dense ID -> Key resolution
-        assert_eq!(reader.resolve_dense_id(0, 0).unwrap(), Some(b"BUS_101".as_slice()));
-        assert_eq!(reader.resolve_dense_id(0, 3).unwrap(), Some(b"BUS_104".as_slice()));
+        assert_eq!(
+            reader.resolve_dense_id(0, 0).unwrap(),
+            Some(b"BUS_101".as_slice())
+        );
+        assert_eq!(
+            reader.resolve_dense_id(0, 3).unwrap(),
+            Some(b"BUS_104".as_slice())
+        );
 
         // Verify COO relation
         let xfmr_idx = reader
@@ -910,7 +915,10 @@ mod tests {
             .position(|r| r.name == "TRANSFORMER")
             .unwrap() as u16;
         assert_eq!(reader.get_neighbors(xfmr_idx, 2).unwrap(), vec![3]);
-        assert_eq!(reader.get_neighbors(xfmr_idx, 0).unwrap(), Vec::<u64>::new());
+        assert_eq!(
+            reader.get_neighbors(xfmr_idx, 0).unwrap(),
+            Vec::<u64>::new()
+        );
 
         // Verify Virtual relation union
         let v_idx = reader
@@ -929,7 +937,10 @@ mod tests {
             .unwrap();
         assert_eq!(reader.relations()[z_idx].csr_row_off_bytes, 0);
         assert_eq!(reader.get_neighbors(z_idx as u16, 0).unwrap(), vec![0]);
-        assert_eq!(reader.get_neighbors(z_idx as u16, 2).unwrap(), Vec::<u64>::new());
+        assert_eq!(
+            reader.get_neighbors(z_idx as u16, 2).unwrap(),
+            Vec::<u64>::new()
+        );
         assert_eq!(reader.get_neighbors(z_idx as u16, 3).unwrap(), vec![1]);
     }
 }

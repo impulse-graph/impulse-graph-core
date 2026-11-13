@@ -209,8 +209,8 @@ op_VECTOR_ANN_SEARCH: {
             uint64_t deg_plus_one = static_cast<uint64_t>(v_max_degree_r) + 1ULL;
             uint64_t row_bytes_u64 = 0;
             uint64_t expected_slab_bytes = 0;
-            if (__builtin_mul_overflow(deg_plus_one, OP_CA_VAMANA_ADJ_U32_BYTES, &row_bytes_u64) ||
-                __builtin_mul_overflow(v_node_count, row_bytes_u64, &expected_slab_bytes)) {
+            if (impulse_u64_mul_overflow(deg_plus_one, OP_CA_VAMANA_ADJ_U32_BYTES, &row_bytes_u64) ||
+                impulse_u64_mul_overflow(v_node_count, row_bytes_u64, &expected_slab_bytes)) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
             if ((v_adj_slab_offset % IMP_SNAP_SECTION_ALIGN) != 0ULL || v_adj_slab_bytes < expected_slab_bytes) {
@@ -229,7 +229,7 @@ op_VECTOR_ANN_SEARCH: {
                 if ((v_quant_code_offset % IMP_SNAP_SECTION_ALIGN) != 0ULL) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                 if (v_quant_type != OP_CA_QUANT_NONE) {
                     uint64_t expected_quant_bytes = 0;
-                    if (__builtin_mul_overflow(v_node_count, quant_row_bytes, &expected_quant_bytes)) {
+                    if (impulse_u64_mul_overflow(v_node_count, quant_row_bytes, &expected_quant_bytes)) {
                         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                     }
                     quant_slab = static_cast<const uint8_t*>(
@@ -252,21 +252,21 @@ op_VECTOR_ANN_SEARCH: {
             uint32_t attr_dim = std::max<uint32_t>(1u, attr.dimension);
             uint64_t vec_row_bytes = static_cast<uint64_t>(attr_dim) * sizeof(float);
             uint64_t req_emb_bytes = 0;
-            if (__builtin_mul_overflow(v_node_count, vec_row_bytes, &req_emb_bytes)) {
+            if (impulse_u64_mul_overflow(v_node_count, vec_row_bytes, &req_emb_bytes)) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
             uint64_t emb_offset_bytes = 0;
             if (IMP_ATTR_IS_NULLABLE(attr.type_code) && v_node_count > 0) {
                 uint64_t words = (v_node_count >> 6) + ((v_node_count & 63ULL) != 0ULL ? 1ULL : 0ULL);
                 uint64_t raw_bm = 0;
-                if (__builtin_mul_overflow(words, 8ULL, &raw_bm) ||
-                    __builtin_add_overflow(raw_bm, 127ULL, &emb_offset_bytes)) {
+                if (impulse_u64_mul_overflow(words, 8ULL, &raw_bm) ||
+                    impulse_u64_add_overflow(raw_bm, 127ULL, &emb_offset_bytes)) {
                     return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
                 }
                 emb_offset_bytes &= ~127ULL;
             }
             uint64_t total_req_attr_bytes = 0;
-            if (__builtin_add_overflow(emb_offset_bytes, req_emb_bytes, &total_req_attr_bytes) ||
+            if (impulse_u64_add_overflow(emb_offset_bytes, req_emb_bytes, &total_req_attr_bytes) ||
                 !attr.data_ptr || attr.data_bytes < total_req_attr_bytes ||
                 (reinterpret_cast<uintptr_t>(static_cast<const uint8_t*>(attr.data_ptr) + emb_offset_bytes) % alignof(float)) != 0u) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
