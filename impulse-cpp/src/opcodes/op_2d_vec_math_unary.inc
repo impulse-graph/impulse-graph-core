@@ -87,7 +87,7 @@ op_VEC_MATH_UNARY: {
     if (use_f64) {
         size_t src_len = (h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->double_vector_lengths[h_src] : 0;
-        if (src_len > 0) N = src_len;
+        N = std::min(src_len, vm_state->query_context->max_nodes);
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -103,7 +103,7 @@ op_VEC_MATH_UNARY: {
     } else {
         size_t src_len = (h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->float_vector_lengths[h_src] : 0;
-        if (src_len > 0) N = src_len;
+        N = std::min(src_len, vm_state->query_context->max_nodes);
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
