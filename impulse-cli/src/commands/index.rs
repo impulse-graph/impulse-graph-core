@@ -276,11 +276,13 @@ fn replay_snapshot_into_writer(
     Ok(())
 }
 
+pub(crate) type ExtractedCsrCoo = (Vec<u32>, Vec<u32>, Option<Vec<u32>>);
+
 pub(crate) fn extract_relation_csr_and_coo(
     reader: &SnapshotReader,
     r_idx: usize,
     r: &impulse_graph::RelationInfo,
-) -> Result<(Vec<u32>, Vec<u32>, Option<Vec<u32>>), Box<dyn Error>> {
+) -> Result<ExtractedCsrCoo, Box<dyn Error>> {
     let n = r.node_count as usize;
     if r.is_flat_forward() {
         let flat = reader.get_col_indices_as_u32_vec(r_idx)?;
@@ -309,7 +311,7 @@ pub(crate) fn extract_relation_csr_and_coo(
     }
 }
 
-fn strip_nullable_bitmap<'a>(type_code: u8, row_count: usize, raw_data: &'a [u8]) -> &'a [u8] {
+fn strip_nullable_bitmap(type_code: u8, row_count: usize, raw_data: &[u8]) -> &[u8] {
     if (type_code & 0x80) != 0 {
         let word_count = row_count.div_ceil(64);
         let raw_bm = word_count * 8;

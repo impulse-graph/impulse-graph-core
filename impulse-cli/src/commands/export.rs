@@ -338,6 +338,7 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_domain_text(
     path: &Path,
     keys: &[String],
@@ -392,6 +393,7 @@ fn export_domain_text(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_relation_text(
     path: &Path,
     rel: &impulse_graph::RelationInfo,
