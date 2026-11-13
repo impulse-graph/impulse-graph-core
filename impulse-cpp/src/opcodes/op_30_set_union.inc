@@ -50,6 +50,10 @@ op_SET_UNION: {
     int h_dst = -1;
     if (dst_was_bitset) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        if (h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_dst].words == nullptr) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

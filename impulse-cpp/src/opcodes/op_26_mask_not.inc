@@ -38,6 +38,9 @@ op_MASK_NOT: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_26_ALLOWED_SRC_TYPES);
+    if (vm_state->register_types[src] != TYPE_BITSET_HANDLE) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(dst == src);
 
     int h_src = static_cast<int>(vm_state->registers[src]);
