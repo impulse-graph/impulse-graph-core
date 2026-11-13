@@ -38,6 +38,9 @@ op_ISLAND_DETECT: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src1 < IMP_VM_GPR_COUNT && src2 < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_65_ALLOWED_SRC_TYPES);
+    if (((1ULL << vm_state->register_types[src1]) & OP_65_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     if (src2 > 0u || vm_state->register_types[src2] != TYPE_NULL) {
         IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_65_ALLOWED_AUX1_TYPES);
     }

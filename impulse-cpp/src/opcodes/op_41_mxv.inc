@@ -35,6 +35,9 @@ op_MXV: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src_vec, OP_41_ALLOWED_SRC_TYPES);
+    if (((1ULL << vm_state->register_types[src_vec]) & OP_41_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
