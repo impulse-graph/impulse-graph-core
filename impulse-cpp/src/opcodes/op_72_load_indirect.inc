@@ -43,8 +43,15 @@ op_LOAD_INDIRECT: {
     if (reg_deref_mode) {
         IMP_VALIDATE_GPR(src_param);
         IMPULSE_CHECK_REG_TYPE(vm_state, src_param, OP_72_FLAG0_SRC_TYPES);
+        if (vm_state->register_types[src_param] != TYPE_INT64 &&
+            vm_state->register_types[src_param] != TYPE_NODE_ID) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
         const uint64_t target_reg_idx = vm_state->registers[src_param];
         IMP_VALIDATE_GPR(target_reg_idx);
+        if (target_reg_idx >= IMP_VM_GPR_COUNT) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         IMPULSE_ASSERT(target_reg_idx < IMP_VM_GPR_COUNT);
         IMPULSE_TESTCASE(target_reg_idx == dst);
         const uint64_t val = vm_state->registers[target_reg_idx];

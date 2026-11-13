@@ -30,6 +30,10 @@ op_COO_WALK_STREAM: {
     IMP_VALIDATE_GPR(src);
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_A0_ALLOWED_SRC_TYPES);
+    if (vm_state->register_types[src] == TYPE_NULL ||
+        ((1ULL << vm_state->register_types[src]) & OP_A0_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(vm_state->register_types[src] == TYPE_LANE_FRONTIER);
 
     impulse_vm_status_t st = execute_walk_stream_common<OP_COO_WALK_STREAM>(bytecode, instruction_count, vm_state);

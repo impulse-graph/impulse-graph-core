@@ -32,6 +32,12 @@ op_VECTOR_DIV: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, num, OP_36_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, denom, OP_36_ALLOWED_AUX1_TYPES);
+    if (vm_state->register_types[num] == TYPE_NULL ||
+        vm_state->register_types[denom] == TYPE_NULL ||
+        ((1ULL << vm_state->register_types[num]) & OP_36_ALLOWED_SRC_TYPES) == 0 ||
+        ((1ULL << vm_state->register_types[denom]) & OP_36_ALLOWED_AUX1_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     size_t size = vm_state->query_context->max_nodes;
     bool num_is_double = (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR);
