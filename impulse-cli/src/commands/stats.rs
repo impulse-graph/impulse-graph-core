@@ -36,44 +36,64 @@ pub fn run(
             rel.name.clone()
         };
 
-        // Degree distribution sketch
-        let row_offsets = reader.get_row_offsets(r_idx)?;
-        let mut degree_sketch = DegreeDistributionSketch::new(10_000);
-        let n = rel.node_count as usize;
-        if row_offsets.len() > n {
-            for i in 0..n {
-                let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
-                degree_sketch.offer(deg);
+        // Degree distribution sketch (skip virtual/non-CSR relations without row_offsets)
+        if let Ok(row_offsets) = reader.get_row_offsets(r_idx) {
+            let mut degree_sketch = DegreeDistributionSketch::new(10_000);
+            let n = rel.node_count as usize;
+            if row_offsets.len() > n {
+                for i in 0..n {
+                    let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
+                    degree_sketch.offer(deg);
+                }
             }
+            sketches_map.insert(
+                format!("impulse.stats.relation.{}.out_degree", r_idx),
+                degree_sketch.to_json(),
+            );
         }
-        sketches_map.insert(
-            format!("impulse.stats.relation.{}.out_degree", r_idx),
-            degree_sketch.to_json(),
-        );
 
         // Attribute stats & sketches
         let mut current_rel_attrs = Vec::new();
         for (a_idx, attr) in rel.attributes.iter().enumerate() {
             if let Ok(data) = reader.get_attribute_data(r_idx, a_idx) {
-                let attr_stat = match attr.type_code {
-                    1 => AttributeStatisticsCalculator::calculate_int32(&attr.name, data),
-                    2 => AttributeStatisticsCalculator::calculate_int64(&attr.name, data),
-                    3 => AttributeStatisticsCalculator::calculate_float32(&attr.name, data),
-                    4 => AttributeStatisticsCalculator::calculate_float64(&attr.name, data),
+                let base_type = attr.type_code & 0x7F;
+                let attr_stat = match base_type {
+                    0x03 => AttributeStatisticsCalculator::calculate_int32(&attr.name, data),
+                    0x04 => AttributeStatisticsCalculator::calculate_int64(&attr.name, data),
+                    0x06 => AttributeStatisticsCalculator::calculate_float32(&attr.name, data),
+                    0x07 => AttributeStatisticsCalculator::calculate_float64(&attr.name, data),
                     _ => impulse_graph::stats::AttributeStatistics::empty(&attr.name),
                 };
 
                 // Build CBO Sketch for attribute
-                if attr.type_code == 1
-                    || attr.type_code == 2
-                    || attr.type_code == 3
-                    || attr.type_code == 4
-                {
+                if matches!(base_type, 0x01 | 0x02 | 0x03 | 0x04 | 0x06 | 0x07) {
                     let mut hll = HyperLogLogSketch::new(10);
                     let mut hist = EquiDepthHistogramBuilder::new(10_000);
 
-                    match attr.type_code {
-                        1 => {
+                    match base_type {
+                        0x01 => {
+                            for &b in data {
+                                let v = b as i8;
+                                if v == i8::MIN {
+                                    hist.offer_null();
+                                } else {
+                                    hll.offer_long(v as u64);
+                                    hist.offer(v as f64);
+                                }
+                            }
+                        }
+                        0x02 => {
+                            for &chunk in data.as_chunks::<2>().0 {
+                                let v = i16::from_le_bytes(chunk);
+                                if v == i16::MIN {
+                                    hist.offer_null();
+                                } else {
+                                    hll.offer_long(v as u64);
+                                    hist.offer(v as f64);
+                                }
+                            }
+                        }
+                        0x03 => {
                             for &chunk in data.as_chunks::<4>().0 {
                                 let v = i32::from_le_bytes(chunk);
                                 if v == i32::MIN {
@@ -84,7 +104,7 @@ pub fn run(
                                 }
                             }
                         }
-                        2 => {
+                        0x04 => {
                             for &chunk in data.as_chunks::<8>().0 {
                                 let v = i64::from_le_bytes(chunk);
                                 if v == i64::MIN {
@@ -95,7 +115,7 @@ pub fn run(
                                 }
                             }
                         }
-                        3 => {
+                        0x06 => {
                             for &chunk in data.as_chunks::<4>().0 {
                                 let v = f32::from_le_bytes(chunk);
                                 if v.is_nan() {
@@ -106,7 +126,7 @@ pub fn run(
                                 }
                             }
                         }
-                        4 => {
+                        0x07 => {
                             for &chunk in data.as_chunks::<8>().0 {
                                 let v = f64::from_le_bytes(chunk);
                                 if v.is_nan() {

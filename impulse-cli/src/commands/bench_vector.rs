@@ -270,10 +270,13 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
             } else {
                 (vec![0u32; n + 1], Vec::new())
             };
+            if n == 0 || d == 0 {
+                return Err("Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into());
+            }
             let mut rng = StdRng::seed_from_u64(cfg.seed);
             let mut qvecs = vec![0.0f32; cfg.queries * d];
             for qi in 0..cfg.queries {
-                let u = rng.gen_range(0..n.max(1));
+                let u = rng.gen_range(0..n);
                 for j in 0..d {
                     qvecs[qi * d + j] = vecs[u * d + j] + rng.gen_range(-0.08..0.08);
                 }
@@ -283,10 +286,13 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
             let loaded = load_embeddings_from_path(emb_path, None, metric == VamanaMetric::Cosine)?;
             let n = loaded.num_vectors;
             let d = loaded.dimension;
+            if n == 0 || d == 0 {
+                return Err("Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into());
+            }
             let mut rng = StdRng::seed_from_u64(cfg.seed);
             let mut qvecs = vec![0.0f32; cfg.queries * d];
             for qi in 0..cfg.queries {
-                let u = rng.gen_range(0..n.max(1));
+                let u = rng.gen_range(0..n);
                 for j in 0..d {
                     qvecs[qi * d + j] = loaded.vectors[u * d + j] + rng.gen_range(-0.08..0.08);
                 }

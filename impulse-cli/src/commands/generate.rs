@@ -147,8 +147,8 @@ pub fn run(args: &GenerateArgs) -> Result<(), Box<dyn Error>> {
 /// Generates a Graph500 Kronecker / R-MAT benchmark graph
 fn generate_graph500(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, Box<dyn Error>> {
     let scale = args.scale;
-    if scale == 0 || scale > 36 {
-        return Err("Scale factor S must be between 1 and 36".into());
+    if scale == 0 || scale > 32 {
+        return Err("Scale factor S must be between 1 and 32 (u32 vertex IDs)".into());
     }
 
     let num_nodes = 1u64 << scale;
@@ -201,6 +201,10 @@ fn generate_graph500(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, B
             } else {
                 std::cmp::min(chunk_size as u64, target_edges - start_idx)
             };
+
+            if num_nodes == 0 {
+                return Vec::new();
+            }
 
             let mut thread_edges =
                 Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
@@ -411,6 +415,10 @@ fn generate_erdos_renyi(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph
             } else {
                 std::cmp::min(chunk as u64, target_edges - start)
             };
+
+            if num_nodes == 0 {
+                return Vec::new();
+            }
 
             let mut thread_edges =
                 Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
@@ -623,6 +631,10 @@ fn generate_bipartite(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, 
             } else {
                 std::cmp::min(chunk as u64, target_edges - start)
             };
+
+            if src_nodes == 0 || tgt_nodes == 0 {
+                return Vec::new();
+            }
 
             let mut thread_edges = Vec::with_capacity(count as usize);
 

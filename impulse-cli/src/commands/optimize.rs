@@ -62,7 +62,10 @@ pub fn run_with_options(
         output_path.display()
     );
     let reader = SnapshotReader::open(input_path)?;
-    let mut writer = SnapshotWriter::new(output_path.to_str().unwrap());
+    let output_str = output_path
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
 
     if let Ok(meta) = reader.get_metadata() {
         if !meta.is_empty() {
@@ -443,13 +446,22 @@ pub fn run_with_options(
                     let start = entry.data_offset as usize;
                     let len = entry.data_bytes as usize;
                     if start + len <= snapshot_bytes.len() {
+                        let mut payload = snapshot_bytes[start..start + len].to_vec();
+                        // Relativize absolute Vamana slab offsets before SnapshotWriter::finalize_to_writer
+                        // adds the new idx.data_offset.
+                        if payload.len() >= 64 {
+                            let rel_adj = hdr.adj_slab_offset.saturating_sub(entry.data_offset);
+                            let rel_quant = hdr.quant_code_offset.saturating_sub(entry.data_offset);
+                            payload[0x28..0x30].copy_from_slice(&rel_adj.to_le_bytes());
+                            payload[0x38..0x40].copy_from_slice(&rel_quant.to_le_bytes());
+                        }
                         writer.add_index(
                             entry.domain_id,
                             entry.relation_id,
                             entry.attribute_index,
                             entry.index_type,
                             &entry.name,
-                            snapshot_bytes[start..start + len].to_vec(),
+                            payload,
                         );
                     }
                 }
@@ -606,11 +618,15 @@ pub fn compute_rcm_permutation(
     row_offsets: &[u32],
     col_indices: &[u32],
 ) -> (Vec<u32>, Vec<u32>) {
+    if node_count == 0 || row_offsets.len() <= node_count {
+        let id: Vec<u32> = (0..node_count as u32).collect();
+        return (id.clone(), id);
+    }
     let mut visited = vec![false; node_count];
     let mut order: Vec<u32> = Vec::with_capacity(node_count);
 
     let mut degrees: Vec<(usize, u32)> = (0..node_count)
-        .map(|i| (i, row_offsets[i + 1] - row_offsets[i]))
+        .map(|i| (i, row_offsets[i + 1].saturating_sub(row_offsets[i])))
         .collect();
     degrees.sort_by_key(|&(_, deg)| deg);
 
@@ -626,14 +642,18 @@ pub fn compute_rcm_permutation(
         while let Some(u) = queue.pop_front() {
             order.push(u as u32);
 
-            let start = row_offsets[u] as usize;
-            let end = row_offsets[u + 1] as usize;
-            let mut nbrs: Vec<usize> = (start..end)
-                .map(|k| col_indices[k] as usize)
-                .filter(|&v| v < node_count && !visited[v])
-                .collect();
+            let start = (row_offsets[u] as usize).min(col_indices.len());
+            let end = (row_offsets[u + 1] as usize).min(col_indices.len());
+            let mut nbrs: Vec<usize> = if start <= end {
+                (start..end)
+                    .map(|k| col_indices[k] as usize)
+                    .filter(|&v| v < node_count && !visited[v])
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
-            nbrs.sort_by_key(|&v| row_offsets[v + 1] - row_offsets[v]);
+            nbrs.sort_by_key(|&v| row_offsets[v + 1].saturating_sub(row_offsets[v]));
 
             for v in nbrs {
                 if !visited[v] {
@@ -658,8 +678,12 @@ pub fn compute_degree_sort_permutation(
     node_count: usize,
     row_offsets: &[u32],
 ) -> (Vec<u32>, Vec<u32>) {
+    if node_count == 0 || row_offsets.len() <= node_count {
+        let id: Vec<u32> = (0..node_count as u32).collect();
+        return (id.clone(), id);
+    }
     let mut degrees: Vec<(usize, u32)> = (0..node_count)
-        .map(|i| (i, row_offsets[i + 1] - row_offsets[i]))
+        .map(|i| (i, row_offsets[i + 1].saturating_sub(row_offsets[i])))
         .collect();
 
     degrees.sort_by_key(|&(_, deg)| std::cmp::Reverse(deg));

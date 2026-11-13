@@ -551,16 +551,33 @@ pub fn run_with_options(
             if is_parquet_file(&edge_file_path, r.format.as_deref()) {
                 let src_keys = read_parquet_id_strings(&edge_file_path, src_col)?;
                 let tgt_keys = read_parquet_id_strings(&edge_file_path, tgt_col)?;
+                if src_keys.len() != tgt_keys.len() {
+                    return Err(format!(
+                        "Relation '{}' Parquet column length mismatch: '{}' has {} rows, '{}' has {} rows",
+                        r.name.as_deref().unwrap_or("<unnamed>"), src_col, src_keys.len(), tgt_col, tgt_keys.len()
+                    )
+                    .into());
+                }
 
                 for i in 0..src_keys.len() {
                     let src_idx = {
-                        let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
+                        let src_map = domain_node_maps.get_mut(&r.src_domain).ok_or_else(|| {
+                            format!(
+                                "Relation '{}' references undefined src_domain '{}'",
+                                r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                            )
+                        })?;
                         let next_idx = src_map.len() as u32;
                         *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
                     };
 
                     let tgt_idx = {
-                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
+                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).ok_or_else(|| {
+                            format!(
+                                "Relation '{}' references undefined tgt_domain '{}'",
+                                r.name.as_deref().unwrap_or("<unnamed>"), r.tgt_domain
+                            )
+                        })?;
                         let next_idx = tgt_map.len() as u32;
                         *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
                     };
@@ -581,13 +598,23 @@ pub fn run_with_options(
 
                 for i in 0..src_keys.len() {
                     let src_idx = {
-                        let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
+                        let src_map = domain_node_maps.get_mut(&r.src_domain).ok_or_else(|| {
+                            format!(
+                                "Relation '{}' references undefined src_domain '{}'",
+                                r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                            )
+                        })?;
                         let next_idx = src_map.len() as u32;
                         *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
                     };
 
                     let tgt_idx = {
-                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
+                        let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).ok_or_else(|| {
+                            format!(
+                                "Relation '{}' references undefined tgt_domain '{}'",
+                                r.name.as_deref().unwrap_or("<unnamed>"), r.tgt_domain
+                            )
+                        })?;
                         let next_idx = tgt_map.len() as u32;
                         *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
                     };
@@ -608,7 +635,15 @@ pub fn run_with_options(
         // Sort edges by src_idx then tgt_idx for CSR construction
         edges.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
-        let src_domain_count = domain_node_maps.get(&r.src_domain).unwrap().len() as u32;
+        let src_domain_count = domain_node_maps
+            .get(&r.src_domain)
+            .ok_or_else(|| {
+                format!(
+                    "Relation '{}' references undefined src_domain '{}'",
+                    r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                )
+            })?
+            .len() as u32;
         let mut row_offsets = vec![0u32; (src_domain_count + 1) as usize];
         let mut col_indices = Vec::with_capacity(edges.len());
         let mut permutation = Vec::with_capacity(edges.len());

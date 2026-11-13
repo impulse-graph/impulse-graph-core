@@ -211,6 +211,7 @@ pub fn run_with_options(
                 || state_unopt.pc != state.pc
                 || state_unopt.flags != state.flags
                 || state_unopt.register_types != state.register_types
+                || state_unopt.registers != state.registers
             {
                 unsafe {
                     impulse_vm_context_destroy(ctx);
