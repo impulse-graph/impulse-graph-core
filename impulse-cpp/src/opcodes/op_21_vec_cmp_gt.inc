@@ -63,11 +63,16 @@ op_VEC_CMP_GT: {
 
     if (type1 == TYPE_DOUBLE_VECTOR) {
         int h_src = static_cast<int>(val1);
-        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES) && vm_state->query_context->double_vector_lengths[h_src] > 0)
-            ? vm_state->query_context->double_vector_lengths[h_src] : vm_state->query_context->max_nodes;
+        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+            ? std::min(vm_state->query_context->double_vector_lengths[h_src], vm_state->query_context->max_nodes)
+            : vm_state->query_context->max_nodes;
         const double* v = vm_state->query_context->double_vectors[h_src].data();
         if (type2 == TYPE_DOUBLE_VECTOR) {
             int h_src2 = static_cast<int>(val2);
+            size_t N2 = (h_src2 >= 0 && h_src2 < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+                ? std::min(vm_state->query_context->double_vector_lengths[h_src2], vm_state->query_context->max_nodes)
+                : vm_state->query_context->max_nodes;
+            N = std::min(N, N2);
             const double* v2 = vm_state->query_context->double_vectors[h_src2].data();
             for (size_t i = 0; i < N; ++i) {
                 if (v[i] > v2[i]) bs.set(i);
@@ -81,12 +86,17 @@ op_VEC_CMP_GT: {
         }
     } else if (type1 == TYPE_FLOAT_VECTOR) {
         int h_src = static_cast<int>(val1);
-        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES) && vm_state->query_context->float_vector_lengths[h_src] > 0)
-            ? vm_state->query_context->float_vector_lengths[h_src] : vm_state->query_context->max_nodes;
+        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+            ? std::min(vm_state->query_context->float_vector_lengths[h_src], vm_state->query_context->max_nodes)
+            : vm_state->query_context->max_nodes;
         const float* v = vm_state->query_context->float_vectors[h_src].data();
         if (v) {
             if (type2 == TYPE_FLOAT_VECTOR) {
                 int h_src2 = static_cast<int>(val2);
+                size_t N2 = (h_src2 >= 0 && h_src2 < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+                    ? std::min(vm_state->query_context->float_vector_lengths[h_src2], vm_state->query_context->max_nodes)
+                    : vm_state->query_context->max_nodes;
+                N = std::min(N, N2);
                 const float* v2 = vm_state->query_context->float_vectors[h_src2].data();
                 for (size_t i = 0; i < N; ++i) {
                     if (v[i] > v2[i]) bs.set(i);
