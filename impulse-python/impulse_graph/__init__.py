@@ -152,15 +152,19 @@ class Snapshot:
         self._check_open()
         effective_catalog = catalog if catalog is not None else self._catalog
         if isinstance(name_or_id, int):
-            dom_info = self.get_domain(name_or_id)
-            return DomainView(
-                self,
-                domain_id=dom_info["domain_id"],
-                domain_name=dom_info["name"],
-                node_count=dom_info.get("node_count", 0),
-                key_type=dom_info["key_type"],
-                catalog=effective_catalog,
-            )
+            count = self.domain_count()
+            for i in range(count):
+                dom_info = self.get_domain(i)
+                if dom_info["domain_id"] == name_or_id:
+                    return DomainView(
+                        self,
+                        domain_id=dom_info["domain_id"],
+                        domain_name=dom_info["name"],
+                        node_count=dom_info.get("node_count", 0),
+                        key_type=dom_info["key_type"],
+                        catalog=effective_catalog,
+                    )
+            raise KeyError(f"Domain ID {name_or_id} not found in snapshot catalog.")
         elif isinstance(name_or_id, str):
             count = self.domain_count()
             for i in range(count):
@@ -358,16 +362,30 @@ class Snapshot:
         c_query = CypherQuery(query, catalog=effective_catalog)
         return c_query.build_traversal(self)
 
+    def _relation_shape(self, relation_index: int, transpose: bool = False) -> tuple[int, int]:
+        rel = self.get_relation(relation_index)
+        src_count = rel["node_count"]
+        tgt_count = rel["node_count"]
+        try:
+            src_dom = self.domain(int(rel["src_domain_id"]))
+            if src_dom.node_count > 0:
+                src_count = src_dom.node_count
+        except Exception:
+            pass
+        try:
+            tgt_dom = self.domain(int(rel["tgt_domain_id"]))
+            if tgt_dom.node_count > 0:
+                tgt_count = tgt_dom.node_count
+        except Exception:
+            pass
+        return (tgt_count, src_count) if transpose else (src_count, tgt_count)
+
     def to_scipy_csr(self, relation_index: int = 0, transpose: bool = False):
         """
         Convert snapshot topology to a scipy.sparse.csr_matrix or csc_matrix.
         Uses zero-copy off-heap pointers.
         """
         import scipy.sparse as sp
-
-        rel = self.get_relation(relation_index)
-        node_count = rel["node_count"]
-        shape = (node_count, node_count)
 
         if transpose:
             try:
@@ -377,13 +395,21 @@ class Snapshot:
                 # Transpose forward CSR if CSC is not compiled in file
                 forward = self.to_scipy_csr(relation_index, transpose=False)
                 return forward.transpose().tocsr()
+            _, cols = self._relation_shape(relation_index, transpose=True)
+            rows = len(indptr) - 1 if len(indptr) > 0 else 0
+            if len(indices) > 0:
+                cols = max(cols, int(indices.max()) + 1)
             data = np.ones(len(indices), dtype=np.float32)
-            return sp.csr_matrix((data, indices, indptr), shape=shape)
+            return sp.csr_matrix((data, indices, indptr), shape=(rows, cols))
 
         indptr = self.get_row_offsets_array(relation_index)
         indices = self.get_col_indices_array(relation_index)
+        _, cols = self._relation_shape(relation_index, transpose=False)
+        rows = len(indptr) - 1 if len(indptr) > 0 else 0
+        if len(indices) > 0:
+            cols = max(cols, int(indices.max()) + 1)
         data = np.ones(len(indices), dtype=np.float32)
-        return sp.csr_matrix((data, indices, indptr), shape=shape)
+        return sp.csr_matrix((data, indices, indptr), shape=(rows, cols))
 
     def to_torch_csr(self, relation_index: int = 0, transpose: bool = False, device: str = "cpu"):
         """
@@ -391,10 +417,6 @@ class Snapshot:
         Safe for zero-copy read-only inference.
         """
         import torch
-
-        rel = self.get_relation(relation_index)
-        node_count = rel["node_count"]
-        size = (node_count, node_count)
 
         if transpose:
             try:
@@ -406,6 +428,12 @@ class Snapshot:
         else:
             crow_np = self.get_row_offsets_array(relation_index)
             col_np = self.get_col_indices_array(relation_index)
+
+        _, cols = self._relation_shape(relation_index, transpose=transpose)
+        rows = len(crow_np) - 1 if len(crow_np) > 0 else 0
+        if len(col_np) > 0:
+            cols = max(cols, int(col_np.max()) + 1)
+        size = (rows, cols)
 
         # Use np.copy or int64 casting to satisfy PyTorch sparse_csr 64-bit requirement
         crow_indices = torch.from_numpy(crow_np.astype(np.int64))

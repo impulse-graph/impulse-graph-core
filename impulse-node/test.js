@@ -172,7 +172,29 @@ const queryRes3 = executeBytecode(snap, bcBuf, 0n);
 assert.strictEqual(queryRes3.isOk(), true, 'executeBytecode should succeed');
 assert.strictEqual(queryRes3.asInt(), 42n, 'executeBytecode result should match 42');
 
+// Test executeBytecode bitset result lifetime (UAF fix)
+const qbBitset = new QueryBuilder();
+qbBitset.inputNode(0).walkEdge(0).collectBitset();
+const queryResBitset = executeBytecode(snap, qbBitset.compile().bytecode(), 0n);
+assert.strictEqual(queryResBitset.isOk(), true, 'executeBytecode bitset should succeed');
+assert.strictEqual(queryResBitset.testBitset(1), true, 'executeBytecode bitset should keep ctx alive for node 1');
+assert.strictEqual(queryResBitset.testBitset(2), true, 'executeBytecode bitset should keep ctx alive for node 2');
+
 console.log('  -> Low-level executeBytecode passed!\n');
+
+// 7. Test Traversal wrapper, 0-step traversal, 4-arg isReachable, and executeWithContext validation
+console.log('[Test 7] Testing Traversal wrapper & SWE-sweep fixes...');
+const { Traversal } = require('./index.js');
+assert.deepStrictEqual(snap.traverse(0).out(0).toArray(), [1, 2], '1-hop traversal should return [1, 2]');
+assert.deepStrictEqual(snap.traverse(2).toArray(), [2], '0-step traversal should return seed [2]');
+assert.strictEqual(snap.isReachable(0, 0, 0, 1), true, '4-arg isReachable should resolve domain pair to relation 0');
+assert.strictEqual(snap.isReachable(99, 0, 0, 1), false, '4-arg isReachable with missing domain pair should return false');
+assert.throws(
+  () => compiled.executeWithContext(123, 456, 0n),
+  TypeError,
+  'executeWithContext should reject non-object arguments'
+);
+console.log('  -> Traversal & SWE-sweep fixes passed!\n');
 
 // Cleanup temporary snapshot
 snap.close();

@@ -83,7 +83,11 @@ func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
 	}
 	count := s.RelationCount()
 	for i := uint16(0); i < count; i++ {
-		return i, true
+		var cName *C.char
+		status := C.impulse_snapshot_get_relation_name(s.ptr, C.uint16_t(i), &cName)
+		if status == C.IMPULSE_OK && cName != nil && C.GoString(cName) == name {
+			return i, true
+		}
 	}
 	return 0, false
 }

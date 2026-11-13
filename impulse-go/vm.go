@@ -326,6 +326,7 @@ func ExecuteVM(bytecode []Instruction, state *VMState, inputParam uint64) error 
 // QueryBuilder provides a fluent Go API for constructing impOps VM bytecode programs.
 type QueryBuilder struct {
 	instructions []Instruction
+	currentReg   uint16
 }
 
 // NewQueryBuilder initializes a new fluent QueryBuilder.
@@ -336,109 +337,129 @@ func NewQueryBuilder() *QueryBuilder {
 }
 
 func (b *QueryBuilder) InputNode(dstReg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x01, Flags: 0, DstReg: dstReg, Payload: 0})
-	return b
-}
-
-func (b *QueryBuilder) InputSet(dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x02, Flags: 0, DstReg: dstReg, Payload: 0})
 	return b
 }
 
+func (b *QueryBuilder) InputSet(dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x03, Flags: 0, DstReg: dstReg, Payload: 0})
+	return b
+}
+
 func (b *QueryBuilder) LoadConstInt(val uint32, dstReg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x03, Flags: 0, DstReg: dstReg, Payload: val})
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x04, Flags: 0, DstReg: dstReg, Payload: val})
 	return b
 }
 
 func (b *QueryBuilder) WalkEdge(relationID uint16, dstReg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x10, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
+	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x10, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) WalkEdgeFiltered(relationID uint16, filterReg uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(filterReg) << 16) | uint32(relationID)
+	payload := (uint32(relationID) << 16) | (uint32(filterReg&0xFF) << 8) | uint32(b.currentReg&0xFF)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x11, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) Degree(relationID uint16, dstReg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x12, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
+	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x12, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) CscWalk(relationID uint16, dstReg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x18, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
+	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x18, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) SetUnion(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
 	payload := (uint32(srcReg1) << 16) | uint32(srcReg2)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x30, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) SetIntersect(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
 	payload := (uint32(srcReg1) << 16) | uint32(srcReg2)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x31, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) SetDifference(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
-	payload := (uint32(srcReg1) << 16) | uint32(srcReg2)
+	payload := (uint32(srcReg2) << 16) | uint32(srcReg1)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x32, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) SetCardinality(srcReg, dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x33, Flags: 0, DstReg: dstReg, Payload: uint32(srcReg)})
 	return b
 }
 
 func (b *QueryBuilder) AfforestCC(relationID uint16, dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x40, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
 	return b
 }
 
 func (b *QueryBuilder) MxV(relationID uint16, vectorReg, dstReg uint16) *QueryBuilder {
-	payload := (uint32(vectorReg) << 16) | uint32(relationID)
+	payload := (uint32(relationID&0xFF) << 8) | uint32(vectorReg&0xFF)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x41, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
 func (b *QueryBuilder) BrandesForward(relationID uint16, dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x48, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
 	return b
 }
 
 func (b *QueryBuilder) SampleNeighbors(relationID uint16, kSamples uint16, dstReg uint16) *QueryBuilder {
 	payload := (uint32(relationID) << 16) | uint32(kSamples)
+	b.currentReg = dstReg
 	b.instructions = append(b.instructions, Instruction{Opcode: 0x60, Flags: 0, DstReg: dstReg, Payload: payload})
 	return b
 }
 
-func (b *QueryBuilder) RebacCheck(relationID uint16, targetNodeReg, dstReg uint16) *QueryBuilder {
-	payload := (uint32(targetNodeReg) << 16) | uint32(relationID)
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x63, Flags: 0, DstReg: dstReg, Payload: payload})
+func (b *QueryBuilder) RebacCheck(permissionID uint32, dstReg uint16) *QueryBuilder {
+	b.currentReg = dstReg
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x63, Flags: 0, DstReg: dstReg, Payload: permissionID})
 	return b
 }
 
 func (b *QueryBuilder) CollectBitset(reg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x90, Flags: 0, DstReg: reg, Payload: 0})
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x90, Flags: 0, DstReg: reg, Payload: uint32(reg)})
+	b.currentReg = reg
 	return b
 }
 
 func (b *QueryBuilder) CollectArray(reg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x91, Flags: 0, DstReg: reg, Payload: 0})
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x91, Flags: 0, DstReg: reg, Payload: uint32(reg)})
+	b.currentReg = reg
 	return b
 }
 
 func (b *QueryBuilder) Halt() *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0xFF, Flags: 0, DstReg: 0, Payload: 0})
+	b.instructions = append(b.instructions, Instruction{Opcode: 0x00, Flags: 0, DstReg: 0, Payload: 0})
 	return b
 }
 
 func (b *QueryBuilder) Compile() []Instruction {
-	if len(b.instructions) == 0 || b.instructions[len(b.instructions)-1].Opcode != 0xFF {
+	if len(b.instructions) == 0 || b.instructions[len(b.instructions)-1].Opcode != 0x00 {
 		b.Halt()
 	}
 	bytecode := make([]Instruction, len(b.instructions))
