@@ -34,6 +34,10 @@ op_EWISE_ADD: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_43_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_43_ALLOWED_AUX1_TYPES);
+    if ((vm_state->register_types[src1] != TYPE_FLOAT_VECTOR && vm_state->register_types[src1] != TYPE_DOUBLE_VECTOR) ||
+        (vm_state->register_types[src2] != TYPE_FLOAT_VECTOR && vm_state->register_types[src2] != TYPE_DOUBLE_VECTOR)) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     size_t N = vm_state->query_context->max_nodes;
     bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);

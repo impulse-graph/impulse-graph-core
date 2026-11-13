@@ -46,9 +46,19 @@ op_MASK_AND: {
 
     int h1 = static_cast<int>(vm_state->registers[src1]);
     int h2 = static_cast<int>(vm_state->registers[src2]);
+    if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->bitsets.size() ||
+        vm_state->query_context->bitsets[h1].words == nullptr ||
+        h2 < 0 || static_cast<size_t>(h2) >= vm_state->query_context->bitsets.size() ||
+        vm_state->query_context->bitsets[h2].words == nullptr) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && dst != src1 && dst != src2) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        if (h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_dst].words == nullptr) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
