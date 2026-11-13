@@ -59,6 +59,8 @@ op_L1_NORM_DIFF: {
         float val2 = (vm_state->register_types[src2] == TYPE_FLOAT) ?
             reinterpret_cast<float&>(vm_state->registers[src2]) : static_cast<float>(vm_state->registers[src2]);
         l1_diff = std::abs(val1 - val2);
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     IMPULSE_TESTCASE(l1_diff == 0.0f);
 

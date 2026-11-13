@@ -49,9 +49,7 @@ op_VEC_BLEND: {
     uint8_t type_true = vm_state->register_types[src_true];
     IMPULSE_TESTCASE(type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR);
     if (type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR) {
-        // Scalar / non-vector operands: no-op per Java specification
-        vm_state->pc++;
-        DISPATCH();
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
 
     int h_mask = static_cast<int>(vm_state->registers[mask_reg]);

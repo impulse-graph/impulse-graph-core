@@ -42,8 +42,19 @@ op_ROARING_BITMAP_AND_NOT: {
     IMPULSE_TESTCASE(dst == src2);
     IMPULSE_TESTCASE(src1 == src2);
 
-    const int h1 = (vm_state->register_types[src1] == TYPE_BITSET_HANDLE) ? static_cast<int>(vm_state->registers[src1]) : -1;
-    const int h2 = (vm_state->register_types[src2] == TYPE_BITSET_HANDLE) ? static_cast<int>(vm_state->registers[src2]) : -1;
+    if (vm_state->register_types[src1] != TYPE_BITSET_HANDLE ||
+        vm_state->register_types[src2] != TYPE_BITSET_HANDLE) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+
+    const int h1 = static_cast<int>(vm_state->registers[src1]);
+    const int h2 = static_cast<int>(vm_state->registers[src2]);
+    if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->bitsets.size() ||
+        vm_state->query_context->bitsets[h1].words == nullptr ||
+        h2 < 0 || static_cast<size_t>(h2) >= vm_state->query_context->bitsets.size() ||
+        vm_state->query_context->bitsets[h2].words == nullptr) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
 
     const int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
