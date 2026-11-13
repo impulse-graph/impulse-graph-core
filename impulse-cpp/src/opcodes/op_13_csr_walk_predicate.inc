@@ -69,6 +69,11 @@ op_CSR_WALK_PREDICATE: {
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     IMPULSE_TESTCASE(src_is_bitset);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
+    if (src_is_bitset &&
+        (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->bitsets.size() ||
+         vm_state->query_context->bitsets[h_src].words == nullptr)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
     uint64_t max_nodes = vm_state->query_context->max_nodes;
 

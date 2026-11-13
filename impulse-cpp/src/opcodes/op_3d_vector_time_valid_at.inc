@@ -37,6 +37,10 @@ op_VECTOR_TIME_VALID_AT: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, time_reg, OP_3D_ALLOWED_SRC_TYPES);
+    if (vm_state->register_types[time_reg] == TYPE_NULL ||
+        ((1ULL << vm_state->register_types[time_reg]) & OP_3D_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

@@ -72,6 +72,11 @@ op_CSR_WALK_2HOP: {
     }
     IMPULSE_TESTCASE(src_is_bitset);
     IMPULSE_TESTCASE(dst == src && src_is_bitset);
+    if (src_is_bitset &&
+        (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->bitsets.size() ||
+         vm_state->query_context->bitsets[h_src].words == nullptr)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && !(dst == src && src_is_bitset)) {
