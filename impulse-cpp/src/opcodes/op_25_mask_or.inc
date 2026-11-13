@@ -41,6 +41,10 @@ op_MASK_OR: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src1, OP_25_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_25_ALLOWED_AUX1_TYPES);
+    if (vm_state->register_types[src1] != TYPE_BITSET_HANDLE ||
+        vm_state->register_types[src2] != TYPE_BITSET_HANDLE) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(src1 == src2);
     IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
