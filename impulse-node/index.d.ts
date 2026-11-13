@@ -1,6 +1,11 @@
 export class Snapshot {
   constructor(path: string);
   isReachable(
+    relationIndex: number,
+    srcId: number | bigint,
+    tgtId: number | bigint
+  ): boolean;
+  isReachable(
     srcDomain: number,
     srcId: number | bigint,
     tgtDomain: number,
@@ -29,6 +34,7 @@ export class VmContext {
   constructor(snapshot?: Snapshot);
   destroy(): void;
   vectorSize(): number;
+  bitsetWordCount(): number;
   acquireBitset(): number;
   releaseBitset(handle: number): void;
   bitsetAdd(handle: number, nodeId: number | bigint): void;

@@ -245,7 +245,8 @@ class Traversal:
                 qb.filter_cel(step[1])
             elif op == "degree":
                 qb.walk_degree(step[1])
-        qb.collect_bitset()
+        if not self._steps or self._steps[-1][0] != "degree":
+            qb.collect_bitset()
         return qb.compile()
 
     def execute(
@@ -311,6 +312,9 @@ class Traversal:
 
         if not res.is_ok():
             return []
+
+        if self._steps and self._steps[-1][0] == "degree":
+            return [int(res.as_int())]
 
         handle = res.raw_value
         nodes = [int(nid) for nid in ctx.get_bitset_nodes(handle)]

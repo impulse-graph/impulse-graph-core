@@ -53,11 +53,24 @@ public sealed class Snapshot : IDisposable
 
     public unsafe ExecutionResult ExecuteQuery(Query query, ulong inputParam = 0UL)
     {
-        using var ctx = new VmContext(this);
-        return ExecuteQuery(query, ctx, inputParam);
+        var ctx = new VmContext(this);
+        try
+        {
+            return ExecuteQueryCore(query, ctx, inputParam, ownedContext: ctx);
+        }
+        catch
+        {
+            ctx.Dispose();
+            throw;
+        }
     }
 
     public unsafe ExecutionResult ExecuteQuery(Query query, VmContext context, ulong inputParam = 0UL)
+    {
+        return ExecuteQueryCore(query, context, inputParam, ownedContext: null);
+    }
+
+    private unsafe ExecutionResult ExecuteQueryCore(Query query, VmContext context, ulong inputParam, VmContext? ownedContext)
     {
         EnsureOpen();
         ArgumentNullException.ThrowIfNull(query);
@@ -84,8 +97,10 @@ public sealed class Snapshot : IDisposable
             registers[i] = state.Registers[i];
         }
 
-        return new ExecutionResult(status, state.Flags, registers);
+        return new ExecutionResult(status, state.Flags, registers, ownedContext);
     }
+
+    ~Snapshot() => Dispose(disposing: false);
 
     private void EnsureOpen()
     {
@@ -94,6 +109,12 @@ public sealed class Snapshot : IDisposable
     }
 
     public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_handle != nint.Zero)
         {
