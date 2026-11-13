@@ -1549,6 +1549,9 @@ impulse_status_t impulse_snapshot_get_relation_buffers(
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
     const auto& rel = snapshot->relations[relation_index];
+    if ((rel.csr_row_off_offset % 4 != 0) || (rel.csr_col_idx_offset % 4 != 0)) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
     *out_offsets = (rel.csr_row_off_offset > 0) ? reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset) : nullptr;
     *out_targets = (rel.csr_col_idx_offset > 0) ? reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset) : nullptr;
@@ -1639,6 +1642,9 @@ impulse_status_t impulse_snapshot_get_relation_csc_buffers(
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
     const auto& rel = snapshot->relations[relation_index];
+    if ((rel.csc_row_off_offset % 4 != 0) || (rel.csc_col_idx_offset % 4 != 0)) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
     if (rel.csc_row_off_offset > 0) {
         *out_csc_offsets = reinterpret_cast<const uint32_t*>(raw + rel.csc_row_off_offset);

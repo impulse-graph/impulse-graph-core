@@ -1795,9 +1795,7 @@ impl SnapshotReader {
                 if let Ok(mut data) = self.get_domain_attribute_by_index(d_idx, a_idx) {
                     if a.is_nullable() {
                         let bm = align_128(dom.node_count.div_ceil(64) * 8) as usize;
-                        if data.len() >= bm {
-                            data = &data[bm..];
-                        }
+                        data = if data.len() >= bm { &data[bm..] } else { &[] };
                     }
                     let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
                     let attr_stats = match base_type {
@@ -1833,9 +1831,7 @@ impl SnapshotReader {
                 if let Ok(mut data) = self.get_attribute_data(r_idx, a_idx) {
                     if a.is_nullable() {
                         let bm = align_128(r.edge_count.div_ceil(64) * 8) as usize;
-                        if data.len() >= bm {
-                            data = &data[bm..];
-                        }
+                        data = if data.len() >= bm { &data[bm..] } else { &[] };
                     }
                     let base_type = a.type_code & crate::spec::IMPULSE_TYPE_MASK;
                     let attr_stats = match base_type {

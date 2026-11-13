@@ -272,7 +272,7 @@ static inline bool impulse_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* ou
         if (_imp_zf) { \
             (vm_state)->flags |= IMPULSE_VM_FLAG_ZF; \
         } else { \
-            (vm_state)->flags &= static_cast<uint8_t>(~IMPULSE_VM_FLAG_ZF); \
+            (vm_state)->flags &= ~static_cast<uint64_t>(IMPULSE_VM_FLAG_ZF); \
         } \
     } while (0)
 
@@ -283,7 +283,7 @@ static inline bool impulse_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* ou
         if (_imp_st) { \
             (vm_state)->flags |= IMPULSE_VM_FLAG_ST; \
         } else { \
-            (vm_state)->flags &= static_cast<uint8_t>(~IMPULSE_VM_FLAG_ST); \
+            (vm_state)->flags &= ~static_cast<uint64_t>(IMPULSE_VM_FLAG_ST); \
         } \
     } while (0)
 

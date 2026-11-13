@@ -589,8 +589,7 @@ impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16
 impulse_status_t impulse_delta_layer_add_edge(impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
     if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
     std::unique_lock<std::shared_mutex> lock(delta->mutex);
-    uint64_t key = (src_node << 32) | (tgt_node & 0xFFFFFFFF);
-    delta->tombstones.erase(key);
+    delta->tombstones.erase({src_node, tgt_node});
     delta->additions[src_node].push_back(tgt_node);
     return IMPULSE_OK;
 }
@@ -598,16 +597,14 @@ impulse_status_t impulse_delta_layer_add_edge(impulse_delta_layer_t* delta, uint
 impulse_status_t impulse_delta_layer_tombstone_edge(impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
     if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
     std::unique_lock<std::shared_mutex> lock(delta->mutex);
-    uint64_t key = (src_node << 32) | (tgt_node & 0xFFFFFFFF);
-    delta->tombstones.insert(key);
+    delta->tombstones.insert({src_node, tgt_node});
     return IMPULSE_OK;
 }
 
 bool impulse_delta_layer_is_tombstoned(const impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
     if (!delta) return false;
     std::shared_lock<std::shared_mutex> lock(delta->mutex);
-    uint64_t key = (src_node << 32) | (tgt_node & 0xFFFFFFFF);
-    return delta->tombstones.find(key) != delta->tombstones.end();
+    return delta->tombstones.find({src_node, tgt_node}) != delta->tombstones.end();
 }
 
 void impulse_delta_layer_destroy(impulse_delta_layer_t* delta) {

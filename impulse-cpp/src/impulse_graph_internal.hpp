@@ -26,6 +26,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <set>
 #include <vector>
 
 #ifdef _WIN32
@@ -223,7 +224,7 @@ struct impulse_delta_layer {
     uint16_t tgt_domain_id;
     std::string relation_name;
     mutable std::shared_mutex mutex;
-    std::unordered_set<uint64_t> tombstones;
+    std::set<std::pair<uint64_t, uint64_t>> tombstones;
     std::unordered_map<uint64_t, std::vector<uint64_t>> additions;
 };
 

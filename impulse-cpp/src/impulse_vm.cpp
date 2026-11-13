@@ -7,6 +7,8 @@
  */
 #include "impulse_vm_internal.hpp"
 #include "impulse_opcode_contracts.hpp"
+#include <atomic>
+#include <thread>
 using namespace impulse::vm;
 #include "opcodes/shared/mock_attr_common.hpp"
 #include "opcodes/shared/coo_walk_common.hpp"
@@ -39,8 +41,10 @@ impulse_vm_status_t impulse_vm_execute(
 #if HAS_COMPUTED_GOTO
     // Jump table containing addresses of labels
     static const void* dispatch_table[256];
-    static bool dispatch_inited = false;
-    if (!dispatch_inited) {
+    static std::atomic<int> dispatch_state{0}; // 0=uninit, 1=initing, 2=ready
+    if (dispatch_state.load(std::memory_order_acquire) != 2) {
+        int expected = 0;
+        if (dispatch_state.compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
         for (int i = 0; i < 256; ++i) dispatch_table[i] = &&op_INVALID;
         dispatch_table[OP_INIT_MOCK_NODE_ATTR] = &&op_INIT_MOCK_NODE_ATTR;
         dispatch_table[OP_INIT_MOCK_EDGE_ATTR] = &&op_INIT_MOCK_EDGE_ATTR;
@@ -223,7 +227,12 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_LANE_SET_COVER] = &&op_LANE_SET_COVER;
         dispatch_table[OP_VECTOR_ANN_SEARCH] = &&op_VECTOR_ANN_SEARCH;
         dispatch_table[OP_VECTOR_RERANK_DOT] = &&op_VECTOR_RERANK_DOT;
-        dispatch_inited = true;
+        dispatch_state.store(2, std::memory_order_release);
+        } else {
+            while (dispatch_state.load(std::memory_order_acquire) != 2) {
+                std::this_thread::yield();
+            }
+        }
     }
 
     bool fuel_active = (vm_state->query_context != nullptr && vm_state->query_context->fuel_enabled);

@@ -63,6 +63,9 @@ public:
                     pos++;
                     break;
                 }
+                if (src[pos] == ')' || src[pos] == ']') {
+                    throw std::runtime_error("ImpScheme S-expression mismatched closing delimiter");
+                }
                 expr.list.push_back(parse(depth + 1));
             }
             return expr;

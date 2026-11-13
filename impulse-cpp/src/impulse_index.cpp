@@ -259,7 +259,7 @@ impulse_status_t impulse_index_build_zone_map(
     uint8_t base_type = type_code & 0x7F;
 
     for (uint32_t p = 0; p < page_count; ++p) {
-        size_t start = p * PAGE_SIZE;
+        size_t start = static_cast<size_t>(p) * PAGE_SIZE;
         size_t end = std::min(start + PAGE_SIZE, element_count);
 
         double min_val = DBL_MAX;
@@ -367,7 +367,7 @@ impulse_status_t impulse_index_build_inverted_bitset(
     }
 
     uint32_t key_count = static_cast<uint32_t>(bitsets.size());
-    std::string string_pool = "\0";
+    std::string string_pool(1, '\0');
     std::vector<InvertedBitsetEntry> entries;
     std::vector<std::vector<uint64_t>> payload_data;
 
@@ -497,7 +497,7 @@ impulse_status_t impulse_index_build_minimal_perfect_hash(
     if (!keys || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t seed = 0x123456789ABCDEF0ULL;
-    std::string string_pool = "\0";
+    std::string string_pool(1, '\0');
     std::vector<MphfEntry> table(count * 2);
     std::vector<bool> occupied(count * 2, false);
 

@@ -864,10 +864,12 @@ impl SnapshotWriter {
                         let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
                         let num_edges = rel.col_indices.len();
                         for u in 0..max_u {
-                            let start = rel.row_offsets[u] as usize;
+                            let start = (rel.row_offsets[u] as usize).min(num_edges);
                             let end = (rel.row_offsets[u + 1] as usize).min(num_edges);
-                            for &v in &rel.col_indices[start..end] {
-                                pairs.push((u as u32, v));
+                            if start <= end {
+                                for &v in &rel.col_indices[start..end] {
+                                    pairs.push((u as u32, v));
+                                }
                             }
                         }
                     }

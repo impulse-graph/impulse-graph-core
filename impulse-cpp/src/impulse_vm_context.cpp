@@ -1072,11 +1072,18 @@ void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, ui
     if (ctx && handle < ctx->bitsets.size()) {
         auto& bs = ctx->bitsets[handle];
         bs.clear();
-        size_t full_words = count / 64;
+        if (!bs.words || bs.word_count == 0) return;
+        size_t full_words = static_cast<size_t>(count / 64);
+        if (full_words >= bs.word_count) {
+            for (size_t i = 0; i < bs.word_count; ++i) {
+                bs.words[i] = ~0ULL;
+            }
+            return;
+        }
         for (size_t i = 0; i < full_words; ++i) {
             bs.words[i] = ~0ULL;
         }
-        size_t rem = count % 64;
+        size_t rem = static_cast<size_t>(count % 64);
         if (rem > 0) {
             bs.words[full_words] = (1ULL << rem) - 1;
         }

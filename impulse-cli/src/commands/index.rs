@@ -84,7 +84,10 @@ pub fn add(input_path: &Path, output_path: &Path, specs: &[String]) -> Result<()
     );
 
     let reader = SnapshotReader::open(input_path)?;
-    let mut writer = SnapshotWriter::new(output_path.to_str().unwrap());
+    let output_str = output_path
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
 
     // 1..3. Replay metadata, domains (with v0.10.0 inline attributes & key_attr_index), and relations
     replay_snapshot_into_writer(&reader, &mut writer)?;
@@ -135,7 +138,10 @@ pub fn drop(
     );
 
     let reader = SnapshotReader::open(input_path)?;
-    let mut writer = SnapshotWriter::new(output_path.to_str().unwrap());
+    let output_str = output_path
+        .to_str()
+        .ok_or("Output path is not valid UTF-8")?;
+    let mut writer = SnapshotWriter::new(output_str);
 
     // 1..3. Replay metadata, domains, and relations
     replay_snapshot_into_writer(&reader, &mut writer)?;
@@ -468,8 +474,7 @@ fn build_and_add_index(
 
     match index_type_str.as_str() {
         "permutation" | "0x01" | "1" => {
-            let elem_count = elem_row_count.max(get_element_count(&attr_info, attr_payload.len()));
-            let elem_count = elem_count.min(get_element_count(&attr_info, attr_payload.len()));
+            let elem_count = elem_row_count.min(get_element_count(&attr_info, attr_payload.len()));
             let mut out_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
             let mut out_size: usize = 0;
             let status = unsafe {
