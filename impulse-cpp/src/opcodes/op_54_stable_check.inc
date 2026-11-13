@@ -51,9 +51,11 @@ op_STABLE_CHECK: {
     IMPULSE_TESTCASE(src_is_bitset && !dst_is_bitset);
 
     if (src_is_bitset && dst_is_bitset) {
-        if (h_src < 0 || static_cast<size_t>(h_src) >= VM_MAX_BITSET_HANDLES ||
-            h_dst < 0 || static_cast<size_t>(h_dst) >= VM_MAX_BITSET_HANDLES) {
-            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_src].words == nullptr ||
+            h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_dst].words == nullptr) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_BITSET_HANDLES);
         IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < VM_MAX_BITSET_HANDLES);

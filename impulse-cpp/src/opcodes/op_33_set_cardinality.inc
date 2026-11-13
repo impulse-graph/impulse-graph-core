@@ -35,7 +35,10 @@ op_SET_CARDINALITY: {
     IMPULSE_TESTCASE(dst == src);
     if (stype == TYPE_BITSET_HANDLE) {
         int handle = static_cast<int>(vm_state->registers[src]);
-        IMPULSE_ASSERT(handle >= 0 && static_cast<size_t>(handle) < vm_state->query_context->bitsets.size());
+        if (handle < 0 || static_cast<size_t>(handle) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[handle].words == nullptr) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         const auto& bs = vm_state->query_context->bitsets[handle];
         for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
             count += std::popcount(bs.words[i]);
