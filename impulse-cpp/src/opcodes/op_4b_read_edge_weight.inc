@@ -45,6 +45,10 @@ op_READ_EDGE_WEIGHT: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, u_reg, OP_4B_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, v_reg, OP_4B_ALLOWED_AUX1_TYPES);
+    if (((1ULL << vm_state->register_types[u_reg]) & OP_4B_ALLOWED_SRC_TYPES) == 0 ||
+        ((1ULL << vm_state->register_types[v_reg]) & OP_4B_ALLOWED_AUX1_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     IMPULSE_TESTCASE(u_reg == v_reg);
     float weight = OP_4B_DEFAULT_EDGE_WEIGHT;

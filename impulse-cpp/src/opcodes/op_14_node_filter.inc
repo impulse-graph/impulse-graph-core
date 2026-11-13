@@ -43,6 +43,9 @@ op_NODE_FILTER: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_14_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, val_reg, OP_14_ALLOWED_VAL_TYPES);
+    if (((1ULL << vm_state->register_types[src]) & OP_14_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {
