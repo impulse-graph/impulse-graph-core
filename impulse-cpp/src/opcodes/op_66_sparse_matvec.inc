@@ -32,6 +32,9 @@ op_SPARSE_MATVEC: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_66_ALLOWED_SRC_TYPES);
+    if (((1ULL << vm_state->register_types[src]) & OP_66_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(dst == src);
 
     const int h = acquire_float_vector(vm_state->query_context);

@@ -32,6 +32,9 @@ op_KCORE_DECOMPOSITION: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && r_src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, r_src, OP_68_ALLOWED_SRC_TYPES);
+    if (((1ULL << vm_state->register_types[r_src]) & OP_68_ALLOWED_SRC_TYPES) == 0) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
 
     uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
     if (rel_id == 0u && vm_state->register_types[r_src] == TYPE_NULL && r_src > 0u) {
