@@ -82,7 +82,8 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
 
     // 4. Collect and merge relations
     // Map relation_name -> (src_domain_id, tgt_domain_id, edge_set, include_csc)
-    let mut merged_relations: HashMap<String, (u16, u16, Vec<(u32, u32)>, bool)> = HashMap::new();
+    type MergedRelationEntry = (u16, u16, Vec<(u32, u32)>, bool);
+    let mut merged_relations: HashMap<String, MergedRelationEntry> = HashMap::new();
 
     // Load base relations
     for (r_idx, r) in base_reader.relations().iter().enumerate() {

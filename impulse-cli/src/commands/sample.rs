@@ -234,9 +234,8 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
 
             if is_json {
                 let mut rows = Vec::new();
-                for edge_idx in start..end {
+                for (edge_idx, &tgt_id) in col_indices.iter().enumerate().take(end).skip(start) {
                     let src_id = find_source_node(edge_idx, row_offsets);
-                    let tgt_id = col_indices[edge_idx];
 
                     let mut row_obj = serde_json::Map::new();
                     row_obj.insert("edge_idx".to_string(), json!(edge_idx));
@@ -281,9 +280,8 @@ pub fn run_with_options(file: &Path, opts: &SampleOptions<'_>) -> Result<(), Box
                 }
                 table.set_header(headers);
 
-                for edge_idx in start..end {
+                for (edge_idx, &tgt_id) in col_indices.iter().enumerate().take(end).skip(start) {
                     let src_id = find_source_node(edge_idx, row_offsets);
-                    let tgt_id = col_indices[edge_idx];
                     let mut row =
                         vec![edge_idx.to_string(), src_id.to_string(), tgt_id.to_string()];
                     for (attr, data, offsets) in &attr_cols {
