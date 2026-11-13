@@ -43,7 +43,7 @@ op_EXTRACT_VALIDITY: {
         IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len = vm_state->query_context->float_vector_lengths[h1];
-        if (len == 0 || len > v1.size()) len = v1.size();
+        if (len > v1.size()) len = v1.size();
         for (size_t i = 0; i < len; ++i) {
             if (!std::isnan(v1[i])) {
                 bitset_add(bDst, i, vm_state->query_context->max_nodes);
@@ -54,7 +54,7 @@ op_EXTRACT_VALIDITY: {
         IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
         auto& v1 = vm_state->query_context->double_vectors[h1];
         size_t len = vm_state->query_context->double_vector_lengths[h1];
-        if (len == 0 || len > v1.size()) len = v1.size();
+        if (len > v1.size()) len = v1.size();
         for (size_t i = 0; i < len; ++i) {
             if (!std::isnan(v1[i])) {
                 bitset_add(bDst, i, vm_state->query_context->max_nodes);
