@@ -68,6 +68,10 @@ op_VECTOR_MUL_ATTR: {
         VALIDATE_REG(src_reg);
         IMPULSE_ASSERT(src_reg < IMP_VM_GPR_COUNT);
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_34_ALLOWED_SRC_TYPES);
+        if (vm_state->register_types[src_reg] == TYPE_NULL ||
+            ((1ULL << vm_state->register_types[src_reg]) & OP_34_ALLOWED_SRC_TYPES) == 0) {
+            return IMPULSE_VM_ERR_INVALID_REGISTER;
+        }
 
         if (rel_id >= vm_state->query_context->attribute_slots.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         if (attr_id >= vm_state->query_context->attribute_slots[rel_id].size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

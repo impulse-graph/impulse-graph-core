@@ -32,6 +32,9 @@ op_COALESCE: {
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
     IMPULSE_TESTCASE(vm_state->register_types[src1] == TYPE_NULL);
+    if (vm_state->register_types[src1] == TYPE_NULL) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
     IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
