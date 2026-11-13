@@ -49,12 +49,8 @@ op_ROARING_BITMAP_AND: {
 
     const int h1 = static_cast<int>(vm_state->registers[src1]);
     const int h2 = static_cast<int>(vm_state->registers[src2]);
-    if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->bitsets.size() ||
-        vm_state->query_context->bitsets[h1].words == nullptr ||
-        h2 < 0 || static_cast<size_t>(h2) >= vm_state->query_context->bitsets.size() ||
-        vm_state->query_context->bitsets[h2].words == nullptr) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
+    IMP_REQUIRE_BITSET_HANDLE(vm_state, h1);
+    IMP_REQUIRE_BITSET_HANDLE(vm_state, h2);
 
     const int h_dst = acquire_bitset(vm_state->query_context);
     if (h_dst < 0) {

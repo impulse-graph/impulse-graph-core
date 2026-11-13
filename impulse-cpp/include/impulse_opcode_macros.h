@@ -265,6 +265,15 @@ static inline bool impulse_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* ou
         } \
     } while (0)
 
+#define IMP_REQUIRE_BITSET_HANDLE(vm_state, h) \
+    do { \
+        if (IMPULSE_UNLIKELY((h) < 0 || \
+                             static_cast<size_t>(h) >= (vm_state)->query_context->bitsets.size() || \
+                             (vm_state)->query_context->bitsets[(h)].words == nullptr)) { \
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS; \
+        } \
+    } while (0)
+
 #define IMP_VM_SET_ZF(vm_state, zero_cond) \
     do { \
         const bool _imp_zf = static_cast<bool>(zero_cond); \
