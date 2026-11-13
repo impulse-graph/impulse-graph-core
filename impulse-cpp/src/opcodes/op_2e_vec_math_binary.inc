@@ -89,7 +89,7 @@ op_VEC_MATH_BINARY: {
         int h_v = static_cast<int>(vm_state->registers[vec_reg]);
         size_t v_len = (h_v >= 0 && static_cast<size_t>(h_v) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->float_vector_lengths[h_v] : 0;
-        size_t N = (v_len > 0) ? v_len : vm_state->query_context->max_nodes;
+        size_t N = std::min(v_len, vm_state->query_context->max_nodes);
         uint32_t b_flt = static_cast<uint32_t>(vm_state->registers[flt_reg] & IMP_SENTINEL_U32);
         float f_val = 0.0f;
         std::memcpy(&f_val, &b_flt, sizeof(float));
@@ -121,8 +121,8 @@ op_VEC_MATH_BINARY: {
     if (use_f64) {
         size_t len1 = (h_s1 >= 0 && static_cast<size_t>(h_s1) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s1] : 0;
         size_t len2 = (h_s2 >= 0 && static_cast<size_t>(h_s2) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s2] : 0;
-        size_t out_len = (len1 > 0 && len2 > 0) ? std::min(len1, len2) : std::max(len1, len2);
-        if (out_len > 0) N = out_len;
+        size_t out_len = std::min(len1, len2);
+        N = std::min(out_len, vm_state->query_context->max_nodes);
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
@@ -139,8 +139,8 @@ op_VEC_MATH_BINARY: {
     } else {
         size_t len1 = (h_s1 >= 0 && static_cast<size_t>(h_s1) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_s1] : 0;
         size_t len2 = (h_s2 >= 0 && static_cast<size_t>(h_s2) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_s2] : 0;
-        size_t out_len = (len1 > 0 && len2 > 0) ? std::min(len1, len2) : std::max(len1, len2);
-        if (out_len > 0) N = out_len;
+        size_t out_len = std::min(len1, len2);
+        N = std::min(out_len, vm_state->query_context->max_nodes);
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);
             if (h < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
