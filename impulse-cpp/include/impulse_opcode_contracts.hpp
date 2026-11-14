@@ -25,7 +25,7 @@ namespace impulse::vm {
 // ============================================================================
 // 1. Register Type Bitmasks (0x00 .. 0x10)
 // ============================================================================
-#define IMP_TYPE_BIT(t) (1u << static_cast<uint32_t>(t))
+#define IMP_TYPE_BIT(t) (static_cast<uint32_t>(t) < 32u ? (1u << static_cast<uint32_t>(t)) : 0u)
 
 constexpr uint32_t IMP_TYPES_NONE           = 0u;
 constexpr uint32_t IMP_TYPES_ANY            = 0x1FFFFu;
@@ -41,7 +41,8 @@ constexpr uint32_t IMP_TYPES_SOURCE_SET     = IMP_TYPES_INT_OR_NODE | IMP_TYPE_B
  */
 #define IMPULSE_CHECK_REG_TYPE(vm_state, reg, allowed_mask) \
     do { \
-        if (IMPULSE_UNLIKELY(((1u << static_cast<uint32_t>((vm_state)->register_types[(reg)])) & (allowed_mask)) == 0u)) { \
+        const uint32_t _imp_rt = static_cast<uint32_t>((vm_state)->register_types[(reg)]); \
+        if (IMPULSE_UNLIKELY(_imp_rt >= 32u || ((1u << _imp_rt) & (allowed_mask)) == 0u)) { \
             return IMPULSE_VM_ERR_INVALID_REGISTER; \
         } \
     } while (0)

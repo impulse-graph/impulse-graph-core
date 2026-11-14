@@ -78,6 +78,24 @@ int main() {
         }
     }
 
+    // VM register-type check (fuzz_vm_bytecode crash PT0UPT09PYBD9wlQBAAAAA==):
+    // Out-of-range register_types tag (>= 32, e.g. 41) previously triggered UBSan shift-exponent >= 32
+    // in IMPULSE_CHECK_REG_TYPE during OP_EWISE_ADD (0x43). Must return IMPULSE_VM_ERR_INVALID_REGISTER.
+    {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+        assert(ctx != nullptr);
+        impulse_vm_state_t vm{};
+        vm.query_context = ctx;
+        vm.register_types[4] = 41;
+        impulse_instruction_t prog[2] = {
+            {0x43, 0x09, 0x0050, 0x00000004u},
+            {OP_HALT, 0, 0, 0},
+        };
+        impulse_vm_status_t vms = impulse_vm_execute(prog, 2, &vm, 100);
+        assert(vms == IMPULSE_VM_ERR_INVALID_REGISTER);
+        impulse_vm_context_destroy(ctx);
+    }
+
     std::printf("test_robustness_regressions: PASS\n");
     return 0;
 }
