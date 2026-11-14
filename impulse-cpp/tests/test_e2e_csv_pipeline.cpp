@@ -1323,6 +1323,88 @@ void run_suite_3_graphblas_vm(const impulse_snapshot_t* snap) {
                   << " ({0..39}, {40..74}, {75..99}), C_50 k-core=2.0\n";
         impulse_vm_context_destroy(ctx);
     }
+
+    // 3.9 Vectorized Complex Mathematical Expressions (OP_VEC_MATH_UNARY/BINARY/TERNARY)
+    {
+        int failures_before = g_failed_assertions;
+        impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+        impulse_vm_state_t state{};
+        state.query_context = ctx;
+
+        // Sensor domain (id 9, N=10):
+        //   voltage_f64 = attr 0 (115.0 .. 126.25)
+        //   phase_angle_f64 = attr 1 (-0.15 .. +0.12)
+        //   reading_f32 = attr 2 (42.0 .. 64.5)
+        // Compute AC phasor magnitude hypot(V * cos(theta), V * sin(theta)) == V,
+        // plus sigmoid(theta * 10), erf(theta), clamp/lerp, and safeDiv(V, 0.0, fallback).
+        int h_zero = impulse_vm_context_acquire_double_vector(ctx);
+        int h_ten = impulse_vm_context_acquire_double_vector(ctx);
+        int h_half = impulse_vm_context_acquire_double_vector(ctx);
+        int h_target = impulse_vm_context_acquire_double_vector(ctx);
+        for (size_t i = 0; i < 10; ++i) {
+            impulse_vm_context_double_vector_set(ctx, static_cast<size_t>(h_zero), i, 0.0);
+            impulse_vm_context_double_vector_set(ctx, static_cast<size_t>(h_ten), i, 10.0);
+            impulse_vm_context_double_vector_set(ctx, static_cast<size_t>(h_half), i, 0.25);
+            impulse_vm_context_double_vector_set(ctx, static_cast<size_t>(h_target), i, 200.0);
+        }
+        state.registers[10] = static_cast<uint64_t>(h_zero);
+        state.register_types[10] = TYPE_DOUBLE_VECTOR;
+        state.registers[11] = static_cast<uint64_t>(h_ten);
+        state.register_types[11] = TYPE_DOUBLE_VECTOR;
+        state.registers[12] = static_cast<uint64_t>(h_half);
+        state.register_types[12] = TYPE_DOUBLE_VECTOR;
+        state.registers[13] = static_cast<uint64_t>(h_target);
+        state.register_types[13] = TYPE_DOUBLE_VECTOR;
+
+        auto pack_bin = [](uint16_t s1, uint16_t s2, uint8_t fn) -> uint32_t {
+            return static_cast<uint32_t>(s1) | (static_cast<uint32_t>(s2) << 8) | (static_cast<uint32_t>(fn) << 16);
+        };
+        auto pack_tern = [](uint16_t s1, uint16_t s2, uint16_t s3, uint8_t fn) -> uint32_t {
+            return static_cast<uint32_t>(s1) | (static_cast<uint32_t>(s2) << 8) |
+                   (static_cast<uint32_t>(s3) << 16) | (static_cast<uint32_t>(fn) << 24);
+        };
+
+        const impulse_instruction_t math_prog[] = {
+            {OP_LOAD_COLUMN_VECTOR, 0, 1, 9U | (0U << 16)}, // R1 = V (double)
+            {OP_LOAD_COLUMN_VECTOR, 0, 2, 9U | (1U << 16)}, // R2 = theta (double)
+            {OP_VEC_MATH_UNARY,  0, 3, static_cast<uint32_t>(2U | (static_cast<uint32_t>(MATH_FUNC_COS) << 8))}, // R3 = cos(theta)
+            {OP_VEC_MATH_UNARY,  0, 4, static_cast<uint32_t>(2U | (static_cast<uint32_t>(MATH_FUNC_SIN) << 8))}, // R4 = sin(theta)
+            {OP_EWISE_MULT,      0, 5, 1U | (3U << 8)},     // R5 = V * cos(theta)
+            {OP_EWISE_MULT,      0, 6, 1U | (4U << 8)},     // R6 = V * sin(theta)
+            {OP_VEC_MATH_BINARY, 0, 7, pack_bin(5, 6, MATH_FUNC_HYPOT)}, // R7 = hypot(R5, R6) == V
+            {OP_EWISE_MULT,      0, 8, 2U | (11U << 8)},    // R8 = theta * 10
+            {OP_VEC_MATH_UNARY,  0, 9, static_cast<uint32_t>(8U | (static_cast<uint32_t>(MATH_FUNC_SIGMOID) << 8))}, // R9 = sigmoid(10*theta)
+            {OP_VEC_MATH_TERNARY, 0, 14, pack_tern(1, 13, 12, MATH_FUNC_LERP)}, // R14 = lerp(V, 200, 0.25)
+            {OP_VEC_MATH_TERNARY, 0, 15, pack_tern(1, 10, 13, MATH_FUNC_SAFE_DIV)}, // R15 = safeDiv(V, 0.0, 200.0)
+            {OP_VEC_MATH_UNARY,  0, 16, static_cast<uint32_t>(2U | (static_cast<uint32_t>(MATH_FUNC_ERF) << 8))}, // R16 = erf(theta)
+            {OP_HALT, 0, 7, 0}
+        };
+        E2E_CHECK(impulse_vm_execute(math_prog, sizeof(math_prog) / sizeof(math_prog[0]), &state, 0) == IMPULSE_VM_OK,
+                  "Vector math expression program (OP_VEC_MATH_*) failed");
+
+        const double* hypot_v = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(state.registers[7]));
+        const double* sig_v = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(state.registers[9]));
+        const double* lerp_v = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(state.registers[14]));
+        const double* sdiv_v = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(state.registers[15]));
+        const double* erf_v = impulse_vm_context_get_double_vector(ctx, static_cast<size_t>(state.registers[16]));
+        E2E_CHECK(hypot_v && sig_v && lerp_v && sdiv_v && erf_v, "All math output vectors must be non-null");
+        if (hypot_v && sig_v && lerp_v && sdiv_v && erf_v) {
+            for (size_t i = 0; i < 10; ++i) {
+                double v = 115.0 + 1.25 * static_cast<double>(i);
+                double th = -0.15 + 0.03 * static_cast<double>(i);
+                double want_sig = 1.0 / (1.0 + std::exp(-10.0 * th));
+                double want_lerp = v + 0.25 * (200.0 - v);
+                E2E_CHECK(std::abs(hypot_v[i] - v) < 1e-6, "hypot(V*cos, V*sin) != V");
+                E2E_CHECK(std::abs(sig_v[i] - want_sig) < 1e-6, "sigmoid(10*theta) mismatch");
+                E2E_CHECK(std::abs(lerp_v[i] - want_lerp) < 1e-6, "lerp(V, 200, 0.25) mismatch");
+                E2E_CHECK(std::abs(sdiv_v[i] - 200.0) < 1e-6, "safeDiv(V, 0, 200) must return fallback 200.0");
+                E2E_CHECK(std::abs(erf_v[i] - std::erf(th)) < 1e-6, "erf(theta) mismatch");
+            }
+        }
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "3.9 Vector Math Expressions (hypot/cos/sin/sigmoid/lerp/safeDiv/erf): 10/10 sensors exact\n";
+        impulse_vm_context_destroy(ctx);
+    }
 }
 
 // ============================================================================
@@ -1483,6 +1565,198 @@ void run_suite_4_cel_filters_and_projections(const impulse_snapshot_t* snap) {
                   << "4.3 Edge-Stream CEL Filter & State Projection (OP_CSR_WALK_STREAM): targets="
                   << format_u32_vec(yielded_sensors) << ", projected_sum=" << projected_sum << "\n";
         impulse_vm_context_destroy(ctx);
+    }
+
+    // 4.4 Complex Nested Math Expressions via Traversal::filter/project + collectNodeValues
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        // User domain (u0..u15): age_i32 = 20 + 2*i, score_f64 = 50.0 + 3.25*i
+        const std::string user_math_cel =
+            "clamp(lerp(score_f64, 100.0, 0.25), 65.0, 95.0) + sqrt(abs(age_i32 - 25.0))";
+        auto user_proj = view.domain("User")
+                             .all()
+                             .filter("age_i32 >= 26 && score_f64 < 95.0")
+                             .project(user_math_cel)
+                             .collectNodeValues();
+        E2E_CHECK(user_proj.size() == 11U, "Expected 11 users in [3..13], got " + std::to_string(user_proj.size()));
+        for (size_t idx = 0; idx < user_proj.size(); ++idx) {
+            uint64_t u = 3ULL + idx;
+            double age = 20.0 + 2.0 * static_cast<double>(u);
+            double score = 50.0 + 3.25 * static_cast<double>(u);
+            double l = score + 0.25 * (100.0 - score);
+            double want = std::clamp(l, 65.0, 95.0) + std::sqrt(std::abs(age - 25.0));
+            E2E_CHECK(user_proj[idx].first == u, "User node ID mismatch at index " + std::to_string(idx));
+            E2E_CHECK(std::abs(user_proj[idx].second - static_cast<float>(want)) < 1e-3f,
+                      "User math CEL projection mismatch for u" + std::to_string(u));
+        }
+
+        // Sensor domain (0..9): AC phasor + sigmoid expression
+        const std::string sensor_math_cel =
+            "hypot(voltage_f64 * cos(phase_angle_f64), voltage_f64 * sin(phase_angle_f64)) * "
+            "(1.0 + sigmoid(phase_angle_f64 * 10.0))";
+        auto sensor_proj = view.domain("Sensor")
+                               .all()
+                               .filter("voltage_f64 >= 120.0 && abs(phase_angle_f64) <= 0.06")
+                               .project(sensor_math_cel)
+                               .collectNodeValues();
+        E2E_CHECK(sensor_proj.size() == 4U, "Expected 4 sensors in [4..7], got " + std::to_string(sensor_proj.size()));
+        for (size_t idx = 0; idx < sensor_proj.size(); ++idx) {
+            uint64_t s = 4ULL + idx;
+            double v = 115.0 + 1.25 * static_cast<double>(s);
+            double th = -0.15 + 0.03 * static_cast<double>(s);
+            double want = std::hypot(v * std::cos(th), v * std::sin(th)) * (1.0 + 1.0 / (1.0 + std::exp(-10.0 * th)));
+            E2E_CHECK(sensor_proj[idx].first == s, "Sensor node ID mismatch");
+            E2E_CHECK(std::abs(sensor_proj[idx].second - static_cast<float>(want)) < 1e-2f,
+                      "Sensor phasor+sigmoid CEL mismatch for s" + std::to_string(s));
+        }
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.4 Complex Nested Math CEL Projections: User(11/11) & Sensor(4/4) exact\n";
+    }
+
+    // 4.5 Nullable Attributes & Kleene 3-Valued Logic (Sensor.opt_calibration_f64: nulls at 2, 7)
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        auto nulls = view.domain("Sensor").all().filter("is_null(opt_calibration_f64)").collect();
+        E2E_CHECK((nulls == std::vector<uint64_t>{2, 7}), "is_null(opt_calibration_f64) must match {2, 7}");
+
+        auto gt = view.domain("Sensor").all().filter("opt_calibration_f64 > 1.004").collect();
+        E2E_CHECK((gt == std::vector<uint64_t>{5, 6, 8, 9}),
+                  "opt_calibration_f64 > 1.004 must exclude null 7 and match {5, 6, 8, 9}");
+
+        auto not_gt = view.domain("Sensor").all().filter("!(opt_calibration_f64 > 1.004)").collect();
+        E2E_CHECK((not_gt == std::vector<uint64_t>{0, 1, 3, 4}),
+                  "!(opt_calibration_f64 > 1.004) must exclude Kleene UNKNOWN {2, 7} and match {0, 1, 3, 4}");
+
+        auto non_null_le = view.domain("Sensor").all().filter("is_not_null(opt_calibration_f64) && opt_calibration_f64 <= 1.001").collect();
+        E2E_CHECK((non_null_le == std::vector<uint64_t>{0, 1}), "is_not_null && <= 1.001 must match {0, 1}");
+
+        auto coalesced = view.domain("Sensor")
+                             .all()
+                             .filter("voltage_f64 <= 118.0")
+                             .project("is_null(opt_calibration_f64) ? 1.5 : opt_calibration_f64")
+                             .collectNodeValues();
+        E2E_CHECK(coalesced.size() == 3U, "Expected sensors {0, 1, 2}");
+        if (coalesced.size() == 3U) {
+            E2E_CHECK(std::abs(coalesced[0].second - 1.000f) < 1e-4f, "sensor 0 calibration");
+            E2E_CHECK(std::abs(coalesced[1].second - 1.001f) < 1e-4f, "sensor 1 calibration");
+            E2E_CHECK(std::abs(coalesced[2].second - 1.500f) < 1e-4f, "sensor 2 null coalesce");
+        }
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.5 Kleene 3-Valued Null Logic (is_null/is_not_null/!unknown/ternary coalesce)\n";
+    }
+
+    // 4.6 String CEL Predicates on Nullable String Columns (User.opt_nickname_str, Product.opt_promo_str)
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        auto nick_or_null = view.domain("User")
+                                .all()
+                                .filter("contains(opt_nickname_str, \"nick_1\") || is_null(opt_nickname_str)")
+                                .collect();
+        // nick_1, nick_10, nick_12, nick_13, nick_14 + nulls at {3, 7, 11, 15}
+        E2E_CHECK((nick_or_null == std::vector<uint64_t>{1, 3, 7, 10, 11, 12, 13, 14, 15}),
+                  "contains(opt_nickname_str, 'nick_1') || is_null mismatch");
+
+        auto promo_3 = view.domain("Product").all().filter("ends_with(opt_promo_str, \"_3\")").collect();
+        E2E_CHECK((promo_3 == std::vector<uint64_t>{3}), "ends_with(opt_promo_str, '_3') must match {3}");
+
+        auto promo_starts = view.domain("Product").all().filter("starts_with(opt_promo_str, \"PROMO_1\")").collect();
+        E2E_CHECK((promo_starts == std::vector<uint64_t>{1, 10}),
+                  "starts_with(opt_promo_str, 'PROMO_1') must match {1, 10}");
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.6 String CEL Predicates (starts_with/ends_with/contains on nullable strings)\n";
+    }
+
+    // 4.7 Compiler-Generated Edge-Stream CEL Shader (CelCompiler::compile_stream_shader)
+    {
+        int failures_before = g_failed_assertions;
+        impulse::cel::Parser parser("edge.capacity_f32 > 155.0 && abs(src.voltage_f64 - 122.0) <= 2.5");
+        auto ast = parser.parse();
+        E2E_CHECK(ast != nullptr, "Failed to parse stream filter CEL");
+        std::unordered_map<std::string, uint16_t> stream_attrs = {
+            {"capacity_f32", 1U},
+            {"voltage_f64", 0U},
+        };
+        std::vector<impulse_instruction_t> shader;
+        bool ok = impulse::cel::CelCompiler::compile_stream_shader(ast, shader, 0U, &stream_attrs, true);
+        E2E_CHECK(ok && shader.size() >= 3U && shader.front().opcode == OP_STREAM_FUNC_BEGIN &&
+                  shader.back().opcode == OP_STREAM_FUNC_END,
+                  "CelCompiler::compile_stream_shader must emit valid BEGIN..END filter shader");
+        if (ok && shader.size() >= 3U) {
+            // Insert OP_STREAM_YIELD right before OP_STREAM_FUNC_END so targets are collected in R1.
+            shader.insert(shader.end() - 1, impulse_instruction_t{OP_STREAM_YIELD, 0, 1, 0});
+            std::vector<impulse_instruction_t> prog;
+            prog.push_back(impulse_instruction_t{OP_CSR_WALK_STREAM, 1, 1, 0U | (16U << 16)});
+            prog.insert(prog.end(), shader.begin(), shader.end());
+            prog.push_back(impulse_instruction_t{OP_HALT, 0, 1, 0});
+
+            impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
+            impulse_vm_state_t st{};
+            st.query_context = ctx;
+            int h_seed = impulse_vm_context_acquire_bitset(ctx);
+            for (uint32_t u : {4U, 5U, 6U, 7U}) impulse_vm_context_bitset_add(ctx, static_cast<size_t>(h_seed), u);
+            st.registers[0] = static_cast<uint64_t>(h_seed);
+            st.register_types[0] = TYPE_BITSET_HANDLE;
+
+            E2E_CHECK(impulse_vm_execute(prog.data(), prog.size(), &st, 0) == IMPULSE_VM_OK,
+                      "Compiled edge-stream CEL shader execution failed");
+            auto yielded = extract_active_nodes(ctx, st, 1, 10);
+            // From seeds {4,5,6,7}: edges with capacity > 155 and src.voltage in [119.5, 124.5]:
+            // 4(120.0)->6(cap 240), 5(121.25)->6(cap 150 NO), 5(121.25)->7(cap 250), 6(122.5)->7(cap 160), 7(123.75)->8(cap 170)
+            E2E_CHECK((yielded == std::vector<uint32_t>{6U, 7U, 8U}),
+                      "Compiled stream CEL yielded wrong targets: " + format_u32_vec(yielded));
+            impulse_vm_context_destroy(ctx);
+        }
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.7 Compiler-Generated Edge-Stream CEL Shader (compile_stream_shader)\n";
+    }
+
+    // 4.8 Multi-Lane CEL + Constant-Folding Equivalence + Malformed CEL Rejection
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        auto ml_res = view.domain("Sensor")
+                          .multiLane()
+                          .fromSeeds({4ULL, 5ULL, 6ULL})
+                          .out("SENSOR_FEEDS_SENSOR")
+                          .filter("popcount(lane) >= 1 && voltage_f64 >= 122.5")
+                          .project("voltage_f64 + sqrt(16.0)")
+                          .collect();
+        // Seeds 4->(5,6), 5->(6,7), 6->(7); voltage >= 122.5 matches {6, 7, 8, 9} -> active {6, 7}
+        E2E_CHECK(ml_res.laneMaskFor(6U) == 0b011ULL, "Sensor 6 must have lanes 0 and 1");
+        E2E_CHECK(ml_res.laneMaskFor(7U) == 0b110ULL, "Sensor 7 must have lanes 1 and 2");
+        E2E_CHECK(ml_res.laneMaskFor(5U) == 0ULL, "Sensor 5 must be filtered out by voltage_f64 >= 122.5");
+
+        // Constant-folding equivalence
+        const std::string fold_expr = "sqrt(16.0) * 2.0 + abs(-3.0) - (1.0 + 2.0)";
+        auto raw_ast = impulse::cel::Parser(fold_expr).parse();
+        auto opt_ast = impulse::cel::AstOptimizer::optimize(raw_ast);
+        E2E_CHECK(raw_ast != nullptr && opt_ast != nullptr, "Foldable expression must parse");
+        auto no_attr = [](const std::string&) { return impulse::cel::CelValue::make_null(); };
+        double d_raw = 0.0, d_opt = 0.0;
+        E2E_CHECK(impulse::cel::CelKleeneEvaluator::eval(raw_ast, no_attr).to_double(d_raw) &&
+                  impulse::cel::CelKleeneEvaluator::eval(opt_ast, no_attr).to_double(d_opt) &&
+                  std::abs(d_raw - 8.0) < 1e-12 && std::abs(d_opt - 8.0) < 1e-12,
+                  "AstOptimizer folded CEL result must equal raw CEL result (8.0)");
+
+        // Malformed CEL rejection
+        for (const char* bad_cel : {"voltage_f64 >=", "", "&&"}) {
+            E2E_CHECK(impulse::cel::Parser(bad_cel).parse() == nullptr,
+                      std::string("Malformed CEL must be rejected: ") + bad_cel);
+        }
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.8 Multi-Lane CEL, Constant-Folding Equivalence & Malformed CEL Rejection\n";
     }
 }
 

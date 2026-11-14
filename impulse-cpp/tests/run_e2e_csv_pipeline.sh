@@ -9,8 +9,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMPULSE_CPP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-OUT_BIN="/tmp/test_e2e_csv_pipeline_bin"
-TMP_IMPS="/tmp/e2e_core_test.imps"
+TMP_DIR="${TMPDIR:-/tmp}"
+TMP_DIR="${TMP_DIR%/}"
+export TMPDIR="${TMP_DIR}"
+OUT_BIN="${TMP_DIR}/test_e2e_csv_pipeline_bin"
+TMP_IMPS="${TMP_DIR}/e2e_core_test.imps"
 
 cleanup() {
     rm -f "${OUT_BIN}" "${TMP_IMPS}"
