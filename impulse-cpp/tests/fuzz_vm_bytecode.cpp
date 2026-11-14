@@ -137,9 +137,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     // OP_INIT_INPUT_SET documents `input_param` as a raw pointer to bitset words; any non-zero scalar
     // would be a caller contract violation (not an engine bug), so scalar seeds are only passed when
     // the program does not contain that opcode.
-    bool uses_input_set = false;
-    for (size_t i = 0; i < n; ++i) uses_input_set |= (prog[i].opcode == OP_INIT_INPUT_SET);
-    (void)impulse_vm_execute(prog, n, &st, uses_input_set ? 0 : (rnd & 0xF));
+    bool uses_input_ptr = false;
+    for (size_t i = 0; i < n; ++i) {
+        uses_input_ptr |= (prog[i].opcode == OP_INIT_INPUT_SET || prog[i].opcode == OP_MAP_KEYS_TO_DENSE);
+    }
+    (void)impulse_vm_execute(prog, n, &st, uses_input_ptr ? 0 : (rnd & 0xF));
     impulse_vm_context_destroy(ctx);
     return 0;
 }
