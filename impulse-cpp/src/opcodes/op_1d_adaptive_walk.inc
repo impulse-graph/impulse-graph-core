@@ -53,6 +53,7 @@ op_ADAPTIVE_WALK: {
         const auto& slot = vm_state->query_context->slots[rel];
         if (slot.csc_offsets_ptr && slot.csc_targets_ptr && vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
             int h_src = static_cast<int>(vm_state->registers[src]);
+            IMP_REQUIRE_BITSET_HANDLE(vm_state, h_src);
             const auto& bs = vm_state->query_context->bitsets[h_src];
             uint64_t frontier_size = 0;
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {
@@ -79,6 +80,7 @@ op_ADAPTIVE_WALK: {
                 IMPULSE_TESTCASE(accum);
                 if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
                     int h_existing = static_cast<int>(vm_state->registers[dst]);
+                    IMP_REQUIRE_BITSET_HANDLE(vm_state, h_existing);
                     if (dst == src) {
                         h_dst = acquire_bitset(vm_state->query_context);
                         if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

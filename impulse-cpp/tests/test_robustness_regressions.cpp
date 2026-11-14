@@ -164,6 +164,37 @@ int main() {
         impulse_vm_context_destroy(ctx);
     }
 
+    // OP_MOV (0x70) and OP_STABLE_CHECK (0x54) invalid bitset handle regression:
+    // Out-of-bounds TYPE_BITSET_HANDLE in src/dst must return an error status instead of OOB indexing.
+    {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+        assert(ctx != nullptr);
+
+        impulse_vm_state_t vm_mov{};
+        vm_mov.query_context = ctx;
+        vm_mov.registers[0] = 99999ULL;
+        vm_mov.register_types[0] = TYPE_BITSET_HANDLE;
+        impulse_instruction_t prog_mov[2] = {
+            {OP_MOV, 0x00, 1, 0u},
+            {OP_HALT, 0, 0, 0},
+        };
+        assert(impulse_vm_execute(prog_mov, 2, &vm_mov, 100) == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+
+        impulse_vm_state_t vm_stable{};
+        vm_stable.query_context = ctx;
+        vm_stable.registers[0] = 1ULL;
+        vm_stable.register_types[0] = TYPE_NODE_ID;
+        vm_stable.registers[1] = 99999ULL;
+        vm_stable.register_types[1] = TYPE_BITSET_HANDLE;
+        impulse_instruction_t prog_stable[2] = {
+            {OP_STABLE_CHECK, 0x00, 1, 0u},
+            {OP_HALT, 0, 0, 0},
+        };
+        assert(impulse_vm_execute(prog_stable, 2, &vm_stable, 100) != IMPULSE_VM_OK);
+
+        impulse_vm_context_destroy(ctx);
+    }
+
     std::printf("test_robustness_regressions: PASS\n");
     return 0;
 }

@@ -69,10 +69,10 @@ op_STABLE_CHECK: {
             }
         }
     } else if (!src_is_bitset && dst_is_bitset) {
-        if (h_dst < 0 || static_cast<size_t>(h_dst) >= VM_MAX_BITSET_HANDLES) {
+        if (h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_dst].words == nullptr) {
             return IMPULSE_VM_ERR_INVALID_REGISTER;
         }
-        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < VM_MAX_BITSET_HANDLES);
         const auto& bs_dst = vm_state->query_context->bitsets[h_dst];
         is_subset = bitset_test(bs_dst, scalar_src, vm_state->query_context->max_nodes);
     } else if (!src_is_bitset && !dst_is_bitset) {

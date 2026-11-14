@@ -770,6 +770,9 @@ PYBIND11_MODULE(_impulse_native, m) {
             return self.execute(s_ptr, input_param);
         }, py::arg("snapshot") = nullptr, py::arg("input_param") = 0)
         .def("execute_with_context", [](const impulse::vm::CompiledQuery& self, PyImpulseVmContext& ctx, impulse_vm_state_t& state, uint64_t input_param) {
+            if (!ctx.raw_handle()) {
+                throw std::runtime_error("ImpulseVmContext has been destroyed");
+            }
             return self.executeWithContext(ctx.raw_handle(), &state, input_param);
         }, py::arg("context"), py::arg("state"), py::arg("input_param") = 0);
 
