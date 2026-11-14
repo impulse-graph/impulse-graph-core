@@ -32,9 +32,18 @@
 #endif
 #include <new>
 
+#if defined(__SANITIZE_THREAD__)
+#define IMPULSE_TSAN_ENABLED 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define IMPULSE_TSAN_ENABLED 1
+#endif
+#endif
+
 static thread_local bool g_track_heap_allocs = false;
 static thread_local size_t g_heap_alloc_count = 0;
 
+#ifndef IMPULSE_TSAN_ENABLED
 void* operator new(std::size_t sz) {
     if (g_track_heap_allocs) {
         ++g_heap_alloc_count;
@@ -68,6 +77,7 @@ void operator delete(void* p, std::size_t) noexcept {
 void operator delete[](void* p, std::size_t) noexcept {
     std::free(p);
 }
+#endif
 
 using namespace impulse::vm;
 

@@ -25,6 +25,7 @@
 #ifndef IMPULSE_FUZZ_DRIVER_HPP
 #define IMPULSE_FUZZ_DRIVER_HPP
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -262,9 +263,7 @@ inline int standalone_main(int argc, char** argv, const char* target, std::vecto
 #endif
 
     auto now = [] {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     };
     double t0 = now();
     uint64_t execs = 0;
