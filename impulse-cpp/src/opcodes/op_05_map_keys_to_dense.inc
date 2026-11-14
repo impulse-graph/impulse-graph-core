@@ -55,7 +55,11 @@ op_MAP_KEYS_TO_DENSE: {
     bs_dst.clear();
 
     IMPULSE_TESTCASE(input_param == 0u);
-    if (attr && attr->data_ptr) {
+    if (input_param != 0u &&
+        (input_param < 4096u || (input_param % alignof(impulse_vm_input_keys)) != 0u)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    if (attr && attr->data_ptr && input_param != 0u) {
         const impulse_vm_input_keys* input_keys = reinterpret_cast<const impulse_vm_input_keys*>(input_param);
         if (input_keys && input_keys->keys && input_keys->count > 0) {
             const uint8_t base_type = IMP_ATTR_BASE_TYPE(attr->type_code);

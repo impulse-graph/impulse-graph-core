@@ -115,6 +115,22 @@ int main() {
         impulse_vm_context_destroy(ctx);
     }
 
+    // OP_MAP_KEYS_TO_DENSE (0x05) invalid/misaligned input_param regression:
+    // Passing a small scalar like 7 must return IMPULSE_VM_ERR_OUT_OF_BOUNDS instead of dereferencing 0x7.
+    {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+        assert(ctx != nullptr);
+        impulse_vm_state_t vm{};
+        vm.query_context = ctx;
+        impulse_instruction_t prog[2] = {
+            {OP_MAP_KEYS_TO_DENSE, 0x00, 0x0001, 0u},
+            {OP_HALT, 0, 0, 0},
+        };
+        impulse_vm_status_t vms = impulse_vm_execute(prog, 2, &vm, 7ULL);
+        assert(vms == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+        impulse_vm_context_destroy(ctx);
+    }
+
     std::printf("test_robustness_regressions: PASS\n");
     return 0;
 }
