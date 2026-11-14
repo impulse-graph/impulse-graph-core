@@ -269,7 +269,7 @@ pub fn disassemble_bytes(
     for pc in 0..instruction_count {
         let offset = pc * 8;
         let slice = &buffer[offset..offset + 8];
-        let instr = unsafe { &*(slice.as_ptr() as *const impulse_instruction_t) };
+        let instr = unsafe { std::ptr::read_unaligned(slice.as_ptr() as *const impulse_instruction_t) };
 
         let op_name = get_opcode_name(instr.opcode);
         let mut flags_parts = Vec::new();

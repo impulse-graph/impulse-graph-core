@@ -64,6 +64,7 @@ op_CSR_DEGREE: {
         }
     } else if (stype == TYPE_BITSET_HANDLE && slot.offsets_ptr) {
         int h_src = static_cast<int>(vm_state->registers[src]);
+        IMP_REQUIRE_BITSET_HANDLE(vm_state, h_src);
         const auto& bs_src = vm_state->query_context->bitsets[h_src];
         for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {
             uint64_t word = bs_src.words[w];

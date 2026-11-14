@@ -57,6 +57,7 @@ op_CSR_WALK_PREDICATE: {
     IMPULSE_TESTCASE(dst == src);
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && dst != src) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        IMP_REQUIRE_BITSET_HANDLE(vm_state, h_dst);
         vm_state->query_context->bitsets[h_dst].clear();
     } else {
         h_dst = acquire_bitset(vm_state->query_context);

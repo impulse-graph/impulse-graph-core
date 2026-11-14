@@ -52,13 +52,16 @@ op_CSR_WALK_DIRECT_STORE: {
     const bool src_is_bitset = (src_type == TYPE_BITSET_HANDLE);
     IMPULSE_TESTCASE(src_is_bitset);
     IMPULSE_TESTCASE(dst == src);
-    if (src_is_bitset && static_cast<size_t>(src_val) >= vm_state->query_context->bitsets.size()) {
+    if (src_is_bitset &&
+        (static_cast<size_t>(src_val) >= vm_state->query_context->bitsets.size() ||
+         vm_state->query_context->bitsets[src_val].words == nullptr)) {
         return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
 
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && !(dst == src && src_is_bitset) &&
-        vm_state->registers[dst] < vm_state->query_context->bitsets.size()) {
+        vm_state->registers[dst] < vm_state->query_context->bitsets.size() &&
+        vm_state->query_context->bitsets[vm_state->registers[dst]].words != nullptr) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
     } else {
         h_dst = acquire_bitset(vm_state->query_context);

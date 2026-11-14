@@ -61,6 +61,7 @@ op_CSR_WALK_FILTERED: {
     int h_dst = -1;
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE && dst != src && dst != filter_reg) {
         h_dst = static_cast<int>(vm_state->registers[dst]);
+        IMP_REQUIRE_BITSET_HANDLE(vm_state, h_dst);
         vm_state->query_context->bitsets[h_dst].clear();
     } else {
         h_dst = acquire_bitset(vm_state->query_context);
@@ -82,7 +83,8 @@ op_CSR_WALK_FILTERED: {
     uint64_t scalar_filter = IMP_INVALID_NODE_U64;
     if (vm_state->register_types[filter_reg] == TYPE_BITSET_HANDLE) {
         int h_filt = static_cast<int>(vm_state->registers[filter_reg]);
-        if (h_filt >= 0 && static_cast<size_t>(h_filt) < VM_MAX_BITSET_HANDLES) {
+        if (h_filt >= 0 && static_cast<size_t>(h_filt) < vm_state->query_context->bitsets.size() &&
+            vm_state->query_context->bitsets[h_filt].words != nullptr) {
             filter_words = vm_state->query_context->bitsets[h_filt].words;
         }
     } else if (vm_state->register_types[filter_reg] == TYPE_NODE_ID || vm_state->register_types[filter_reg] == TYPE_INT64) {
