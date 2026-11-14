@@ -611,7 +611,13 @@ void impulse_delta_layer_destroy(impulse_delta_layer_t* delta) {
     delete delta;
 }
 
-static void populate_writer_from_snapshot(const impulse_snapshot_t* base_snapshot, impulse_writer_t* writer) {
+static void populate_writer_from_snapshot(
+    const impulse_snapshot_t* base_snapshot,
+    impulse_delta_layer_t** deltas,
+    size_t delta_count,
+    impulse_writer_t* writer,
+    std::vector<std::vector<uint8_t>>& owned_buffers
+) {
     const uint8_t* raw = static_cast<const uint8_t*>(base_snapshot->mmap_ptr);
 
     for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
@@ -642,16 +648,104 @@ static void populate_writer_from_snapshot(const impulse_snapshot_t* base_snapsho
 
     for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
         const auto& rel = base_snapshot->relations[r];
-        const void* row_ptr = raw + rel.csr_row_off_offset;
-        const void* col_ptr = raw + rel.csr_col_idx_offset;
+        const std::string rel_name = (r < base_snapshot->relation_names.size()) ? base_snapshot->relation_names[r] : "";
+
+        // Collect matching deltas for this relation
+        std::vector<impulse_delta_layer_t*> matching_deltas;
+        if (deltas && delta_count > 0) {
+            for (size_t d = 0; d < delta_count; ++d) {
+                impulse_delta_layer_t* dl = deltas[d];
+                if (!dl) continue;
+                if (dl->src_domain_id == rel.src_domain_id &&
+                    dl->tgt_domain_id == rel.tgt_domain_id &&
+                    (dl->relation_name.empty() || rel_name.empty() || dl->relation_name == rel_name)) {
+                    std::shared_lock<std::shared_mutex> lk(dl->mutex);
+                    if (!dl->tombstones.empty() || !dl->additions.empty()) {
+                        matching_deltas.push_back(dl);
+                    }
+                }
+            }
+        }
+
         uint64_t sec_feats = rel.section_features & ~0x01ULL; // writer currently serializes CSR only
 
-        impulse_writer_add_relation(
-            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
-            rel.node_count, rel.edge_count, sec_feats,
-            row_ptr, rel.csr_row_off_bytes,
-            col_ptr, rel.csr_col_idx_bytes
-        );
+        if (matching_deltas.empty() || rel.csr_row_off_offset == 0 || rel.csr_col_idx_offset == 0) {
+            const void* row_ptr = raw + rel.csr_row_off_offset;
+            const void* col_ptr = raw + rel.csr_col_idx_offset;
+            impulse_writer_add_relation(
+                writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
+                rel.node_count, rel.edge_count, sec_feats,
+                row_ptr, rel.csr_row_off_bytes,
+                col_ptr, rel.csr_col_idx_bytes
+            );
+        } else {
+            // Merge base CSR with matching delta tombstones and additions (32-bit CSR)
+            const uint32_t* base_rows = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
+            const uint32_t* base_cols = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+            uint64_t new_node_count = rel.node_count;
+            for (auto* dl : matching_deltas) {
+                std::shared_lock<std::shared_mutex> lk(dl->mutex);
+                for (const auto& kv : dl->additions) {
+                    if (kv.first + 1 > new_node_count) new_node_count = kv.first + 1;
+                }
+            }
+            std::vector<uint32_t> merged_rows(static_cast<size_t>(new_node_count) + 1, 0);
+            std::vector<uint32_t> merged_cols;
+            merged_cols.reserve(static_cast<size_t>(rel.edge_count));
+
+            auto is_tomb = [&](uint64_t u, uint64_t v) {
+                for (auto* dl : matching_deltas) {
+                    std::shared_lock<std::shared_mutex> lk(dl->mutex);
+                    if (dl->tombstones.find({u, v}) != dl->tombstones.end()) return true;
+                }
+                return false;
+            };
+
+            for (uint64_t u = 0; u < new_node_count; ++u) {
+                merged_rows[static_cast<size_t>(u)] = static_cast<uint32_t>(merged_cols.size());
+                if (u < rel.node_count) {
+                    uint32_t start = base_rows[u];
+                    uint32_t end = base_rows[u + 1];
+                    for (uint32_t e = start; e < end; ++e) {
+                        uint64_t v = base_cols[e];
+                        if (!is_tomb(u, v)) {
+                            merged_cols.push_back(static_cast<uint32_t>(v));
+                        }
+                    }
+                }
+                for (auto* dl : matching_deltas) {
+                    std::shared_lock<std::shared_mutex> lk(dl->mutex);
+                    auto it = dl->additions.find(u);
+                    if (it != dl->additions.end()) {
+                        for (uint64_t v : it->second) {
+                            if (!is_tomb(u, v)) {
+                                merged_cols.push_back(static_cast<uint32_t>(v));
+                            }
+                        }
+                    }
+                }
+            }
+            merged_rows[static_cast<size_t>(new_node_count)] = static_cast<uint32_t>(merged_cols.size());
+
+            owned_buffers.emplace_back(merged_rows.size() * sizeof(uint32_t));
+            std::memcpy(owned_buffers.back().data(), merged_rows.data(), owned_buffers.back().size());
+            const void* row_ptr = owned_buffers.back().data();
+            const uint64_t row_bytes = owned_buffers.back().size();
+
+            owned_buffers.emplace_back(merged_cols.size() * sizeof(uint32_t));
+            if (!merged_cols.empty()) {
+                std::memcpy(owned_buffers.back().data(), merged_cols.data(), owned_buffers.back().size());
+            }
+            const void* col_ptr = owned_buffers.back().empty() ? nullptr : owned_buffers.back().data();
+            const uint64_t col_bytes = owned_buffers.back().size();
+
+            impulse_writer_add_relation(
+                writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
+                new_node_count, static_cast<uint64_t>(merged_cols.size()), sec_feats,
+                row_ptr, row_bytes,
+                col_ptr, col_bytes
+            );
+        }
 
         if (r < base_snapshot->relation_attributes.size()) {
             const auto& rattrs = base_snapshot->relation_attributes[r];
@@ -673,6 +767,23 @@ static void populate_writer_from_snapshot(const impulse_snapshot_t* base_snapsho
         }
     }
 
+    for (size_t idx = 0; idx < base_snapshot->indexes.size(); ++idx) {
+        const auto& ie = base_snapshot->indexes[idx];
+        const char* iname = (idx < base_snapshot->index_names.size()) ? base_snapshot->index_names[idx].c_str() : "";
+        const void* idata = (ie.data_offset > 0 && ie.data_bytes > 0) ? (raw + ie.data_offset) : nullptr;
+        impulse_writer_add_index(
+            writer,
+            ie.domain_id,
+            ie.relation_id,
+            ie.attribute_index,
+            ie.index_type,
+            iname,
+            idata,
+            ie.data_bytes,
+            ie.payload_feature_mask
+        );
+    }
+
     for (const auto& kv : base_snapshot->metadata) {
         impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
     }
@@ -684,8 +795,6 @@ impulse_status_t impulse_snapshot_compact_to_file(
     size_t delta_count,
     const char* output_file_path
 ) {
-    (void)deltas;
-    (void)delta_count;
     if (!base_snapshot || !output_file_path) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = 0;
@@ -695,7 +804,8 @@ impulse_status_t impulse_snapshot_compact_to_file(
     impulse_writer_t* writer = impulse_writer_create(output_file_path, gfeat);
     if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    populate_writer_from_snapshot(base_snapshot, writer);
+    std::vector<std::vector<uint8_t>> owned_buffers;
+    populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer, owned_buffers);
 
     impulse_status_t st = impulse_writer_finalize(writer);
     impulse_writer_destroy(writer);
@@ -709,8 +819,6 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     impulse_write_fn write_cb,
     void* user_data
 ) {
-    (void)deltas;
-    (void)delta_count;
     if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
 
     uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
@@ -720,7 +828,8 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     impulse_writer_t* writer = impulse_writer_create_stream(write_cb, user_data, gfeat);
     if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    populate_writer_from_snapshot(base_snapshot, writer);
+    std::vector<std::vector<uint8_t>> owned_buffers;
+    populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer, owned_buffers);
 
     impulse_status_t st = impulse_writer_finalize(writer);
     impulse_writer_destroy(writer);

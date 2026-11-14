@@ -1129,7 +1129,7 @@ void test_mcdc_snapshot_pass8_deep_decisions() {
         ASSERT_EQ(impulse_writer_add_domain(w, 0, 0, "User"), IMPULSE_OK);
 
         uint32_t row_off[] = { 0, 1, 2, 3 };
-        uint16_t col_idx[] = { 1, 2, 0 };
+        uint32_t col_idx[] = { 1, 2, 0 };
         ASSERT_EQ(impulse_writer_add_relation(w, 0, 0, 0, 3, 3, 0, row_off, sizeof(row_off), col_idx, sizeof(col_idx)), IMPULSE_OK);
 
         float weights[] = { 1.0f, 2.0f, 3.0f };

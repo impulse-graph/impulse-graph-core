@@ -824,12 +824,12 @@ inline uint32_t run_island_detect_bfs(
     size_t num_words = (N + 63) / 64;
     size_t tid = 0;
 #if defined(_OPENMP)
-    tid = static_cast<size_t>(omp_get_thread_num());
+    int raw_tid = omp_get_thread_num();
+    tid = (raw_tid >= 0) ? static_cast<size_t>(raw_tid) : 0;
 #endif
     std::vector<uint64_t> local_visited;
     std::vector<uint32_t> local_queue;
-    const bool use_ctx_scratch =
-        tid < ctx->bfs_visited_words.size() && tid < ctx->bfs_queues.size();
+    const bool use_ctx_scratch = (tid < ctx->bfs_visited_words.size() && tid < ctx->bfs_queues.size());
     auto& visited_words = use_ctx_scratch ? ctx->bfs_visited_words[tid] : local_visited;
     visited_words.clear();
     visited_words.resize(num_words, 0ULL);
@@ -850,11 +850,13 @@ inline uint32_t run_island_detect_bfs(
 
             while (head < queue.size()) {
                 uint32_t u = queue[head++];
+                if (u >= slot.node_count) continue;
                 uint64_t start = slot.get_csr_offset(u);
                 uint64_t end = slot.get_csr_offset(u + 1);
+                if (end > slot.edge_count) end = slot.edge_count;
 
                 for (uint64_t e = start; e < end; ++e) {
-                    if (branch_ids && e < slot.edge_count) {
+                    if (branch_ids) {
                         int32_t br_id = branch_ids[e];
                         if (br_id == k1 || br_id == k2) {
                             continue;
@@ -872,9 +874,9 @@ inline uint32_t run_island_detect_bfs(
                     }
                 }
             }
-            }
         }
-        return components;
+    }
+    return components;
     }
 
 inline void extract_active_bits(const VmBitSet& bs, std::vector<uint32_t>& out_bits) {

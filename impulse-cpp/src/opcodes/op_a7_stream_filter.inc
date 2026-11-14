@@ -36,7 +36,7 @@
 #endif
                     case OP_STREAM_FILTER: {
                         IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT);
-                        const bool filter_reject = (s_regs[sDst] == 0.0f);
+                        const bool filter_reject = std::isnan(s_regs[sDst]) || (s_regs[sDst] == 0.0f);
                         IMPULSE_TESTCASE(filter_reject);
                         if (filter_reject) abort = true;
                         break;

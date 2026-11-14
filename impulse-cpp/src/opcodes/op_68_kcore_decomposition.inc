@@ -69,9 +69,11 @@ op_KCORE_DECOMPOSITION: {
             int d = 0;
             if (i < slot.node_count) {
                 const uint64_t off_s = slot.get_csr_offset(i);
-                const uint64_t off_e = slot.get_csr_offset(i + 1);
-                IMPULSE_WELL_FORMED_ASSERT(off_s <= off_e);
-                d = (off_e >= off_s) ? static_cast<int>(off_e - off_s) : 0;
+                const uint64_t off_e = std::min(slot.get_csr_offset(i + 1), slot.edge_count);
+                if (off_e >= off_s) {
+                    const uint64_t diff = off_e - off_s;
+                    d = static_cast<int>(std::min<uint64_t>(diff, static_cast<uint64_t>(std::numeric_limits<int>::max())));
+                }
             }
             deg[i] = d;
             if (d > max_deg) max_deg = d;

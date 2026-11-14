@@ -78,16 +78,11 @@ IMPULSE_VM_FORCE_INLINE impulse_vm_status_t execute_init_mock_attr(
                 len = std::min<size_t>(len, VM_MOCK_INIT_CAP);
                 IMPULSE_TESTCASE(len == 0);
                 mock_attr.int_data.resize(len, 0ULL);
+                mock_attr.float_data.resize(len, 0.0f);
                 if (len > 0) {
                     std::memcpy(mock_attr.int_data.data(), vec.data(), len * sizeof(uint64_t));
-                }
-                IMPULSE_TESTCASE(vm_state->query_context->float_vectors_allocated[h]);
-                if (vm_state->query_context->float_vectors_allocated[h]) {
-                    const auto& fvec = vm_state->query_context->float_vectors[h];
-                    size_t flen = std::min<size_t>(len, fvec.size());
-                    mock_attr.float_data.resize(flen, 0.0f);
-                    if (flen > 0) {
-                        std::memcpy(mock_attr.float_data.data(), fvec.data(), flen * sizeof(float));
+                    for (size_t i = 0; i < len; ++i) {
+                        mock_attr.float_data[i] = static_cast<float>(static_cast<int64_t>(vec[i]));
                     }
                 }
             }

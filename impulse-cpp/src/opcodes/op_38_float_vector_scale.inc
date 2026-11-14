@@ -54,9 +54,12 @@ op_FLOAT_VECTOR_SCALE: {
     IMPULSE_TESTCASE(factor == 0.0f);
 
     int handle = static_cast<int>(vm_state->registers[dst]);
-    if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 && handle < static_cast<int>(vm_state->query_context->float_vectors.size())) {
+    if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && handle >= 0 &&
+        static_cast<size_t>(handle) < VM_MAX_VECTOR_HANDLES &&
+        vm_state->query_context->float_vectors_allocated[handle]) {
         float* vec = vm_state->query_context->float_vectors[handle].data();
-        size_t size = vm_state->query_context->max_nodes;
+        size_t cap = vm_state->query_context->float_vectors[handle].size();
+        size_t size = std::min(vm_state->query_context->max_nodes, cap);
         impulse_simd_vector_scale_f32(vec, factor, size);
     }
 

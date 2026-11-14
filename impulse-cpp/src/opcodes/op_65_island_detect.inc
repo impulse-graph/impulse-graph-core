@@ -93,7 +93,13 @@ op_ISLAND_DETECT: {
             const int32_t* branch_ids = nullptr;
             if (rel < vm_state->query_context->attribute_slots.size() &&
                 !vm_state->query_context->attribute_slots[rel].empty()) {
-                branch_ids = static_cast<const int32_t*>(vm_state->query_context->attribute_slots[rel][0].data_ptr);
+                const auto& battr = vm_state->query_context->attribute_slots[rel][0];
+                if (battr.data_ptr != nullptr &&
+                    (battr.type_code & 0x7Fu) == IMP_TYPE_CODE_INT32 &&
+                    (reinterpret_cast<uintptr_t>(battr.data_ptr) % alignof(int32_t)) == 0 &&
+                    battr.data_bytes >= slot.edge_count * sizeof(int32_t)) {
+                    branch_ids = static_cast<const int32_t*>(battr.data_ptr);
+                }
             }
 
             const uint32_t N = static_cast<uint32_t>(slot.node_count);

@@ -97,10 +97,11 @@ op_COO_WALK_FILTERED: {
                         IMPULSE_WELL_FORMED_ASSERT(start <= end);
                         for (uint64_t e = start; e < end; ++e) {
                             const uint64_t v = slot.get_csr_target(e);
+                            if (v >= vm_state->query_context->max_nodes) continue;
                             const bool match = flt_words
                                 ? ((flt_words[IMP_WORD_INDEX(v)] & IMP_BIT_MASK64(v)) != 0ULL)
                                 : (!flt_is_null && v == scalar_flt);
-                            if (match && v < vm_state->query_context->max_nodes) {
+                            if (match) {
                                 #pragma omp atomic
                                 bs_dst.words[IMP_WORD_INDEX(v)] |= IMP_BIT_MASK64(v);
                             }
@@ -113,6 +114,7 @@ op_COO_WALK_FILTERED: {
                 IMPULSE_WELL_FORMED_ASSERT(start <= end);
                 for (uint64_t e = start; e < end; ++e) {
                     const uint64_t v = slot.get_csr_target(e);
+                    if (v >= vm_state->query_context->max_nodes) continue;
                     const bool match = flt_words
                         ? ((flt_words[IMP_WORD_INDEX(v)] & IMP_BIT_MASK64(v)) != 0ULL)
                         : (!flt_is_null && v == scalar_flt);

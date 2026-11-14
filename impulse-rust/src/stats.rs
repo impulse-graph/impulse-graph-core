@@ -293,7 +293,7 @@ impl AttributeStatisticsCalculator {
 
         let mut min = i64::MAX;
         let mut max = i64::MIN;
-        let mut null_count = 0u64;
+        let null_count = 0u64;
         let mut distinct = HashSet::new();
 
         let mut is_strict_inc = true;
@@ -308,11 +308,6 @@ impl AttributeStatisticsCalculator {
         for i in 0..count {
             let chunk: [u8; 4] = data[i * 4..i * 4 + 4].try_into().unwrap();
             let val = i32::from_le_bytes(chunk);
-
-            if val == i32::MIN {
-                null_count += 1;
-                continue;
-            }
 
             if (val as i64) < min {
                 min = val as i64;
@@ -384,7 +379,7 @@ impl AttributeStatisticsCalculator {
 
         let mut min = i64::MAX;
         let mut max = i64::MIN;
-        let mut null_count = 0u64;
+        let null_count = 0u64;
         let mut distinct = HashSet::new();
 
         let mut is_strict_inc = true;
@@ -399,11 +394,6 @@ impl AttributeStatisticsCalculator {
         for i in 0..count {
             let chunk: [u8; 8] = data[i * 8..i * 8 + 8].try_into().unwrap();
             let val = i64::from_le_bytes(chunk);
-
-            if val == i64::MIN {
-                null_count += 1;
-                continue;
-            }
 
             if val < min {
                 min = val;

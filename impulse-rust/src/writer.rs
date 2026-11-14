@@ -790,6 +790,11 @@ impl SnapshotWriter {
                 payload.extend_from_slice(&col_bytes);
             } else {
                 // Standard CSR
+                for w in rel.row_offsets.windows(2) {
+                    if w[0] > w[1] || (w[1] as usize) > rel.col_indices.len() {
+                        return Err(ImpulseError::InvalidArgument);
+                    }
+                }
                 Self::align_buffer(&mut payload, 128);
                 rel.csr_row_off_offset = payload_base_offset + payload.len() as u64;
                 let row_bytes: Vec<u8> = rel
@@ -864,12 +869,13 @@ impl SnapshotWriter {
                         let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
                         let num_edges = rel.col_indices.len();
                         for u in 0..max_u {
-                            let start = (rel.row_offsets[u] as usize).min(num_edges);
-                            let end = (rel.row_offsets[u + 1] as usize).min(num_edges);
-                            if start <= end {
-                                for &v in &rel.col_indices[start..end] {
-                                    pairs.push((u as u32, v));
-                                }
+                            let start = rel.row_offsets[u] as usize;
+                            let end = rel.row_offsets[u + 1] as usize;
+                            if start > end || end > num_edges {
+                                return Err(ImpulseError::InvalidArgument);
+                            }
+                            for &v in &rel.col_indices[start..end] {
+                                pairs.push((u as u32, v));
                             }
                         }
                     }
