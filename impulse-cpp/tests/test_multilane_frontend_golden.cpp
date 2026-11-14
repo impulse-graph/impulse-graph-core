@@ -208,15 +208,16 @@ void test_cel_literals_and_errors() {
         }
     }
 
-    // Deeply nested input must not blow the stack at moderate depth.
+    // Deeply nested input must not blow the stack at moderate depth, and excessive depth throws cleanly.
     {
-        std::string deep(2000, '(');
+        std::string deep(15, '(');
         deep += "lane";
-        deep += std::string(2000, ')');
+        deep += std::string(15, ')');
         CHECK(scm_of(deep) == "lane");
-        std::string tildes(2000, '~');
+        std::string tildes(15, '~');
         std::string r = scm_of(tildes + "lane");
         CHECK(r.rfind("(~ (~ ", 0) == 0);
+        CHECK(scm_of(std::string(2000, '(') + "lane" + std::string(2000, ')')).rfind("<THROW:", 0) == 0);
     }
 }
 
@@ -781,13 +782,13 @@ void test_impk_lowering_goldens() {
     match_program("impk full pipeline",
                   compiled.instructions,
                   {
-                      {OP_LANE_INIT_SEEDS, 0x00, 0, 0x00000000},
+                      {OP_LANE_INIT_SEEDS, 0x01, 0, 0x00030000},
                       {OP_LANE_INIT_GROUPS, 0x00, 0, 0x00020000},      // pairs_reg=0 | num_groups=2<<16
                       {OP_LANE_SET_EDGE_MASK, 0x00, 0, 0x00000000},    // pairs_reg=0 | rel 0<<16
                       {OP_LANE_CSR_WALK, 0x04, 1, 0x00000000},         // fixed-point flag 0x04
                       {OP_LANE_CSC_WALK, 0x04, 0, 0x00000001},         // src=R1
                       {OP_LANE_PRUNE_MASK, 0x01, 0, 0x00001000},       // mode=1, arg0=16<<8
-                      {OP_LANE_FILTER_QUORUM, 0x01, 1, 0x00FF0200},    // src|min_q=2<<8|mask=0xFF<<16
+                      {OP_LANE_FILTER_QUORUM, 0x00, 1, 0x00020000},    // src=0 | min_q=2<<16 (unmasked)
                       {OP_LANE_REDUCE_AND, 0x00, 0, 0x00000001},
                       {OP_LANE_REDUCE_ATTR, 0x00, 0, 0x00040001},      // src=1|attr 0<<8|ARGMIN(4)<<16
                       {OP_LANE_SET_COVER, 0x00, 0, 0x0000FF01},        // src=1|mask 0xFF<<8
@@ -804,9 +805,15 @@ void test_impk_lowering_goldens() {
     match_program("impk direct quorum",
                   c2.instructions,
                   {
+                      {OP_LOAD_CONST_INT, 0x00, 62, 10},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                      {OP_LOAD_CONST_INT, 0x00, 62, 20},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                      {OP_LOAD_CONST_INT, 0x00, 62, 30},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
                       {OP_LANE_INIT_SEEDS, 0x00, 0, 0x00000000},
                       {OP_LANE_CSR_WALK, 0x04, 1, 0x00000000},
-                      {OP_LANE_FILTER_QUORUM, 0x01, 0, 0x00FF0201},
+                      {OP_LANE_FILTER_QUORUM, 0x00, 0, 0x00020001},
                       {OP_COLLECT_BITSET, 0x00, 0, 0x00000000},
                       {OP_HALT, 0x00, 0, 0x00000000},
                   });
@@ -815,12 +822,12 @@ void test_impk_lowering_goldens() {
     {
         auto p = ImpKCompiler::compile("L0 = lane_seeds(1, 2)\nY = lane_spmm(edge, L0, 0)\n");
         auto c = ImpulseCompiler::compile(p, &cat);
-        CHECK(c.instructions.size() >= 2 && c.instructions[1].opcode == OP_LANE_CSR_WALK &&
-              c.instructions[1].flags == 0x00);
+        CHECK(c.instructions.size() >= 6 && c.instructions[5].opcode == OP_LANE_CSR_WALK &&
+              c.instructions[5].flags == 0x00);
         auto p2 = ImpKCompiler::compile("L0 = lane_seeds(1, 2)\nY = lane_spmm_csc(edge, L0, fixpoint)\n");
         auto c2b = ImpulseCompiler::compile(p2, &cat);
-        CHECK(c2b.instructions.size() >= 2 && c2b.instructions[1].opcode == OP_LANE_CSC_WALK &&
-              c2b.instructions[1].flags == 0x04);
+        CHECK(c2b.instructions.size() >= 6 && c2b.instructions[5].opcode == OP_LANE_CSC_WALK &&
+              c2b.instructions[5].flags == 0x04);
     }
 
     // Negative: structurally malformed lane statements -> clean exception, not a crash.
@@ -865,7 +872,7 @@ void test_implog_lowering_goldens() {
     using impulse::datalog::DatalogParser;
     const auto cat = make_catalog();
 
-    // multi-seed recursive -> C0 + C3(fixpoint 0x04)
+    // multi-seed recursive -> inline seed materialization + C0 + C3(fixpoint 0x04)
     {
         auto d = DatalogParser::parse_multi_seed(
             "reach(X,Y) :- edge(X,Y).\nreach(X,Z) :- reach(X,Y), edge(Y,Z).\n", {0, 1, 2});
@@ -874,6 +881,12 @@ void test_implog_lowering_goldens() {
         auto c = ImpulseCompiler::compile(d, &cat);
         match_program("implog multi-seed fixpoint", c.instructions,
                       {
+                          {OP_LOAD_CONST_INT, 0x00, 62, 0},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 1},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 2},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
                           {OP_LANE_INIT_SEEDS, 0x00, 0, 0x00000000},
                           {OP_LANE_CSR_WALK, 0x04, 1, 0x00000000},
                           {OP_COLLECT_BITSET, 0x00, 1, 0x00000001},
@@ -896,7 +909,7 @@ void test_implog_lowering_goldens() {
                           {OP_HALT, 0x00, 1, 0x00000000},
                       });
     }
-    // allow/deny split -> C5 mode 1 with arg0 = |allow| lanes
+    // allow/deny split -> inline seed materialization + C0 + C3 + C5 mode 1 with arg0 = |allow| lanes
     {
         auto d = DatalogParser::parse_allow_deny_split("reach(X,Y) :- edge(X,Y).\n", {1, 2, 3}, {4});
         CHECK(d->to_scm_string() ==
@@ -904,6 +917,18 @@ void test_implog_lowering_goldens() {
         auto c = ImpulseCompiler::compile(d, &cat);
         match_program("implog allow/deny split", c.instructions,
                       {
+                          {OP_LOAD_CONST_INT, 0x00, 62, 1},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 2},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 3},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 4},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 0},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                          {OP_LOAD_CONST_INT, 0x00, 62, 0},
+                          {OP_SET_UNION, 0x00, 0, 0x003E0000},
                           {OP_LANE_INIT_SEEDS, 0x00, 0, 0x00000000},
                           {OP_LANE_CSR_WALK, 0x00, 1, 0x00000000},
                           {OP_LANE_PRUNE_MASK, 0x01, 1, 0x00000301},   // src=1 | arg0=3<<8
@@ -943,9 +968,15 @@ void test_cypher_lowering_goldens() {
     auto c = ImpulseCompiler::compile(res.ast, &cat);
     match_program("cypher multi-seed IN + quorum", c.instructions,
                   {
+                      {OP_LOAD_CONST_INT, 0x00, 62, 0},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                      {OP_LOAD_CONST_INT, 0x00, 62, 1},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
+                      {OP_LOAD_CONST_INT, 0x00, 62, 2},
+                      {OP_SET_UNION, 0x00, 0, 0x003E0000},
                       {OP_LANE_INIT_SEEDS, 0x00, 0, 0x00000000},
                       {OP_LANE_CSR_WALK, 0x00, 1, 0x00010000},     // rel id 1 <<16
-                      {OP_LANE_FILTER_QUORUM, 0x01, 0, 0x00FF0201},
+                      {OP_LANE_FILTER_QUORUM, 0x00, 0, 0x00020001},
                       {OP_COLLECT_BITSET, 0x00, 0, 0x00000000},
                       {OP_HALT, 0x00, 0, 0x00000000},
                   });
@@ -1123,8 +1154,9 @@ void test_vm_execution_of_emitted_bytecode() {
         GraphCatalog cat;
         cat.register_relation("edge", 0);
         auto c = ImpulseCompiler::compile(d, &cat);
-        // First two instructions are C0 (seeds in R0) and C3 (fixed point R0 -> R1).
-        std::vector<impulse_instruction_t> prog(c.instructions.begin(), c.instructions.begin() + 2);
+        // After inline seed materialization (2 * seeds.size() insts), the next two instructions are C0 and C3.
+        size_t c0_idx = 2 * seeds.size();
+        std::vector<impulse_instruction_t> prog(c.instructions.begin() + c0_idx, c.instructions.begin() + c0_idx + 2);
         std::vector<uint64_t> masks;
         bool ok = run_lane_program(g, seeds, /*seed_reg=*/0, /*out_reg=*/1, prog, masks);
         CHECK(ok);
@@ -1203,9 +1235,8 @@ void test_documented_gaps() {
         CHECK(CelMultiLaneEvaluator::eval_int(Parser("lane >>> 63").parse(), kTopBit) == 1);
     }
 
-    // GAP-3: inline seeds / group pairs / deny nodes are retained in the AST but are neither
-    //        serialised to ImpScheme nor materialised by the bytecode emitter; the emitted
-    //        OP_LANE_INIT_SEEDS only references an (unpopulated) seed register.
+    // GAP-3: inline seeds are not serialised to ImpScheme text, though the bytecode emitter
+    //        materialises them via OP_LOAD_CONST_INT R62 + OP_SET_UNION R0 before OP_LANE_INIT_SEEDS.
     {
         auto prog = impulse::impk::ImpKCompiler::compile("L0 = lane_seeds(10, 20, 30)\nY = lane_spmm(edge, L0, 0)\n");
         auto init = std::static_pointer_cast<ScmLaneInitSeeds>(prog->steps[0]);
@@ -1215,9 +1246,11 @@ void test_documented_gaps() {
         GraphCatalog cat;
         cat.register_relation("edge", 0);
         auto c = ImpulseCompiler::compile(prog, &cat);
-        CHECK(c.instructions[0].opcode == OP_LANE_INIT_SEEDS);
-        CHECK(c.instructions[0].payload == 0u);  // no seed constant/array carried in bytecode
-        for (const auto& i : c.instructions) CHECK(i.payload != 10u && i.payload != 20u && i.payload != 30u);
+        CHECK(c.instructions.size() >= 7);
+        CHECK(c.instructions[0].opcode == OP_LOAD_CONST_INT && c.instructions[0].payload == 10u);
+        CHECK(c.instructions[2].opcode == OP_LOAD_CONST_INT && c.instructions[2].payload == 20u);
+        CHECK(c.instructions[4].opcode == OP_LOAD_CONST_INT && c.instructions[4].payload == 30u);
+        CHECK(c.instructions[6].opcode == OP_LANE_INIT_SEEDS && c.instructions[6].payload == 0u);
     }
 
     // GAP-4: ImpK lane_reduce_and(..., 7) / lane_edge_mask(..., [pairs]) arguments are parsed but

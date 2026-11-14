@@ -1664,17 +1664,70 @@ public:
                 if (op == "=") {
                     return eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                 }
-                if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
+                if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+                    op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
                     uint64_t ua = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
                     uint64_t ub = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     int64_t ia = static_cast<int64_t>(ua);
                     int64_t ib = static_cast<int64_t>(ub);
+                    if (op == "+") return ua + ub;
+                    if (op == "-") return ua - ub;
+                    if (op == "*") return ua * ub;
+                    if (op == "/") return (ib == 0) ? 0ULL : (ib == -1 ? (0ULL - ua) : static_cast<uint64_t>(ia / ib));
+                    if (op == "%") return (ib == 0 || ib == -1) ? 0ULL : static_cast<uint64_t>(ia % ib);
                     if (op == "&") return ua & ub;
                     if (op == "|") return ua | ub;
                     if (op == "^") return ua ^ ub;
                     if (op == "<<") return (ib < 0 || ib >= 64) ? 0ULL : (ua << ib);
                     if (op == ">>") return (ib < 0 || ib >= 64) ? 0ULL : static_cast<uint64_t>(ia >> ib);
                     if (op == ">>>") return (ib < 0 || ib >= 64) ? 0ULL : (ua >> ib);
+                }
+                return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
+            }
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        size_t total = 0;
+                        for (size_t w = 0; w < num_words; ++w) total += std::popcount(lane_words[w]);
+                        return static_cast<uint64_t>(total);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return static_cast<uint64_t>(std::popcount(v));
+                }
+                if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        for (size_t w = 0; w < num_words; ++w) {
+                            if (lane_words[w] != 0ULL) {
+                                return static_cast<uint64_t>(w * 64 + std::countr_zero(lane_words[w]));
+                            }
+                        }
+                        return static_cast<uint64_t>(-1LL);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? static_cast<uint64_t>(-1LL) : static_cast<uint64_t>(std::countr_zero(v));
+                }
+                if (fn == "last_lane" && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        for (size_t w = num_words; w > 0; --w) {
+                            if (lane_words[w - 1] != 0ULL) {
+                                return static_cast<uint64_t>((w - 1) * 64 + 63 - std::countl_zero(lane_words[w - 1]));
+                            }
+                        }
+                        return static_cast<uint64_t>(-1LL);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? static_cast<uint64_t>(-1LL) : static_cast<uint64_t>(63 - std::countl_zero(v));
+                }
+                if (fn == "clz" && !node->children.empty()) {
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? 64ULL : static_cast<uint64_t>(std::countl_zero(v));
+                }
+                if (fn == "has_any" || fn == "has_all" || fn == "has_none" || fn == "has_lane") {
+                    return eval_bool(node, lane_words, num_words, node_attrs, float_attrs) ? 1ULL : 0ULL;
                 }
                 return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
             }
@@ -2073,7 +2126,7 @@ public:
                 }
                 if (node->text == "lane") {
                     uint64_t lw = (lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL;
-                    return CelValue::make_uint(lw);
+                    return CelValue::make_int(static_cast<int64_t>(lw));
                 }
                 if (node->kind == AstKind::MEMBER_ACCESS && !node->children.empty() &&
                     node->children[0] && node->children[0]->kind == AstKind::IDENTIFIER &&
