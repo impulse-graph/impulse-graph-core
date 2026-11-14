@@ -111,10 +111,14 @@ impulse_status_t impulse_writer_add_relation(
     rel.section_features = section_features;
 
     rel.row_offsets.resize(row_offsets_bytes);
-    std::memcpy(rel.row_offsets.data(), row_offsets_data, row_offsets_bytes);
+    if (row_offsets_bytes > 0 && row_offsets_data != nullptr) {
+        std::memcpy(rel.row_offsets.data(), row_offsets_data, row_offsets_bytes);
+    }
 
     rel.col_indices.resize(col_indices_bytes);
-    std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+    if (col_indices_bytes > 0 && col_indices_data != nullptr) {
+        std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+    }
 
     writer->relations.push_back(std::move(rel));
     return IMPULSE_OK;

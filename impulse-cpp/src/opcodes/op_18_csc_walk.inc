@@ -50,7 +50,7 @@ op_CSC_WALK: {
     } else {
         bool unv_is_valid_rel = (unv < vm_state->query_context->slots.size()) &&
             vm_state->query_context->slots[unv].has_any_topology();
-        if (rel == 0 && IMP_INST_U8_3(inst) == 0u && (unv_is_valid_rel || vm_state->register_types[unv] != TYPE_BITSET_HANDLE)) {
+        if (rel == 0 && IMP_INST_U8_3(inst) == 0u && (unv_is_valid_rel || unv >= 64 || vm_state->register_types[unv] != TYPE_BITSET_HANDLE)) {
             rel = IMP_INST_HIGH16(inst);
             unv = 0;
         }
@@ -78,7 +78,7 @@ op_CSC_WALK: {
         h_src = -1;
     }
 
-    const uint64_t* unv_words = (unv > 0 && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)
+    const uint64_t* unv_words = (unv > 0 && unv < 64 && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)
         ? vm_state->query_context->bitsets[vm_state->registers[unv]].words : nullptr;
 
     int h_dst = -1;
@@ -92,7 +92,7 @@ op_CSC_WALK: {
 
     if (vm_state->register_types[dst] == TYPE_BITSET_HANDLE) {
         int h_existing = static_cast<int>(vm_state->registers[dst]);
-        if ((dst == src && src_is_bitset) || (unv > 0 && dst == unv && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)) {
+        if ((dst == src && src_is_bitset) || (unv > 0 && unv < 64 && dst == unv && vm_state->register_types[unv] == TYPE_BITSET_HANDLE)) {
             h_dst = acquire_bitset(vm_state->query_context);
             if (h_dst < 0) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;

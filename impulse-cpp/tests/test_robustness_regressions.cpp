@@ -96,6 +96,25 @@ int main() {
         impulse_vm_context_destroy(ctx);
     }
 
+    // OP_CSC_WALK unv >= 64 regression (fuzz_vm_bytecode crash in CI):
+    // When OP_CSC_WALK (0x18) encodes unv >= 64 (e.g. param 0x00000040), register_types[unv]
+    // must not be indexed out of bounds.
+    {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+        assert(ctx != nullptr);
+        impulse_vm_state_t vm{};
+        vm.query_context = ctx;
+        vm.registers[0] = 0;
+        vm.register_types[0] = TYPE_INT64;
+        impulse_instruction_t prog[2] = {
+            {0x18, 0x01, 0x0009, 0x00000040u},
+            {OP_HALT, 0, 0, 0},
+        };
+        impulse_vm_status_t vms = impulse_vm_execute(prog, 2, &vm, 100);
+        assert(vms != IMPULSE_VM_OK);
+        impulse_vm_context_destroy(ctx);
+    }
+
     std::printf("test_robustness_regressions: PASS\n");
     return 0;
 }
