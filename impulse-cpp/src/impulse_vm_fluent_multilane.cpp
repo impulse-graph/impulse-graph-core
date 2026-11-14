@@ -577,6 +577,12 @@ MultiLaneResult MultiLaneTraversal::collect() const {
     if (!ctx) {
         return MultiLaneResult(snapshot_, current_domain_id_, final_N, K, lane_keys_, std::move(words_per_node));
     }
+    struct CtxGuard {
+        impulse_vm_context_t* c;
+        ~CtxGuard() {
+            if (c) impulse_vm_context_destroy(c);
+        }
+    } ctx_guard{ctx};
 
     uint32_t init_N = get_domain_node_count(snapshot_, initial_domain_id_);
     size_t max_snap_nodes = std::max<size_t>(impulse_snapshot_max_node_count(snapshot_), std::max<size_t>(init_N, final_N));
@@ -1208,7 +1214,6 @@ MultiLaneResult MultiLaneTraversal::collect() const {
         impulse_vm_context_release_lane_frontier(ctx, static_cast<size_t>(h));
     }
 
-    impulse_vm_context_destroy(ctx);
     return MultiLaneResult(snapshot_, step_dom, final_N, K, lane_keys_, std::move(words_per_node), std::move(proj_values), has_projected);
 }
 
