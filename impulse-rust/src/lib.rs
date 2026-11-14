@@ -972,7 +972,10 @@ mod tests_issue_78 {
         let adj = vec![0u8; 2 * row_stride];
         let perm = vec![0u32, 1u32];
         let res = crate::vamana::builder::permute_vamana_index(&hdr, &adj, None, &perm, &perm);
-        assert!(res.is_err(), "OOB medoid_node_id must return Err instead of panicking");
+        assert!(
+            res.is_err(),
+            "OOB medoid_node_id must return Err instead of panicking"
+        );
     }
 
     #[test]
@@ -983,7 +986,10 @@ mod tests_issue_78 {
         writer.add_relation(0, 0, 2, 2, vec![0u32, 2, 1], vec![0u32, 1]);
         let res = writer.finalize();
         let _ = std::fs::remove_file("__impulse_test_issue78_nonmono.imps");
-        assert!(res.is_err(), "Non-monotonic row_offsets must return Err instead of panicking");
+        assert!(
+            res.is_err(),
+            "Non-monotonic row_offsets must return Err instead of panicking"
+        );
     }
 
     #[test]
@@ -1006,14 +1012,20 @@ mod tests_issue_78 {
         i32_bytes.extend_from_slice(&i32::MIN.to_le_bytes());
         i32_bytes.extend_from_slice(&5i32.to_le_bytes());
         let st32 = AttributeStatisticsCalculator::calculate_int32("v32", &i32_bytes);
-        assert_eq!(st32.null_count, 0, "i32::MIN must not be misclassified as null");
+        assert_eq!(
+            st32.null_count, 0,
+            "i32::MIN must not be misclassified as null"
+        );
         assert_eq!(st32.min_int_val, i32::MIN as i64);
 
         let mut i64_bytes = Vec::new();
         i64_bytes.extend_from_slice(&i64::MIN.to_le_bytes());
         i64_bytes.extend_from_slice(&5i64.to_le_bytes());
         let st64 = AttributeStatisticsCalculator::calculate_int64("v64", &i64_bytes);
-        assert_eq!(st64.null_count, 0, "i64::MIN must not be misclassified as null");
+        assert_eq!(
+            st64.null_count, 0,
+            "i64::MIN must not be misclassified as null"
+        );
         assert_eq!(st64.min_int_val, i64::MIN);
     }
 }

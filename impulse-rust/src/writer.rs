@@ -571,8 +571,8 @@ impl SnapshotWriter {
                             if let Some(bt) = BaseDataType::from_u8(attr.type_code) {
                                 let stride =
                                     bt.element_byte_size() * (attr.dimension.max(1) as usize);
-                                if stride > 0 {
-                                    inferred = inferred.max((attr.data.len() / stride) as u64);
+                                if let Some(count) = attr.data.len().checked_div(stride) {
+                                    inferred = inferred.max(count as u64);
                                 }
                             }
                         }
@@ -766,11 +766,11 @@ impl SnapshotWriter {
                 } else {
                     let mut flat = vec![sentinel; src_n];
                     let max_u = src_n.min(rel.row_offsets.len().saturating_sub(1));
-                    for u in 0..max_u {
+                    for (u, slot) in flat.iter_mut().enumerate().take(max_u) {
                         let s = rel.row_offsets[u] as usize;
                         let e = (rel.row_offsets[u + 1] as usize).min(rel.col_indices.len());
                         if e > s {
-                            flat[u] = rel.col_indices[s];
+                            *slot = rel.col_indices[s];
                         }
                     }
                     flat

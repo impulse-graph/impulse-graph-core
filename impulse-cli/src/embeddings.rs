@@ -926,12 +926,12 @@ pub fn load_delimited_embeddings(
             let cell = rec.get(c_idx).unwrap_or("");
             parse_inline_vector_str(cell)?
         } else if rec.len() == 1
-            || (rec.len() == 2
-                && id_col_idx.is_some()
-                && {
-                    let vec_idx = if id_col_idx == Some(1) { 0 } else { 1 };
-                    rec[vec_idx].contains('[') || rec[vec_idx].contains(';') || rec[vec_idx].contains(' ')
-                })
+            || (rec.len() == 2 && id_col_idx.is_some() && {
+                let vec_idx = if id_col_idx == Some(1) { 0 } else { 1 };
+                rec[vec_idx].contains('[')
+                    || rec[vec_idx].contains(';')
+                    || rec[vec_idx].contains(' ')
+            })
         {
             let vec_cell = if rec.len() == 1 || id_col_idx == Some(1) {
                 &rec[0]
