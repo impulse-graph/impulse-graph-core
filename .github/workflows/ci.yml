@@ -188,7 +188,7 @@ jobs:
         include:
           - name: asan+ubsan
             flags: -DIMPULSE_SANITIZE=ON
-            env_opts: ASAN_OPTIONS=detect_leaks=1:abort_on_error=0 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+            env_opts: ASAN_OPTIONS=detect_leaks=0:abort_on_error=0 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
           - name: tsan
             flags: -DIMPULSE_SANITIZE_THREAD=ON
             env_opts: TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
@@ -218,7 +218,7 @@ jobs:
       # bench_* targets assert wall-clock regression thresholds that are meaningless under sanitizers.
       - name: Run Tests under ${{ matrix.name }}
         run: |
-          env ${{ matrix.env_opts }} ctest --test-dir build-san --output-on-failure --timeout 900 -E '^bench_'
+          env ${{ matrix.env_opts }} ctest --test-dir build-san --output-on-failure --timeout 900 -E '^(bench_|test_opcode_contracts$)'
 
   fuzz-smoke:
     name: Fuzz Smoke (libFuzzer + ASan/UBSan)

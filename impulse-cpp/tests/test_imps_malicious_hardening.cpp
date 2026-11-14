@@ -645,7 +645,8 @@ void test_secondary_index_and_vamana_attacks() {
         HARDEN_CHECK((reinterpret_cast<uintptr_t>(words) & 7ULL) == 0ULL, "Returned bitset pointer is 8B aligned");
 
         // Corrupt bitset_offset of entry 0 to an unaligned offset (+1)
-        std::vector<uint8_t> corrupt(static_cast<const uint8_t*>(raw_idx), static_cast<const uint8_t*>(raw_idx) + idx_sz + 8);
+        std::vector<uint8_t> corrupt(static_cast<const uint8_t*>(raw_idx), static_cast<const uint8_t*>(raw_idx) + idx_sz);
+        corrupt.resize(idx_sz + 8, 0);
         uint32_t str_bytes = 0;
         std::memcpy(&str_bytes, corrupt.data() + 12, 4);
         size_t entry0_bitset_off_pos = 32 + str_bytes + 4;
