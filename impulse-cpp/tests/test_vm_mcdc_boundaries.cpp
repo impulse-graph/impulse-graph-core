@@ -1125,32 +1125,14 @@ void test_mcdc_opcodes_roaring_and_boolean() {
     impulse_vm_context_bitset_add(ctx, h2, 20);
     impulse_vm_context_bitset_add(ctx, h2, 30);
 
-    // 1. OP_ROARING_BITMAP_AND across {T,T}, {T,F}, {F,T}
+    // 1. {T, T} Roaring & Mask operations with valid bitset handles in R1, R2
     std::vector<impulse_instruction_t> roaring_bc = {
-        // Setup registers: R1 = h1 (bitset), R2 = h2 (bitset), R3 = 99 (INT64)
-        { OP_LOAD_CONST_INT, 0, 3, 99 },
-        // {T, T}: both are bitsets -> R10 = R1 & R2 ({20})
-        { OP_ROARING_BITMAP_AND, 0, 10, static_cast<uint32_t>(h1 | (h2 << 16)) },
-        // {T, F}: src1 is bitset, src2 is INT64
-        { OP_ROARING_BITMAP_AND, 0, 11, static_cast<uint32_t>(h1 | (3 << 16)) },
-        // {F, T}: src1 is INT64, src2 is bitset
-        { OP_ROARING_BITMAP_AND, 0, 12, static_cast<uint32_t>(3 | (h2 << 16)) },
-
-        // 2. OP_ROARING_BITMAP_OR across {T,T}, {T,F}, {F,T}
-        { OP_ROARING_BITMAP_OR, 0, 13, static_cast<uint32_t>(h1 | (h2 << 16)) },
-        { OP_ROARING_BITMAP_OR, 0, 14, static_cast<uint32_t>(h1 | (3 << 16)) },
-        { OP_ROARING_BITMAP_OR, 0, 15, static_cast<uint32_t>(3 | (h2 << 16)) },
-
-        // 3. OP_ROARING_BITMAP_AND_NOT across {T,T}, {T,F}, {F,T}
-        { OP_ROARING_BITMAP_AND_NOT, 0, 16, static_cast<uint32_t>(h1 | (h2 << 16)) },
-        { OP_ROARING_BITMAP_AND_NOT, 0, 17, static_cast<uint32_t>(h1 | (3 << 16)) },
-        { OP_ROARING_BITMAP_AND_NOT, 0, 18, static_cast<uint32_t>(3 | (h2 << 16)) },
-
-        // 4. OP_MASK_AND, OP_MASK_OR, OP_MASK_NOT
-        { OP_MASK_AND, 0, 20, static_cast<uint32_t>(h1 | (h2 << 8)) },
-        { OP_MASK_OR, 0, 21, static_cast<uint32_t>(h1 | (h2 << 8)) },
-        { OP_MASK_NOT, 0, 22, static_cast<uint32_t>(h1) },
-
+        { OP_ROARING_BITMAP_AND, 0, 10, static_cast<uint32_t>(1 | (2 << 16)) },
+        { OP_ROARING_BITMAP_OR, 0, 13, static_cast<uint32_t>(1 | (2 << 16)) },
+        { OP_ROARING_BITMAP_AND_NOT, 0, 16, static_cast<uint32_t>(1 | (2 << 16)) },
+        { OP_MASK_AND, 0, 20, static_cast<uint32_t>(1 | (2 << 8)) },
+        { OP_MASK_OR, 0, 21, static_cast<uint32_t>(1 | (2 << 8)) },
+        { OP_MASK_NOT, 0, 22, static_cast<uint32_t>(1) },
         { OP_HALT, 0, 0, 0 }
     };
 
@@ -1162,6 +1144,30 @@ void test_mcdc_opcodes_roaring_and_boolean() {
     state.pc = 0;
     impulse_vm_status_t st = impulse_vm_execute(roaring_bc.data(), roaring_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
+
+    // 2. {T, F} and {F, T} across OP_ROARING_BITMAP_{AND,OR,AND_NOT} must reject INT64 operand
+    const uint8_t roaring_ops[] = {
+        OP_ROARING_BITMAP_AND,
+        OP_ROARING_BITMAP_OR,
+        OP_ROARING_BITMAP_AND_NOT
+    };
+    for (uint8_t op : roaring_ops) {
+        std::vector<impulse_instruction_t> tf_bc = {
+            { OP_LOAD_CONST_INT, 0, 3, 99 },
+            { op, 0, 11, static_cast<uint32_t>(1 | (3 << 16)) },
+            { OP_HALT, 0, 0, 0 }
+        };
+        state.pc = 0;
+        assert(impulse_vm_execute(tf_bc.data(), tf_bc.size(), &state, 0) == IMPULSE_VM_ERR_INVALID_REGISTER);
+
+        std::vector<impulse_instruction_t> ft_bc = {
+            { OP_LOAD_CONST_INT, 0, 3, 99 },
+            { op, 0, 12, static_cast<uint32_t>(3 | (2 << 16)) },
+            { OP_HALT, 0, 0, 0 }
+        };
+        state.pc = 0;
+        assert(impulse_vm_execute(ft_bc.data(), ft_bc.size(), &state, 0) == IMPULSE_VM_ERR_INVALID_REGISTER);
+    }
 
     // 5. OP_VEC_BLEND with float and double vectors
     int h_f1 = impulse_vm_context_acquire_float_vector(ctx);
@@ -2126,7 +2132,10 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
     std::vector<impulse_instruction_t> roaring_and_not_bc = {
         { OP_ROARING_BITMAP_AND_NOT, 0, 3, 1 | (2 << 16) },
         { OP_ROARING_BITMAP_OR, 0, 3, 1 | (2 << 16) },
-        { OP_VEC_CMP_BETWEEN, 0, 4, 0 | (10 << 16) }, // between min/max
+        { OP_LOAD_CONST_INT, 0, 0, 5 },
+        { OP_LOAD_CONST_INT, 0, 9, 0 },
+        { OP_LOAD_CONST_INT, 0, 10, 10 },
+        { OP_VEC_CMP_BETWEEN, 0, 4, 0 | (9 << 8) | (10 << 16) }, // between min/max
         { OP_HALT, 0, 0, 0 }
     };
 
