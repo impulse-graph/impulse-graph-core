@@ -63,15 +63,34 @@ op_VEC_MATH_UNARY: {
     IMPULSE_TESTCASE(vm_state->register_types[src] == TYPE_FLOAT);
     IMPULSE_TESTCASE(dst == src);
 
-    if (vm_state->register_types[src] == TYPE_FLOAT) {
-        uint32_t bits_in = static_cast<uint32_t>(vm_state->registers[src] & IMP_SENTINEL_U32);
-        float f_in = 0.0f, f_out = 0.0f;
-        std::memcpy(&f_in, &bits_in, sizeof(float));
-        impulse_vector_math_unary_f32(func_id, &f_out, &f_in, 1);
-        uint32_t bits_out = 0;
-        std::memcpy(&bits_out, &f_out, sizeof(float));
-        vm_state->registers[dst] = bits_out;
-        vm_state->register_types[dst] = TYPE_FLOAT;
+    if (vm_state->register_types[src] == TYPE_FLOAT || vm_state->register_types[src] == TYPE_DOUBLE) {
+        const bool out_f64 = (type_tag == OP_2D_TYPE_TAG_F64 || vm_state->register_types[src] == TYPE_DOUBLE);
+        if (out_f64) {
+            double d_in = 0.0, d_out = 0.0;
+            if (vm_state->register_types[src] == TYPE_DOUBLE) {
+                uint64_t bits_in = vm_state->registers[src];
+                std::memcpy(&d_in, &bits_in, sizeof(double));
+            } else {
+                uint32_t bits_in = static_cast<uint32_t>(vm_state->registers[src] & IMP_SENTINEL_U32);
+                float f_in = 0.0f;
+                std::memcpy(&f_in, &bits_in, sizeof(float));
+                d_in = static_cast<double>(f_in);
+            }
+            impulse_vector_math_unary_f64(func_id, &d_out, &d_in, 1);
+            uint64_t bits_out = 0;
+            std::memcpy(&bits_out, &d_out, sizeof(double));
+            vm_state->registers[dst] = bits_out;
+            vm_state->register_types[dst] = TYPE_DOUBLE;
+        } else {
+            uint32_t bits_in = static_cast<uint32_t>(vm_state->registers[src] & IMP_SENTINEL_U32);
+            float f_in = 0.0f, f_out = 0.0f;
+            std::memcpy(&f_in, &bits_in, sizeof(float));
+            impulse_vector_math_unary_f32(func_id, &f_out, &f_in, 1);
+            uint32_t bits_out = 0;
+            std::memcpy(&bits_out, &f_out, sizeof(float));
+            vm_state->registers[dst] = bits_out;
+            vm_state->register_types[dst] = TYPE_FLOAT;
+        }
         vm_state->pc++;
         DISPATCH();
     }
@@ -85,8 +104,12 @@ op_VEC_MATH_UNARY: {
     const bool use_f64 = (type_tag == OP_2D_TYPE_TAG_F64 || vm_state->register_types[src] == TYPE_DOUBLE_VECTOR);
     IMPULSE_TESTCASE(use_f64);
     if (use_f64) {
-        size_t src_len = (h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
-            ? vm_state->query_context->double_vector_lengths[h_src] : 0;
+        const bool src_is_double = (vm_state->register_types[src] == TYPE_DOUBLE_VECTOR);
+        size_t src_len = 0;
+        if (h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES) {
+            src_len = src_is_double ? vm_state->query_context->double_vector_lengths[h_src]
+                                    : vm_state->query_context->float_vector_lengths[h_src];
+        }
         N = std::min(src_len, vm_state->query_context->max_nodes);
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
@@ -98,8 +121,16 @@ op_VEC_MATH_UNARY: {
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         vm_state->query_context->double_vector_lengths[h_dst] = src_len;
         double* d = vm_state->query_context->double_vectors[h_dst].data();
-        const double* s = vm_state->query_context->double_vectors[h_src].data();
-        impulse_vector_math_unary_f64(func_id, d, s, N);
+        if (src_is_double) {
+            const double* s = vm_state->query_context->double_vectors[h_src].data();
+            impulse_vector_math_unary_f64(func_id, d, s, N);
+        } else {
+            const float* s = vm_state->query_context->float_vectors[h_src].data();
+            for (size_t i = 0; i < N; ++i) {
+                double d_in = static_cast<double>(s[i]);
+                impulse_vector_math_unary_f64(func_id, &d[i], &d_in, 1);
+            }
+        }
     } else {
         size_t src_len = (h_src >= 0 && static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->float_vector_lengths[h_src] : 0;

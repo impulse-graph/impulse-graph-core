@@ -47,11 +47,12 @@ op_REDUCE: {
             double best_val = (op_id == BINARY_OP_ARGMIN)
                 ? std::numeric_limits<double>::infinity()
                 : -std::numeric_limits<double>::infinity();
-            int64_t best_idx = (N > 0) ? 0 : -1;
+            int64_t best_idx = -1;
             for (size_t i = 0; i < N; ++i) {
                 double v = vec[i];
                 if (std::isnan(v)) continue;
-                if ((op_id == BINARY_OP_ARGMIN && v < best_val) ||
+                if (best_idx < 0 ||
+                    (op_id == BINARY_OP_ARGMIN && v < best_val) ||
                     (op_id == BINARY_OP_ARGMAX && v > best_val)) {
                     best_val = v;
                     best_idx = static_cast<int64_t>(i);
@@ -106,11 +107,12 @@ op_REDUCE: {
             float best_val = (op_id == BINARY_OP_ARGMIN)
                 ? std::numeric_limits<float>::infinity()
                 : -std::numeric_limits<float>::infinity();
-            int64_t best_idx = (N > 0) ? 0 : -1;
+            int64_t best_idx = -1;
             for (size_t i = 0; i < N; ++i) {
                 float v = vec[i];
                 if (std::isnan(v)) continue;
-                if ((op_id == BINARY_OP_ARGMIN && v < best_val) ||
+                if (best_idx < 0 ||
+                    (op_id == BINARY_OP_ARGMIN && v < best_val) ||
                     (op_id == BINARY_OP_ARGMAX && v > best_val)) {
                     best_val = v;
                     best_idx = static_cast<int64_t>(i);

@@ -108,6 +108,96 @@ op_CSR_WALK_REDUCE_SUM: {
         IMP_VM_SET_ZF(vm_state, sum == 0);
         vm_state->pc++;
         DISPATCH();
+    } else if (vm_state->register_types[src] == TYPE_BITSET_HANDLE) {
+        int h_src = static_cast<int>(vm_state->registers[src]);
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->bitsets.size() ||
+            vm_state->query_context->bitsets[h_src].words == nullptr) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& bs_src = vm_state->query_context->bitsets[h_src];
+        double fsum = 0.0;
+        int64_t isum = 0;
+        size_t valid_count = 0;
+        bool is_float_res = (mock_node_attr && !mock_node_attr->float_data.empty());
+        if (!mock_node_attr && has_edge_attr) {
+            const uint8_t base_type = IMP_ATTR_BASE_TYPE(edge_attr.type_code);
+            is_float_res = (base_type == IMP_LEGACY_ALT_FLOAT32 || base_type == IMP_LEGACY_ALT_FLOAT64);
+        }
+        if (slot.offsets_ptr && slot.targets_ptr) {
+            size_t words = vm_state->query_context->words_per_bitset;
+            for (size_t w = 0; w < words; ++w) {
+                uint64_t bits = bs_src.words[w];
+                while (bits != 0ULL) {
+                    int bit = std::countr_zero(bits);
+                    bits &= (bits - 1ULL);
+                    uint64_t u = (w * IMP_BITS_PER_WORD) + static_cast<uint64_t>(bit);
+                    if (u >= slot.node_count) break;
+                    uint64_t start = slot.get_csr_offset(u);
+                    uint64_t end   = slot.get_csr_offset(u + 1);
+                    IMPULSE_WELL_FORMED_ASSERT(start <= end);
+                    for (uint64_t idx = start; idx < end; ++idx) {
+                        uint64_t target_node = slot.get_csr_target(idx);
+                        if (mock_node_attr) {
+                            if (mock_node_attr->has_mask && !mock_node_attr->mask.test(target_node)) {
+                                continue;
+                            }
+                            if (!mock_node_attr->float_data.empty()) {
+                                if (target_node < mock_node_attr->float_data.size()) {
+                                    float fv = mock_node_attr->float_data[target_node];
+                                    if (!std::isnan(fv)) {
+                                        fsum += static_cast<double>(fv);
+                                        valid_count++;
+                                    }
+                                }
+                            } else if (!mock_node_attr->int_data.empty()) {
+                                if (target_node < mock_node_attr->int_data.size()) {
+                                    isum += static_cast<int64_t>(mock_node_attr->int_data[target_node]);
+                                    valid_count++;
+                                }
+                            } else {
+                                isum += static_cast<int64_t>(target_node);
+                                valid_count++;
+                            }
+                        } else if (has_edge_attr) {
+                            const uint8_t base_type = IMP_ATTR_BASE_TYPE(edge_attr.type_code);
+                            if (base_type == IMP_LEGACY_ALT_FLOAT32) {
+                                float fv = static_cast<const float*>(edge_attr.data_ptr)[idx];
+                                if (!std::isnan(fv)) { fsum += static_cast<double>(fv); valid_count++; }
+                            } else if (base_type == IMP_LEGACY_ALT_FLOAT64) {
+                                double dv = static_cast<const double*>(edge_attr.data_ptr)[idx];
+                                if (!std::isnan(dv)) { fsum += dv; valid_count++; }
+                            } else if (base_type == IMP_TYPE_CODE_INT32) {
+                                isum += static_cast<const int32_t*>(edge_attr.data_ptr)[idx];
+                                valid_count++;
+                            } else if (base_type == IMP_TYPE_CODE_INT64) {
+                                isum += static_cast<const int64_t*>(edge_attr.data_ptr)[idx];
+                                valid_count++;
+                            } else {
+                                isum += static_cast<int64_t>(target_node);
+                                valid_count++;
+                            }
+                        } else {
+                            isum += static_cast<int64_t>(target_node);
+                            valid_count++;
+                        }
+                    }
+                }
+            }
+        }
+        if (valid_count == 0 || is_float_res) {
+            float fres = (valid_count == 0) ? 0.0f : static_cast<float>(fsum);
+            uint32_t raw_bits = 0;
+            std::memcpy(&raw_bits, &fres, sizeof(float));
+            vm_state->registers[dst] = static_cast<uint64_t>(raw_bits);
+            vm_state->register_types[dst] = TYPE_FLOAT;
+            IMP_VM_SET_ZF(vm_state, valid_count == 0 || fres == 0.0f);
+        } else {
+            vm_state->registers[dst] = static_cast<uint64_t>(isum);
+            vm_state->register_types[dst] = TYPE_INT64;
+            IMP_VM_SET_ZF(vm_state, isum == 0);
+        }
+        vm_state->pc++;
+        DISPATCH();
     }
     int h_dst = acquire_float_vector(vm_state->query_context);
     if (h_dst < 0) {

@@ -30,6 +30,10 @@ op_ALLOC_SCRATCH: {
     IMP_VALIDATE_GPR(dst);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
 
+    if (static_cast<int32_t>(req_bytes) < 0) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
     IMPULSE_TESTCASE(req_bytes == 0u);
     IMPULSE_TESTCASE((static_cast<uint64_t>(req_bytes) & OP_73_SCRATCH_ALIGN_MASK) == 0ULL);
 

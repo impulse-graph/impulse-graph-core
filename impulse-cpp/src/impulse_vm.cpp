@@ -188,33 +188,33 @@ impulse_vm_status_t impulse_vm_execute(
         dispatch_table[OP_COO_WALK_STREAM] = &&op_COO_WALK_STREAM;
         dispatch_table[OP_STREAM_FUNC_BEGIN] = &&op_NOP;
         dispatch_table[OP_STREAM_FUNC_END] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_SRC] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_TGT] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_EDGE] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_ADD] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_SUB] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_MUL] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_DIV] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_MOD] = &&op_NOP;
-        dispatch_table[OP_STREAM_MATH_UNARY] = &&op_NOP;
-        dispatch_table[OP_STREAM_CMP_EQ] = &&op_NOP;
-        dispatch_table[OP_STREAM_CMP_NEQ] = &&op_NOP;
-        dispatch_table[OP_STREAM_CMP_GT] = &&op_NOP;
-        dispatch_table[OP_STREAM_CMP_LT] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOGIC_AND] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOGIC_OR] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_NOP;
-        dispatch_table[OP_STREAM_SELECT] = &&op_NOP;
-        dispatch_table[OP_STREAM_FILTER] = &&op_NOP;
-        dispatch_table[OP_STREAM_YIELD] = &&op_NOP;
-        dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_NOP;
-        dispatch_table[OP_STREAM_REDUCE] = &&op_NOP;
-        dispatch_table[OP_STREAM_REDUCE_ARGMIN] = &&op_NOP;
-        dispatch_table[OP_STREAM_REDUCE_ARGMAX] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_NOP;
-        dispatch_table[OP_STREAM_LOAD_CONST] = &&op_NOP;
+        dispatch_table[OP_STREAM_LOAD_SRC] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_TGT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_EDGE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_ADD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_SUB] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_MUL] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_DIV] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_MOD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_MATH_UNARY] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_EQ] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_NEQ] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_GT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_CMP_LT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_AND] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_OR] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOGIC_NOT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_SELECT] = &&op_INVALID;
+        dispatch_table[OP_STREAM_FILTER] = &&op_INVALID;
+        dispatch_table[OP_STREAM_YIELD] = &&op_INVALID;
+        dispatch_table[OP_STREAM_SCATTER_REDUCE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE_ARGMIN] = &&op_INVALID;
+        dispatch_table[OP_STREAM_REDUCE_ARGMAX] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_SRC_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_TGT_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_EDGE_ID] = &&op_INVALID;
+        dispatch_table[OP_STREAM_LOAD_CONST] = &&op_INVALID;
         dispatch_table[OP_LANE_INIT_SEEDS] = &&op_LANE_INIT_SEEDS;
         dispatch_table[OP_LANE_INIT_GROUPS] = &&op_LANE_INIT_GROUPS;
         dispatch_table[OP_LANE_SET_EDGE_MASK] = &&op_LANE_SET_EDGE_MASK;
@@ -388,6 +388,7 @@ dispatch_loop_start:
         case OP_CSC_WALK_STREAM: goto op_CSC_WALK_STREAM;
         case OP_COO_WALK_STREAM: goto op_COO_WALK_STREAM;
         case OP_STREAM_FUNC_BEGIN: case OP_STREAM_FUNC_END:
+            goto op_NOP;
         case OP_STREAM_LOAD_SRC: case OP_STREAM_LOAD_TGT: case OP_STREAM_LOAD_EDGE:
         case OP_STREAM_MATH_ADD: case OP_STREAM_MATH_SUB: case OP_STREAM_MATH_MUL:
         case OP_STREAM_MATH_DIV: case OP_STREAM_MATH_MOD: case OP_STREAM_MATH_UNARY:
@@ -398,7 +399,7 @@ dispatch_loop_start:
         case OP_STREAM_REDUCE_ARGMIN: case OP_STREAM_REDUCE_ARGMAX:
         case OP_STREAM_LOAD_SRC_ID: case OP_STREAM_LOAD_TGT_ID:
         case OP_STREAM_LOAD_EDGE_ID: case OP_STREAM_LOAD_CONST:
-            goto op_NOP;
+            goto op_INVALID;
         case OP_LANE_INIT_SEEDS: goto op_LANE_INIT_SEEDS;
         case OP_LANE_INIT_GROUPS: goto op_LANE_INIT_GROUPS;
         case OP_LANE_SET_EDGE_MASK: goto op_LANE_SET_EDGE_MASK;
