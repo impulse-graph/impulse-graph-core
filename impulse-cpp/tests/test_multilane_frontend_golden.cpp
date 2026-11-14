@@ -784,7 +784,7 @@ void test_impk_lowering_goldens() {
                   {
                       {OP_LANE_INIT_SEEDS, 0x01, 0, 0x00030000},
                       {OP_LANE_INIT_GROUPS, 0x00, 0, 0x00020000},      // pairs_reg=0 | num_groups=2<<16
-                      {OP_LANE_SET_EDGE_MASK, 0x00, 0, 0x00000000},    // pairs_reg=0 | rel 0<<16
+                      {OP_LANE_SET_EDGE_MASK, 0x01, 0, 0x00000000},    // pairs_reg=0 | rel 0<<16
                       {OP_LANE_CSR_WALK, 0x04, 1, 0x00000000},         // fixed-point flag 0x04
                       {OP_LANE_CSC_WALK, 0x04, 0, 0x00000001},         // src=R1
                       {OP_LANE_PRUNE_MASK, 0x01, 0, 0x00001000},       // mode=1, arg0=16<<8
