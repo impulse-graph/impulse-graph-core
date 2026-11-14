@@ -1758,6 +1758,164 @@ void run_suite_4_cel_filters_and_projections(const impulse_snapshot_t* snap) {
         std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
                   << "4.8 Multi-Lane CEL, Constant-Folding Equivalence & Malformed CEL Rejection\n";
     }
+
+    // 4.9 Comprehensive Unary Math CEL Expressions (~4x volume: 36 unary cases across Sensor & User)
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        struct UnaryCase {
+            const char* expr;
+            double (*ref)(double v, double th, double rd);
+            float tol;
+        };
+
+        auto sig = [](double x) { return 1.0 / (1.0 + std::exp(-x)); };
+        const std::vector<UnaryCase> unary_cases = {
+            {"abs(phase_angle_f64)", [](double, double th, double) { return std::abs(th); }, 1e-4f},
+            {"sqrt(voltage_f64)", [](double v, double, double) { return std::sqrt(v); }, 1e-4f},
+            {"rsqrt(voltage_f64)", [](double v, double, double) { return 1.0 / std::sqrt(v); }, 1e-4f},
+            {"cbrt(voltage_f64)", [](double v, double, double) { return std::cbrt(v); }, 1e-4f},
+            {"floor(voltage_f64)", [](double v, double, double) { return std::floor(v); }, 1e-5f},
+            {"ceil(voltage_f64)", [](double v, double, double) { return std::ceil(v); }, 1e-5f},
+            {"trunc(phase_angle_f64 * 10.0)", [](double, double th, double) { return std::trunc(th * 10.0); }, 1e-5f},
+            {"round(voltage_f64)", [](double v, double, double) { return std::round(v); }, 1e-5f},
+            {"exp(phase_angle_f64)", [](double, double th, double) { return std::exp(th); }, 1e-4f},
+            {"exp2(phase_angle_f64)", [](double, double th, double) { return std::exp2(th); }, 1e-4f},
+            {"exp10(phase_angle_f64)", [](double, double th, double) { return std::pow(10.0, th); }, 1e-4f},
+            {"expm1(phase_angle_f64)", [](double, double th, double) { return std::expm1(th); }, 1e-4f},
+            {"log(voltage_f64)", [](double v, double, double) { return std::log(v); }, 1e-4f},
+            {"log2(voltage_f64)", [](double v, double, double) { return std::log2(v); }, 1e-4f},
+            {"log10(voltage_f64)", [](double v, double, double) { return std::log10(v); }, 1e-4f},
+            {"log1p(phase_angle_f64)", [](double, double th, double) { return std::log1p(th); }, 1e-4f},
+            {"sin(phase_angle_f64)", [](double, double th, double) { return std::sin(th); }, 1e-4f},
+            {"cos(phase_angle_f64)", [](double, double th, double) { return std::cos(th); }, 1e-4f},
+            {"tan(phase_angle_f64)", [](double, double th, double) { return std::tan(th); }, 1e-4f},
+            {"asin(phase_angle_f64)", [](double, double th, double) { return std::asin(th); }, 1e-4f},
+            {"acos(phase_angle_f64)", [](double, double th, double) { return std::acos(th); }, 1e-4f},
+            {"atan(phase_angle_f64)", [](double, double th, double) { return std::atan(th); }, 1e-4f},
+            {"sinh(phase_angle_f64)", [](double, double th, double) { return std::sinh(th); }, 1e-4f},
+            {"cosh(phase_angle_f64)", [](double, double th, double) { return std::cosh(th); }, 1e-4f},
+            {"tanh(phase_angle_f64)", [](double, double th, double) { return std::tanh(th); }, 1e-4f},
+            {"asinh(phase_angle_f64)", [](double, double th, double) { return std::asinh(th); }, 1e-4f},
+            {"acosh(voltage_f64 * 0.01)", [](double v, double, double) { return std::acosh(v * 0.01); }, 1e-4f},
+            {"atanh(phase_angle_f64)", [](double, double th, double) { return std::atanh(th); }, 1e-4f},
+            {"relu(phase_angle_f64)", [](double, double th, double) { return th > 0.0 ? th : 0.0; }, 1e-5f},
+            {"sigmoid(phase_angle_f64 * 10.0)", [](double, double th, double) { return 1.0 / (1.0 + std::exp(-10.0 * th)); }, 1e-4f},
+            {"silu(phase_angle_f64 * 10.0)", [](double, double th, double) { double x = 10.0 * th; return x / (1.0 + std::exp(-x)); }, 1e-4f},
+            {"softplus(phase_angle_f64 * 5.0)", [](double, double th, double) { return std::log1p(std::exp(5.0 * th)); }, 1e-4f},
+            {"erf(phase_angle_f64 * 4.0)", [](double, double th, double) { return std::erf(4.0 * th); }, 1e-4f},
+            {"erfc(phase_angle_f64 * 4.0)", [](double, double th, double) { return std::erfc(4.0 * th); }, 1e-4f},
+            {"lgamma(voltage_f64 * 0.02)", [](double v, double, double) { return std::lgamma(v * 0.02); }, 1e-4f},
+            {"sqrt(abs(sin(phase_angle_f64))) + tanh(exp(phase_angle_f64))",
+             [](double, double th, double) { return std::sqrt(std::abs(std::sin(th))) + std::tanh(std::exp(th)); }, 1e-4f},
+        };
+        (void)sig;
+
+        for (const auto& tc : unary_cases) {
+            auto vals = view.domain("Sensor").all().project(tc.expr).collectNodeValues();
+            E2E_CHECK(vals.size() == 10U, std::string("Unary CEL size mismatch for ") + tc.expr);
+            for (size_t i = 0; i < vals.size(); ++i) {
+                double v = 115.0 + 1.25 * static_cast<double>(i);
+                double th = -0.15 + 0.03 * static_cast<double>(i);
+                double rd = 42.0 + 2.5 * static_cast<double>(i);
+                float want = static_cast<float>(tc.ref(v, th, rd));
+                E2E_CHECK(std::abs(vals[i].second - want) <= tc.tol,
+                          std::string("Unary CEL value mismatch for ") + tc.expr + " at s" + std::to_string(i));
+            }
+        }
+
+        // Also test unary math predicates in Traversal::filter
+        auto filt_sin = view.domain("Sensor").all().filter("sin(phase_angle_f64) > 0.0 && sqrt(voltage_f64) > 11.0").collect();
+        // phase > 0 => i in {6..9}; sqrt(v) > 11 => v > 121 => i >= 5 => {6, 7, 8, 9}
+        E2E_CHECK((filt_sin == std::vector<uint64_t>{6, 7, 8, 9}), "Unary filter sin/sqrt mismatch");
+
+        auto filt_finite = view.domain("Sensor").all().filter("isfinite(voltage_f64) && !isnan(phase_angle_f64) && !isinf(reading_f32)").collect();
+        E2E_CHECK(filt_finite.size() == 10U, "isfinite/!isnan/!isinf must match all 10 sensors");
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.9 Comprehensive Unary Math CEL Expressions (" << unary_cases.size() << " projections + 2 filters)\n";
+    }
+
+    // 4.10 Comprehensive Non-Unary Math CEL Expressions (~3x volume: 24 binary/ternary/nested cases)
+    {
+        int failures_before = g_failed_assertions;
+        impulse::vm::SnapshotView view(snap);
+
+        struct NonUnaryCase {
+            const char* expr;
+            double (*ref)(double v, double th, double rd);
+            float tol;
+        };
+
+        const std::vector<NonUnaryCase> non_unary_cases = {
+            {"pow(reading_f32 * 0.1, 2.0)", [](double, double, double rd) { return std::pow(rd * 0.1, 2.0); }, 1e-3f},
+            {"pow(cbrt(voltage_f64), 3.0)", [](double v, double, double) { return std::pow(std::cbrt(v), 3.0); }, 1e-2f},
+            {"hypot(voltage_f64, reading_f32)", [](double v, double, double rd) { return std::hypot(v, rd); }, 1e-2f},
+            {"hypot(voltage_f64 * cos(phase_angle_f64), voltage_f64 * sin(phase_angle_f64))",
+             [](double v, double th, double) { return std::hypot(v * std::cos(th), v * std::sin(th)); }, 1e-2f},
+            {"atan2(phase_angle_f64, voltage_f64 * 0.01)",
+             [](double v, double th, double) { return std::atan2(th, v * 0.01); }, 1e-4f},
+            {"atan2(sin(phase_angle_f64), cos(phase_angle_f64))",
+             [](double, double th, double) { return std::atan2(std::sin(th), std::cos(th)); }, 1e-4f},
+            {"copysign(reading_f32, phase_angle_f64)",
+             [](double, double th, double rd) { return std::copysign(rd, th); }, 1e-4f},
+            {"copysign(sqrt(abs(phase_angle_f64)), phase_angle_f64)",
+             [](double, double th, double) { return std::copysign(std::sqrt(std::abs(th)), th); }, 1e-4f},
+            {"fmod(voltage_f64, 10.0)", [](double v, double, double) { return std::fmod(v, 10.0); }, 1e-4f},
+            {"voltage_f64 % 7.5", [](double v, double, double) { return std::fmod(v, 7.5); }, 1e-4f},
+            {"clamp(reading_f32, 47.0, 59.5)", [](double, double, double rd) { return std::clamp(rd, 47.0, 59.5); }, 1e-4f},
+            {"clamp(voltage_f64 - 118.0, -1.5, 4.5)", [](double v, double, double) { return std::clamp(v - 118.0, -1.5, 4.5); }, 1e-4f},
+            {"lerp(reading_f32, voltage_f64, 0.35)", [](double v, double, double rd) { return rd + 0.35 * (v - rd); }, 1e-2f},
+            {"lerp(cos(phase_angle_f64), sin(phase_angle_f64), 0.5)",
+             [](double, double th, double) { double c = std::cos(th), s = std::sin(th); return c + 0.5 * (s - c); }, 1e-4f},
+            {"safeDiv(voltage_f64, phase_angle_f64, -999.0)",
+             [](double v, double th, double) { return std::abs(th) < 1e-12 ? -999.0 : (v / th); }, 1e-1f},
+            {"safe_div(reading_f32, voltage_f64 - 120.0, 777.0)",
+             [](double v, double, double rd) { return std::abs(v - 120.0) < 1e-12 ? 777.0 : (rd / (v - 120.0)); }, 1e-2f},
+            {"safeDiv(pow(reading_f32, 2.0), fmod(voltage_f64, 10.0) + 1.0, 0.0)",
+             [](double v, double, double rd) { return std::pow(rd, 2.0) / (std::fmod(v, 10.0) + 1.0); }, 1e-1f},
+            {"clamp(lerp(reading_f32, voltage_f64, 0.25), 65.0, 80.0)",
+             [](double v, double, double rd) { return std::clamp(rd + 0.25 * (v - rd), 65.0, 80.0); }, 1e-2f},
+            {"hypot(clamp(phase_angle_f64 * 10.0, -1.0, 1.0), erf(phase_angle_f64 * 3.0))",
+             [](double, double th, double) { return std::hypot(std::clamp(th * 10.0, -1.0, 1.0), std::erf(th * 3.0)); }, 1e-4f},
+            {"lerp(softplus(phase_angle_f64), silu(phase_angle_f64), 0.5)",
+             [](double, double th, double) {
+                 double a = std::log1p(std::exp(th));
+                 double b = th / (1.0 + std::exp(-th));
+                 return a + 0.5 * (b - a);
+             }, 1e-4f},
+            {"pow(hypot(cos(phase_angle_f64), sin(phase_angle_f64)), 4.0)",
+             [](double, double th, double) { return std::pow(std::hypot(std::cos(th), std::sin(th)), 4.0); }, 1e-4f},
+            {"atan2(sinh(phase_angle_f64), cosh(phase_angle_f64))",
+             [](double, double th, double) { return std::atan2(std::sinh(th), std::cosh(th)); }, 1e-4f},
+        };
+
+        for (const auto& tc : non_unary_cases) {
+            auto vals = view.domain("Sensor").all().project(tc.expr).collectNodeValues();
+            E2E_CHECK(vals.size() == 10U, std::string("Non-unary CEL size mismatch for ") + tc.expr);
+            for (size_t i = 0; i < vals.size(); ++i) {
+                double v = 115.0 + 1.25 * static_cast<double>(i);
+                double th = -0.15 + 0.03 * static_cast<double>(i);
+                double rd = 42.0 + 2.5 * static_cast<double>(i);
+                float want = static_cast<float>(tc.ref(v, th, rd));
+                E2E_CHECK(std::abs(vals[i].second - want) <= tc.tol,
+                          std::string("Non-unary CEL value mismatch for ") + tc.expr + " at s" + std::to_string(i));
+            }
+        }
+
+        // Non-unary math predicates in Traversal::filter
+        auto filt_hypot = view.domain("Sensor").all().filter("hypot(voltage_f64 - 120.0, reading_f32 - 52.0) <= 3.0").collect();
+        // i=3: hypot(-1.25, -2.5)=2.795 <= 3; i=4: hypot(0, 0)=0 <= 3; i=5: hypot(1.25, 2.5)=2.795 <= 3
+        E2E_CHECK((filt_hypot == std::vector<uint64_t>{3, 4, 5}), "Non-unary filter hypot mismatch");
+
+        auto filt_clamp = view.domain("Sensor").all().filter("clamp(reading_f32, 47.0, 57.0) == reading_f32 && fmod(voltage_f64, 5.0) == 0.0").collect();
+        // reading in [47, 57] => i in [2..6]; voltage % 5 == 0 => v in {115, 120, 125} => i in {0, 4, 8} => {4}
+        E2E_CHECK((filt_clamp == std::vector<uint64_t>{4}), "Non-unary filter clamp+fmod mismatch");
+
+        std::cout << ((g_failed_assertions == failures_before) ? "  [PASS] " : "  [FAIL] ")
+                  << "4.10 Comprehensive Non-Unary Math CEL Expressions (" << non_unary_cases.size() << " projections + 2 filters)\n";
+    }
 }
 
 } // anonymous namespace
