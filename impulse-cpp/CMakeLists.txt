@@ -30,11 +30,42 @@ if(IMPULSE_DISABLE_COMPUTED_GOTO)
     add_compile_definitions(IMPULSE_DISABLE_COMPUTED_GOTO=1)
 endif()
 
-# --- Sanitizer Option ---------------------------------------------------
+# --- Sanitizer Options --------------------------------------------------
+# IMPULSE_SANITIZE        : AddressSanitizer + UndefinedBehaviorSanitizer. UBSan findings are
+#                           fatal (-fno-sanitize-recover=undefined) so they fail ctest.
+# IMPULSE_SANITIZE_THREAD : ThreadSanitizer (mutually exclusive with ASan/UBSan).
+#                           NOTE: the OpenMP paths in src/opcodes/*.inc are guarded by `_OPENMP`
+#                           and are compiled out unless IMPULSE_ENABLE_OPENMP=ON. libomp is not
+#                           TSan-instrumented, so OpenMP+TSan reports false positives from the
+#                           runtime's own barriers; use TSan with OpenMP OFF (default) unless an
+#                           instrumented runtime (e.g. libgomp built with -fsanitize=thread or
+#                           archer) is available.
 option(IMPULSE_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(IMPULSE_SANITIZE_THREAD "Enable ThreadSanitizer (mutually exclusive with IMPULSE_SANITIZE)" OFF)
+option(IMPULSE_ENABLE_OPENMP "Compile ImpulseVM intra-instruction OpenMP parallel paths" OFF)
+if(IMPULSE_SANITIZE AND IMPULSE_SANITIZE_THREAD)
+    message(FATAL_ERROR "IMPULSE_SANITIZE (ASan+UBSan) and IMPULSE_SANITIZE_THREAD (TSan) are mutually exclusive")
+endif()
 if(IMPULSE_SANITIZE)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address,undefined)
+    if(MSVC)
+        # MSVC supports ASan only (/fsanitize=address); UBSan/TSan are not available.
+        add_compile_options(/fsanitize=address)
+    else()
+        add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined
+                            -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address,undefined)
+    endif()
+endif()
+if(IMPULSE_SANITIZE_THREAD)
+    if(MSVC)
+        message(FATAL_ERROR "IMPULSE_SANITIZE_THREAD is not supported with MSVC")
+    endif()
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+if(IMPULSE_ENABLE_OPENMP)
+    find_package(OpenMP REQUIRED COMPONENTS CXX)
+    message(STATUS "ImpulseVM OpenMP parallel paths enabled")
 endif()
 
 # --- MC/DC Coverage Option ----------------------------------------------
@@ -83,6 +114,9 @@ target_include_directories(impulse_graph PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(impulse_graph PUBLIC hwy)
+if(IMPULSE_ENABLE_OPENMP)
+    target_link_libraries(impulse_graph PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 # --- Static Library (.a / .lib) ------------------------------------------
 add_library(impulse_graph_static STATIC
@@ -104,6 +138,9 @@ target_include_directories(impulse_graph_static PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(impulse_graph_static PUBLIC hwy)
+if(IMPULSE_ENABLE_OPENMP)
+    target_link_libraries(impulse_graph_static PUBLIC $<BUILD_INTERFACE:OpenMP::OpenMP_CXX>)
+endif()
 
 # --- Install Targets & Exports -------------------------------------------
 install(TARGETS impulse_graph impulse_graph_static
@@ -315,6 +352,52 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(kleisli_json_runner tests/kleisli_json_runner.cpp)
     target_link_libraries(kleisli_json_runner PRIVATE impulse_graph_static)
+
+    add_executable(test_multilane_frontend_golden tests/test_multilane_frontend_golden.cpp)
+    target_link_libraries(test_multilane_frontend_golden PRIVATE impulse_graph_static)
+    add_test(NAME test_multilane_frontend_golden COMMAND test_multilane_frontend_golden)
+endif()
+
+# --- Fuzz Targets --------------------------------------------------------
+# IMPULSE_BUILD_FUZZ      : build fuzz targets with the standalone random-mutation driver
+#                           (tests/fuzz_driver.hpp) and register short ctest smoke runs.
+# IMPULSE_ENABLE_LIBFUZZER: build the same targets with LLVM libFuzzer (-fsanitize=fuzzer,
+#                           requires clang with the libFuzzer runtime; Apple clang does not ship it,
+#                           use Homebrew llvm). No ctest smoke runs are registered in this mode.
+# Seed corpora: tests/fuzz_corpus/<target>/ (text only). Binary seeds (.imps, bytecode) are
+# generated at runtime by the harness: AGENTS.md 3.6 forbids binary blobs in Git.
+option(IMPULSE_BUILD_FUZZ "Build fuzz targets (standalone mutation driver) and ctest smoke runs" OFF)
+option(IMPULSE_ENABLE_LIBFUZZER "Build fuzz targets with LLVM libFuzzer (-fsanitize=fuzzer)" OFF)
+set(IMPULSE_FUZZ_SMOKE_RUNS 1500 CACHE STRING "Mutation iterations per fuzz ctest smoke test")
+if(IMPULSE_BUILD_FUZZ OR IMPULSE_ENABLE_LIBFUZZER)
+    if(MSVC)
+        message(FATAL_ERROR "Fuzz targets are not supported with MSVC")
+    endif()
+    set(IMPULSE_FUZZ_TARGETS fuzz_snapshot fuzz_dsl_frontends fuzz_cel_parser fuzz_vm_bytecode)
+    set(fuzz_corpus_fuzz_snapshot "")
+    set(fuzz_corpus_fuzz_vm_bytecode "")
+    set(fuzz_corpus_fuzz_dsl_frontends ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_corpus/dsl)
+    set(fuzz_corpus_fuzz_cel_parser ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_corpus/cel)
+    foreach(fz ${IMPULSE_FUZZ_TARGETS})
+        add_executable(${fz} tests/${fz}.cpp)
+        target_link_libraries(${fz} PRIVATE impulse_graph_static)
+        target_include_directories(${fz} PRIVATE tests)
+        if(IMPULSE_ENABLE_LIBFUZZER)
+            target_compile_definitions(${fz} PRIVATE IMPULSE_LIBFUZZER_ENABLED=1)
+            target_compile_options(${fz} PRIVATE -fsanitize=fuzzer-no-link)
+            target_link_options(${fz} PRIVATE -fsanitize=fuzzer)
+        else()
+            add_test(NAME ${fz}_smoke
+                     COMMAND ${fz} -runs=${IMPULSE_FUZZ_SMOKE_RUNS} ${fuzz_corpus_${fz}})
+        endif()
+    endforeach()
+endif()
+
+# Regression tests for defects found by the sanitizer/fuzz campaign.
+if(IMPULSE_BUILD_TESTS)
+    add_executable(test_robustness_regressions tests/test_robustness_regressions.cpp)
+    target_link_libraries(test_robustness_regressions PRIVATE impulse_graph_static)
+    add_test(NAME test_robustness_regressions COMMAND test_robustness_regressions)
 endif()
 
 # --- Examples ------------------------------------------------------------

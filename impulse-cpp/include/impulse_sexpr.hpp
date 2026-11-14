@@ -63,9 +63,16 @@ public:
                     pos++;
                     break;
                 }
+                if (src[pos] == ')' || src[pos] == ']') {
+                    pos++;
+                    throw std::runtime_error("Mismatched closing delimiter in S-Expression");
+                }
                 expr.list.push_back(parse(depth + 1));
             }
             return expr;
+        } else if (src[pos] == ')' || src[pos] == ']') {
+            pos++;
+            throw std::runtime_error("Unexpected closing delimiter in S-Expression");
         } else if (src[pos] == '"') {
             pos++;
             SExpr expr;

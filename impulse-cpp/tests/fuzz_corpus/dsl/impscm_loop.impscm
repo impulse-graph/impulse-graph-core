@@ -1,0 +1,1 @@
+(loop-while (> (bitset:cardinality frontier) 0) (csr-walk edge))

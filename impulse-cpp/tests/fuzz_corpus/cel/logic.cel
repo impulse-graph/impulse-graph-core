@@ -1,0 +1,1 @@
+edge.miles > 100.0 && dest.priority == 1

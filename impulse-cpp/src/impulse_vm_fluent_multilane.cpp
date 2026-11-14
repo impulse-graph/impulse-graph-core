@@ -1125,55 +1125,69 @@ MultiLaneResult MultiLaneTraversal::collect() const {
         } else if (step.kind == LaneStep::Kind::FILTER_CEL || step.kind == LaneStep::Kind::PRUNE_WHERE_CEL ||
                    step.kind == LaneStep::Kind::PROJECT_CEL) {
             impulse::cel::Parser p(step.str_arg);
-            auto ast = p.parse_expression();
-            if (ast) {
-                auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
-                auto dom_attrs = build_domain_attr_cache(snapshot_, step_dom);
-                std::vector<uint64_t> row_buf(words_per_lane, 0ULL);
-                if (step.kind == LaneStep::Kind::PROJECT_CEL && proj_values.size() < step_N) {
-                    proj_values.resize(step_N, 0.0f);
+            auto ast = p.parse();
+            if (!ast) {
+                throw std::invalid_argument("Failed to parse CEL expression: " + step.str_arg);
+            }
+            auto opt_ast = impulse::cel::AstOptimizer::optimize(ast);
+            bool is_lane_proj = (step.kind == LaneStep::Kind::PROJECT_CEL &&
+                                 ast->kind == impulse::cel::AstKind::BINARY_OP &&
+                                 ast->text == "=" && !ast->children.empty() &&
+                                 ast->children[0] && ast->children[0]->text == "lane");
+            auto dom_attrs = build_domain_attr_cache(snapshot_, step_dom);
+            std::vector<uint64_t> row_buf(words_per_lane, 0ULL);
+            if (step.kind == LaneStep::Kind::PROJECT_CEL && !is_lane_proj && proj_values.size() < step_N) {
+                proj_values.resize(step_N, 0.0f);
+            }
+            for (uint32_t u = 0; u < step_N; ++u) {
+                bool is_active = false;
+                for (uint32_t b = 0; b < words_per_lane; ++b) {
+                    int h = batch_handles[b];
+                    uint64_t wval = (h >= 0 && u < ctx->lane_frontiers[h].lanes.size())
+                        ? (ctx->lane_frontiers[h].lanes[u] & ctx->lane_frontiers[h].active_mask)
+                        : 0ULL;
+                    row_buf[b] = wval;
+                    if (wval != 0ULL) is_active = true;
                 }
-                for (uint32_t u = 0; u < step_N; ++u) {
-                    bool is_active = false;
-                    for (uint32_t b = 0; b < words_per_lane; ++b) {
-                        int h = batch_handles[b];
-                        uint64_t wval = (h >= 0 && u < ctx->lane_frontiers[h].lanes.size())
-                            ? (ctx->lane_frontiers[h].lanes[u] & ctx->lane_frontiers[h].active_mask)
-                            : 0ULL;
-                        row_buf[b] = wval;
-                        if (wval != 0ULL) is_active = true;
-                    }
-                    if (!is_active && step.kind != LaneStep::Kind::PROJECT_CEL) continue;
+                if (!is_active && (step.kind != LaneStep::Kind::PROJECT_CEL || is_lane_proj)) continue;
 
-                    auto resolve_fn = [&](const std::string& aname) { return dom_attrs.resolve(u, aname); };
-                    if (step.kind == LaneStep::Kind::FILTER_CEL) {
-                        if (!impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
-                            for (uint32_t b = 0; b < words_per_lane; ++b) {
-                                int h = batch_handles[b];
-                                if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
-                                    ctx->lane_frontiers[h].lanes[u] = 0ULL;
-                                }
+                auto resolve_fn = [&](const std::string& aname) { return dom_attrs.resolve(u, aname); };
+                if (step.kind == LaneStep::Kind::FILTER_CEL) {
+                    if (!impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
+                        for (uint32_t b = 0; b < words_per_lane; ++b) {
+                            int h = batch_handles[b];
+                            if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                                ctx->lane_frontiers[h].lanes[u] = 0ULL;
                             }
                         }
-                    } else if (step.kind == LaneStep::Kind::PRUNE_WHERE_CEL) {
-                        if (impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
-                            for (uint32_t b = 0; b < words_per_lane; ++b) {
-                                int h = batch_handles[b];
-                                if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
-                                    ctx->lane_frontiers[h].lanes[u] = 0ULL;
-                                }
+                    }
+                } else if (step.kind == LaneStep::Kind::PRUNE_WHERE_CEL) {
+                    if (impulse::cel::CelKleeneEvaluator::eval_filter_bool(opt_ast, resolve_fn, row_buf.data(), words_per_lane)) {
+                        for (uint32_t b = 0; b < words_per_lane; ++b) {
+                            int h = batch_handles[b];
+                            if (h >= 0 && u < ctx->lane_frontiers[h].lanes.size()) {
+                                ctx->lane_frontiers[h].lanes[u] = 0ULL;
                             }
                         }
-                    } else if (step.kind == LaneStep::Kind::PROJECT_CEL) {
+                    }
+                } else if (step.kind == LaneStep::Kind::PROJECT_CEL) {
+                    if (is_lane_proj) {
+                        int h0 = words_per_lane > 0 ? batch_handles[0] : -1;
+                        if (h0 >= 0 && u < ctx->lane_frontiers[h0].lanes.size()) {
+                            ctx->lane_frontiers[h0].lanes[u] =
+                                impulse::cel::CelMultiLaneEvaluator::eval_project_lane(opt_ast, row_buf[0], nullptr, nullptr) &
+                                ctx->lane_frontiers[h0].active_mask;
+                        }
+                    } else {
                         auto cv = impulse::cel::CelKleeneEvaluator::eval(opt_ast, resolve_fn, row_buf.data(), words_per_lane);
                         double dv = 0.0;
                         proj_values[u] = cv.to_double(dv) ? static_cast<float>(dv) : 0.0f;
                         has_projected = true;
                     }
                 }
-                for (uint32_t b = 0; b < words_per_lane; ++b) {
-                    if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
-                }
+            }
+            for (uint32_t b = 0; b < words_per_lane; ++b) {
+                if (batch_handles[b] >= 0) rebuild_active_words(ctx->lane_frontiers[batch_handles[b]]);
             }
         }
     }

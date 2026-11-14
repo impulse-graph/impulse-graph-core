@@ -147,6 +147,14 @@ private:
     std::string src_;
     size_t cursor_;
 
+    // Lexical error: reported as END_OF_FILE carrying the offending (non-empty) text, the same
+    // convention used for unknown characters; Parser::parse() rejects non-empty-text EOF.
+    Token error_token(size_t start) const {
+        std::string txt = src_.substr(start, cursor_ - start);
+        if (txt.empty()) txt = "?";
+        return Token{TokenType::END_OF_FILE, txt, 0, 0.0, false, start};
+    }
+
     char peek() const {
         return cursor_ < src_.size() ? src_[cursor_] : '\0';
     }
@@ -201,11 +209,15 @@ private:
                     break;
                 }
             }
+            // "0x" with no digits, or more than 64 bits, is a lexical error (never a silent 0 / throw).
+            if (digits.empty()) return error_token(start);
+            size_t first_nz = digits.find_first_not_of('0');
+            if (first_nz != std::string::npos && digits.size() - first_nz > 16) return error_token(start);
             Token t;
             t.pos = start;
             t.text = raw;
             t.type = TokenType::INT_LITERAL;
-            t.int_val = digits.empty() ? 0 : static_cast<int64_t>(std::stoull(digits, nullptr, 16));
+            t.int_val = static_cast<int64_t>(std::stoull(digits, nullptr, 16));
             return t;
         }
         if (first_digit == '0' && cursor_ < src_.size() && (src_[cursor_] == 'b' || src_[cursor_] == 'B')) {
@@ -224,11 +236,14 @@ private:
                     break;
                 }
             }
+            if (digits.empty()) return error_token(start);
+            size_t first_nz = digits.find_first_not_of('0');
+            if (first_nz != std::string::npos && digits.size() - first_nz > 64) return error_token(start);
             Token t;
             t.pos = start;
             t.text = raw;
             t.type = TokenType::INT_LITERAL;
-            t.int_val = digits.empty() ? 0 : static_cast<int64_t>(std::stoull(digits, nullptr, 2));
+            t.int_val = static_cast<int64_t>(std::stoull(digits, nullptr, 2));
             return t;
         }
 
@@ -259,12 +274,17 @@ private:
         Token t;
         t.pos = start;
         t.text = num_str;
-        if (is_float) {
-            t.type = TokenType::FLOAT_LITERAL;
-            t.float_val = std::stod(num_str);
-        } else {
-            t.type = TokenType::INT_LITERAL;
-            t.int_val = std::stoll(num_str);
+        try {
+            if (is_float) {
+                t.type = TokenType::FLOAT_LITERAL;
+                t.float_val = std::stod(num_str);
+            } else {
+                t.type = TokenType::INT_LITERAL;
+                t.int_val = std::stoll(num_str);
+            }
+        } catch (const std::exception&) {
+            // Out-of-range / malformed numeric literal (e.g. 9223372036854775808, 1e999).
+            return error_token(start);
         }
         return t;
     }
@@ -448,13 +468,27 @@ public:
 
     std::shared_ptr<AstNode> parse() {
         auto expr = parse_expression(0);
-        if (!expr || curr_.type != TokenType::END_OF_FILE) {
+        // END_OF_FILE with non-empty text is a lexical error (unknown char / bad literal).
+        if (!expr || curr_.type != TokenType::END_OF_FILE || !curr_.text.empty()) {
+            return nullptr;
+        }
+        // Sub-expression parse failures yield nullptr children (e.g. `f(1, )`, `sqrt(x * )`);
+        // reject such trees so downstream passes (optimizer / lowering) never dereference them.
+        if (!tree_complete(expr)) {
             return nullptr;
         }
         return expr;
     }
 
 private:
+    static bool tree_complete(const std::shared_ptr<AstNode>& node) {
+        if (!node) return false;
+        for (const auto& child : node->children) {
+            if (!tree_complete(child)) return false;
+        }
+        return true;
+    }
+
     Lexer lexer_;
     Token curr_;
 
@@ -532,22 +566,27 @@ private:
             case TokenType::PLUS:
             case TokenType::TILDE: {
                 auto operand = parse_precedence(PREC_UNARY, depth + 1);
+                if (!operand) return nullptr;
                 return AstNode::make_unary(t.text, operand);
             }
             case TokenType::LPAREN: {
                 auto expr = parse_expression(depth + 1);
-                match(TokenType::RPAREN);
+                if (!expr || !match(TokenType::RPAREN)) return nullptr;
                 return expr;
             }
             case TokenType::LBRACKET: {
                 std::vector<std::shared_ptr<AstNode>> elements;
                 if (curr_.type != TokenType::RBRACKET) {
-                    elements.push_back(parse_expression(depth + 1));
+                    auto first = parse_expression(depth + 1);
+                    if (!first) return nullptr;
+                    elements.push_back(std::move(first));
                     while (match(TokenType::COMMA)) {
-                        elements.push_back(parse_expression(depth + 1));
+                        auto next = parse_expression(depth + 1);
+                        if (!next) return nullptr;
+                        elements.push_back(std::move(next));
                     }
                 }
-                match(TokenType::RBRACKET);
+                if (!match(TokenType::RBRACKET)) return nullptr;
                 return AstNode::make_list(std::move(elements));
             }
             default:
@@ -569,8 +608,9 @@ private:
             if (op.type == TokenType::QUESTION) {
                 // Ternary conditional ? :
                 auto then_branch = parse_expression(depth + 1);
-                match(TokenType::COLON);
+                if (!then_branch || !match(TokenType::COLON)) return nullptr;
                 auto else_branch = parse_precedence(PREC_CONDITIONAL, depth + 1);
+                if (!else_branch) return nullptr;
                 left = AstNode::make_ternary(left, then_branch, else_branch);
             } else if (op.type == TokenType::DOT) {
                 // Field access target.field
@@ -582,30 +622,39 @@ private:
                         std::vector<std::shared_ptr<AstNode>> args;
                         args.push_back(left); // receiver is first arg
                         if (curr_.type != TokenType::RPAREN) {
-                            args.push_back(parse_expression(depth + 1));
+                            auto a = parse_expression(depth + 1);
+                            if (!a) return nullptr;
+                            args.push_back(std::move(a));
                             while (match(TokenType::COMMA)) {
-                                args.push_back(parse_expression(depth + 1));
+                                auto b = parse_expression(depth + 1);
+                                if (!b) return nullptr;
+                                args.push_back(std::move(b));
                             }
                         }
-                        match(TokenType::RPAREN);
+                        if (!match(TokenType::RPAREN)) return nullptr;
                         left = AstNode::make_call(field, std::move(args));
                     } else {
                         left = AstNode::make_member(left, field);
                     }
+                } else {
+                    return nullptr; // '.' must be followed by an identifier
                 }
             } else if (op.type == TokenType::LPAREN) {
                 // Function call ident(args)
                 std::vector<std::shared_ptr<AstNode>> args;
                 if (curr_.type != TokenType::RPAREN) {
-                    args.push_back(parse_expression(depth + 1));
+                    auto a = parse_expression(depth + 1);
+                    if (!a) return nullptr;
+                    args.push_back(std::move(a));
                     while (match(TokenType::COMMA)) {
-                        args.push_back(parse_expression(depth + 1));
+                        auto b = parse_expression(depth + 1);
+                        if (!b) return nullptr;
+                        args.push_back(std::move(b));
                     }
                 }
-                match(TokenType::RPAREN);
-                if (left->kind == AstKind::IDENTIFIER) {
-                    left = AstNode::make_call(left->text, std::move(args));
-                }
+                if (!match(TokenType::RPAREN)) return nullptr;
+                if (left->kind != AstKind::IDENTIFIER) return nullptr; // only ident(args) is callable
+                left = AstNode::make_call(left->text, std::move(args));
             } else {
                 // Binary operator
                 auto next_prec = static_cast<Precedence>(get_precedence(op.type) + (op.type == TokenType::EQ ? 0 : 1));
@@ -1107,6 +1156,11 @@ public:
         }
 
         auto result = std::make_shared<AstNode>(*node);
+        // Defensive: an AST with missing (null) operands (e.g. from parse_expression() on malformed
+        // input) is returned as-is rather than dereferenced by the folding passes.
+        for (const auto& fc : folded_children) {
+            if (!fc) return result;
+        }
         result->children = std::move(folded_children);
 
         // 2. Optimization passes
@@ -1137,7 +1191,7 @@ private:
             }
         } else if (node->text == "-") {
             if (child->kind == AstKind::LITERAL_INT) {
-                return AstNode::make_int(-child->int_val);
+                return AstNode::make_int(static_cast<int64_t>(0 - static_cast<uint64_t>(child->int_val)));
             }
             if (child->kind == AstKind::LITERAL_FLOAT) {
                 return AstNode::make_float(-child->float_val);
@@ -1199,11 +1253,14 @@ private:
         if (left->kind == AstKind::LITERAL_INT && right->kind == AstKind::LITERAL_INT) {
             int64_t a = left->int_val;
             int64_t b = right->int_val;
-            if (op == "+") return AstNode::make_int(a + b);
-            if (op == "-") return AstNode::make_int(a - b);
-            if (op == "*") return AstNode::make_int(a * b);
-            if (op == "/" && b != 0) return AstNode::make_int(a / b);
-            if (op == "%" && b != 0) return AstNode::make_int(a % b);
+            // Integer folding uses two's-complement wraparound (never signed-overflow UB):
+            // INT64_MIN / -1 and INT64_MIN % -1 are the only division traps.
+            const uint64_t ua = static_cast<uint64_t>(a), ub = static_cast<uint64_t>(b);
+            if (op == "+") return AstNode::make_int(static_cast<int64_t>(ua + ub));
+            if (op == "-") return AstNode::make_int(static_cast<int64_t>(ua - ub));
+            if (op == "*") return AstNode::make_int(static_cast<int64_t>(ua * ub));
+            if (op == "/" && b != 0) return AstNode::make_int(b == -1 ? static_cast<int64_t>(0 - ua) : a / b);
+            if (op == "%" && b != 0) return AstNode::make_int(b == -1 ? 0 : a % b);
             if (op == "==") return AstNode::make_bool(a == b);
             if (op == "!=") return AstNode::make_bool(a != b);
             if (op == "<")  return AstNode::make_bool(a < b);
@@ -1290,6 +1347,20 @@ private:
         int func_id = CelCompiler::resolve_math_func(node->text);
         if (func_id <= 0) return node;
 
+        // Integer bit intrinsics must never be folded through double (64-bit lane masks lose
+        // precision and negative->uint64 conversion is UB). Fold with exact integer semantics that
+        // match CelMultiLaneEvaluator, or leave symbolic.
+        if (func_id == MATH_FUNC_POPCOUNT || func_id == MATH_FUNC_CLZ || func_id == MATH_FUNC_CTZ) {
+            if (node->children.size() == 1 && node->children[0]->kind == AstKind::LITERAL_INT) {
+                const uint64_t v = static_cast<uint64_t>(node->children[0]->int_val);
+                if (func_id == MATH_FUNC_POPCOUNT) return AstNode::make_int(std::popcount(v));
+                if (func_id == MATH_FUNC_CLZ) return AstNode::make_int(v == 0 ? 64 : std::countl_zero(v));
+                return AstNode::make_int(v == 0 ? -1 : std::countr_zero(v));
+            }
+            return node;
+        }
+        if (func_id == MATH_FUNC_ROTL || func_id == MATH_FUNC_ROTR) return node;
+
         // Unary constant folding
         if (node->children.size() == 1) {
             auto arg = node->children[0];
@@ -1356,8 +1427,35 @@ public:
     using AttrMap = std::unordered_map<std::string, int64_t>;
     using FloatAttrMap = std::unordered_map<std::string, double>;
 
+    static bool is_float_expr(const std::shared_ptr<AstNode>& node,
+                              const FloatAttrMap* float_attrs = nullptr) {
+        if (!node) return false;
+        switch (node->kind) {
+            case AstKind::LITERAL_FLOAT:
+                return true;
+            case AstKind::IDENTIFIER:
+            case AstKind::MEMBER_ACCESS:
+                if (node->text == "lane") return false;
+                return float_attrs && float_attrs->find(node->text) != float_attrs->end();
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if (fn == "popcount" || fn == "bit_count" || fn == "first_lane" || fn == "ctz" ||
+                    fn == "last_lane" || fn == "clz" || fn == "has_any" || fn == "has_all" ||
+                    fn == "has_none" || fn == "has_lane") {
+                    return false;
+                }
+                return true;
+            }
+            default:
+                for (const auto& c : node->children) {
+                    if (is_float_expr(c, float_attrs)) return true;
+                }
+                return false;
+        }
+    }
+
     // -----------------------------------------------------------------------
-    // eval_double (Primary numeric & floating-point evaluator)
+    // eval_double (Numeric & floating-point evaluator)
     // -----------------------------------------------------------------------
     static double eval_double(const std::shared_ptr<AstNode>& node,
                               const uint64_t* lane_words,
@@ -1391,9 +1489,11 @@ public:
                 if (node->text == "!") {
                     return eval_bool(node->children[0], lane_words, num_words, int_attrs, float_attrs) ? 0.0 : 1.0;
                 }
+                if (node->text == "~") {
+                    return static_cast<double>(eval_int(node, lane_words, num_words, int_attrs, float_attrs));
+                }
                 double v = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
                 if (node->text == "-") return -v;
-                if (node->text == "~") return static_cast<double>(~static_cast<int64_t>(v));
                 return v;
             }
             case AstKind::TERNARY_OP: {
@@ -1412,6 +1512,9 @@ public:
                     op == "<" || op == "<=" || op == ">" || op == ">=") {
                     return eval_bool(node, lane_words, num_words, int_attrs, float_attrs) ? 1.0 : 0.0;
                 }
+                if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
+                    return static_cast<double>(eval_int(node, lane_words, num_words, int_attrs, float_attrs));
+                }
                 double a = eval_double(node->children[0], lane_words, num_words, float_attrs, int_attrs);
                 double b = eval_double(node->children[1], lane_words, num_words, float_attrs, int_attrs);
                 if (op == "+") return a + b;
@@ -1419,15 +1522,6 @@ public:
                 if (op == "*") return a * b;
                 if (op == "/") return (b != 0.0 && !std::isnan(b)) ? (a / b) : 0.0;
                 if (op == "%") return (b != 0.0) ? std::fmod(a, b) : 0.0;
-                // Bitwise binary operators
-                int64_t ia = static_cast<int64_t>(a);
-                int64_t ib = static_cast<int64_t>(b);
-                if (op == "&") return static_cast<double>(ia & ib);
-                if (op == "|") return static_cast<double>(ia | ib);
-                if (op == "^") return static_cast<double>(ia ^ ib);
-                if (op == "<<") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : (static_cast<uint64_t>(ia) << ib));
-                if (op == ">>") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : (ia >> ib));
-                if (op == ">>>") return static_cast<double>((ib < 0 || ib >= 64) ? 0 : static_cast<int64_t>(static_cast<uint64_t>(ia) >> ib));
                 return 0.0;
             }
             case AstKind::FUNCTION_CALL: {
@@ -1570,17 +1664,70 @@ public:
                 if (op == "=") {
                     return eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                 }
-                if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
+                if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+                    op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" || op == ">>>") {
                     uint64_t ua = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
                     uint64_t ub = eval_bits(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     int64_t ia = static_cast<int64_t>(ua);
                     int64_t ib = static_cast<int64_t>(ub);
+                    if (op == "+") return ua + ub;
+                    if (op == "-") return ua - ub;
+                    if (op == "*") return ua * ub;
+                    if (op == "/") return (ib == 0) ? 0ULL : (ib == -1 ? (0ULL - ua) : static_cast<uint64_t>(ia / ib));
+                    if (op == "%") return (ib == 0 || ib == -1) ? 0ULL : static_cast<uint64_t>(ia % ib);
                     if (op == "&") return ua & ub;
                     if (op == "|") return ua | ub;
                     if (op == "^") return ua ^ ub;
                     if (op == "<<") return (ib < 0 || ib >= 64) ? 0ULL : (ua << ib);
                     if (op == ">>") return (ib < 0 || ib >= 64) ? 0ULL : static_cast<uint64_t>(ia >> ib);
                     if (op == ">>>") return (ib < 0 || ib >= 64) ? 0ULL : (ua >> ib);
+                }
+                return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
+            }
+            case AstKind::FUNCTION_CALL: {
+                const std::string& fn = node->text;
+                if ((fn == "popcount" || fn == "bit_count") && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        size_t total = 0;
+                        for (size_t w = 0; w < num_words; ++w) total += std::popcount(lane_words[w]);
+                        return static_cast<uint64_t>(total);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return static_cast<uint64_t>(std::popcount(v));
+                }
+                if ((fn == "first_lane" || fn == "ctz") && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        for (size_t w = 0; w < num_words; ++w) {
+                            if (lane_words[w] != 0ULL) {
+                                return static_cast<uint64_t>(w * 64 + std::countr_zero(lane_words[w]));
+                            }
+                        }
+                        return static_cast<uint64_t>(-1LL);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? static_cast<uint64_t>(-1LL) : static_cast<uint64_t>(std::countr_zero(v));
+                }
+                if (fn == "last_lane" && !node->children.empty()) {
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        for (size_t w = num_words; w > 0; --w) {
+                            if (lane_words[w - 1] != 0ULL) {
+                                return static_cast<uint64_t>((w - 1) * 64 + 63 - std::countl_zero(lane_words[w - 1]));
+                            }
+                        }
+                        return static_cast<uint64_t>(-1LL);
+                    }
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? static_cast<uint64_t>(-1LL) : static_cast<uint64_t>(63 - std::countl_zero(v));
+                }
+                if (fn == "clz" && !node->children.empty()) {
+                    uint64_t v = eval_bits(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                    return (v == 0ULL) ? 64ULL : static_cast<uint64_t>(std::countl_zero(v));
+                }
+                if (fn == "has_any" || fn == "has_all" || fn == "has_none" || fn == "has_lane") {
+                    return eval_bool(node, lane_words, num_words, node_attrs, float_attrs) ? 1ULL : 0ULL;
                 }
                 return double_to_bits_safe(eval_double(node, lane_words, num_words, float_attrs, node_attrs));
             }
@@ -1622,7 +1769,10 @@ public:
                 return node->float_val != 0.0;
             case AstKind::UNARY_OP:
                 if (node->text == "!") return !eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs);
-                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                if (is_float_expr(node, float_attrs)) {
+                    return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                }
+                return eval_int(node, lane_words, num_words, node_attrs, float_attrs) != 0;
             case AstKind::TERNARY_OP:
                 return eval_bool(eval_bool(node->children[0], lane_words, num_words, node_attrs, float_attrs)
                                      ? node->children[1]
@@ -1639,26 +1789,43 @@ public:
                            eval_bool(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                 }
                 if (op == "in") {
-                    double val = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
                     const auto& rhs = node->children[1];
                     if (rhs && rhs->kind == AstKind::LIST_LITERAL) {
-                        for (const auto& elem : rhs->children) {
-                            double elem_val = eval_double(elem, lane_words, num_words, float_attrs, node_attrs);
-                            if (std::abs(val - elem_val) < 1e-9) return true;
+                        if (is_float_expr(node, float_attrs)) {
+                            double val = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
+                            for (const auto& elem : rhs->children) {
+                                double elem_val = eval_double(elem, lane_words, num_words, float_attrs, node_attrs);
+                                if (std::abs(val - elem_val) < 1e-9) return true;
+                            }
+                        } else {
+                            int64_t val = eval_int(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                            for (const auto& elem : rhs->children) {
+                                if (val == eval_int(elem, lane_words, num_words, node_attrs, float_attrs)) return true;
+                            }
                         }
-                        return false;
                     }
                     return false;
                 }
-                double a = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
-                double b = eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs);
-                if (op == "==") return std::abs(a - b) < 1e-9;
-                if (op == "!=") return std::abs(a - b) >= 1e-9;
+                if (is_float_expr(node->children[0], float_attrs) || is_float_expr(node->children[1], float_attrs)) {
+                    double a = eval_double(node->children[0], lane_words, num_words, float_attrs, node_attrs);
+                    double b = eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs);
+                    if (op == "==") return std::abs(a - b) < 1e-9;
+                    if (op == "!=") return std::abs(a - b) >= 1e-9;
+                    if (op == "<")  return a < b;
+                    if (op == "<=") return a <= b;
+                    if (op == ">")  return a > b;
+                    if (op == ">=") return a >= b;
+                    return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                }
+                int64_t a = eval_int(node->children[0], lane_words, num_words, node_attrs, float_attrs);
+                int64_t b = eval_int(node->children[1], lane_words, num_words, node_attrs, float_attrs);
+                if (op == "==") return a == b;
+                if (op == "!=") return a != b;
                 if (op == "<")  return a < b;
                 if (op == "<=") return a <= b;
                 if (op == ">")  return a > b;
                 if (op == ">=") return a >= b;
-                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                return eval_int(node, lane_words, num_words, node_attrs, float_attrs) != 0;
             }
             case AstKind::FUNCTION_CALL: {
                 const std::string& fn = node->text;
@@ -1692,19 +1859,29 @@ public:
                     return (m & forbid) == 0ULL;
                 }
                 if (fn == "has_lane" && node->children.size() >= 2) {
-                    int64_t idx = static_cast<int64_t>(eval_double(node->children[1], lane_words, num_words, float_attrs, node_attrs));
+                    int64_t idx = eval_int(node->children[1], lane_words, num_words, node_attrs, float_attrs);
                     if (idx < 0) return false;
-                    size_t w = static_cast<size_t>(idx) / 64;
-                    size_t b = static_cast<size_t>(idx) % 64;
-                    if (w < num_words) {
-                        return ((lane_words[w] >> b) & 1ULL) != 0ULL;
+                    if (num_words > 1 && (node->children[0]->text == "lane" ||
+                        (node->children[0]->kind == AstKind::MEMBER_ACCESS && node->children[0]->text == "lane"))) {
+                        size_t w = static_cast<size_t>(idx) / 64;
+                        size_t b = static_cast<size_t>(idx) % 64;
+                        if (w < num_words) return ((lane_words[w] >> b) & 1ULL) != 0ULL;
+                        return false;
                     }
-                    return false;
+                    if (idx >= 64) return false;
+                    uint64_t m = static_cast<uint64_t>(eval_int(node->children[0], lane_words, num_words, node_attrs, float_attrs));
+                    return ((m >> idx) & 1ULL) != 0ULL;
                 }
-                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                if (is_float_expr(node, float_attrs)) {
+                    return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                }
+                return eval_int(node, lane_words, num_words, node_attrs, float_attrs) != 0;
             }
             default:
-                return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                if (is_float_expr(node, float_attrs)) {
+                    return eval_double(node, lane_words, num_words, float_attrs, node_attrs) != 0.0;
+                }
+                return eval_int(node, lane_words, num_words, node_attrs, float_attrs) != 0;
         }
     }
 
@@ -1949,7 +2126,7 @@ public:
                 }
                 if (node->text == "lane") {
                     uint64_t lw = (lane_words && num_lane_words > 0) ? lane_words[0] : 0ULL;
-                    return CelValue::make_uint(lw);
+                    return CelValue::make_int(static_cast<int64_t>(lw));
                 }
                 if (node->kind == AstKind::MEMBER_ACCESS && !node->children.empty() &&
                     node->children[0] && node->children[0]->kind == AstKind::IDENTIFIER &&
