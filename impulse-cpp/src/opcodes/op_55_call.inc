@@ -21,6 +21,9 @@ op_CALL: {
     IMPULSE_ASSERT(vm_state != nullptr);
     const auto& inst = bytecode[vm_state->pc];
     const uint32_t func_offset = IMP_INST_PAYLOAD_U32(inst);
+    if (IMPULSE_UNLIKELY(func_offset >= instruction_count)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     IMPULSE_TESTCASE(vm_state->call_stack_depth == 0);
     IMPULSE_TESTCASE(vm_state->call_stack_depth == (OP_55_MAX_CALL_DEPTH - 1u));
     IMPULSE_TESTCASE(vm_state->call_stack_depth >= OP_55_MAX_CALL_DEPTH);
