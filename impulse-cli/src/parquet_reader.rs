@@ -93,9 +93,9 @@ pub fn read_parquet_id_strings(
     for batch_res in reader {
         let batch = batch_res?;
         let schema = batch.schema();
-        let col_idx = schema.index_of(id_col_name).map_err(|_| {
-            format!("Parquet ID column '{}' not found in schema", id_col_name)
-        })?;
+        let col_idx = schema
+            .index_of(id_col_name)
+            .map_err(|_| format!("Parquet ID column '{}' not found in schema", id_col_name))?;
         {
             let array = batch.column(col_idx);
             if let Some(str_arr) = array.as_any().downcast_ref::<StringArray>() {

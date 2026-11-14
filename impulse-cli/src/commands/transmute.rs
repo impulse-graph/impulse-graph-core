@@ -432,7 +432,8 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
                         let rows_b = reader.get_row_offsets(*idx_b)?;
                         let cols_b = reader.get_col_indices_as_u32_vec(*idx_b)?;
 
-                        let src_nodes = (rel_a.node_count as usize).min(rows_a.len().saturating_sub(1));
+                        let src_nodes =
+                            (rel_a.node_count as usize).min(rows_a.len().saturating_sub(1));
                         let mut new_row_offsets = Vec::with_capacity(src_nodes + 1);
                         let mut new_col_indices = Vec::new();
                         new_row_offsets.push(0u32);

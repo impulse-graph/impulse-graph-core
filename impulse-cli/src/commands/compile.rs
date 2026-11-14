@@ -564,7 +564,8 @@ pub fn run_with_options(
                         let src_map = domain_node_maps.get_mut(&r.src_domain).ok_or_else(|| {
                             format!(
                                 "Relation '{}' references undefined src_domain '{}'",
-                                r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                                r.name.as_deref().unwrap_or("<unnamed>"),
+                                r.src_domain
                             )
                         })?;
                         let next_idx = src_map.len() as u32;
@@ -575,7 +576,8 @@ pub fn run_with_options(
                         let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).ok_or_else(|| {
                             format!(
                                 "Relation '{}' references undefined tgt_domain '{}'",
-                                r.name.as_deref().unwrap_or("<unnamed>"), r.tgt_domain
+                                r.name.as_deref().unwrap_or("<unnamed>"),
+                                r.tgt_domain
                             )
                         })?;
                         let next_idx = tgt_map.len() as u32;
@@ -601,7 +603,8 @@ pub fn run_with_options(
                         let src_map = domain_node_maps.get_mut(&r.src_domain).ok_or_else(|| {
                             format!(
                                 "Relation '{}' references undefined src_domain '{}'",
-                                r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                                r.name.as_deref().unwrap_or("<unnamed>"),
+                                r.src_domain
                             )
                         })?;
                         let next_idx = src_map.len() as u32;
@@ -612,7 +615,8 @@ pub fn run_with_options(
                         let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).ok_or_else(|| {
                             format!(
                                 "Relation '{}' references undefined tgt_domain '{}'",
-                                r.name.as_deref().unwrap_or("<unnamed>"), r.tgt_domain
+                                r.name.as_deref().unwrap_or("<unnamed>"),
+                                r.tgt_domain
                             )
                         })?;
                         let next_idx = tgt_map.len() as u32;
@@ -640,7 +644,8 @@ pub fn run_with_options(
             .ok_or_else(|| {
                 format!(
                     "Relation '{}' references undefined src_domain '{}'",
-                    r.name.as_deref().unwrap_or("<unnamed>"), r.src_domain
+                    r.name.as_deref().unwrap_or("<unnamed>"),
+                    r.src_domain
                 )
             })?
             .len() as u32;

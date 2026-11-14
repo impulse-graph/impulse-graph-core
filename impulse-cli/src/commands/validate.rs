@@ -241,7 +241,10 @@ pub fn validate_reader(
                 .csr_row_off_offset
                 .checked_add(rel.csr_row_off_bytes)
                 .ok_or_else(|| {
-                    format!("Relation #{}: CSR row offsets offset + bytes overflows u64", idx)
+                    format!(
+                        "Relation #{}: CSR row offsets offset + bytes overflows u64",
+                        idx
+                    )
                 })?;
             if end_off > file_len {
                 return Err(format!(

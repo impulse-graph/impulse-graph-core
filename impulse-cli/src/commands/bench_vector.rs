@@ -271,7 +271,9 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
                 (vec![0u32; n + 1], Vec::new())
             };
             if n == 0 || d == 0 {
-                return Err("Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into());
+                return Err(
+                    "Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into(),
+                );
             }
             let mut rng = StdRng::seed_from_u64(cfg.seed);
             let mut qvecs = vec![0.0f32; cfg.queries * d];
@@ -287,7 +289,9 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
             let n = loaded.num_vectors;
             let d = loaded.dimension;
             if n == 0 || d == 0 {
-                return Err("Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into());
+                return Err(
+                    "Cannot benchmark vector queries on empty dataset (n == 0 or d == 0)".into(),
+                );
             }
             let mut rng = StdRng::seed_from_u64(cfg.seed);
             let mut qvecs = vec![0.0f32; cfg.queries * d];

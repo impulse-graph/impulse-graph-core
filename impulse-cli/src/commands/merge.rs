@@ -12,9 +12,7 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
     );
 
     let base_reader = SnapshotReader::open(base)?;
-    let output_str = output
-        .to_str()
-        .ok_or("Output path is not valid UTF-8")?;
+    let output_str = output.to_str().ok_or("Output path is not valid UTF-8")?;
     let mut writer = SnapshotWriter::new(output_str);
 
     // 1. Copy base domains & Spec v0.10.0 inline attributes
