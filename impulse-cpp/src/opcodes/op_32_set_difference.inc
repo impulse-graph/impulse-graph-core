@@ -47,6 +47,17 @@ op_SET_DIFFERENCE: {
     IMPULSE_TESTCASE(dst == src2);
     IMPULSE_TESTCASE(src1 == src2);
 
+    if (type1 == TYPE_BITSET_HANDLE &&
+        (val1 >= vm_state->query_context->bitsets.size() ||
+         vm_state->query_context->bitsets[val1].words == nullptr)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+    if (type2 == TYPE_BITSET_HANDLE &&
+        (val2 >= vm_state->query_context->bitsets.size() ||
+         vm_state->query_context->bitsets[val2].words == nullptr)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
+
     int h_dst = -1;
     if (dst_was_bitset) {
         h_dst = static_cast<int>(vm_state->registers[dst]);

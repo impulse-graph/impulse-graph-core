@@ -455,9 +455,12 @@ private:
     }
 
     static AstPtr pass_direction_selection(const AstPtr& root, const GraphCatalog* /*catalog*/) {
+        if (!root) return nullptr;
         auto prog = std::static_pointer_cast<ScmProgram>(root);
+        if (!prog) return nullptr;
         std::vector<AstPtr> opt_steps;
         for (const auto& step : prog->steps) {
+            if (!step) continue;
             if (step->kind() == NodeKind::WALK) {
                 auto w = std::static_pointer_cast<ScmWalk>(step);
                 auto new_w = std::make_shared<ScmWalk>(*w);

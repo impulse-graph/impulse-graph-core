@@ -13,6 +13,7 @@
 #include <string>
 
 #include "impulse_cel.h"
+#include "impulse_compiler.hpp"
 #include "impulse_vm.h"
 
 static std::shared_ptr<impulse::cel::AstNode> optimize(const char* expr) {
@@ -127,6 +128,38 @@ int main() {
             {OP_HALT, 0, 0, 0},
         };
         impulse_vm_status_t vms = impulse_vm_execute(prog, 2, &vm, 7ULL);
+        assert(vms == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+        impulse_vm_context_destroy(ctx);
+    }
+
+    // ImpulseCompiler::compile null guard regression:
+    // Passing nullptr program must throw std::invalid_argument cleanly without crashing.
+    {
+        bool threw = false;
+        try {
+            impulse::compiler::ImpulseCompiler::compile(nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        assert(threw);
+    }
+
+    // OP_SET_UNION / OP_SET_INTERSECT / OP_SET_DIFFERENCE invalid source bitset handle regression:
+    // Out-of-bounds TYPE_BITSET_HANDLE in src1/src2 must return IMPULSE_VM_ERR_OUT_OF_BOUNDS.
+    for (uint8_t op : {uint8_t{OP_SET_UNION}, uint8_t{OP_SET_INTERSECT}, uint8_t{OP_SET_DIFFERENCE}}) {
+        impulse_vm_context_t* ctx = impulse_vm_context_create(nullptr);
+        assert(ctx != nullptr);
+        impulse_vm_state_t vm{};
+        vm.query_context = ctx;
+        vm.registers[0] = 99999ULL;
+        vm.register_types[0] = TYPE_BITSET_HANDLE;
+        vm.registers[1] = 1ULL;
+        vm.register_types[1] = TYPE_NODE_ID;
+        impulse_instruction_t prog[2] = {
+            {op, 0x00, 2, static_cast<uint32_t>(0 | (1 << 16))},
+            {OP_HALT, 0, 0, 0},
+        };
+        impulse_vm_status_t vms = impulse_vm_execute(prog, 2, &vm, 100);
         assert(vms == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
         impulse_vm_context_destroy(ctx);
     }
