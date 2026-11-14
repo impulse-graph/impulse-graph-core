@@ -264,12 +264,15 @@ void test_bitset_operations() {
     input_set[10 / 64] |= (1ULL << (10 % 64));
     input_set[100 / 64] |= (1ULL << (100 % 64));
 
+    uint64_t inline_nodes[2] = { 500ULL, 10ULL };
+    impulse_vm_context_bind_inline_data(ctx, inline_nodes, sizeof(inline_nodes));
+
     // Program:
     // 0: INIT_INPUT_SET R4, input_param (R4 = {5, 10, 100})
     // 1: CLEAR_REG R5
-    // 2: LOAD_CONST_INT R10, 500
+    // 2: LOAD_INLINE_SET R10, {500}
     // 3: SET_UNION R5, R10              (R5 = {500})
-    // 4: LOAD_CONST_INT R11, 10
+    // 4: LOAD_INLINE_SET R11, {10}
     // 5: SET_UNION R5, R11              (R5 = {10, 500})
     // 6: SET_INTERSECT R4, R5           (R4 = R4 & R5 -> {10})
     // 7: SET_CARDINALITY R7, R4         (R7 = 1)
@@ -278,9 +281,9 @@ void test_bitset_operations() {
     std::vector<impulse_instruction_t> bytecode = {
         { OP_INIT_INPUT_SET, 0, 4, 0 },
         { OP_CLEAR_REG, 0, 5, 0 },
-        { OP_LOAD_CONST_INT, 0, 10, 500 },
+        { OP_LOAD_INLINE_SET, 0, 10, 0 | (1 << 16) },
         { OP_SET_UNION, 0, 5, 5 | (10 << 16) },
-        { OP_LOAD_CONST_INT, 0, 11, 10 },
+        { OP_LOAD_INLINE_SET, 0, 11, 8 | (1 << 16) },
         { OP_SET_UNION, 0, 5, 5 | (11 << 16) },
         { OP_SET_INTERSECT, 0, 4, 4 | (5 << 16) },
         { OP_SET_CARDINALITY, 0, 7, 4 },
@@ -849,16 +852,18 @@ void test_csc_walk() {
     impulse_vm_context_mock_csc(ctx, 0, csc_offsets, csc_targets);
 
     // Bytecode:
+    uint64_t inline_csc_sets[3] = { 1ULL, 2ULL, 0ULL };
+    impulse_vm_context_bind_inline_data(ctx, inline_csc_sets, sizeof(inline_csc_sets));
+
     // R1 = current frontier (bitset containing node 1 and node 2)
     // R2 = unvisited set (bitset containing node 0)
     // R3 = next frontier (OP_CSC_WALK R3, R1 | (R2 << 16) | (0 << 24))
     std::vector<impulse_instruction_t> bytecode = {
-        { OP_LOAD_CONST_INT, 0, 4, 1 }, // R4 = 1
-        { OP_LOAD_CONST_INT, 0, 5, 2 }, // R5 = 2
-        { OP_LOAD_CONST_INT, 0, 6, 0 }, // R6 = 0
-        { OP_SET_UNION, 0, 1, 1 | (4 << 16) },       // R1 = {1}
-        { OP_SET_UNION, 0, 1, 1 | (5 << 16) },       // R1 = {1, 2} (frontier)
-        { OP_SET_UNION, 0, 2, 2 | (6 << 16) },       // R2 = {0} (unvisited)
+        { OP_LOAD_INLINE_SET, 0, 4, 0 | (1 << 16) }, // R4 = {1}
+        { OP_LOAD_INLINE_SET, 0, 5, 8 | (1 << 16) }, // R5 = {2}
+        { OP_LOAD_INLINE_SET, 0, 6, 16 | (1 << 16) }, // R6 = {0}
+        { OP_SET_UNION, 0, 1, 4 | (5 << 16) },       // R1 = {1, 2} (frontier)
+        { OP_SET_UNION, 0, 2, 6 | (6 << 16) },       // R2 = {0} (unvisited)
         { OP_CSC_WALK, 0, 3, 1 | (2 << 16) | (0 << 24) }, // R3 = CSC walk from R1 on R2 (relation 0)
         { OP_HALT, 0, 0, 0 }
     };

@@ -492,18 +492,20 @@ static void test_vm_bytecode_branch_coverage() {
     // PC 1: OP_LOOP_DECR R0, offset=0 (loops until R0 == 0: exercises both taken and fallthrough!)
     // PC 2: OP_JZ offset=+2 (ZF is 1 after loop finishes -> taken!)
     // PC 3: OP_NOP
-    // PC 4: OP_LOAD_CONST_INT R1 = 1
+    // PC 4: OP_INIT_INPUT_SET R1 = {0}
     // PC 5: OP_SET_CARDINALITY R2, R1 (sets ZF = 0)
     // PC 6: OP_JZ offset=+2 (ZF is 0 -> fallthrough!)
     // PC 7: OP_JNZ offset=+2 (ZF is 0 -> taken!)
     // PC 8: OP_NOP
     // PC 9: OP_HALT
+    std::vector<uint64_t> input_bits(1024, 0ULL);
+    input_bits[0] = 1ULL;
     impulse_instruction_t prog[] = {
         {OP_LOAD_CONST_INT, 0, 0, 2u},
         {OP_LOOP_DECR,      0, 0, 0u},
         {OP_JZ,              0, 0, 2u},
         {OP_NOP,            0, 0, 0u},
-        {OP_LOAD_CONST_INT, 0, 1, 1u},
+        {OP_INIT_INPUT_SET, 0, 1, 0u},
         {OP_SET_CARDINALITY,0, 2, 1u},
         {OP_JZ,              0, 0, 2u},
         {OP_JNZ,             0, 0, 2u},
@@ -513,7 +515,7 @@ static void test_vm_bytecode_branch_coverage() {
 
     impulse_vm_state_t state{};
     state.query_context = ctx;
-    assert(impulse_vm_execute(prog, sizeof(prog) / sizeof(prog[0]), &state, 0) == IMPULSE_VM_OK);
+    assert(impulse_vm_execute(prog, sizeof(prog) / sizeof(prog[0]), &state, reinterpret_cast<uint64_t>(input_bits.data())) == IMPULSE_VM_OK);
 
     // PC 1 (OP_LOOP_DECR) should have both bit 0 (taken) and bit 1 (fallthrough) -> 0x03
     uint8_t loop_mask = impulse_vm_branch_coverage_get_mask(1, OP_LOOP_DECR, 1u);

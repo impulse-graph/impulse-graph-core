@@ -56,13 +56,6 @@ op_L1_NORM_DIFF: {
         for (size_t i = 0; i < N; ++i) {
             l1_diff += std::abs(vec1[i] - vec2[i]);
         }
-    } else if ((vm_state->register_types[src1] == TYPE_FLOAT || vm_state->register_types[src1] == TYPE_INT64) &&
-               (vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
-        float val1 = (vm_state->register_types[src1] == TYPE_FLOAT) ?
-            reinterpret_cast<float&>(vm_state->registers[src1]) : static_cast<float>(vm_state->registers[src1]);
-        float val2 = (vm_state->register_types[src2] == TYPE_FLOAT) ?
-            reinterpret_cast<float&>(vm_state->registers[src2]) : static_cast<float>(vm_state->registers[src2]);
-        l1_diff = std::abs(val1 - val2);
     } else {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }

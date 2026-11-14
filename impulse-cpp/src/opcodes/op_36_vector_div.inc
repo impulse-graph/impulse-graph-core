@@ -39,6 +39,12 @@ op_VECTOR_DIV: {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
 
+    const bool num_is_vec = (vm_state->register_types[num] == TYPE_FLOAT_VECTOR || vm_state->register_types[num] == TYPE_DOUBLE_VECTOR);
+    const bool denom_is_vec = (vm_state->register_types[denom] == TYPE_FLOAT_VECTOR || vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR);
+    if (!num_is_vec && !denom_is_vec) {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
+    }
+
     size_t size = vm_state->query_context->max_nodes;
     bool num_is_double = (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR);
     bool denom_is_double = (vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR);

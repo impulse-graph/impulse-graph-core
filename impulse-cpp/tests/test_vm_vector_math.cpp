@@ -1113,8 +1113,8 @@ static void test_nullable_vectors_and_monoidic_reducers() {
         assert(reg_f32(21) == 0.0f);
         assert( std::isinf(reg_f32(22)) && !std::signbit(reg_f32(22)));
         assert( std::isinf(reg_f32(23)) &&  std::signbit(reg_f32(23)));
-        assert(st.registers[24] == 0ULL);
-        assert((st.flags & 0x1ULL) != 0ULL); // ZF set on all-NaN
+        assert(st.registers[24] == static_cast<uint64_t>(-1LL));
+        assert((st.flags & 0x1ULL) == 0ULL); // ZF cleared when ARGMAX returns -1 on all-NaN
 
         impulse_vm_context_destroy(ctx);
     }

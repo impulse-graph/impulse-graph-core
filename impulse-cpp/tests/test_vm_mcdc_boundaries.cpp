@@ -681,15 +681,18 @@ void test_mcdc_set_ops_permutations() {
     impulse_vm_state_t state{};
     state.query_context = ctx;
 
+    uint64_t inline_nodes[3] = { 1ULL, 2ULL, 3ULL };
+    impulse_vm_context_bind_inline_data(ctx, inline_nodes, sizeof(inline_nodes));
+
     // Test OP_SET_UNION, OP_SET_INTERSECT, OP_SET_DIFFERENCE across all register combinations:
     // (dst == src1), (dst == src2), (dst != src1 && dst != src2)
-    // with TYPE_BITSET_HANDLE, TYPE_NODE_ID, TYPE_INT64, and TYPE_NULL
+    // with TYPE_BITSET_HANDLE
 
     std::vector<impulse_instruction_t> set_ops_bc = {
         // Setup values
-        { OP_LOAD_CONST_INT, 0, 10, 1 },  // R10 = 1 (INT64)
-        { OP_LOAD_CONST_INT, 0, 11, 2 },  // R11 = 2 (INT64)
-        { OP_LOAD_CONST_INT, 0, 12, 3 },  // R12 = 3 (INT64)
+        { OP_LOAD_INLINE_SET, 0, 10, 0 | (1 << 16) },   // R10 = {1}
+        { OP_LOAD_INLINE_SET, 0, 11, 8 | (1 << 16) },   // R11 = {2}
+        { OP_LOAD_INLINE_SET, 0, 12, 16 | (1 << 16) },  // R12 = {3}
 
         // 1. OP_SET_UNION:
         // dst != src1 && dst != src2
@@ -871,9 +874,11 @@ void test_mcdc_simd_and_vector_math() {
         assert(st == IMPULSE_VM_OK);
 
         // OP_L1_NORM_DIFF
+        state.registers[1] = static_cast<uint64_t>(h_f1);
+        state.register_types[1] = TYPE_FLOAT_VECTOR;
+        state.registers[2] = static_cast<uint64_t>(h_f2);
+        state.register_types[2] = TYPE_FLOAT_VECTOR;
         std::vector<impulse_instruction_t> l1_bc = {
-            { OP_LOAD_CONST_INT, 0, 1, static_cast<uint32_t>(h_f1) },
-            { OP_LOAD_CONST_INT, 0, 2, static_cast<uint32_t>(h_f2) },
             { OP_L1_NORM_DIFF, 0, 0, 1 | (2 << 16) },
             { OP_HALT, 0, 0, 0 }
         };
@@ -1018,37 +1023,17 @@ void test_mcdc_set_ops_type_tags_exhaustive() {
     impulse_vm_state_t state{};
     state.query_context = ctx;
 
-    // R10 is TYPE_NODE_ID, R11 is TYPE_INT64, R12 is TYPE_FLOAT (neither NODE_ID nor INT64)
+    // R10 is TYPE_NODE_ID; R11 is TYPE_INT64 and R12 is TYPE_FLOAT (rejected by OP_SET_*)
     std::vector<impulse_instruction_t> type_tag_bc = {
         { OP_INIT_INPUT_NODE, 0, 10, 0 },          // R10 = 5 (TYPE_NODE_ID)
-        { OP_LOAD_CONST_INT, 0, 11, 10 },          // R11 = 10 (TYPE_INT64)
-        { OP_LOAD_CONST_FLOAT, 0, 12, 0x40000000 },// R12 = 2.0f (TYPE_FLOAT)
 
-        // OP_SET_UNION dst == src1 with NODE_ID, then with INT64, then with FLOAT
-        { OP_SET_UNION, 0, 1, 10 | (10 << 16) }, // dst=R1, src1=R10, src2=R10 (R1={5})
-        { OP_SET_UNION, 0, 1, 1 | (11 << 16) },  // dst=R1, src1=R1, src2=R11 (R1={5, 10})
-        { OP_SET_UNION, 0, 1, 1 | (12 << 16) },  // dst=R1, src1=R1, src2=R12 (FLOAT -> no-op)
-
-        // OP_SET_UNION dst == src2 with NODE_ID, then with INT64, then with FLOAT
-        { OP_SET_UNION, 0, 2, 10 | (2 << 16) },  // dst=R2, src1=R10, src2=R2
-        { OP_SET_UNION, 0, 2, 11 | (2 << 16) },  // dst=R2, src1=R11, src2=R2
-        { OP_SET_UNION, 0, 2, 12 | (2 << 16) },  // dst=R2, src1=R12, src2=R2
-
-        // OP_SET_UNION dst != src1 && dst != src2 with NODE_ID, INT64, FLOAT
-        { OP_SET_UNION, 0, 3, 10 | (11 << 16) }, // R3 = {5, 10}
-        { OP_SET_UNION, 0, 4, 11 | (12 << 16) }, // R4 = {10} (src2 is FLOAT)
-        { OP_SET_UNION, 0, 5, 12 | (10 << 16) }, // R5 = {5} (src1 is FLOAT)
-
-        // OP_SET_INTERSECT with NODE_ID, INT64, FLOAT across all forms
-        { OP_SET_INTERSECT, 0, 3, 3 | (10 << 16) }, // R3 = R3 & R10 (NODE_ID) -> keeps 5
-        { OP_SET_INTERSECT, 0, 3, 3 | (11 << 16) }, // R3 = R3 & R11 (INT64) -> doesn't keep 10 -> empty
-        { OP_SET_INTERSECT, 0, 1, 1 | (12 << 16) }, // R1 = R1 & R12 (FLOAT) -> clears R1
-
-        // OP_SET_DIFFERENCE with NODE_ID, INT64, FLOAT across all forms
-        { OP_SET_UNION, 0, 6, 10 | (11 << 16) },    // R6 = {5, 10}
-        { OP_SET_DIFFERENCE, 0, 6, 6 | (10 << 16) }, // R6 = R6 - R10 (NODE_ID) -> {10}
-        { OP_SET_DIFFERENCE, 0, 6, 6 | (11 << 16) }, // R6 = R6 - R11 (INT64) -> {}
-        { OP_SET_DIFFERENCE, 0, 6, 6 | (12 << 16) }, // R6 = R6 - R12 (FLOAT) -> no-op
+        // OP_SET_UNION / INTERSECT / DIFFERENCE with NODE_ID and NULL
+        { OP_SET_UNION, 0, 1, 10 | (10 << 16) },     // dst=R1, src1=R10, src2=R10 (R1={5})
+        { OP_SET_UNION, 0, 2, 10 | (2 << 16) },      // dst=R2, src1=R10, src2=R2 (R2={5})
+        { OP_SET_UNION, 0, 3, 10 | (1 << 16) },      // dst=R3, src1=R10, src2=R1 (R3={5})
+        { OP_SET_INTERSECT, 0, 3, 3 | (10 << 16) },  // R3 = R3 & R10 (NODE_ID) -> {5}
+        { OP_SET_UNION, 0, 6, 10 | (1 << 16) },      // R6 = {5}
+        { OP_SET_DIFFERENCE, 0, 6, 6 | (10 << 16) }, // R6 = R6 - R10 (NODE_ID) -> {}
 
         { OP_HALT, 0, 0, 0 }
     };
@@ -1056,6 +1041,19 @@ void test_mcdc_set_ops_type_tags_exhaustive() {
     state.pc = 0;
     impulse_vm_status_t st = impulse_vm_execute(type_tag_bc.data(), type_tag_bc.size(), &state, 5);
     assert(st == IMPULSE_VM_OK);
+
+    // Verify TYPE_INT64 and TYPE_FLOAT are rejected with IMPULSE_VM_ERR_INVALID_REGISTER
+    for (uint8_t op : {uint8_t{OP_SET_UNION}, uint8_t{OP_SET_INTERSECT}, uint8_t{OP_SET_DIFFERENCE}}) {
+        std::vector<impulse_instruction_t> neg_int_bc = {
+            { OP_INIT_INPUT_NODE, 0, 10, 0 },
+            { OP_LOAD_CONST_INT, 0, 11, 10 },
+            { op, 0, 1, 10 | (11 << 16) },
+            { OP_HALT, 0, 0, 0 }
+        };
+        impulse_vm_state_t neg_st{};
+        neg_st.query_context = ctx;
+        assert(impulse_vm_execute(neg_int_bc.data(), neg_int_bc.size(), &neg_st, 5) == IMPULSE_VM_ERR_INVALID_REGISTER);
+    }
 
     impulse_vm_context_destroy(ctx);
 }
