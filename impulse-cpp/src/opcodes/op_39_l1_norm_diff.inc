@@ -42,15 +42,19 @@ op_L1_NORM_DIFF: {
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
-        if (h1 >= 0 && h1 < static_cast<int>(vm_state->query_context->float_vectors.size()) &&
-            h2 >= 0 && h2 < static_cast<int>(vm_state->query_context->float_vectors.size())) {
-            const float* vec1 = vm_state->query_context->float_vectors[h1].data();
-            const float* vec2 = vm_state->query_context->float_vectors[h2].data();
+        if (h1 < 0 || h1 >= static_cast<int>(vm_state->query_context->float_vectors.size()) ||
+            h2 < 0 || h2 >= static_cast<int>(vm_state->query_context->float_vectors.size())) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        const auto& v1 = vm_state->query_context->float_vectors[h1];
+        const auto& v2 = vm_state->query_context->float_vectors[h2];
+        N = std::min(N, std::min(v1.size(), v2.size()));
+        const float* vec1 = v1.data();
+        const float* vec2 = v2.data();
 
-            #pragma omp parallel for reduction(+:l1_diff) schedule(static)
-            for (size_t i = 0; i < N; ++i) {
-                l1_diff += std::abs(vec1[i] - vec2[i]);
-            }
+        #pragma omp parallel for reduction(+:l1_diff) schedule(static)
+        for (size_t i = 0; i < N; ++i) {
+            l1_diff += std::abs(vec1[i] - vec2[i]);
         }
     } else if ((vm_state->register_types[src1] == TYPE_FLOAT || vm_state->register_types[src1] == TYPE_INT64) &&
                (vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {

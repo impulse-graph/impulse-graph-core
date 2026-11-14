@@ -37,6 +37,9 @@ op_LOAD_INDIRECT: {
     IMP_VALIDATE_GPR(dst);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT);
 
+    if (IMP_INST_FLAGS(inst) != IMP_FLAG_NONE && IMP_INST_FLAGS(inst) != OP_72_FLAG_VECTOR_ELEM) {
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
+    }
     const bool reg_deref_mode = (IMP_INST_FLAGS(inst) == IMP_FLAG_NONE);
     IMPULSE_TESTCASE(reg_deref_mode);
 

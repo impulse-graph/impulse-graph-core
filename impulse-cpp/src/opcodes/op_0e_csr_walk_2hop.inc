@@ -66,6 +66,10 @@ op_CSR_WALK_2HOP: {
         scalar_src = input_param;
         src_is_bitset = false;
     } else {
+        IMPULSE_CHECK_REG_TYPE(vm_state, src,
+            IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPE_BIT(TYPE_NODE_ID) |
+            IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR) |
+            IMP_TYPE_BIT(TYPE_CSR_SPAN) | IMP_TYPE_BIT(TYPE_NULL));
         src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
         h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
         scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;

@@ -66,15 +66,21 @@ op_MXV: {
     IMPULSE_TESTCASE(dst == src_vec);
 
     if (is_double) {
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->double_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR && dst != src_vec) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            if (h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->double_vectors.size()) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
         } else {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
-        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
-        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->double_vectors.size());
+        N = std::min(N, vm_state->query_context->double_vectors[h_dst].size());
+        target_bound = std::min(target_bound, vm_state->query_context->double_vectors[h_src].size());
         vm_state->query_context->double_vector_lengths[h_dst] = N;
         double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
         const double* src_data = vm_state->query_context->double_vectors[h_src].data();
@@ -132,16 +138,21 @@ op_MXV: {
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else {
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->float_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && dst != src_vec) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            if (h_dst < 0 || static_cast<size_t>(h_dst) >= vm_state->query_context->float_vectors.size()) {
+                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+            }
         } else {
             h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
-        IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
-        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->float_vectors.size());
         N = std::min(N, vm_state->query_context->float_vectors[h_dst].size());
+        target_bound = std::min(target_bound, vm_state->query_context->float_vectors[h_src].size());
         vm_state->query_context->float_vector_lengths[h_dst] = N;
         float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
         const float* src_data = vm_state->query_context->float_vectors[h_src].data();

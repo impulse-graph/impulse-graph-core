@@ -34,6 +34,7 @@ op_STABLE_CHECK: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
+    IMPULSE_CHECK_REG_TYPE(vm_state, dst, OP_54_ALLOWED_SRC_TYPES);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_54_ALLOWED_SRC_TYPES);
 
     bool is_subset = true;

@@ -110,7 +110,8 @@ op_ADAPTIVE_WALK: {
                 }
                 auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-                for (uint64_t u = 0; u < slot.node_count; ++u) {
+                size_t csc_n = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
+                for (uint64_t u = 0; u < csc_n; ++u) {
                     uint64_t start = slot.get_csc_offset(u);
                     uint64_t end = slot.get_csc_offset(u + 1);
                     IMPULSE_WELL_FORMED_ASSERT(start <= end);
@@ -134,7 +135,7 @@ op_ADAPTIVE_WALK: {
                     if (bs_dst.words[i] != 0) { is_empty = false; break; }
                 }
                 IMP_VM_SET_ZF(vm_state, is_empty);
-                vm_state->pc++;
+                vm_state->pc += IMP_INST_IS_EXTENDED(inst) ? 2u : 1u;
                 DISPATCH();
             }
         }

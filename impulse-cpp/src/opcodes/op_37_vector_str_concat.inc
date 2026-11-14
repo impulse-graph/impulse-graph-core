@@ -48,13 +48,17 @@ op_VECTOR_STR_CONCAT: {
     IMPULSE_TESTCASE(src1 == src2);
     if (vm_state->register_types[src1] == TYPE_STRING_VECTOR) {
         int h_src1 = static_cast<int>(vm_state->registers[src1]);
-        IMPULSE_ASSERT(h_src1 >= 0 && static_cast<size_t>(h_src1) < vm_state->query_context->string_vectors.size());
+        if (h_src1 < 0 || static_cast<size_t>(h_src1) >= vm_state->query_context->string_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         const auto& svec1 = vm_state->query_context->string_vectors[h_src1];
         for (const char* str : svec1) svec_dst.push_back(str);
     }
     if (vm_state->register_types[src2] == TYPE_STRING_VECTOR) {
         int h_src2 = static_cast<int>(vm_state->registers[src2]);
-        IMPULSE_ASSERT(h_src2 >= 0 && static_cast<size_t>(h_src2) < vm_state->query_context->string_vectors.size());
+        if (h_src2 < 0 || static_cast<size_t>(h_src2) >= vm_state->query_context->string_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         const auto& svec2 = vm_state->query_context->string_vectors[h_src2];
         for (const char* str : svec2) svec_dst.push_back(str);
     }

@@ -36,9 +36,6 @@ op_LOAD_COLUMN_VECTOR: {
 
     const BoundAttributeSlot* slot_ptr = resolve_node_attribute_slot(vm_state->query_context, domain_or_rel, attr_idx);
     IMPULSE_TESTCASE(slot_ptr != nullptr);
-    if (slot_ptr == nullptr) {
-        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-    }
     if (slot_ptr != nullptr) {
         const auto& slot = *slot_ptr;
         const uint8_t base_tc = IMP_ATTR_BASE_TYPE(slot.type_code);
@@ -123,6 +120,11 @@ op_LOAD_COLUMN_VECTOR: {
         }
     }
 
+    const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, attr_idx);
+    if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, domain_or_rel);
+    if (!ma_ptr && (attr_idx != 0 || domain_or_rel != 0)) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR ||
         vm_state->registers[dst] >= vm_state->query_context->float_vectors.size()) {
         const int h = acquire_float_vector(vm_state->query_context);
@@ -134,8 +136,6 @@ op_LOAD_COLUMN_VECTOR: {
     IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
     float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
     size_t loaded_len = 0;
-    const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, attr_idx);
-    if (!ma_ptr) ma_ptr = find_mock_node_attr(vm_state->query_context, domain_or_rel);
     if (ma_ptr && !ma_ptr->float_data.empty()) {
         loaded_len = std::min(N, ma_ptr->float_data.size());
         std::memcpy(dst_vec, ma_ptr->float_data.data(), loaded_len * sizeof(float));

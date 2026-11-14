@@ -104,12 +104,16 @@ op_NODE_FILTER: {
             if ((u + 1) * sizeof(int64_t) > val_bytes) return false;
             return reinterpret_cast<const int64_t*>(val_ptr)[u] == static_cast<int64_t>(val);
         } else if (base_type == IMP_TYPE_CODE_INT8 || base_type == IMP_TYPE_CODE_INT16) {
+            if (dom_rows > 0 && u >= dom_rows) return false;
             if (dom_rows > 0 && val_bytes >= dom_rows * sizeof(int64_t)) {
                 return reinterpret_cast<const int64_t*>(val_ptr)[u] == static_cast<int64_t>(val);
             }
-            if (u >= val_bytes) return false;
-            if (base_type == IMP_TYPE_CODE_INT8) return val_ptr[u] == static_cast<uint8_t>(val);
-            return reinterpret_cast<const int8_t*>(val_ptr)[u] == static_cast<int8_t>(val);
+            if (base_type == IMP_TYPE_CODE_INT8) {
+                if (u >= val_bytes) return false;
+                return val_ptr[u] == static_cast<uint8_t>(val);
+            }
+            if ((u + 1) * sizeof(int16_t) > val_bytes) return false;
+            return reinterpret_cast<const int16_t*>(val_ptr)[u] == static_cast<int16_t>(val);
         } else if (base_type == IMP_TYPE_CODE_INT32) {
             if ((u + 1) * sizeof(int32_t) > val_bytes) return false;
             return reinterpret_cast<const int32_t*>(val_ptr)[u] == static_cast<int32_t>(val);

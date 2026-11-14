@@ -59,11 +59,12 @@ op_LOAD_INLINE_ARRAY: {
     vm_state->query_context->float_vector_lengths[h_dst] = copy_count;
 
     vm_state->query_context->node_vectors_allocated[h_dst] = true;
-    vm_state->query_context->node_vector_lengths[h_dst] = copy_count;
+    size_t node_copy_count = std::min<size_t>(copy_count, vm_state->query_context->node_vectors[h_dst].size());
+    vm_state->query_context->node_vector_lengths[h_dst] = node_copy_count;
     vm_state->query_context->node_vector_length_explicit[h_dst] = true;
     uint64_t* dst_vec_u = vm_state->query_context->node_vectors[h_dst].data();
     const uint32_t* raw_u32 = reinterpret_cast<const uint32_t*>(vm_state->query_context->inline_data_ptr + offset_bytes);
-    for (size_t i = 0; i < copy_count; ++i) {
+    for (size_t i = 0; i < node_copy_count; ++i) {
         dst_vec_u[i] = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(raw_u32[i])));
     }
 

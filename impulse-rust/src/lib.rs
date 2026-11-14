@@ -944,3 +944,76 @@ mod tests {
         assert_eq!(reader.get_neighbors(z_idx as u16, 3).unwrap(), vec![1]);
     }
 }
+
+#[cfg(test)]
+mod tests_issue_78 {
+    use super::*;
+
+    #[test]
+    fn test_permute_vamana_index_oob_medoid_returns_err() {
+        let hdr = VamanaHeader {
+            magic: VAMANA_MAGIC,
+            version: 1,
+            metric: 0,
+            quant_type: 0,
+            domain_id: 0,
+            vec_attr_id: 0,
+            dimension: 2,
+            node_count: 2,
+            max_degree_r: 2,
+            medoid_node_id: 999, // OOB!
+            alpha: 1.2,
+            ef_construction: 4,
+            adj_slab_offset: 0,
+            adj_slab_bytes: 24,
+            quant_code_offset: 0,
+        };
+        let row_stride = (1 + 2) * 4;
+        let adj = vec![0u8; 2 * row_stride];
+        let perm = vec![0u32, 1u32];
+        let res = crate::vamana::builder::permute_vamana_index(&hdr, &adj, None, &perm, &perm);
+        assert!(res.is_err(), "OOB medoid_node_id must return Err instead of panicking");
+    }
+
+    #[test]
+    fn test_writer_non_monotonic_row_offsets_returns_err() {
+        let mut writer = SnapshotWriter::new("__impulse_test_issue78_nonmono.imps");
+        writer.add_domain(0, KeyType::Int32, "User");
+        // Non-monotonic row_offsets: start=2 > end=1
+        writer.add_relation(0, 0, 2, 2, vec![0u32, 2, 1], vec![0u32, 1]);
+        let res = writer.finalize();
+        let _ = std::fs::remove_file("__impulse_test_issue78_nonmono.imps");
+        assert!(res.is_err(), "Non-monotonic row_offsets must return Err instead of panicking");
+    }
+
+    #[test]
+    fn test_ffi_relation_index_u16_overflow_returns_false() {
+        let path = "__impulse_test_issue78_ffi_rel.imps";
+        let mut writer = SnapshotWriter::new(path);
+        writer.add_domain(0, KeyType::Int32, "User");
+        writer.add_relation(0, 0, 2, 1, vec![0u32, 1, 1], vec![1u32]);
+        writer.finalize().unwrap();
+        let reader = SnapshotReader::open(path).unwrap();
+        let is_adj = unsafe { impulse_snapshot_is_adjacent_rs(&reader, 65536usize, 0, 1) };
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+        assert!(!is_adj, "relation_index=65536 must not wrap to relation 0");
+    }
+
+    #[test]
+    fn test_stats_i32_min_and_i64_min_not_treated_as_null() {
+        let mut i32_bytes = Vec::new();
+        i32_bytes.extend_from_slice(&i32::MIN.to_le_bytes());
+        i32_bytes.extend_from_slice(&5i32.to_le_bytes());
+        let st32 = AttributeStatisticsCalculator::calculate_int32("v32", &i32_bytes);
+        assert_eq!(st32.null_count, 0, "i32::MIN must not be misclassified as null");
+        assert_eq!(st32.min_int_val, i32::MIN as i64);
+
+        let mut i64_bytes = Vec::new();
+        i64_bytes.extend_from_slice(&i64::MIN.to_le_bytes());
+        i64_bytes.extend_from_slice(&5i64.to_le_bytes());
+        let st64 = AttributeStatisticsCalculator::calculate_int64("v64", &i64_bytes);
+        assert_eq!(st64.null_count, 0, "i64::MIN must not be misclassified as null");
+        assert_eq!(st64.min_int_val, i64::MIN);
+    }
+}

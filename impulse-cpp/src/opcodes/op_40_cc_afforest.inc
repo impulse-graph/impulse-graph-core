@@ -42,7 +42,9 @@ op_CC_AFFOREST: {
     vm_state->register_types[dst] = TYPE_NODE_VECTOR;
 
     int handle = static_cast<int>(vm_state->registers[dst]);
-    IMPULSE_ASSERT(handle >= 0 && static_cast<size_t>(handle) < vm_state->query_context->node_vectors.size());
+    if (handle < 0 || static_cast<size_t>(handle) >= vm_state->query_context->node_vectors.size()) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+    }
     auto& comp = vm_state->query_context->node_vectors[handle];
     size_t csc_bound = (slot.csc_node_count > 0) ? slot.csc_node_count : slot.node_count;
     size_t N = (csc_bound > 0) ? csc_bound : vm_state->query_context->max_nodes;

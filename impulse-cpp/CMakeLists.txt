@@ -313,6 +313,14 @@ if(IMPULSE_BUILD_TESTS)
     target_link_libraries(test_issues_49_50_51_52 PRIVATE impulse_graph_static)
     add_test(NAME test_issues_49_50_51_52 COMMAND test_issues_49_50_51_52)
 
+    add_executable(test_issue_78_swe_sweep tests/test_issue_78_swe_sweep.cpp)
+    target_link_libraries(test_issue_78_swe_sweep PRIVATE impulse_graph_static)
+    add_test(NAME test_issue_78_swe_sweep COMMAND test_issue_78_swe_sweep)
+
+    add_executable(test_issue_77_opcodes tests/test_issue_77_opcodes.cpp)
+    target_link_libraries(test_issue_77_opcodes PRIVATE impulse_graph_static)
+    add_test(NAME test_issue_77_opcodes COMMAND test_issue_77_opcodes)
+
     add_executable(kleisli_json_runner tests/kleisli_json_runner.cpp)
     target_link_libraries(kleisli_json_runner PRIVATE impulse_graph_static)
 endif()

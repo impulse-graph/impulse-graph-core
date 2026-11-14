@@ -40,7 +40,9 @@ op_EXTRACT_VALIDITY: {
 
     if (stype == TYPE_FLOAT_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src]);
-        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
+        if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->float_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len = vm_state->query_context->float_vector_lengths[h1];
         if (len > v1.size()) len = v1.size();
@@ -51,7 +53,9 @@ op_EXTRACT_VALIDITY: {
         }
     } else if (stype == TYPE_DOUBLE_VECTOR) {
         int h1 = static_cast<int>(vm_state->registers[src]);
-        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
+        if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->double_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         auto& v1 = vm_state->query_context->double_vectors[h1];
         size_t len = vm_state->query_context->double_vector_lengths[h1];
         if (len > v1.size()) len = v1.size();

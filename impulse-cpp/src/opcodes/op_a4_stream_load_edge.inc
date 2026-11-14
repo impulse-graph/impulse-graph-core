@@ -70,10 +70,20 @@
                                 uint8_t base_tc = IMP_ATTR_BASE_TYPE(aslot.type_code);
                                 bool is_null = IMP_ATTR_IS_NULLABLE(aslot.type_code);
                                 IMPULSE_TESTCASE(is_null);
-                                size_t elem_sz = (base_tc == IMP_TYPE_CODE_FLOAT64) ? sizeof(double) : sizeof(float);
-                                size_t bm_bytes = (is_null && aslot.data_bytes > IMP_SNAP_SECTION_ALIGN)
-                                    ? static_cast<size_t>(IMP_SNAP_SECTION_ALIGN)
-                                    : 0u;
+                                size_t elem_sz = (base_tc == IMP_TYPE_CODE_FLOAT64 || base_tc == IMP_TYPE_CODE_INT64)
+                                    ? sizeof(double)
+                                    : sizeof(float);
+                                size_t bm_bytes = 0u;
+                                if (is_null) {
+                                    size_t expected_bm = (rel < vm_state->query_context->slots.size() && vm_state->query_context->slots[rel].edge_count > 0)
+                                        ? static_cast<size_t>(IMP_VALIDITY_PADDED_BYTES(vm_state->query_context->slots[rel].edge_count))
+                                        : static_cast<size_t>(IMP_SNAP_SECTION_ALIGN);
+                                    if (aslot.data_bytes > expected_bm) {
+                                        bm_bytes = expected_bm;
+                                    } else if (aslot.data_bytes > IMP_SNAP_SECTION_ALIGN) {
+                                        bm_bytes = static_cast<size_t>(IMP_SNAP_SECTION_ALIGN);
+                                    }
+                                }
                                 if (aslot.data_ptr && aslot.data_bytes > bm_bytes) {
                                     const uint8_t* raw_b = static_cast<const uint8_t*>(aslot.data_ptr);
                                     size_t cnt = (aslot.data_bytes - bm_bytes) / elem_sz;

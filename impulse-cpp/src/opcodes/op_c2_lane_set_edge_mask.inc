@@ -62,7 +62,10 @@ op_LANE_SET_EDGE_MASK: {
         IMPULSE_ASSERT(static_cast<size_t>(h_dst) < VM_MAX_LANE_FRONTIER_HANDLES);
         auto& lf_dst = vm_state->query_context->lane_frontiers[h_dst];
 
-        size_t rel_slot = (rel_id < VM_MAX_REL_SLOTS) ? rel_id : 0;
+        if (rel_id >= VM_MAX_REL_SLOTS) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        size_t rel_slot = rel_id;
         IMPULSE_ASSERT(rel_slot < VM_MAX_REL_SLOTS);
         size_t n_edges = OP_C2_MIN_EDGE_MASK_CAP;
         if (rel_id < vm_state->query_context->slots.size() && vm_state->query_context->slots[rel_id].edge_count > 0) {

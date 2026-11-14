@@ -38,13 +38,15 @@ op_COALESCE: {
     IMPULSE_TESTCASE(dst == src1 || dst == src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
-        int hDst = acquire_float_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
+        if (h1 < 0 || static_cast<size_t>(h1) >= vm_state->query_context->float_vectors.size() ||
+            h2 < 0 || static_cast<size_t>(h2) >= vm_state->query_context->float_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
+        int hDst = acquire_float_vector(vm_state->query_context);
+        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->float_vectors.size());
-        IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
-        IMPULSE_ASSERT(h2 >= 0 && static_cast<size_t>(h2) < vm_state->query_context->float_vectors.size());
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         auto& v2 = vm_state->query_context->float_vectors[h2];
@@ -61,7 +63,7 @@ op_COALESCE: {
         vm_state->registers[dst] = hDst;
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
     } else if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR &&
-               (vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
+               vm_state->register_types[src2] == TYPE_FLOAT) {
         int hDst = acquire_float_vector(vm_state->query_context);
         if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
@@ -110,7 +112,7 @@ op_COALESCE: {
         vm_state->registers[dst] = hDst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else if (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR &&
-               (vm_state->register_types[src2] == TYPE_DOUBLE || vm_state->register_types[src2] == TYPE_FLOAT || vm_state->register_types[src2] == TYPE_INT64)) {
+               (vm_state->register_types[src2] == TYPE_DOUBLE || vm_state->register_types[src2] == TYPE_FLOAT)) {
         int hDst = acquire_double_vector(vm_state->query_context);
         if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
@@ -139,12 +141,8 @@ op_COALESCE: {
         }
         vm_state->registers[dst] = hDst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
-    } else if (vm_state->register_types[src1] != TYPE_NULL) {
-        vm_state->registers[dst] = vm_state->registers[src1];
-        vm_state->register_types[dst] = vm_state->register_types[src1];
     } else {
-        vm_state->registers[dst] = vm_state->registers[src2];
-        vm_state->register_types[dst] = vm_state->register_types[src2];
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     IMP_VM_SET_ZF(vm_state, false);
     vm_state->pc++;

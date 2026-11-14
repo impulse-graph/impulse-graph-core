@@ -42,12 +42,13 @@ op_SET_MAX_DOP: {
     }
 
     IMPULSE_TESTCASE(req_dop == 0u);
+    if (req_dop == 0u) return IMPULSE_VM_ERR_INVALID_REGISTER;
+    if (host_ceiling < OP_75_MIN_DOP) host_ceiling = OP_75_MIN_DOP;
     IMPULSE_TESTCASE(req_dop == static_cast<uint32_t>(OP_75_MIN_DOP));
     IMPULSE_TESTCASE(req_dop > static_cast<uint32_t>(host_ceiling));
 
-    const int effective_dop = std::max(
-        OP_75_MIN_DOP,
-        std::min(req_dop > 0u ? static_cast<int>(req_dop) : host_ceiling, host_ceiling));
+    const uint64_t clamped_dop = std::min<uint64_t>(req_dop, static_cast<uint64_t>(host_ceiling));
+    const int effective_dop = std::max(OP_75_MIN_DOP, static_cast<int>(clamped_dop));
     IMPULSE_ASSERT(effective_dop >= OP_75_MIN_DOP);
 
     if (vm_state->query_context) {
