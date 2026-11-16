@@ -12,7 +12,7 @@
     "lint": "eslint \"**/*.js\""
   },
   "dependencies": {
-    "node-addon-api": "^7.0.0"
+    "node-addon-api": "^8.9.2"
   },
   "license": "Apache-2.0",
   "devDependencies": {
