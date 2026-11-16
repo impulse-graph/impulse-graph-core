@@ -33,7 +33,7 @@ jobs:
       has_packages: ${{ steps.check_dist.outputs.has_packages }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v5
