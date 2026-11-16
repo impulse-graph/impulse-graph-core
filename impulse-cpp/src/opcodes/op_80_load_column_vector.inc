@@ -69,12 +69,15 @@ op_LOAD_COLUMN_VECTOR: {
             }
             const int h_dst = static_cast<int>(vm_state->registers[dst]);
             IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
-            double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
             size_t loaded_len = 0;
             if (slot.data_ptr && slot.data_bytes > bitmap_bytes) {
                 const uint8_t* raw_bytes = static_cast<const uint8_t*>(slot.data_ptr);
                 const double* src_attr = reinterpret_cast<const double*>(raw_bytes + bitmap_bytes);
                 loaded_len = std::min(N, static_cast<size_t>((slot.data_bytes - bitmap_bytes) / sizeof(double)));
+                if (vm_state->query_context->double_vectors[h_dst].size() < loaded_len) {
+                    vm_state->query_context->double_vectors[h_dst].resize(loaded_len, 0.0);
+                }
+                double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
                 std::memcpy(dst_vec, src_attr, loaded_len * sizeof(double));
                 if (is_nullable) {
                     for (size_t i = 0; i < loaded_len; ++i) {
@@ -98,12 +101,15 @@ op_LOAD_COLUMN_VECTOR: {
             }
             const int h_dst = static_cast<int>(vm_state->registers[dst]);
             IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
-            float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
             size_t loaded_len = 0;
             if (slot.data_ptr && slot.data_bytes > bitmap_bytes) {
                 const uint8_t* raw_bytes = static_cast<const uint8_t*>(slot.data_ptr);
                 const float* src_attr = reinterpret_cast<const float*>(raw_bytes + bitmap_bytes);
                 loaded_len = std::min(N, static_cast<size_t>((slot.data_bytes - bitmap_bytes) / sizeof(float)));
+                if (vm_state->query_context->float_vectors[h_dst].size() < loaded_len) {
+                    vm_state->query_context->float_vectors[h_dst].resize(loaded_len, 0.0f);
+                }
+                float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
                 std::memcpy(dst_vec, src_attr, loaded_len * sizeof(float));
                 if (is_nullable) {
                     for (size_t i = 0; i < loaded_len; ++i) {

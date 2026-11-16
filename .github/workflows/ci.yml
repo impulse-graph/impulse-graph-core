@@ -52,6 +52,18 @@ jobs:
               - 'impulse-cpp/**'
               - '.github/workflows/**'
 
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
   build-cpp-kernel:
     name: Build C++ Kernel (${{ matrix.os }})
     needs: detect-changes
@@ -70,8 +82,11 @@ jobs:
 
       - name: Build C++20 Core Kernel
         run: |
-          cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DIMPULSE_BUILD_FUZZ=OFF
           cmake --build build-cpp --config Release
+
+      - name: Run C++ Unit & Integration Tests
+        run: ctest --test-dir build-cpp --output-on-failure -C Release -E '^(bench_|test_opcode_contracts$)'
 
   test-rust-engine:
     name: Test Rust Engine Crate
@@ -86,6 +101,14 @@ jobs:
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rustfmt & Clippy
+        run: |
+          cd impulse-rust
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
 
       - name: Run Rust Unit & Integration Tests
         run: |
@@ -138,6 +161,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -154,6 +179,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Build C++20 Static Kernel (for CGO & N-API)
+        run: |
+          cmake -B impulse-cpp/build -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DIMPULSE_BUILD_TESTS=OFF -DIMPULSE_BUILD_EXAMPLES=OFF
+          cmake --build impulse-cpp/build --target impulse_graph_static hwy -j"$(nproc)"
+
       - name: Test Python Bindings & Package Validation
         run: |
           if [ -f impulse-python/setup.py ] || [ -f impulse-python/pyproject.toml ]; then
@@ -168,13 +198,13 @@ jobs:
       - name: Test Go Bindings
         run: |
           if [ -d impulse-go ]; then
-            cd impulse-go && go test ./... || true
+            cd impulse-go && go test ./...
           fi
 
       - name: Test Node Bindings
         run: |
           if [ -f impulse-node/package.json ]; then
-            cd impulse-node && npm install && npm test || true
+            cd impulse-node && npm install && npm test
           fi
 
   sanitizers:
@@ -286,7 +316,7 @@ jobs:
 
   ci-gate:
     name: CI Gate / All Checks Passed
-    needs: [detect-changes, build-cpp-kernel, sanitizers, fuzz-smoke, test-rust-engine, test-cli-tooling, test-ffi-bindings]
+    needs: [detect-changes, dependency-review, build-cpp-kernel, sanitizers, fuzz-smoke, test-rust-engine, test-cli-tooling, test-ffi-bindings]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -52,12 +52,12 @@ op_COALESCE: {
         auto& v2 = vm_state->query_context->float_vectors[h2];
         size_t len1 = vm_state->query_context->float_vector_lengths[h1];
         size_t len2 = vm_state->query_context->float_vector_lengths[h2];
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : std::max(v1.size(), v2.size());
+        size_t active_len = std::max(len1, len2);
         active_len = std::min(active_len, vDst.size());
         vm_state->query_context->float_vector_lengths[hDst] = active_len;
         for (size_t i = 0; i < active_len; ++i) {
-            float a = (i < v1.size()) ? v1[i] : std::numeric_limits<float>::quiet_NaN();
-            float b = (i < v2.size()) ? v2[i] : 0.0f;
+            float a = (i < len1 && i < v1.size()) ? v1[i] : std::numeric_limits<float>::quiet_NaN();
+            float b = (i < len2 && i < v2.size()) ? v2[i] : 0.0f;
             vDst[i] = std::isnan(a) ? b : a;
         }
         vm_state->registers[dst] = hDst;
@@ -101,12 +101,12 @@ op_COALESCE: {
         auto& v2 = vm_state->query_context->double_vectors[h2];
         size_t len1 = vm_state->query_context->double_vector_lengths[h1];
         size_t len2 = vm_state->query_context->double_vector_lengths[h2];
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : std::max(v1.size(), v2.size());
+        size_t active_len = std::max(len1, len2);
         active_len = std::min(active_len, vDst.size());
         vm_state->query_context->double_vector_lengths[hDst] = active_len;
         for (size_t i = 0; i < active_len; ++i) {
-            double a = (i < v1.size()) ? v1[i] : std::numeric_limits<double>::quiet_NaN();
-            double b = (i < v2.size()) ? v2[i] : 0.0;
+            double a = (i < len1 && i < v1.size()) ? v1[i] : std::numeric_limits<double>::quiet_NaN();
+            double b = (i < len2 && i < v2.size()) ? v2[i] : 0.0;
             vDst[i] = std::isnan(a) ? b : a;
         }
         vm_state->registers[dst] = hDst;

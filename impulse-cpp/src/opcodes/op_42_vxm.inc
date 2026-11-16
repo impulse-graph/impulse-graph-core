@@ -113,16 +113,17 @@ op_VXM: {
     };
 
     if (is_double) {
-        int h_dst = -1;
-        if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR && dst != src_vec) {
-            h_dst = static_cast<int>(vm_state->registers[dst]);
-        } else {
-            h_dst = acquire_double_vector(vm_state->query_context);
-            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h_dst = acquire_double_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->double_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
-        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->double_vectors.size());
+        if (vm_state->query_context->double_vectors[h_dst].size() < N) {
+            vm_state->query_context->double_vectors[h_dst].resize(N, 0.0);
+        }
         vm_state->query_context->double_vector_lengths[h_dst] = N;
+        size_t eff_src_bound = std::min(src_bound, vm_state->query_context->double_vectors[h_src].size());
         double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
         const double* src_data = vm_state->query_context->double_vectors[h_src].data();
 
@@ -144,7 +145,7 @@ op_VXM: {
                     double sum = 0.0;
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) sum += src_data[v];
+                        if (v < eff_src_bound) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
@@ -152,21 +153,21 @@ op_VXM: {
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
                         double w = static_cast<double>(lookup_csc_edge_weight(v, u));
-                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + w);
+                        if (v < eff_src_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {
                     double max_val = -std::numeric_limits<double>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) max_val = std::max(max_val, std::min(src_data[v], 1.0));
+                        if (v < eff_src_bound) max_val = std::max(max_val, std::min(src_data[v], 1.0));
                     }
                     dst_data[u] = (start == end) ? 0.0 : max_val;
                 } else if (semiring_id == SEMIRING_BOOL) {
                     double any = 0.0;
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound && src_data[v] != 0.0) { any = 1.0; break; }
+                        if (v < eff_src_bound && src_data[v] != 0.0) { any = 1.0; break; }
                     }
                     dst_data[u] = any;
                 } else {
@@ -179,16 +180,17 @@ op_VXM: {
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else {
-        int h_dst = -1;
-        if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && dst != src_vec) {
-            h_dst = static_cast<int>(vm_state->registers[dst]);
-        } else {
-            h_dst = acquire_float_vector(vm_state->query_context);
-            if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        int h_dst = acquire_float_vector(vm_state->query_context);
+        if (h_dst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (h_src < 0 || static_cast<size_t>(h_src) >= vm_state->query_context->float_vectors.size()) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
-        IMPULSE_ASSERT(h_src >= 0 && static_cast<size_t>(h_src) < vm_state->query_context->float_vectors.size());
+        if (vm_state->query_context->float_vectors[h_dst].size() < N) {
+            vm_state->query_context->float_vectors[h_dst].resize(N, 0.0f);
+        }
         vm_state->query_context->float_vector_lengths[h_dst] = N;
+        size_t eff_src_bound = std::min(src_bound, vm_state->query_context->float_vectors[h_src].size());
         float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
         const float* src_data = vm_state->query_context->float_vectors[h_src].data();
 
@@ -210,7 +212,7 @@ op_VXM: {
                     float sum = 0.0f;
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) sum += src_data[v];
+                        if (v < eff_src_bound) sum += src_data[v];
                     }
                     dst_data[u] = sum;
                 } else if (semiring_id == SEMIRING_MIN_PLUS) {
@@ -218,21 +220,21 @@ op_VXM: {
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
                         float w = lookup_csc_edge_weight(v, u);
-                        if (v < src_bound) min_val = std::min(min_val, src_data[v] + w);
+                        if (v < eff_src_bound) min_val = std::min(min_val, src_data[v] + w);
                     }
                     dst_data[u] = min_val;
                 } else if (semiring_id == SEMIRING_MAX_MIN) {
                     float max_val = -std::numeric_limits<float>::infinity();
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound) max_val = std::max(max_val, std::min(src_data[v], 1.0f));
+                        if (v < eff_src_bound) max_val = std::max(max_val, std::min(src_data[v], 1.0f));
                     }
                     dst_data[u] = (start == end) ? 0.0f : max_val;
                 } else if (semiring_id == SEMIRING_BOOL) {
                     float any = 0.0f;
                     for (uint64_t i = start; i < end; ++i) {
                         uint64_t v = slot.get_csc_target(i);
-                        if (v < src_bound && src_data[v] != 0.0f) { any = 1.0f; break; }
+                        if (v < eff_src_bound && src_data[v] != 0.0f) { any = 1.0f; break; }
                     }
                     dst_data[u] = any;
                 } else {

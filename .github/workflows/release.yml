@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v0.9.0-preview.1)'
+        description: 'Release version (e.g. v0.10.0-preview.1)'
         required: false
         default: ''
       prerelease:
@@ -221,7 +221,7 @@ jobs:
           fi
           VER="${RAW_TAG#v}"
           if [ -z "$VER" ] || [ "$VER" = "main" ]; then
-            VER="0.9.0"
+            VER="0.10.0"
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
 
@@ -299,6 +299,7 @@ jobs:
       - name: Generate Formatted Release Description
         run: |
           TAG_NAME="${{ steps.prerelease_check.outputs.release_tag }}"
+          VER="${TAG_NAME#v}"
           cat << EOF > release_description.md
           # 🚀 Impulse Graph Release \`${TAG_NAME}\`
 
@@ -338,22 +339,22 @@ jobs:
 
           | Platform | Python 3.13 | Python 3.12 | Python 3.11 | Python 3.10 | Python 3.9 |
           | :--- | :---: | :---: | :---: | :---: | :---: |
-          | 🍏 **macOS arm64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-macosx_11_0_arm64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-macosx_11_0_arm64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-macosx_11_0_arm64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-macosx_11_0_arm64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-macosx_11_0_arm64.whl) |
-          | 🐧 **Linux x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) |
-          | 🐧 **Linux aarch64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) |
-          | 🪟 **Windows amd64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp313-cp313-win_amd64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp312-cp312-win_amd64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp311-cp311-win_amd64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp310-cp310-win_amd64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0-cp39-cp39-win_amd64.whl) |
+          | 🍏 **macOS arm64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp313-cp313-macosx_11_0_arm64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp312-cp312-macosx_11_0_arm64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp311-cp311-macosx_11_0_arm64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp310-cp310-macosx_11_0_arm64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp39-cp39-macosx_11_0_arm64.whl) |
+          | 🐧 **Linux x86_64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl) |
+          | 🐧 **Linux aarch64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl) |
+          | 🪟 **Windows amd64** | [cp313](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp313-cp313-win_amd64.whl) | [cp312](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp312-cp312-win_amd64.whl) | [cp311](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp311-cp311-win_amd64.whl) | [cp310](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp310-cp310-win_amd64.whl) | [cp39](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}-cp39-cp39-win_amd64.whl) |
 
-          - **Source Tarball**: [⬇️ \`impulse_graph-0.9.0.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-0.9.0.tar.gz)
+          - **Source Tarball**: [⬇️ \`impulse_graph-${VER}.tar.gz\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse_graph-${VER}.tar.gz)
 
           ---
 
           ## 🦀 4. Rust Engine Crate
 
-          - **Crate Download**: [⬇️ \`impulse-graph-0.9.0.crate\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-graph-0.9.0.crate)
+          - **Crate Download**: [⬇️ \`impulse-graph-${VER}.crate\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/impulse-graph-${VER}.crate)
           - **Add to \`Cargo.toml\`**:
             \`\`\`toml
             [dependencies]
-            impulse-graph = "0.9.0"
+            impulse-graph = "${VER}"
             \`\`\`
 
           ---
@@ -415,7 +416,7 @@ jobs:
     if: |
       always() &&
       needs.build-python-wheels.result == 'success' &&
-      (github.event_name == 'push' || inputs.publish_pypi == true)
+      ((github.event_name == 'push' && !contains(github.ref_name, '-')) || (github.event_name == 'workflow_dispatch' && inputs.publish_pypi == true))
     environment:
       name: pypi
       url: https://pypi.org/p/impulse-graph

@@ -66,7 +66,6 @@ op_GATHER_EDGE_ATTR: {
     }
     const int h_dst = static_cast<int>(vm_state->registers[dst]);
     IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
-    float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
 
     const uint32_t mock_key = (domain != 0u) ? domain : attr_idx;
     const auto* ma_ptr = find_mock_node_attr(vm_state->query_context, mock_key);
@@ -76,6 +75,10 @@ op_GATHER_EDGE_ATTR: {
         const size_t len = ma.float_data.size();
         vm_state->query_context->float_vector_lengths[h_dst] = len;
         const size_t limit = (len > 0) ? len : N;
+        if (vm_state->query_context->float_vectors[h_dst].size() < limit) {
+            vm_state->query_context->float_vectors[h_dst].resize(limit, 0.0f);
+        }
+        float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
         for (size_t i = 0; i < limit; ++i) {
             const bool in_frontier = front_is_bs ? vm_state->query_context->bitsets[h_front].test(i) : true;
             if (in_frontier && (!ma.has_mask || ma.mask.test(i)) && i < ma.float_data.size()) {
@@ -91,6 +94,10 @@ op_GATHER_EDGE_ATTR: {
         const float* src_attr = static_cast<const float*>(slot.data_ptr);
         const size_t attr_n = std::min(N, static_cast<size_t>(slot.data_bytes / sizeof(float)));
         IMPULSE_TESTCASE(attr_n == 0);
+        if (vm_state->query_context->float_vectors[h_dst].size() < attr_n) {
+            vm_state->query_context->float_vectors[h_dst].resize(attr_n, 0.0f);
+        }
+        float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
         vm_state->query_context->float_vector_lengths[h_dst] = attr_n;
         if (front_is_bs) {
             const auto& bs = vm_state->query_context->bitsets[h_front];

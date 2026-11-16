@@ -20,7 +20,7 @@ Testing across Impulse Graph Engine follows a **5-tier testing pyramid**, spanni
                     │ (ImpK / ImpLog -> ImpScheme -> impOps)   │
                     ├──────────────────────────────────────────┤
                     │ Level 1: Language Engine Kernels & FFI   │
-                    │ (C++20, Rust, Java 25 FFM, Python, Go)   │
+                    │ (C++20, Rust, Java 21+/25 FFM, Python, Go)│
                     ├──────────────────────────────────────────┤
                     │ Level 0: Agnostic Spec & VM ISA Vectors  │  Micro Level
                     │ (tc01..tc36, vm-impas, 100% Coverage)    │

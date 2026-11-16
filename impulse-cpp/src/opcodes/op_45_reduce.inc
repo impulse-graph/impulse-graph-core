@@ -40,7 +40,7 @@ op_REDUCE: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->double_vector_lengths[handle];
-        if (active_len > 0 && active_len < N) N = active_len;
+        N = std::min(N, active_len);
         IMPULSE_TESTCASE(N == 0);
         const double* vec = vm_state->query_context->double_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
@@ -100,7 +100,7 @@ op_REDUCE: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->float_vector_lengths[handle];
-        if (active_len > 0 && active_len < N) N = active_len;
+        N = std::min(N, active_len);
         IMPULSE_TESTCASE(N == 0);
         const float* vec = vm_state->query_context->float_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {
@@ -162,7 +162,7 @@ op_REDUCE: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         size_t active_len = vm_state->query_context->node_vector_lengths[handle];
-        if (active_len > 0 && active_len < N) N = active_len;
+        N = std::min(N, active_len);
         IMPULSE_TESTCASE(N == 0);
         const uint64_t* vec = vm_state->query_context->node_vectors[handle].data();
         if (op_id == BINARY_OP_ARGMIN || op_id == BINARY_OP_ARGMAX) {

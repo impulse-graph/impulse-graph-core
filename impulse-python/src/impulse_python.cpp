@@ -91,6 +91,12 @@ public:
         res["csr_row_off_bytes"] = entry.csr_row_off_bytes;
         res["csr_col_idx_offset"] = entry.csr_col_idx_offset;
         res["csr_col_idx_bytes"] = entry.csr_col_idx_bytes;
+        const char* rel_name = nullptr;
+        if (impulse_snapshot_get_relation_name(snapshot_, index, &rel_name) == IMPULSE_OK && rel_name) {
+            res["name"] = std::string(rel_name);
+        } else {
+            res["name"] = "";
+        }
         return res;
     }
 
