@@ -165,3 +165,44 @@ def test_domain_disassembly_impas(ecommerce_snapshot):
         assert "OP_CSR_WALK" in impas
         assert "OP_COLLECT_BITSET" in impas
         assert "OP_HALT" in impas
+
+
+def test_auto_populated_relation_catalog(ecommerce_snapshot, monkeypatch):
+    import impulse_graph
+
+    real_native_cls = impulse_graph._NativeSnapshot
+    custom_names = {0: "CUSTOM_PURCHASED", 1: "CUSTOM_MADE_BY"}
+
+    class _NamedNativeProxy:
+        def __init__(self, path):
+            self._inner = real_native_cls(path)
+
+        def get_relation(self, index):
+            info = dict(self._inner.get_relation(index))
+            if index in custom_names:
+                info["name"] = custom_names[index]
+            return info
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(impulse_graph, "_NativeSnapshot", _NamedNativeProxy)
+
+    with Snapshot(ecommerce_snapshot) as snap:
+        assert snap._auto_catalog == {"CUSTOM_PURCHASED": 0, "CUSTOM_MADE_BY": 1}
+
+        # Fluent traverse without explicit catalog
+        assert set(snap.traverse(0).out("CUSTOM_PURCHASED").to_list()) == {0, 1}
+
+        # Domain-bound traverse without explicit catalog
+        brands = snap.domain("User").from_node(0).out("CUSTOM_PURCHASED").out("CUSTOM_MADE_BY").to_list()
+        assert set(brands) == {0, 1}
+
+        # Cypher without explicit catalog
+        cypher_res = snap.cypher("MATCH (u)-[:CUSTOM_PURCHASED]->(p) WHERE id(u) = 0 RETURN p")
+        assert set(cypher_res) == {0, 1}
+
+        # Explicit catalog overrides auto-catalog while preserving other embedded names
+        overridden = snap.traverse(0, catalog={"CUSTOM_MADE_BY": 0}).out("CUSTOM_MADE_BY")
+        assert set(overridden.to_list()) == {0, 1}
+        assert overridden._resolve_rel("CUSTOM_PURCHASED") == 0
