@@ -46,7 +46,10 @@ op_VEC_CMP_GT: {
     uint64_t val1 = vm_state->registers[src1];
     uint8_t type2 = vm_state->register_types[src2];
     uint64_t val2 = vm_state->registers[src2];
-    if (type1 == TYPE_NULL || type2 == TYPE_NULL) {
+    const bool type2_ok = (type2 == TYPE_FLOAT_VECTOR || type2 == TYPE_DOUBLE_VECTOR ||
+                           type2 == TYPE_FLOAT || type2 == TYPE_DOUBLE ||
+                           type2 == TYPE_INT64 || type2 == TYPE_NODE_ID);
+    if ((type1 != TYPE_FLOAT_VECTOR && type1 != TYPE_DOUBLE_VECTOR) || !type2_ok) {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     IMPULSE_TESTCASE(src1 == src2);

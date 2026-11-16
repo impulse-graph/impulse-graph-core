@@ -50,15 +50,13 @@ op_EWISE_MULT: {
         size_t h_s2 = vm_state->registers[src2];
         size_t len1 = (h_s1 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s1] : N;
         size_t len2 = (h_s2 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s2] : N;
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::min(len1, len2) : N;
-        if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
-            int h_dst = acquire_double_vector(vm_state->query_context);
-            if (h_dst < 0) {
-                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            }
-            vm_state->registers[dst] = h_dst;
-            vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
+        size_t active_len = std::min(len1, len2);
+        int h_dst = acquire_double_vector(vm_state->query_context);
+        if (h_dst < 0) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
         IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->double_vectors.size());
         vm_state->query_context->double_vector_lengths[vm_state->registers[dst]] = active_len;
         double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
@@ -77,15 +75,13 @@ op_EWISE_MULT: {
         size_t h_s2 = vm_state->registers[src2];
         size_t len1 = (h_s1 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_s1] : N;
         size_t len2 = (h_s2 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_s2] : N;
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::min(len1, len2) : N;
-        if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
-            int h_dst = acquire_float_vector(vm_state->query_context);
-            if (h_dst < 0) {
-                return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-            }
-            vm_state->registers[dst] = h_dst;
-            vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
+        size_t active_len = std::min(len1, len2);
+        int h_dst = acquire_float_vector(vm_state->query_context);
+        if (h_dst < 0) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
+        vm_state->registers[dst] = h_dst;
+        vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
         IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->float_vectors.size());
         vm_state->query_context->float_vector_lengths[vm_state->registers[dst]] = active_len;
         float* dst_data = vm_state->query_context->float_vectors[vm_state->registers[dst]].data();

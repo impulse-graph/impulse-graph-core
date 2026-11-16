@@ -49,7 +49,7 @@ Per `AGENTS.md`, the Impulse Graph Engine ecosystem is partitioned into speciali
 │   ├── impulse-go/             # Go CGo C-ABI bindings
 │   └── impulse-dotnet/         # .NET 9 P/Invoke C-ABI bindings
 ├── impulse-graph-spec/         # Normative Binary Snapshot Specification & Test Vectors (tc01..tc36)
-├── impulse-graph-java/         # Standalone Java 25 FFM Core Engine & MethodHandle JIT
+├── impulse-graph-java/         # Standalone Java 21 LTS / Java 22+ FFM Core Engine & MethodHandle JIT
 ├── impulse-platform/           # Enterprise Cloud Infrastructure (Spring Boot, gRPC, Kafka WAL, RocksDB)
 ├── impulse-benchmarks/         # Reproducible Performance Benchmarks (Neo4j, PyG, NetworkX, JMH)
 ├── impulse-website/            # Documentation Portal (docs.impulsegraph.io)
@@ -59,7 +59,7 @@ Per `AGENTS.md`, the Impulse Graph Engine ecosystem is partitioned into speciali
 ```
 
 ### 2.1 Language Strategy
-1. **Java 25 (`impulse-graph-java`)**: Pure Java 25 implementation using Foreign Function & Memory (FFM `Arena` / `MemorySegment`) and `VectorAPI`.
+1. **Java 21 LTS / Java 22+ (`impulse-graph-java`)**: Pure Java implementation using Foreign Function & Memory (FFM `Arena` / `MemorySegment`) and `VectorAPI`.
 2. **C++20 (`impulse-graph-core/impulse-cpp`)**: Native C++ kernel delivering the canonical C-ABI C header (`impulse_graph.h`) for embedded, high-performance, and native bindings.
 3. **Rust (`impulse-graph-core/impulse-rust`)**: Safe, concurrent native implementation providing zero-cost Rust abstractions and C-ABI export.
 
@@ -191,7 +191,7 @@ The following **10 repositories** form the complete **Impulse Graph Ecosystem** 
 
 | # | Repository Name | Primary Role & Description | Primary Tech Stack |
 | :- | :--- | :--- | :--- |
-| 1 | **`impulse-graph`** | **The Flagship Engine Workspace**. Contains the C-ABI binary specification v2.3, shared test vectors, Java 25 FFM engine, C++20 kernel, Rust crate, and language bindings (Python, C#, F#, Kotlin, Scala). | C++20, Java 25, Rust, Python, C#, Kotlin, Scala |
+| 1 | **`impulse-graph`** | **The Flagship Engine Workspace**. Contains the C-ABI Binary Snapshot Specification v0.9.0, shared test vectors, Java 21 LTS / Java 22+ FFM engine, C++20 kernel, Rust crate, and language bindings (Python, C#, F#, Kotlin, Scala). | C++20, Java 21+/25, Rust, Python, C#, Kotlin, Scala |
 | 2 | **`impulse-tools`** | **Developer Tools & Optimizer Suite**. Contains `impulse-opt` (RCM cache-line reordering, SIMD-PFOR/Roaring compression, section stripping/injection) and `impulse-inspect` CLI (inspect headers, validate SHA-256, dump Section 2 directories). | C++20 / Rust / CMake |
 | 3 | **`impulse-benchmarks`** | **Continuous Micro & Macro Performance Suite**. Reproducible benchmark harnesses comparing Impulse Graph against Neo4j, NetworkX, PyTorch Geometric, MATPOWER, and OpenFGA. Generates latency percentiles (p50, p99) and flamegraphs. | JMH (Java), Google Benchmark (C++), Criterion (Rust), Pytest-Benchmark |
 | 4 | **`impulse-platform`** | **Enterprise Cloud Infrastructure**. Contains Kafka WAL ingestion, GCS/S3 cloud snapshot sync, Kubernetes leader election, RocksDB local persistence, and Spring Boot server. | Java / Spring Boot / K8s / Kafka / RocksDB |
@@ -256,7 +256,7 @@ The Impulse Graph ecosystem publishes native artifacts across **7 major package 
 
 | Registry | Ecosystem / Language | Published Artifact Name | Description & Installation Command |
 | :--- | :--- | :--- | :--- |
-| **Maven Central** | Java (JVM) | `io.impulse.graph:impulse-spec`<br>`io.impulse.graph:impulse-api`<br>`io.impulse.graph:impulse-core` | Core Java 25 FFM engine (0 dependencies).<br>`<dependency><groupId>io.impulse.graph</groupId><artifactId>impulse-core</artifactId></dependency>` |
+| **Maven Central** | Java (JVM) | `io.impulse.graph:impulse-spec`<br>`io.impulse.graph:impulse-api`<br>`io.impulse.graph:impulse-core` | Core Java 21 LTS / Java 22+ FFM engine (0 dependencies).<br>`<dependency><groupId>io.impulse.graph</groupId><artifactId>impulse-core</artifactId></dependency>` |
 | **Maven Central** | Kotlin (JVM) | `io.impulse.graph:impulse-kotlin` | Kotlin extension functions & Coroutine `Flow`. |
 | **Maven Central** | Scala 3 (JVM) | `io.impulse.graph:impulse-scala_3` | Scala 3 extensions & ZIO / Cats Effect integration. |
 | **Maven Central** | Spring Boot | `io.impulse.platform:impulse-platform-starter-springboot` | Spring Boot auto-configuration starter. |

@@ -67,7 +67,7 @@ To compile your own datasets into `.imps` files, use the Impulse CLI (`impulse-c
 
 ```bash
 # Install the CLI
-cargo install impulse-graph-tools
+cargo install impulse-graph-tooling
 
 # Create a manifest describing your graph schema
 cat > manifest.json << 'EOF'
@@ -99,7 +99,7 @@ impulse inspect my_graph.imps
 
 All native bindings link against the C++20 kernel. Queries execute in the C++ engine regardless of host language — the binding layer is just the call boundary.
 
-For JVM applications (Java 25, Kotlin, Scala 3, Clojure), see the standalone [**impulse-graph-java**](https://github.com/impulse-graph/impulse-graph-java) implementation built on pure JDK 25 Foreign Function & Memory (FFM) and Vector API with full feature parity.
+For JVM applications (Java 21 LTS / Java 22+, Kotlin, Scala 3, Clojure), see the standalone [**impulse-graph-java**](https://github.com/impulse-graph/impulse-graph-java) implementation built on pure JDK Foreign Function & Memory (FFM) and Vector API with full feature parity.
 
 | Language | Directory | Install | API Style |
 | :--- | :--- | :--- | :--- |
@@ -390,7 +390,7 @@ Comparison against other graph engines on the same dataset:
 | Repository | Description |
 | :--- | :--- |
 | **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc37`, `vm-impas/`) — mounted at [`spec/`](./spec/) |
-| **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 25 FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
+| **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 21 LTS / Java 22+ FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
 | **[`impulse-cli`](./impulse-cli/)** | Standalone CLI utilities inside this repository: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
 | **[impulse-ocaml](https://github.com/impulse-graph/impulse-ocaml)** | Normative OCaml reference engine & formal `ImpulseVM` bytecode oracle |
 | **[impulse-verification](https://github.com/impulse-graph/impulse-verification)** | Four-way polyglot validation suite (`four_way_validation.py`) & contract-guided differential fuzzer |
@@ -401,7 +401,7 @@ Comparison against other graph engines on the same dataset:
 
 ## Platform Support & Zero Dependencies
 
-Impulse Graph maintains **zero third-party runtime dependencies**. The C++20 kernel uses only standard library headers. The Rust crate has an empty `[dependencies]`. The Java engine uses only JDK 25 FFM. No transitive dependency vulnerabilities, no supply-chain risk.
+Impulse Graph maintains **zero third-party runtime dependencies**. The C++20 kernel uses only standard library headers. The Rust crate has an empty `[dependencies]`. The Java engine uses only JDK FFM (Java 21 LTS / Java 22+). No transitive dependency vulnerabilities, no supply-chain risk.
 
 | OS | Architectures | Toolchain | SIMD |
 | :--- | :--- | :--- | :--- |
@@ -440,7 +440,7 @@ ctest --test-dir build --output-on-failure
 cd impulse-cli && cargo build --release && cargo test
 
 # Python
-cd impulse-python && pip install -e . && python -m unittest discover tests
+cd impulse-python && pip install -e . && pytest
 
 # Rust
 cd impulse-rust && cargo test

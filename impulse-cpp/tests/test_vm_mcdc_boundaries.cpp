@@ -888,9 +888,11 @@ void test_mcdc_simd_and_vector_math() {
     }
 
     // OP_VEC_CMP_EQ with and without INVERT flag
+    state.registers[1] = static_cast<uint64_t>(h_f1);
+    state.register_types[1] = TYPE_FLOAT_VECTOR;
+    state.registers[2] = static_cast<uint64_t>(h_f2);
+    state.register_types[2] = TYPE_FLOAT_VECTOR;
     std::vector<impulse_instruction_t> cmp_bc = {
-        { OP_LOAD_CONST_INT, 0, 1, static_cast<uint32_t>(h_f1) },
-        { OP_LOAD_CONST_INT, 0, 2, static_cast<uint32_t>(h_f2) },
         { OP_VEC_CMP_EQ, 0, 3, 1 | (2 << 8) },                         // flags = 0
         { OP_VEC_CMP_EQ, IMPULSE_VM_OP_FLAG_INVERT, 4, 1 | (2 << 8) }, // flags = INVERT
         { OP_HALT, 0, 0, 0 }
@@ -898,6 +900,12 @@ void test_mcdc_simd_and_vector_math() {
     state.pc = 0;
     impulse_vm_status_t st = impulse_vm_execute(cmp_bc.data(), cmp_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
+
+    // Negative MC/DC: non-vector src1 (TYPE_INT64) must be rejected
+    state.register_types[1] = TYPE_INT64;
+    state.pc = 0;
+    st = impulse_vm_execute(cmp_bc.data(), cmp_bc.size(), &state, 0);
+    assert(st == IMPULSE_VM_ERR_INVALID_REGISTER);
 
     impulse_vm_context_destroy(ctx);
 }

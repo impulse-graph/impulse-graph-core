@@ -308,9 +308,10 @@ struct impulse_vm_context {
     std::array<MockAttribute, VM_MAX_MOCK_ATTRS> mock_node_attrs;
     std::array<MockAttribute, VM_MAX_MOCK_ATTRS> mock_edge_attrs;
 
-    // Fuel counter for unbounded loop & gas protection
-    uint64_t fuel = 0;
-    bool fuel_enabled = false;
+    // Fuel counter for unbounded loop & gas protection (50M default, matching OCaml/Java)
+    static constexpr uint64_t DEFAULT_FUEL = 50000000ULL;
+    uint64_t fuel = DEFAULT_FUEL;
+    bool fuel_enabled = true;
 };
 
 // ============================================================================

@@ -1,8 +1,8 @@
 # Impulse Graph Engine — Cross-Language Fluent API Specification & Guide
 
 > **Document Status**: Normative Ecosystem Standard  
-> **Target Version**: `v0.9.0` / `v1.0.0`  
-> **Applies To**: C++20, Rust, Python, Java 25, Node.js, C# (.NET)
+> **Target Version**: `v0.10.0` / `v1.0.0`  
+> **Applies To**: C++20, Rust, Python, Java 21 LTS / Java 22+, Node.js, C# (.NET)
 
 ---
 
