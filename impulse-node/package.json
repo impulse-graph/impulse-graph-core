@@ -17,6 +17,6 @@
   "license": "Apache-2.0",
   "devDependencies": {
     "eslint": "^10.10.0",
-    "prettier": "^3.9.6"
+    "prettier": "^3.10.1"
   }
 }
