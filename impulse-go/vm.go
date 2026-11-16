@@ -7,6 +7,7 @@ package impulse
 import "C"
 
 import (
+	"math/bits"
 	"unsafe"
 )
 
@@ -44,6 +45,13 @@ func (ctx *VMContext) Close() {
 	if ctx.ptr != nil {
 		C.impulse_vm_context_destroy(ctx.ptr)
 		ctx.ptr = nil
+	}
+}
+
+// Reset clears active VM handles and execution stacks without freeing off-heap arenas.
+func (ctx *VMContext) Reset() {
+	if ctx.ptr != nil {
+		C.impulse_vm_context_reset(ctx.ptr)
 	}
 }
 
@@ -97,6 +105,86 @@ func (ctx *VMContext) BitsetFill(handle int, count uint64) {
 
 func (ctx *VMContext) BitsetGetWord(handle int, wordIdx int) uint64 {
 	return uint64(C.impulse_vm_context_bitset_get_word(ctx.ptr, C.size_t(handle), C.size_t(wordIdx)))
+}
+
+// BitsetWords returns a zero-copy view of the underlying 64-bit bitset words for handle.
+func (ctx *VMContext) BitsetWords(handle int) []uint64 {
+	if ctx.ptr == nil {
+		return nil
+	}
+	wc := int(C.impulse_vm_context_get_bitset_word_count(ctx.ptr))
+	if wc <= 0 {
+		return nil
+	}
+	ptr := C.impulse_vm_context_get_bitset_words(ctx.ptr, C.size_t(handle))
+	if ptr == nil {
+		return nil
+	}
+	return unsafe.Slice((*uint64)(unsafe.Pointer(ptr)), wc)
+}
+
+// BitsetCount returns the number of set bits in handle strictly below maxNodes in a single CGO pass.
+func (ctx *VMContext) BitsetCount(handle int, maxNodes uint64) int {
+	if maxNodes == 0 {
+		return 0
+	}
+	words := ctx.BitsetWords(handle)
+	if len(words) == 0 {
+		return 0
+	}
+	fullWords := int(maxNodes / 64)
+	remBits := maxNodes % 64
+	limit := fullWords
+	if limit > len(words) {
+		limit = len(words)
+	}
+	count := 0
+	for i := 0; i < limit; i++ {
+		count += bits.OnesCount64(words[i])
+	}
+	if remBits > 0 && fullWords < len(words) {
+		mask := (uint64(1) << remBits) - 1
+		count += bits.OnesCount64(words[fullWords] & mask)
+	}
+	return count
+}
+
+// BitsetToSlice extracts all set node IDs strictly below maxNodes using word-level bit scanning.
+func (ctx *VMContext) BitsetToSlice(handle int, maxNodes uint64) []uint64 {
+	if maxNodes == 0 {
+		return []uint64{}
+	}
+	words := ctx.BitsetWords(handle)
+	if len(words) == 0 {
+		return []uint64{}
+	}
+	fullWords := int(maxNodes / 64)
+	remBits := maxNodes % 64
+	limit := fullWords
+	if limit > len(words) {
+		limit = len(words)
+	}
+	results := make([]uint64, 0, ctx.BitsetCount(handle, maxNodes))
+	for i := 0; i < limit; i++ {
+		w := words[i]
+		base := uint64(i) * 64
+		for w != 0 {
+			tz := bits.TrailingZeros64(w)
+			results = append(results, base+uint64(tz))
+			w &= w - 1
+		}
+	}
+	if remBits > 0 && fullWords < len(words) {
+		mask := (uint64(1) << remBits) - 1
+		w := words[fullWords] & mask
+		base := uint64(fullWords) * 64
+		for w != 0 {
+			tz := bits.TrailingZeros64(w)
+			results = append(results, base+uint64(tz))
+			w &= w - 1
+		}
+	}
+	return results
 }
 
 // Float Vector operations

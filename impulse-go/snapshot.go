@@ -6,11 +6,18 @@ package impulse
 */
 import "C"
 
-import "unsafe"
+import (
+	"runtime"
+	"sync"
+	"unsafe"
+)
 
 // Snapshot represents a read-only memory-mapped Impulse graph snapshot (.imps).
 type Snapshot struct {
-	ptr *C.impulse_snapshot_t
+	ptr    *C.impulse_snapshot_t
+	poolMu sync.RWMutex
+	vmPool chan *VMContext
+	closed bool
 }
 
 // OpenSnapshot opens a binary graph snapshot file via zero-copy OS memory-mapping (mmap).
@@ -28,15 +35,74 @@ func OpenSnapshot(path string) (*Snapshot, error) {
 		return nil, Status(status)
 	}
 
-	return &Snapshot{ptr: ptr}, nil
+	poolCap := runtime.GOMAXPROCS(0) * 2
+	if poolCap < 8 {
+		poolCap = 8
+	}
+	return &Snapshot{
+		ptr:    ptr,
+		vmPool: make(chan *VMContext, poolCap),
+	}, nil
+}
+
+// AcquireVMContext borrows a pooled VMContext bound to this Snapshot, or creates one if the pool is empty.
+func (s *Snapshot) AcquireVMContext() (*VMContext, error) {
+	s.poolMu.RLock()
+	if s.closed || s.ptr == nil {
+		s.poolMu.RUnlock()
+		return nil, VMErrNullSnapshot
+	}
+	select {
+	case ctx := <-s.vmPool:
+		s.poolMu.RUnlock()
+		return ctx, nil
+	default:
+		s.poolMu.RUnlock()
+		return NewVMContext(s)
+	}
+}
+
+// ReleaseVMContext resets and returns a VMContext to the Snapshot pool, or destroys it if the pool is full or closed.
+func (s *Snapshot) ReleaseVMContext(ctx *VMContext) {
+	if ctx == nil || ctx.Ptr() == nil {
+		return
+	}
+	s.poolMu.RLock()
+	if s.closed || s.vmPool == nil {
+		s.poolMu.RUnlock()
+		ctx.Close()
+		return
+	}
+	ctx.Reset()
+	select {
+	case s.vmPool <- ctx:
+		s.poolMu.RUnlock()
+	default:
+		s.poolMu.RUnlock()
+		ctx.Close()
+	}
 }
 
 // Close unmaps physical memory and releases snapshot resources.
 func (s *Snapshot) Close() {
+	s.poolMu.Lock()
+	s.closed = true
+	if s.vmPool != nil {
+		for {
+			select {
+			case ctx := <-s.vmPool:
+				ctx.Close()
+			default:
+				goto drained
+			}
+		}
+	}
+drained:
 	if s.ptr != nil {
 		C.impulse_snapshot_close(s.ptr)
 		s.ptr = nil
 	}
+	s.poolMu.Unlock()
 }
 
 // Ptr returns the raw C pointer handle for internal/FFI calls.
