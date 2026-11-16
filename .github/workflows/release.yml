@@ -93,7 +93,7 @@ jobs:
           fi
 
       - name: Upload C-ABI SDK Distributable Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-sdk-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}
           path: dist/*
@@ -169,7 +169,7 @@ jobs:
           fi
 
       - name: Upload CLI Distributable Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target.os }}-${{ matrix.target.arch }}
           path: dist/*
@@ -193,7 +193,7 @@ jobs:
           cp impulse-rust/target/package/*.crate dist-crates/ || true
 
       - name: Upload Rust Crate Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-rust-crates
           path: dist-crates/*
@@ -252,7 +252,7 @@ jobs:
           CIBW_ENVIRONMENT: 'IMPULSE_VERSION="${{ steps.version_info.outputs.version }}"'
 
       - name: Upload Python Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheels-${{ matrix.os }}
           path: wheelhouse/*
