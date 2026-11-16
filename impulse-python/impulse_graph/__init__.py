@@ -91,7 +91,16 @@ class Snapshot:
         if _NativeSnapshot is None:
             raise RuntimeError("_impulse_native extension is not compiled.")
         self._native = _NativeSnapshot(path)
-        self._catalog = catalog
+        self._auto_catalog: Dict[str, int] = {}
+        try:
+            for idx in range(self._native.relation_count()):
+                rel_info = self._native.get_relation(idx)
+                rel_name = rel_info.get("name")
+                if rel_name:
+                    self._auto_catalog[rel_name] = idx
+        except Exception:
+            pass
+        self._catalog = catalog if catalog is not None else (self._auto_catalog or None)
         self._default_ctx = None
         self._default_state = None
 

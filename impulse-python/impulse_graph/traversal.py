@@ -86,18 +86,18 @@ class Traversal:
         self._current_domain = initial_domain
         self._steps = []
 
+        auto_catalog = getattr(snapshot, "_auto_catalog", None)
+        self._catalog: Dict[str, int] = dict(auto_catalog) if isinstance(auto_catalog, dict) else {}
         if isinstance(catalog, str):
             key = catalog.lower().replace("_catalog", "").replace(".imps", "")
             if key in BUILTIN_CATALOGS:
-                self._catalog = dict(BUILTIN_CATALOGS[key])
+                self._catalog.update(BUILTIN_CATALOGS[key])
             else:
                 raise ValueError(
                     f"Unknown catalog preset '{catalog}'. Available presets: {list(BUILTIN_CATALOGS.keys())}"
                 )
         elif isinstance(catalog, dict):
-            self._catalog = dict(catalog)
-        else:
-            self._catalog = {}
+            self._catalog.update(catalog)
 
     @property
     def current_domain(self) -> Optional[Any]:
