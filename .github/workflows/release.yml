@@ -443,7 +443,7 @@ jobs:
           twine check --strict dist/*
 
       - name: Generate SLSA Level 3 Build Provenance Attestation (PEP 740)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'dist/*'
 
