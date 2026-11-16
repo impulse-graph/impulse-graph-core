@@ -43,6 +43,9 @@ public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         Napi::Function func = DefineClass(env, "Snapshot", {
             InstanceMethod("isReachable", &NodeSnapshot::IsReachable),
+            InstanceMethod("domainCount", &NodeSnapshot::DomainCount),
+            InstanceMethod("relationCount", &NodeSnapshot::RelationCount),
+            InstanceMethod("getRelationName", &NodeSnapshot::GetRelationName),
             InstanceMethod("close", &NodeSnapshot::Close)
         });
 
@@ -138,6 +141,31 @@ private:
         IMPULSE_ASSERT(snapshot_ != nullptr);
         bool reachable = impulse_snapshot_is_reachable(snapshot_, relation_index, src_id, tgt_id);
         return Napi::Boolean::New(env, reachable);
+    }
+
+    Napi::Value DomainCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) return Napi::Number::New(env, 0);
+        return Napi::Number::New(env, impulse_snapshot_domain_count(snapshot_));
+    }
+
+    Napi::Value RelationCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) return Napi::Number::New(env, 0);
+        return Napi::Number::New(env, impulse_snapshot_relation_count(snapshot_));
+    }
+
+    Napi::Value GetRelationName(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_ || info.Length() < 1 || !info[0].IsNumber()) {
+            return env.Null();
+        }
+        uint16_t idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        const char* name = nullptr;
+        if (impulse_snapshot_get_relation_name(snapshot_, idx, &name) == IMPULSE_OK && name) {
+            return Napi::String::New(env, name);
+        }
+        return env.Null();
     }
 
     impulse_snapshot_t* snapshot_ = nullptr;

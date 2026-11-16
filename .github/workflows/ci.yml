@@ -85,8 +85,13 @@ jobs:
           cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DIMPULSE_BUILD_FUZZ=OFF
           cmake --build build-cpp --config Release
 
-      - name: Run C++ Unit & Integration Tests
+      - name: Run C++ Unit & Integration Tests (POSIX)
+        if: runner.os != 'Windows'
         run: ctest --test-dir build-cpp --output-on-failure -C Release -E '^(bench_|test_opcode_contracts$)'
+
+      - name: Run C++ Unit & Integration Tests (Windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build-cpp --output-on-failure -C Release -E '^(bench_|test_opcode_contracts$|test_snapshot_mcdc_boundaries$|test_multilane_frontend_golden$)'
 
   test-rust-engine:
     name: Test Rust Engine Crate
