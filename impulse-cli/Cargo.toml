@@ -20,7 +20,7 @@ path = "src/bin/generate_docs.rs"
 [dependencies]
 impulse-graph = { path = "../impulse-rust" }
 clap = { version = "4.4", features = ["derive"] }
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 csv = "1.3"
