@@ -283,7 +283,12 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
         return nullptr;
     }
     LARGE_INTEGER sz;
-    GetFileSizeEx(hFile, &sz);
+    if (!GetFileSizeEx(hFile, &sz) || sz.QuadPart < 4096) {
+        CloseHandle(hFile);
+        g_last_error = "File size smaller than 4KB Page 0 header";
+        if (out_status) *out_status = IMPULSE_ERR_IO_FAILURE;
+        return nullptr;
+    }
     size_t file_size = static_cast<size_t>(sz.QuadPart);
     HANDLE hMap = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
     if (!hMap) {

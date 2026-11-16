@@ -277,9 +277,10 @@ void test_header_and_filesystem_attacks() {
 
     // 1a. Directory path must be rejected cleanly (not mmap'd)
     {
+        std::string tmp_dir = std::filesystem::temp_directory_path().string();
         impulse_status_t st = IMPULSE_OK;
-        impulse_snapshot_t* snap = impulse_snapshot_open("/tmp", &st);
-        HARDEN_CHECK(snap == nullptr && st == IMPULSE_ERR_IO_FAILURE, "Opening directory /tmp must fail with IO_FAILURE");
+        impulse_snapshot_t* snap = impulse_snapshot_open(tmp_dir.c_str(), &st);
+        HARDEN_CHECK(snap == nullptr && st == IMPULSE_ERR_IO_FAILURE, "Opening temp directory must fail with IO_FAILURE");
     }
 
     // 1b. Truncated sizes: 0B, 63B, 64B, 4095B

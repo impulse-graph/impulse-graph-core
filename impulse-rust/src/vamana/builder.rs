@@ -119,13 +119,13 @@ impl BuildWorkerScratch {
 
         let mut first_unexpanded = 0usize;
         loop {
-            let mut next_pos = None;
-            for idx in first_unexpanded..self.beam.len() {
-                if !self.beam[idx].3 {
-                    next_pos = Some(idx);
-                    break;
-                }
-            }
+            let next_pos = self
+                .beam
+                .iter()
+                .enumerate()
+                .skip(first_unexpanded)
+                .find(|(_, item)| !item.3)
+                .map(|(idx, _)| idx);
             let Some(pos) = next_pos else { break };
             self.beam[pos].3 = true;
             first_unexpanded = pos + 1;
