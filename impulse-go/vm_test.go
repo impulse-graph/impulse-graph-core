@@ -137,4 +137,31 @@ func TestVMExecutionAndContext(t *testing.T) {
 	if _, ok := snap.RelationIndex("NON_EXISTENT_RELATION"); ok {
 		t.Errorf("expected RelationIndex to return false for unknown relation")
 	}
+
+	// 6. Verify Snapshot VMContext pooling, Reset, BitsetCount, and BitsetToSlice
+	pooledCtx, err := snap.AcquireVMContext()
+	if err != nil {
+		t.Fatalf("failed to acquire pooled VM context: %v", err)
+	}
+	hPool := pooledCtx.AcquireBitset()
+	pooledCtx.BitsetAdd(hPool, 1)
+	pooledCtx.BitsetAdd(hPool, 2)
+	pooledCtx.BitsetAdd(hPool, 99) // >= maxNodes(3), must be excluded by maxNodes bound
+	if got := pooledCtx.BitsetCount(hPool, 3); got != 2 {
+		t.Errorf("expected BitsetCount(maxNodes=3)=2, got %d", got)
+	}
+	slice := pooledCtx.BitsetToSlice(hPool, 3)
+	if len(slice) != 2 || slice[0] != 1 || slice[1] != 2 {
+		t.Errorf("expected BitsetToSlice=[1 2], got %v", slice)
+	}
+	snap.ReleaseVMContext(pooledCtx)
+
+	reacquired, err := snap.AcquireVMContext()
+	if err != nil {
+		t.Fatalf("failed to reacquire pooled VM context: %v", err)
+	}
+	if reacquired != pooledCtx {
+		t.Errorf("expected pooled VMContext to be reused after ReleaseVMContext")
+	}
+	snap.ReleaseVMContext(reacquired)
 }

@@ -105,10 +105,9 @@ func (t *Traversal) Project(fields ...string) *Traversal {
 	return t
 }
 
-// ToSlice executes the traversal and returns the active node IDs as a slice of uint64.
-func (t *Traversal) ToSlice() ([]uint64, error) {
+func (t *Traversal) compile() ([]Instruction, uint16, error) {
 	if t.snapshot == nil || t.snapshot.Ptr() == nil {
-		return nil, VMErrNullSnapshot
+		return nil, 0, VMErrNullSnapshot
 	}
 
 	qb := NewQueryBuilder()
@@ -117,7 +116,7 @@ func (t *Traversal) ToSlice() ([]uint64, error) {
 	for idx, step := range t.steps {
 		relID, found := t.snapshot.RelationIndex(step.relationName)
 		if !found {
-			return nil, fmt.Errorf("relation %q not found in snapshot catalog", step.relationName)
+			return nil, 0, fmt.Errorf("relation %q not found in snapshot catalog", step.relationName)
 		}
 
 		dstReg := uint16((idx % 2) + 1)
@@ -136,34 +135,39 @@ func (t *Traversal) ToSlice() ([]uint64, error) {
 	}
 
 	qb.CollectBitset(currentReg)
-	bytecode := qb.Compile()
+	return qb.Compile(), currentReg, nil
+}
 
-	ctx, err := NewVMContext(t.snapshot)
+func (t *Traversal) executeBitset() (*VMContext, int, error) {
+	bytecode, currentReg, err := t.compile()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	defer ctx.Close()
+
+	ctx, err := t.snapshot.AcquireVMContext()
+	if err != nil {
+		return nil, 0, err
+	}
 
 	state := NewVMState()
 	state.SetQueryContext(ctx)
 
-	err = ExecuteVM(bytecode, state, t.startNode)
+	if err := ExecuteVM(bytecode, state, t.startNode); err != nil {
+		t.snapshot.ReleaseVMContext(ctx)
+		return nil, 0, err
+	}
+
+	return ctx, int(state.GetRegister(int(currentReg))), nil
+}
+
+// ToSlice executes the traversal and returns the active node IDs as a slice of uint64.
+func (t *Traversal) ToSlice() ([]uint64, error) {
+	ctx, handle, err := t.executeBitset()
 	if err != nil {
 		return nil, err
 	}
-
-	resReg := state.GetRegister(int(currentReg))
-	handle := int(resReg)
-
-	results := make([]uint64, 0)
-	maxNodes := t.snapshot.MaxNodeCount()
-	for i := uint64(0); i < maxNodes; i++ {
-		if ctx.BitsetTest(handle, i) {
-			results = append(results, i)
-		}
-	}
-
-	return results, nil
+	defer t.snapshot.ReleaseVMContext(ctx)
+	return ctx.BitsetToSlice(handle, t.snapshot.MaxNodeCount()), nil
 }
 
 // ToRecords executes the traversal and projects the specified attributes for all matching nodes.
@@ -189,11 +193,12 @@ func (t *Traversal) ToRecords() ([]Record, error) {
 
 // Count returns the number of reachable nodes at the end of the traversal.
 func (t *Traversal) Count() (int, error) {
-	slice, err := t.ToSlice()
+	ctx, handle, err := t.executeBitset()
 	if err != nil {
 		return 0, err
 	}
-	return len(slice), nil
+	defer t.snapshot.ReleaseVMContext(ctx)
+	return ctx.BitsetCount(handle, t.snapshot.MaxNodeCount()), nil
 }
 
 // ToSet returns the active node IDs as a unique set map.
