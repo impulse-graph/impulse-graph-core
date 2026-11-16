@@ -28,7 +28,7 @@ ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
 sha2 = "0.10"
 zstd = "0.13"
 comfy-table = "7.1"
-indicatif = "0.17"
+indicatif = "0.18"
 rayon = "1.8"
 rand = "0.8"
 safetensors = "0.4"
