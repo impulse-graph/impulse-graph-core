@@ -34,6 +34,6 @@ rand = "0.8"
 safetensors = "0.4"
 memmap2 = "0.9"
 parquet = "53"
-arrow-array = "53"
+arrow-array = "54"
 arrow-schema = "53"
 
