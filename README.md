@@ -66,8 +66,8 @@ with Snapshot("hetionet.v09.imps") as graph:
 To compile your own datasets into `.imps` files, use the Impulse CLI (`impulse-cli`):
 
 ```bash
-# Install the CLI
-cargo install impulse-graph-tooling
+# Install the CLI from the workspace
+cargo install --path impulse-cli
 
 # Create a manifest describing your graph schema
 cat > manifest.json << 'EOF'
@@ -84,10 +84,10 @@ cat > manifest.json << 'EOF'
 EOF
 
 # Build the snapshot
-impulse build -m manifest.json -o my_graph.imps
+impulse-graph build -m manifest.json -o my_graph.imps
 
 # Inspect it
-impulse inspect my_graph.imps
+impulse-graph inspect my_graph.imps
 ```
 
 > [!TIP]
@@ -387,11 +387,11 @@ Comparison against other graph engines on the same dataset:
 
 ## Ecosystem
 
-| Repository | Description |
+| Repository / Module | Description |
 | :--- | :--- |
 | **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc37`, `vm-impas/`) — mounted at [`spec/`](./spec/) |
 | **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 21 LTS / Java 22+ FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
-| **[`impulse-cli`](./impulse-cli/)** | Standalone CLI utilities inside this repository: `impulse build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
+| **[`impulse-cli`](./impulse-cli/)** *(this repo)* | Standalone CLI utilities (`impulse-graph` binary, formerly `impulse-graph-tooling`): `build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
 | **[impulse-ocaml](https://github.com/impulse-graph/impulse-ocaml)** | Normative OCaml reference engine & formal `ImpulseVM` bytecode oracle |
 | **[impulse-verification](https://github.com/impulse-graph/impulse-verification)** | Four-way polyglot validation suite (`four_way_validation.py`) & contract-guided differential fuzzer |
 | **[impulse-benchmarks](https://github.com/impulse-graph/impulse-benchmarks)** | Reproducible benchmark suite vs PyG, NetworkX, MATPOWER |
