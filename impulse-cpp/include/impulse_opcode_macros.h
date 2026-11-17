@@ -317,4 +317,19 @@ static inline bool impulse_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* ou
         } \
     } while (0)
 
+#ifdef __cplusplus
+#include <cstring>
+#include <type_traits>
+
+template <class To, class From>
+inline To imp_bit_cast(const From& src) noexcept {
+    static_assert(sizeof(To) == sizeof(From), "imp_bit_cast size mismatch");
+    static_assert(std::is_trivially_copyable<To>::value && std::is_trivially_copyable<From>::value,
+                  "imp_bit_cast requires trivially copyable types");
+    To dst;
+    std::memcpy(&dst, &src, sizeof(To));
+    return dst;
+}
+#endif
+
 #endif /* IMPULSE_OPCODE_MACROS_H */

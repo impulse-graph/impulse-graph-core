@@ -85,7 +85,7 @@ op_VEC_CMP_GT: {
             }
         } else {
             double threshold = (type2 == TYPE_DOUBLE) ?
-                std::bit_cast<double>(val2) : static_cast<double>(static_cast<int64_t>(val2));
+                imp_bit_cast<double>(val2) : static_cast<double>(static_cast<int64_t>(val2));
             for (size_t i = 0; i < N; ++i) {
                 if (v[i] > threshold) bs.set(i);
             }
@@ -109,7 +109,7 @@ op_VEC_CMP_GT: {
                 }
             } else {
                 float threshold = (type2 == TYPE_FLOAT) ?
-                    std::bit_cast<float>(static_cast<uint32_t>(val2)) : static_cast<float>(static_cast<int64_t>(val2));
+                    imp_bit_cast<float>(static_cast<uint32_t>(val2)) : static_cast<float>(static_cast<int64_t>(val2));
                 for (size_t i = 0; i < N; ++i) {
                     if (v[i] > threshold) bs.set(i);
                 }
