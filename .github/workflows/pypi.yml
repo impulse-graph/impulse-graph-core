@@ -33,10 +33,10 @@ jobs:
       has_packages: ${{ steps.check_dist.outputs.has_packages }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -77,7 +77,7 @@ jobs:
           fi
 
       - name: Upload Prepared Distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pypi-dist-packages
           path: dist/*
@@ -97,13 +97,13 @@ jobs:
       contents: read
     steps:
       - name: Download Prepared Distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pypi-dist-packages
           path: dist
 
       - name: Generate SLSA Level 3 Build Provenance Attestation (PEP 740)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'dist/*'
 
