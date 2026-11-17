@@ -85,7 +85,7 @@ op_VEC_CMP_EQ: {
             }
         } else {
             double target = (type2 == TYPE_DOUBLE) ?
-                std::bit_cast<double>(val2) : static_cast<double>(static_cast<int64_t>(val2));
+                imp_bit_cast<double>(val2) : static_cast<double>(static_cast<int64_t>(val2));
             for (size_t i = 0; i < N; ++i) {
                 if (v[i] == target) bs.set(i);
             }
@@ -109,7 +109,7 @@ op_VEC_CMP_EQ: {
                 }
             } else {
                 float target = (type2 == TYPE_FLOAT) ?
-                    std::bit_cast<float>(static_cast<uint32_t>(val2)) : static_cast<float>(static_cast<int64_t>(val2));
+                    imp_bit_cast<float>(static_cast<uint32_t>(val2)) : static_cast<float>(static_cast<int64_t>(val2));
                 for (size_t i = 0; i < N; ++i) {
                     if (v[i] == target) bs.set(i);
                 }
