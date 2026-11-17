@@ -66,8 +66,8 @@ with Snapshot("hetionet.v09.imps") as graph:
 To compile your own datasets into `.imps` files, use the Impulse CLI (`impulse-cli`):
 
 ```bash
-# Install the CLI
-cargo install impulse-graph-tooling
+# Install the CLI from the workspace
+cargo install --path impulse-cli
 
 # Create a manifest describing your graph schema
 cat > manifest.json << 'EOF'
@@ -84,10 +84,10 @@ cat > manifest.json << 'EOF'
 EOF
 
 # Build the snapshot
-impulse build -m manifest.json -o my_graph.imps
+impulse-graph build -m manifest.json -o my_graph.imps
 
 # Inspect it
-impulse inspect my_graph.imps
+impulse-graph inspect my_graph.imps
 ```
 
 > [!TIP]
