@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: impulse-graph
+Description: Impulse Graph Engine zero-copy C-ABI binary snapshot and ImpulseVM runtime
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -limpulse_graph
+Cflags: -I${includedir}
