@@ -77,11 +77,11 @@ op_VEC_CMP_BETWEEN: {
         const float* min_fvec = (type_min == TYPE_FLOAT_VECTOR) ? vm_state->query_context->float_vectors[static_cast<int>(val_min)].data() : nullptr;
         const double* max_dvec = (type_max == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[static_cast<int>(val_max)].data() : nullptr;
         const float* max_fvec = (type_max == TYPE_FLOAT_VECTOR) ? vm_state->query_context->float_vectors[static_cast<int>(val_max)].data() : nullptr;
-        double min_scalar = (type_min == TYPE_DOUBLE) ? std::bit_cast<double>(val_min)
-                          : (type_min == TYPE_FLOAT) ? static_cast<double>(std::bit_cast<float>(static_cast<uint32_t>(val_min)))
+        double min_scalar = (type_min == TYPE_DOUBLE) ? imp_bit_cast<double>(val_min)
+                          : (type_min == TYPE_FLOAT) ? static_cast<double>(imp_bit_cast<float>(static_cast<uint32_t>(val_min)))
                           : static_cast<double>(static_cast<int64_t>(val_min));
-        double max_scalar = (type_max == TYPE_DOUBLE) ? std::bit_cast<double>(val_max)
-                          : (type_max == TYPE_FLOAT) ? static_cast<double>(std::bit_cast<float>(static_cast<uint32_t>(val_max)))
+        double max_scalar = (type_max == TYPE_DOUBLE) ? imp_bit_cast<double>(val_max)
+                          : (type_max == TYPE_FLOAT) ? static_cast<double>(imp_bit_cast<float>(static_cast<uint32_t>(val_max)))
                           : static_cast<double>(static_cast<int64_t>(val_max));
         IMPULSE_TESTCASE(min_scalar > max_scalar);
         for (size_t i = 0; i < N; ++i) {
@@ -98,11 +98,11 @@ op_VEC_CMP_BETWEEN: {
         const double* min_dvec = (type_min == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[static_cast<int>(val_min)].data() : nullptr;
         const float* max_fvec = (type_max == TYPE_FLOAT_VECTOR) ? vm_state->query_context->float_vectors[static_cast<int>(val_max)].data() : nullptr;
         const double* max_dvec = (type_max == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[static_cast<int>(val_max)].data() : nullptr;
-        float min_scalar = (type_min == TYPE_FLOAT) ? std::bit_cast<float>(static_cast<uint32_t>(val_min))
-                         : (type_min == TYPE_DOUBLE) ? static_cast<float>(std::bit_cast<double>(val_min))
+        float min_scalar = (type_min == TYPE_FLOAT) ? imp_bit_cast<float>(static_cast<uint32_t>(val_min))
+                         : (type_min == TYPE_DOUBLE) ? static_cast<float>(imp_bit_cast<double>(val_min))
                          : static_cast<float>(static_cast<int64_t>(val_min));
-        float max_scalar = (type_max == TYPE_FLOAT) ? std::bit_cast<float>(static_cast<uint32_t>(val_max))
-                         : (type_max == TYPE_DOUBLE) ? static_cast<float>(std::bit_cast<double>(val_max))
+        float max_scalar = (type_max == TYPE_FLOAT) ? imp_bit_cast<float>(static_cast<uint32_t>(val_max))
+                         : (type_max == TYPE_DOUBLE) ? static_cast<float>(imp_bit_cast<double>(val_max))
                          : static_cast<float>(static_cast<int64_t>(val_max));
         IMPULSE_TESTCASE(min_scalar > max_scalar);
         for (size_t i = 0; i < N; ++i) {
