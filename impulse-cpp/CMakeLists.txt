@@ -177,8 +177,34 @@ install(EXPORT ImpulseGraphTargets
     DESTINATION lib/cmake/ImpulseGraph
 )
 
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/ImpulseGraphConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/ImpulseGraphConfigVersion.cmake"
+    DESTINATION lib/cmake/ImpulseGraph
+)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/impulse-graph.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/impulse-graph.pc"
+    @ONLY
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/impulse-graph.pc"
+    DESTINATION lib/pkgconfig
+)
+
 # --- Tests ---------------------------------------------------------------
-option(IMPULSE_BUILD_TESTS "Build impulse-graph tests" ON)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(_IMPULSE_DEFAULT_BUILD_TESTS ON)
+else()
+    set(_IMPULSE_DEFAULT_BUILD_TESTS OFF)
+endif()
+option(IMPULSE_BUILD_TESTS "Build impulse-graph tests" ${_IMPULSE_DEFAULT_BUILD_TESTS})
 if(IMPULSE_BUILD_TESTS)
     enable_testing()
     add_executable(test_assert tests/test_assert.cpp)
