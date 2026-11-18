@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.0", "packaging>=24.2", "wheel", "pybind11>=2.10.0", "cmake", "ninja"]
+requires = ["setuptools>=61.0", "wheel", "pybind11>=2.10.0", "cmake", "ninja"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "impulse-graph"
 dynamic = ["version"]
 description = "Impulse Graph Engine Python SDK & C++ Bytecode VM Binding"
 readme = "README.md"
-license = "Apache-2.0"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.8"
 authors = [
     { name = "Impulse Graph Team", email = "engineering@impulsegraph.io" }
