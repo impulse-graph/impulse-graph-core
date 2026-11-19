@@ -279,7 +279,7 @@ jobs:
       - name: Sign SHA256SUMS with Cosign (Keyless OIDC)
         run: |
           cd release-assets
-          cosign sign-blob --yes --output-signature SHA256SUMS.sig SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
 
       - name: Determine Pre-release Status
         id: prerelease_check
@@ -382,7 +382,7 @@ jobs:
           Every release artifact is cryptographically hashed and signed via Sigstore / Cosign keyless OIDC:
 
           * **SHA-256 Checksums**: [⬇️ \`SHA256SUMS\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS)
-          * **Cosign Signature**: [⬇️ \`SHA256SUMS.sig\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS.sig)
+          * **Cosign Bundle**: [⬇️ \`SHA256SUMS.sigstore.json\`](https://github.com/impulse-graph/impulse-graph-core/releases/download/${TAG_NAME}/SHA256SUMS.sigstore.json)
 
           \`\`\`bash
           # Verify file integrity
@@ -392,7 +392,7 @@ jobs:
           cosign verify-blob \
             --certificate-identity-regexp "https://github.com/impulse-graph/impulse-graph-core/" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            --signature SHA256SUMS.sig \
+            --bundle SHA256SUMS.sigstore.json \
             SHA256SUMS
           \`\`\`
           EOF
