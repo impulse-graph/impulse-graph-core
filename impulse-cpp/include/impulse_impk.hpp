@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <cmath>
 #include <algorithm>
 #include <cctype>
 
@@ -197,11 +198,26 @@ public:
             }
             return fallback;
         };
+        auto double_to_u32 = [](double v) -> uint32_t {
+            if (!std::isfinite(v) || v < 0.0 || v > 4294967295.0) {
+                throw std::runtime_error("ImpK parse error: integer out of uint32 range");
+            }
+            return static_cast<uint32_t>(v);
+        };
+        auto double_to_u64 = [](double v) -> uint64_t {
+            if (!std::isfinite(v) || v < 0.0 || v >= 18446744073709551616.0) {
+                throw std::runtime_error("ImpK parse error: integer out of uint64 range");
+            }
+            return static_cast<uint64_t>(v);
+        };
         auto consume_number = [&](double fallback) -> double {
             if (pos < tokens.size() && tokens[pos].type == Token::NUMBER) {
                 return tokens[pos++].value;
             }
             return fallback;
+        };
+        auto consume_u32 = [&](uint32_t fallback) -> uint32_t {
+            return double_to_u32(consume_number(static_cast<double>(fallback)));
         };
         auto consume_bool_or_flags = [&]() -> bool {
             if (pos < tokens.size()) {
@@ -234,7 +250,7 @@ public:
             std::vector<uint64_t> out;
             while (pos < tokens.size() && tokens[pos].type != Token::RBRACKET && tokens[pos].type != Token::END) {
                 if (tokens[pos].type == Token::NUMBER) {
-                    out.push_back(static_cast<uint64_t>(tokens[pos].value));
+                    out.push_back(double_to_u64(tokens[pos].value));
                 }
                 pos++;
                 match(Token::COMMA);
@@ -246,7 +262,7 @@ public:
             std::vector<uint64_t> out;
             while (pos < tokens.size() && tokens[pos].type != Token::RPAREN && tokens[pos].type != Token::END) {
                 if (tokens[pos].type == Token::NUMBER) {
-                    out.push_back(static_cast<uint64_t>(tokens[pos].value));
+                    out.push_back(double_to_u64(tokens[pos].value));
                 }
                 pos++;
                 match(Token::COMMA);
@@ -305,7 +321,7 @@ public:
                             } else if (fn == "topk") {
                                 std::string vec = (pos < tokens.size()) ? tokens[pos].text : "v"; if (pos < tokens.size()) pos++;
                                 expect(Token::COMMA);
-                                uint32_t k = (pos < tokens.size()) ? static_cast<uint32_t>(tokens[pos].value) : 10; if (pos < tokens.size()) pos++;
+                                uint32_t k = consume_u32(10);
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::TopK, "", vec, "", 0.0, k};
                                 statements.push_back(stmt);
@@ -317,7 +333,7 @@ public:
                                 if (peek_type() == Token::LBRACKET) {
                                     q_vec = consume_float_bracket_list();
                                 } else if (peek_type() == Token::NUMBER) {
-                                    q_reg = static_cast<uint32_t>(consume_number(2));
+                                    q_reg = consume_u32(2);
                                 } else {
                                     rel_or_q = consume_ident_or_str("q");
                                 }
@@ -328,20 +344,20 @@ public:
                                 if (peek_type() == Token::LBRACKET) {
                                     q_vec = consume_float_bracket_list();
                                     expect(Token::COMMA);
-                                    k = static_cast<uint32_t>(consume_number(10));
+                                    k = consume_u32(10);
                                 } else if (peek_type() == Token::IDENT || peek_type() == Token::STRING) {
                                     q_var = consume_ident_or_str("q");
                                     expect(Token::COMMA);
-                                    k = static_cast<uint32_t>(consume_number(10));
+                                    k = consume_u32(10);
                                 } else {
-                                    k = static_cast<uint32_t>(consume_number(10));
+                                    k = consume_u32(10);
                                     q_var = rel_or_q;
                                 }
                                 if (match(Token::COMMA)) {
                                     if (peek_type() == Token::IDENT) {
                                         fused = consume_bool_or_flags();
                                     } else {
-                                        uint32_t val = static_cast<uint32_t>(consume_number(0));
+                                        uint32_t val = consume_u32(0);
                                         if (!q_var.empty() && q_var != rel_or_q) {
                                             // 4-arg form ann_search(rel, query_vec, k, ef_or_fused)
                                             if (val == 1) fused = true;
@@ -366,7 +382,7 @@ public:
                                 if (peek_type() == Token::LBRACKET) {
                                     q_vec = consume_float_bracket_list();
                                 } else if (peek_type() == Token::NUMBER) {
-                                    q_reg = static_cast<uint32_t>(consume_number(2));
+                                    q_reg = consume_u32(2);
                                 } else {
                                     q_var = consume_ident_or_str("q");
                                 }
@@ -376,14 +392,14 @@ public:
                                     if (peek_type() == Token::IDENT || peek_type() == Token::STRING) {
                                         metric = parse_metric_name(consume_ident_or_str("dot"));
                                     } else {
-                                        attr_id = static_cast<uint32_t>(consume_number(0));
+                                        attr_id = consume_u32(0);
                                     }
                                 }
                                 if (match(Token::COMMA)) {
                                     if (peek_type() == Token::IDENT || peek_type() == Token::STRING) {
                                         metric = parse_metric_name(consume_ident_or_str("dot"));
                                     } else {
-                                        metric = static_cast<uint32_t>(consume_number(0));
+                                        metric = consume_u32(0);
                                     }
                                 }
                                 expect(Token::RPAREN);
@@ -405,12 +421,12 @@ public:
                                 if (peek_type() == Token::LBRACKET) {
                                     pairs = consume_u64_bracket_list();
                                     if (match(Token::COMMA)) {
-                                        num_groups = static_cast<uint32_t>(consume_number(1));
+                                        num_groups = consume_u32(1);
                                     }
                                 } else {
-                                    uint32_t preg = static_cast<uint32_t>(consume_number(0));
+                                    uint32_t preg = consume_u32(0);
                                     if (match(Token::COMMA)) {
-                                        num_groups = static_cast<uint32_t>(consume_number(1));
+                                        num_groups = consume_u32(1);
                                     }
                                     pairs.push_back(preg);
                                 }
@@ -464,40 +480,40 @@ public:
                             } else if (fn == "lane_prune" || fn == "lane_prune_mask") {
                                 std::string l_var = consume_ident_or_str("L");
                                 expect(Token::COMMA);
-                                uint32_t mode = static_cast<uint32_t>(consume_number(0));
+                                uint32_t mode = consume_u32(0);
                                 uint32_t arg0 = 0;
                                 uint32_t arg1 = 0;
-                                if (match(Token::COMMA)) arg0 = static_cast<uint32_t>(consume_number(0));
-                                if (match(Token::COMMA)) arg1 = static_cast<uint32_t>(consume_number(0));
+                                if (match(Token::COMMA)) arg0 = consume_u32(0);
+                                if (match(Token::COMMA)) arg1 = consume_u32(0);
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::LanePruneMask, "", l_var, "", 0.0, arg1, mode, arg0, false, {}, {}};
                                 statements.push_back(stmt);
                             } else if (fn == "lane_quorum" || fn == "lane_filter_quorum") {
                                 std::string l_var = consume_ident_or_str("L");
                                 expect(Token::COMMA);
-                                uint32_t min_k = static_cast<uint32_t>(consume_number(1));
+                                uint32_t min_k = consume_u32(1);
                                 uint32_t mask_reg = 0xFF;
-                                if (match(Token::COMMA)) mask_reg = static_cast<uint32_t>(consume_number(0xFF));
+                                if (match(Token::COMMA)) mask_reg = consume_u32(0xFF);
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::LaneFilterQuorum, "", l_var, "", 0.0, min_k, mask_reg, 0, false, {}, {}};
                                 statements.push_back(stmt);
                             } else if (fn == "lane_reduce_and") {
                                 std::string l_var = consume_ident_or_str("L");
                                 uint32_t mask = 0;
-                                if (match(Token::COMMA)) mask = static_cast<uint32_t>(consume_number(0));
+                                if (match(Token::COMMA)) mask = consume_u32(0);
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::LaneReduceAnd, "", l_var, "", 0.0, 0, mask, 0, false, {}, {}};
                                 statements.push_back(stmt);
                             } else if (fn == "lane_reduce_attr") {
                                 std::string l_var = consume_ident_or_str("L");
                                 expect(Token::COMMA);
-                                uint32_t attr_id = static_cast<uint32_t>(consume_number(0));
+                                uint32_t attr_id = consume_u32(0);
                                 uint32_t red_op = 0;
                                 if (match(Token::COMMA)) {
                                     if (peek_type() == Token::IDENT || peek_type() == Token::STRING) {
                                         red_op = parse_reduce_op_name(consume_ident_or_str("sum"));
                                     } else {
-                                        red_op = static_cast<uint32_t>(consume_number(0));
+                                        red_op = consume_u32(0);
                                     }
                                 }
                                 expect(Token::RPAREN);
@@ -507,8 +523,8 @@ public:
                                 std::string l_var = consume_ident_or_str("L");
                                 uint32_t mask_reg = 0xFF;
                                 uint32_t mode = 0;
-                                if (match(Token::COMMA)) mask_reg = static_cast<uint32_t>(consume_number(0xFF));
-                                if (match(Token::COMMA)) mode = static_cast<uint32_t>(consume_number(0));
+                                if (match(Token::COMMA)) mask_reg = consume_u32(0xFF);
+                                if (match(Token::COMMA)) mode = consume_u32(0);
                                 expect(Token::RPAREN);
                                 ImpKStatement stmt{target, ImpKOpType::LaneSetCover, "", l_var, "", 0.0, 0, mask_reg, mode, false, {}, {}};
                                 statements.push_back(stmt);
