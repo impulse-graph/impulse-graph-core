@@ -91,7 +91,7 @@ Examples that load pre-built snapshots (`02_social_traversal`, `03_rbac_reachabi
 1. **Download & Extract Sample Datasets**:
    ```bash
    # Download the sample datasets bundle from GitHub Releases
-   curl -fsSLO https://github.com/impulse-graph/impulse-graph-core/releases/download/v0.9.0/impulse-sample-datasets.tar.gz
+   curl -fsSLO https://github.com/impulse-graph/impulse-graph-core/releases/download/v0.10.0/impulse-sample-datasets.tar.gz
    tar -xzf impulse-sample-datasets.tar.gz -C ~/impulse-datasets/
    ```
 

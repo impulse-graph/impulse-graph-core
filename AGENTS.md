@@ -20,7 +20,7 @@ It fills a critical missing gap in the open-source software ecosystem by acting 
 | Category | Canonical Term | Usage & Guidelines | Legacy Terms (RETIRED) |
 | :--- | :--- | :--- | :--- |
 | **Official Project Name** | **Impulse Graph Engine** | Use in titles, documentation, READMEs, and organization overview (`impulse-graph`). | `abac-engine`, `impulse-engine` |
-| **Binary Snapshot Format** | **Impulse Binary Snapshot Format** (`.imps`) | Refers to the physical C-ABI binary file format specification (Version 0.9.0). File extension is strictly `.imps`. | `Snapshot File v2.3`, `v2.4 format` |
+| **Binary Snapshot Format** | **Impulse Binary Snapshot Format** (`.imps`) | Refers to the physical C-ABI binary file format specification (Version 0.10.0). File extension is strictly `.imps`. | `Snapshot File v2.3`, `v2.4 format` |
 | **Snapshot Data Structure** | **Impulse Graph Snapshot** | The read-only, memory-mapped in-memory representation of an immutable `.imps` file (`ImpulseGraphSnapshot`). | `Impulse Snapshot`, `Snapshot File` |
 | **Execution Core / VM** | **Impulse VM** (`ImpulseVM`) | The bytecode Virtual Machine engine executing `impOps` bytecode instructions. | `Impulse VM Engine`, `Impulse Core Engine` |
 | **Bytecode Instruction Set** | **`impOps`** | The formal instruction set architecture and binary opcode specifications (opcodes `0x01`..`0x6A`). | `impulse opcodes`, `vm instructions` |
@@ -37,7 +37,7 @@ The ecosystem is partitioned into specialized repositories located at `~/impulse
 
 | Repository Name | Role & Description | Primary Tech Stack | Primary Directory |
 | :--- | :--- | :--- | :--- |
-| **`impulse-graph-spec`** | **Layer 0 — Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.9.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc37`, `vm-impas/`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
+| **`impulse-graph-spec`** | **Layer 0 — Binary Snapshot Specification & Test Vectors**. Canonical C-ABI Binary Snapshot v0.10.0 normative format specification (`docs/FORMAT_SPECIFICATION.md`) and cross-language compliance test vectors (`tc01`..`tc37`, `vm-impas/`). | Markdown, Python | `~/impulse/impulse-graph-spec/` |
 | **`impulse-graph-core`** | **Layer 1 — Core Engine Kernel, CLI Tooling & FFI Bindings**. Contains the C++20 zero-copy memory-mapped kernel (`impulse-cpp`), Rust core engine crate (`impulse-rust`), CLI tooling suite (`impulse-cli`), multi-language FFI bindings (Python, C#, Go, Node.js), and pinned `spec/` submodule. | C++20, Rust, Python, C#, Go, Node.js | `~/impulse/impulse-graph-core/` |
 | **`impulse-graph-java`** | **Layer 1 — Java 25 FFM Core Engine**. Standalone Java 25 Foreign Function & Memory (FFM) off-heap snapshot engine & Impulse VM interpreter (`impulse-api`, `impulse-core`, `impulse-spec`), and pinned `spec/` submodule. | Java 25 (FFM/Vector API), Maven | `~/impulse/impulse-graph-java/` |
 | **`impulse-ocaml`** | **Layer 1 — Normative Reference Engine & Formal Oracle**. Pure functional OCaml reference implementation of the `ImpulseVM` ISA and `ICTX` v1 deterministic state hash, with pinned `spec/` submodule. | OCaml, Dune | `~/impulse/impulse-ocaml/` |
@@ -56,8 +56,8 @@ The ecosystem is partitioned into specialized repositories located at `~/impulse
 
 When modifying or implementing code across any repository in `~/impulse/`, enforce the following architectural rules:
 
-### 3.1 C-ABI Binary Snapshot Specification v0.9.0
-* **Header Baseline**: Fixed 4KB Page 0 with 64-byte active baseline, magic `0x494D5053` (`IMPS`), 16-bit version `0x0009` (`9`).
+### 3.1 C-ABI Binary Snapshot Specification v0.10.0
+* **Header Baseline**: Fixed 4KB Page 0 with 64-byte active baseline, magic `0x494D5053` (`IMPS`), 16-bit version `0x000A` (`10`).
 * **Section 2 Shared String Table**: Single global string pool for node/edge relation names, domain catalog, and string attributes.
 * **Hardware Alignment**: 128-byte alignment across all offset sections for AVX-512 vector units, GPU warp coalescing (NVIDIA GPUDirect Storage `cuFile`), and TPU vector tiles.
 * **Single-Pass Cloud S3 Streaming Write**: `SnapshotWriter` streams binary files direct to cloud object storage (Amazon S3, Google Cloud Storage) in $O(\text{chunk})$ physical RAM footprint without requiring random file seeks.

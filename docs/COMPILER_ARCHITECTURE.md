@@ -79,7 +79,7 @@ RETURN c
 
 **Emitted `impOps` Assembly (`.impas`)**:
 ```assembly
-.version 0.9.0
+.version 0.10.0
 .instructions 6
 
   0x0000:  OP_CSR_WALK              flags=0x03, dst=R1 , payload=0x00070000 ; Walk src=R0 -> dst=R1 via rel[7] ("DaG") [seed-inlined] [early-exit]
