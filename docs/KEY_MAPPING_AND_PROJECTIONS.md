@@ -11,7 +11,7 @@ Impulse Graph strictly decouples **Physical Dense Node IDs** from **External Dom
 * **Dense Node IDs (`0..N-1`)**: The internal VM, bitsets, CSR row offsets, and SIMD instructions operate exclusively on dense, contiguous `uint32_t` / `uint64_t` indices for $O(1)$ L1 cache access.
 * **Domain Keys**: External identifiers (UUIDs, Strings, SQL `BIGINT`s, floats) mapped to dense node IDs via Minimal Perfect Hash Functions (MPHF), binary search tables, or direct arrays in Section 4/5 of the `.imps` binary snapshot.
 
-### 1.1 Supported Domain Key Types (Normative Specification v0.9.0)
+### 1.1 Supported Domain Key Types (Normative Specification v0.10.0)
 
 | Type Code | Constant | Spec Byte Size | Input Binding API | Column Projection C Type |
 | :---: | :--- | :---: | :--- | :--- |

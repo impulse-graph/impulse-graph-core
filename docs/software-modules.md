@@ -10,7 +10,7 @@ This document defines the logical software module organization, class boundaries
 
 ### 1.1 `ImpulseGraphSnapshot` (Read-Only Binary Snapshot Interface)
 * **Purpose**: Provides a read-only, zero-copy interface for querying immutable graph snapshots.
-* **Underlying Storage**: Backed directly by memory-mapped (`mmap`) off-heap files conforming to the [C-ABI Binary Snapshot Specification v0.9.0](KEY_MAPPING_AND_PROJECTIONS.md).
+* **Underlying Storage**: Backed directly by memory-mapped (`mmap`) off-heap files conforming to the [C-ABI Binary Snapshot Specification v0.10.0](KEY_MAPPING_AND_PROJECTIONS.md).
 * **Guarantees**: Thread-safe, lock-free, zero-allocation reads; 64-byte / 128-byte cache-line and 4KB page aligned.
 
 ### 1.2 `ImpulseGraph` (Snapshot + Live Delta Overlay)
@@ -191,7 +191,7 @@ The following **10 repositories** form the complete **Impulse Graph Ecosystem** 
 
 | # | Repository Name | Primary Role & Description | Primary Tech Stack |
 | :- | :--- | :--- | :--- |
-| 1 | **`impulse-graph`** | **The Flagship Engine Workspace**. Contains the C-ABI Binary Snapshot Specification v0.9.0, shared test vectors, Java 21 LTS / Java 22+ FFM engine, C++20 kernel, Rust crate, and language bindings (Python, C#, F#, Kotlin, Scala). | C++20, Java 21+/25, Rust, Python, C#, Kotlin, Scala |
+| 1 | **`impulse-graph`** | **The Flagship Engine Workspace**. Contains the C-ABI Binary Snapshot Specification v0.10.0, shared test vectors, Java 21 LTS / Java 22+ FFM engine, C++20 kernel, Rust crate, and language bindings (Python, C#, F#, Kotlin, Scala). | C++20, Java 21+/25, Rust, Python, C#, Kotlin, Scala |
 | 2 | **`impulse-tools`** | **Developer Tools & Optimizer Suite**. Contains `impulse-opt` (RCM cache-line reordering, SIMD-PFOR/Roaring compression, section stripping/injection) and `impulse-inspect` CLI (inspect headers, validate SHA-256, dump Section 2 directories). | C++20 / Rust / CMake |
 | 3 | **`impulse-benchmarks`** | **Continuous Micro & Macro Performance Suite**. Reproducible benchmark harnesses comparing Impulse Graph against Neo4j, NetworkX, PyTorch Geometric, MATPOWER, and OpenFGA. Generates latency percentiles (p50, p99) and flamegraphs. | JMH (Java), Google Benchmark (C++), Criterion (Rust), Pytest-Benchmark |
 | 4 | **`impulse-platform`** | **Enterprise Cloud Infrastructure**. Contains Kafka WAL ingestion, GCS/S3 cloud snapshot sync, Kubernetes leader election, RocksDB local persistence, and Spring Boot server. | Java / Spring Boot / K8s / Kafka / RocksDB |

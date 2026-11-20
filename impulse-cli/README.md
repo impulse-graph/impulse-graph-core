@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../LICENSE)
 
-Unified developer utilities, dataset snapshot builder, DSL compiler suite, layout optimizer, synthetic graph data generator, and execution runtime for the **Impulse Graph Engine** (`impulse-graph-core/impulse-cli/`, Spec v0.9.0).
+Unified developer utilities, dataset snapshot builder, DSL compiler suite, layout optimizer, synthetic graph data generator, and execution runtime for the **Impulse Graph Engine** (`impulse-graph-core/impulse-cli/`, Spec v0.10.0).
 
 - **Canonical Binary**: `impulse-graph`
 - **Symlink / CLI Alias**: `impulse`
@@ -77,7 +77,7 @@ Compute degree percentiles ($P_{50}, P_{90}, P_{99}$), supernodes, multiplicity 
 impulse stats graph.imps
 ```
 
-### 6. Validate Spec v0.9.0 Compliance
+### 6. Validate Spec v0.10.0 Compliance
 
 Verify header checksums, 128-byte hardware memory alignment, and CSR array bounds:
 
@@ -101,7 +101,7 @@ impulse snapshot optimize \
 
 ## Building Binary Snapshots (`impulse build`)
 
-The `impulse build` (or `impulse snapshot build`) command ingests raw graph datasets (TSV, CSV, or Apache Parquet) described by a JSON manifest and compiles them into a single, immutable, zero-copy `.imps` binary snapshot file adhering to the **Impulse Binary Snapshot Specification v0.9.0**.
+The `impulse build` (or `impulse snapshot build`) command ingests raw graph datasets (TSV, CSV, or Apache Parquet) described by a JSON manifest and compiles them into a single, immutable, zero-copy `.imps` binary snapshot file adhering to the **Impulse Binary Snapshot Specification v0.10.0**.
 
 ```bash
 impulse build <MANIFEST.json> <OUTPUT.imps>
@@ -113,7 +113,7 @@ A build manifest (`manifest.json`) defines the domain catalog, edge relations, i
 
 ```json
 {
-  "version": "0.9.0",
+  "version": "0.10.0",
   "domains": [
     {
       "id": 0,
@@ -154,7 +154,7 @@ A build manifest (`manifest.json`) defines the domain catalog, edge relations, i
 
 | Field | Location | Type | Description |
 | :--- | :--- | :--- | :--- |
-| `version` | Top-level | `string` | Snapshot format version target (e.g. `"0.9.0"`). |
+| `version` | Top-level | `string` | Snapshot format version target (e.g. `"0.10.0"`). |
 | `domains` | Top-level | `array` | List of Node Domain definitions. |
 | `domains[].id` | Domain | `uint16` | Dense 0-indexed Domain ID ($0, 1, \dots$). |
 | `domains[].name` | Domain | `string` | Canonical domain name (e.g. `"User"`, `"Document"`). |
@@ -216,7 +216,7 @@ charlie	alice
 2. Create `manifest.json`:
 ```json
 {
-  "version": "0.9.0",
+  "version": "0.10.0",
   "domains": [
     { "id": 0, "name": "User", "key_type": "string" }
   ],
@@ -244,7 +244,7 @@ impulse snapshot validate social_graph.imps
 2. Create `rebac_manifest.json`:
 ```json
 {
-  "version": "0.9.0",
+  "version": "0.10.0",
   "domains": [
     { "id": 0, "name": "User", "key_type": "string" },
     { "id": 1, "name": "Group", "key_type": "string" },

@@ -65,7 +65,7 @@ Examples that load sample snapshots (`social_graph.imps`, `rbac_snapshot.imps`, 
 
 1. **Download & Extract Sample Datasets**:
    ```bash
-   curl -fsSLO https://github.com/impulse-graph/impulse-graph-core/releases/download/v0.9.0/impulse-sample-datasets.tar.gz
+   curl -fsSLO https://github.com/impulse-graph/impulse-graph-core/releases/download/v0.10.0/impulse-sample-datasets.tar.gz
    tar -xzf impulse-sample-datasets.tar.gz -C ~/impulse-datasets/
    ```
 

@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![C++ Standard](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
-[![Spec Compliance](https://img.shields.io/badge/Spec-v0.9.0-green.svg)](https://github.com/impulse-graph/impulse-graph-spec)
+[![Spec Compliance](https://img.shields.io/badge/Spec-v0.10.0-green.svg)](https://github.com/impulse-graph/impulse-graph-spec)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#platform-support--zero-dependencies)
 [![Dependencies](https://img.shields.io/badge/Dependencies-0%20(Zero)-brightgreen.svg)](#platform-support--zero-dependencies)
 
@@ -29,7 +29,7 @@ pip install impulse-graph
 ### 2. Download a Sample Snapshot
 
 ```bash
-curl -LO https://github.com/impulse-graph/impulse-graph-samples/releases/download/v0.9.0/hetionet.v09.imps
+curl -LO https://github.com/impulse-graph/impulse-graph-samples/releases/download/v0.10.0/hetionet.v09.imps
 ```
 
 > [!NOTE]
@@ -72,7 +72,7 @@ cargo install --path impulse-cli
 # Create a manifest describing your graph schema
 cat > manifest.json << 'EOF'
 {
-  "version": "0.9.0",
+  "version": "0.10.0",
   "domains": [
     { "id": 0, "name": "User", "key_type": "string" },
     { "id": 1, "name": "Product", "key_type": "string" }
@@ -389,7 +389,7 @@ Comparison against other graph engines on the same dataset:
 
 | Repository / Module | Description |
 | :--- | :--- |
-| **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.9.0 format specification and cross-language test vectors (`tc01`..`tc37`, `vm-impas/`) — mounted at [`spec/`](./spec/) |
+| **[impulse-graph-spec](https://github.com/impulse-graph/impulse-graph-spec)** | C-ABI Binary Snapshot v0.10.0 format specification and cross-language test vectors (`tc01`..`tc37`, `vm-impas/`) — mounted at [`spec/`](./spec/) |
 | **[impulse-graph-java](https://github.com/impulse-graph/impulse-graph-java)** | Pure Java 21 LTS / Java 22+ FFM off-heap snapshot engine with 100% feature parity with C++ — includes [Kotlin](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-kotlin), [Scala 3](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-scala), and [Clojure](https://github.com/impulse-graph/impulse-graph-java/tree/main/impulse-clojure) SDKs |
 | **[`impulse-cli`](./impulse-cli/)** *(this repo)* | Standalone CLI utilities (`impulse-graph` binary, formerly `impulse-graph-tooling`): `build`, `inspect`, `validate`, `compile`, `optimize`, `assemble`, `export` |
 | **[impulse-ocaml](https://github.com/impulse-graph/impulse-ocaml)** | Normative OCaml reference engine & formal `ImpulseVM` bytecode oracle |

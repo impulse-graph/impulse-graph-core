@@ -24,7 +24,7 @@ The Impulse Binary Snapshot Format (`.imps`) addresses the same challenge for gr
 ```
 
 ### Physical Layout & Alignment
-- **Fixed 4KB Page 0**: 64-byte active baseline, magic `0x494D5053` (`IMPS`), format version `0x0009` (`9`).
+- **Fixed 4KB Page 0**: 64-byte active baseline, magic `0x494D5053` (`IMPS`), format version `0x000A` (`10`).
 - **128-Byte Hardware Alignment**: All CSR row offsets, column targets, and columnar attribute sections are 128-byte aligned to maximize AVX-512 vector lanes, GPU warp coalescing (NVIDIA GPUDirect Storage `cuFile`), and TPU vector tiles.
 - **Off-Heap Zero-Copy (`OWNDATA=False`)**: Data structures map into user virtual memory via `mmap`. Opening a 50 GB snapshot consumes sub-millisecond cold start time and **0 bytes of Python heap RAM**.
 
