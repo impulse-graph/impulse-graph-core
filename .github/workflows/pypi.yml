@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p dist
           echo "Downloading Python assets from release tag ${{ inputs.release_tag }}..."
-          gh release download "${{ inputs.release_tag }}" --pattern "*.whl" --pattern "*.tar.gz" --dir dist/
+          gh release download "${{ inputs.release_tag }}" --pattern "*.whl" --pattern "impulse_graph-*.tar.gz" --dir dist/
 
       - name: Build SDist (if building fresh)
         if: inputs.release_tag == ''
