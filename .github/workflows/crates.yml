@@ -1,0 +1,51 @@
+name: Publish to crates.io (On-Demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Verify cargo package / publish --dry-run without uploading to crates.io'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-crates:
+    name: Package & Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Fetch Highway Sources via CMake
+        run: cmake -B impulse-cpp/build -S impulse-cpp -DCMAKE_BUILD_TYPE=Release
+
+      - name: Stage Self-Contained C++ Sources into impulse-rust/cpp
+        run: |
+          mkdir -p impulse-rust/cpp/third_party/highway
+          cp -r impulse-cpp/include impulse-rust/cpp/
+          cp -r impulse-cpp/src impulse-rust/cpp/
+          cp -r impulse-cpp/build/_deps/highway-src/hwy impulse-rust/cpp/third_party/highway/
+          cp -r impulse-cpp/build/_deps/highway-src/cmake impulse-rust/cpp/third_party/highway/
+          cp impulse-cpp/build/_deps/highway-src/CMakeLists.txt impulse-cpp/build/_deps/highway-src/*.in impulse-rust/cpp/third_party/highway/
+          cp impulse-cpp/build/_deps/highway-src/LICENSE* impulse-rust/cpp/third_party/highway/ 2>/dev/null || true
+
+      - name: Verify Self-Contained Crate Package
+        run: cargo package --manifest-path impulse-rust/Cargo.toml --allow-dirty
+
+      - name: Publish to crates.io (Dry Run)
+        if: inputs.dry_run == true
+        run: cargo publish --manifest-path impulse-rust/Cargo.toml --dry-run --allow-dirty
+
+      - name: Publish to crates.io
+        if: inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path impulse-rust/Cargo.toml --allow-dirty
