@@ -186,11 +186,24 @@ jobs:
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Fetch Highway Sources via CMake
+        run: cmake -B impulse-cpp/build -S impulse-cpp -DCMAKE_BUILD_TYPE=Release
+
+      - name: Stage Self-Contained C++ Sources into impulse-rust/cpp
+        run: |
+          mkdir -p impulse-rust/cpp/third_party/highway
+          cp -r impulse-cpp/include impulse-rust/cpp/
+          cp -r impulse-cpp/src impulse-rust/cpp/
+          cp -r impulse-cpp/build/_deps/highway-src/hwy impulse-rust/cpp/third_party/highway/
+          cp -r impulse-cpp/build/_deps/highway-src/cmake impulse-rust/cpp/third_party/highway/
+          cp impulse-cpp/build/_deps/highway-src/CMakeLists.txt impulse-cpp/build/_deps/highway-src/*.in impulse-rust/cpp/third_party/highway/
+          cp impulse-cpp/build/_deps/highway-src/LICENSE* impulse-rust/cpp/third_party/highway/ 2>/dev/null || true
+
       - name: Package Rust Crates
         run: |
           mkdir -p dist-crates
-          cargo package --manifest-path impulse-rust/Cargo.toml --no-verify --allow-dirty || true
-          cp impulse-rust/target/package/*.crate dist-crates/ || true
+          cargo package --manifest-path impulse-rust/Cargo.toml --allow-dirty
+          cp impulse-rust/target/package/*.crate dist-crates/
 
       - name: Upload Rust Crate Artifacts
         uses: actions/upload-artifact@v7

@@ -2,8 +2,16 @@
 name = "impulse-graph"
 version = "0.10.0"
 edition = "2021"
-description = "Impulse Graph Engine Core Crate (Spec v0.9.0)"
+description = "Impulse Graph Engine Core Crate (Spec v0.10.0)"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/impulse-graph/impulse-graph-core"
+homepage = "https://www.impulsegraph.org"
+include = [
+    "src/**",
+    "cpp/**",
+    "build.rs",
+    "Cargo.toml",
+]
 
 [lib]
 crate-type = ["rlib"]

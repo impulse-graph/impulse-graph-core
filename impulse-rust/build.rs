@@ -2,33 +2,40 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 
-fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> String {
-    let filename = Path::new(src).file_stem().unwrap().to_str().unwrap();
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let is_macos = target_os == "macos";
-    let is_windows = target_os == "windows";
-    let obj_file = if is_windows {
-        format!("{}/{}.obj", out_dir, filename)
+fn ensure_highway(cpp_root: &str, out_dir: &str, is_windows: bool) -> (String, String) {
+    let vendored_hwy = format!("{}/third_party/highway", cpp_root);
+    let monorepo_hwy = format!("{}/build/_deps/highway-src", cpp_root);
+    let hwy_src = if Path::new(&vendored_hwy).exists() {
+        vendored_hwy
     } else {
-        format!("{}/{}.o", out_dir, filename)
+        monorepo_hwy
     };
 
-    let hwy_inc = "../impulse-cpp/build/_deps/highway-src";
+    // In monorepo dev, reuse already-built highway if present
+    let monorepo_hwy_build = format!("{}/build/_deps/highway-build", cpp_root);
+    let monorepo_hwy_lib = if is_windows {
+        format!("{}/Release/hwy.lib", monorepo_hwy_build)
+    } else {
+        format!("{}/libhwy.a", monorepo_hwy_build)
+    };
+    if Path::new(&monorepo_hwy_lib).exists() {
+        return (hwy_src, monorepo_hwy_build);
+    }
+
+    let hwy_build = format!("{}/hwy-build", out_dir);
     let hwy_lib_file = if is_windows {
-        "../impulse-cpp/build/_deps/highway-build/Release/hwy.lib"
+        format!("{}/Release/hwy.lib", hwy_build)
     } else {
-        "../impulse-cpp/build/_deps/highway-build/libhwy.a"
+        format!("{}/libhwy.a", hwy_build)
     };
 
-    if !Path::new(hwy_lib_file).exists()
-        && !Path::new("../impulse-cpp/build/_deps/highway-build/libhwy.a").exists()
-    {
+    if !Path::new(&hwy_lib_file).exists() && Path::new(&hwy_src).exists() {
         let mut cmake_cfg = Command::new("cmake");
         cmake_cfg.args([
             "-B",
-            "../impulse-cpp/build",
+            &hwy_build,
             "-S",
-            "../impulse-cpp",
+            &hwy_src,
             "-DCMAKE_BUILD_TYPE=Release",
             "-DHWY_ENABLE_CONTRIB=OFF",
             "-DHWY_ENABLE_TESTS=OFF",
@@ -37,18 +44,44 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
         if is_windows {
             cmake_cfg.args(["-A", "x64", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"]);
         }
-        let _ = cmake_cfg.status();
-        let _ = Command::new("cmake")
+        let cfg_ok = cmake_cfg.status().map(|s| s.success()).unwrap_or(false);
+        assert!(
+            cfg_ok,
+            "Failed to configure Highway via CMake from {}",
+            hwy_src
+        );
+
+        let build_ok = Command::new("cmake")
             .args([
-                "--build",
-                "../impulse-cpp/build",
-                "--config",
-                "Release",
-                "--target",
-                "hwy",
+                "--build", &hwy_build, "--config", "Release", "--target", "hwy",
             ])
-            .status();
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(build_ok, "Failed to build Highway static library");
     }
+
+    (hwy_src, hwy_build)
+}
+
+fn compile_cpp(
+    src: &str,
+    cpp_root: &str,
+    include_dir: &str,
+    hwy_inc: &str,
+    out_dir: &str,
+    has_omp: bool,
+) -> String {
+    let filename = Path::new(src).file_stem().unwrap().to_str().unwrap();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let is_windows = target_os == "windows";
+    let is_macos = target_os == "macos";
+    let obj_file = if is_windows {
+        format!("{}/{}.obj", out_dir, filename)
+    } else {
+        format!("{}/{}.o", out_dir, filename)
+    };
+    let src_dir = format!("{}/src", cpp_root);
 
     if is_windows {
         let compiler = env::var("CXX").unwrap_or_else(|_| "cl".to_string());
@@ -63,7 +96,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             "/c".to_string(),
             src.to_string(),
             format!("/I{}", include_dir),
-            format!("/I{}", "../impulse-cpp/src"),
+            format!("/I{}", src_dir),
             format!("/Fo:{}", obj_file),
         ];
         if Path::new(hwy_inc).exists() {
@@ -97,7 +130,7 @@ fn compile_cpp(src: &str, include_dir: &str, out_dir: &str, has_omp: bool) -> St
             "-I",
             include_dir,
             "-I",
-            "../impulse-cpp/src",
+            &src_dir,
             "-o",
             &obj_file,
         ];
@@ -155,31 +188,98 @@ fn main() {
     let is_macos = target_os == "macos";
     let is_windows = target_os == "windows";
     let is_musl = target_env == "musl";
-    let cpp_include = "../impulse-cpp/include";
+
+    println!("cargo:rerun-if-env-changed=IMPULSE_SDK_DIR");
+    if let Ok(sdk_dir) = env::var("IMPULSE_SDK_DIR") {
+        println!("cargo:rustc-link-search=native={}/lib", sdk_dir);
+        println!("cargo:rustc-link-lib=impulse_graph");
+        if Path::new(&format!("{}/lib/libhwy.a", sdk_dir)).exists()
+            || Path::new(&format!("{}/lib/hwy.lib", sdk_dir)).exists()
+        {
+            println!("cargo:rustc-link-lib=static=hwy");
+        }
+        return;
+    }
+
+    let cpp_root = if Path::new("cpp/src").exists() {
+        "cpp"
+    } else {
+        "../impulse-cpp"
+    };
+    let cpp_include = format!("{}/include", cpp_root);
+    let (hwy_inc, hwy_build) = ensure_highway(cpp_root, &out_dir, is_windows);
 
     // Track changes to C++ source and header files
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_simd.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_context.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_internal.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/opcodes");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_traversal.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_multilane.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_statement_c_api.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_vm_fluent_internal.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_snapshot_writer.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_graph_internal.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/src/impulse_bytecode_emitter.cpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_simd.h");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_vm.h");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_graph.h");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_index.h");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_scm_ast.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_compiler.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_cypher.hpp");
-    println!("cargo:rerun-if-changed=../impulse-cpp/include/impulse_datalog.hpp");
+    println!("cargo:rerun-if-changed={}/src/impulse_simd.cpp", cpp_root);
+    println!("cargo:rerun-if-changed={}/src/impulse_vm.cpp", cpp_root);
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_context.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_internal.hpp",
+        cpp_root
+    );
+    println!("cargo:rerun-if-changed={}/src/opcodes", cpp_root);
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_fluent.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_traversal.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_multilane.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_statement_c_api.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_internal.hpp",
+        cpp_root
+    );
+    println!("cargo:rerun-if-changed={}/src/impulse_graph.cpp", cpp_root);
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_snapshot_writer.cpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_graph_internal.hpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/src/impulse_bytecode_emitter.cpp",
+        cpp_root
+    );
+    println!("cargo:rerun-if-changed={}/include/impulse_simd.h", cpp_root);
+    println!("cargo:rerun-if-changed={}/include/impulse_vm.h", cpp_root);
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_graph.h",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_index.h",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_scm_ast.hpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_compiler.hpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_cypher.hpp",
+        cpp_root
+    );
+    println!(
+        "cargo:rerun-if-changed={}/include/impulse_datalog.hpp",
+        cpp_root
+    );
 
     let has_omp = if is_macos {
         Path::new("/opt/homebrew/opt/libomp/include").exists()
@@ -190,72 +290,21 @@ fn main() {
     };
 
     // Compile C++ objects
-    let obj_simd = compile_cpp(
-        "../impulse-cpp/src/impulse_simd.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_vm = compile_cpp(
-        "../impulse-cpp/src/impulse_vm.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_vm_ctx = compile_cpp(
-        "../impulse-cpp/src/impulse_vm_context.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_fluent = compile_cpp(
-        "../impulse-cpp/src/impulse_vm_fluent.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_fluent_trav = compile_cpp(
-        "../impulse-cpp/src/impulse_vm_fluent_traversal.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_fluent_ml = compile_cpp(
-        "../impulse-cpp/src/impulse_vm_fluent_multilane.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_stmt_c_api = compile_cpp(
-        "../impulse-cpp/src/impulse_statement_c_api.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_graph = compile_cpp(
-        "../impulse-cpp/src/impulse_graph.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_writer = compile_cpp(
-        "../impulse-cpp/src/impulse_snapshot_writer.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_index = compile_cpp(
-        "../impulse-cpp/src/impulse_index.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
-    let obj_emitter = compile_cpp(
-        "../impulse-cpp/src/impulse_bytecode_emitter.cpp",
-        cpp_include,
-        &out_dir,
-        has_omp,
-    );
+    let compile = |rel: &str| {
+        let src = format!("{}/src/{}", cpp_root, rel);
+        compile_cpp(&src, cpp_root, &cpp_include, &hwy_inc, &out_dir, has_omp)
+    };
+    let obj_simd = compile("impulse_simd.cpp");
+    let obj_vm = compile("impulse_vm.cpp");
+    let obj_vm_ctx = compile("impulse_vm_context.cpp");
+    let obj_fluent = compile("impulse_vm_fluent.cpp");
+    let obj_fluent_trav = compile("impulse_vm_fluent_traversal.cpp");
+    let obj_fluent_ml = compile("impulse_vm_fluent_multilane.cpp");
+    let obj_stmt_c_api = compile("impulse_statement_c_api.cpp");
+    let obj_graph = compile("impulse_graph.cpp");
+    let obj_writer = compile("impulse_snapshot_writer.cpp");
+    let obj_index = compile("impulse_index.cpp");
+    let obj_emitter = compile("impulse_bytecode_emitter.cpp");
 
     // Archive into a single static library
     if is_windows {
@@ -309,12 +358,11 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", out_dir);
-    let hwy_lib = "../impulse-cpp/build/_deps/highway-build";
-    if Path::new(hwy_lib).exists() {
-        println!("cargo:rustc-link-search=native={}", hwy_lib);
+    if Path::new(&hwy_build).exists() {
+        println!("cargo:rustc-link-search=native={}", hwy_build);
     }
-    let hwy_lib_rel = "../impulse-cpp/build/_deps/highway-build/Release";
-    if Path::new(hwy_lib_rel).exists() {
+    let hwy_lib_rel = format!("{}/Release", hwy_build);
+    if Path::new(&hwy_lib_rel).exists() {
         println!("cargo:rustc-link-search=native={}", hwy_lib_rel);
     }
 
