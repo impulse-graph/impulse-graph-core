@@ -11,15 +11,44 @@ fn ensure_highway(cpp_root: &str, out_dir: &str, is_windows: bool) -> (String, S
         monorepo_hwy
     };
 
-    // In monorepo dev, reuse already-built highway if present
-    let monorepo_hwy_build = format!("{}/build/_deps/highway-build", cpp_root);
-    let monorepo_hwy_lib = if is_windows {
-        format!("{}/Release/hwy.lib", monorepo_hwy_build)
-    } else {
-        format!("{}/libhwy.a", monorepo_hwy_build)
-    };
-    if Path::new(&monorepo_hwy_lib).exists() {
-        return (hwy_src, monorepo_hwy_build);
+    // In monorepo dev/CI, reuse already-built highway or configure/build via ../impulse-cpp CMake
+    if cpp_root == "../impulse-cpp" {
+        let monorepo_hwy_build = format!("{}/build/_deps/highway-build", cpp_root);
+        let monorepo_hwy_lib = if is_windows {
+            format!("{}/Release/hwy.lib", monorepo_hwy_build)
+        } else {
+            format!("{}/libhwy.a", monorepo_hwy_build)
+        };
+        if !Path::new(&monorepo_hwy_lib).exists()
+            && !Path::new(&format!("{}/libhwy.a", monorepo_hwy_build)).exists()
+        {
+            let mut cmake_cfg = Command::new("cmake");
+            cmake_cfg.args([
+                "-B",
+                "../impulse-cpp/build",
+                "-S",
+                "../impulse-cpp",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DHWY_ENABLE_CONTRIB=OFF",
+                "-DHWY_ENABLE_TESTS=OFF",
+                "-DHWY_ENABLE_EXAMPLES=OFF",
+            ]);
+            if is_windows {
+                cmake_cfg.args(["-A", "x64", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"]);
+            }
+            let _ = cmake_cfg.status();
+            let _ = Command::new("cmake")
+                .args([
+                    "--build",
+                    "../impulse-cpp/build",
+                    "--config",
+                    "Release",
+                    "--target",
+                    "hwy",
+                ])
+                .status();
+        }
+        return (monorepo_hwy, monorepo_hwy_build);
     }
 
     let hwy_build = format!("{}/hwy-build", out_dir);
