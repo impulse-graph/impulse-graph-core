@@ -48,7 +48,7 @@ fn ensure_highway(cpp_root: &str, out_dir: &str, is_windows: bool) -> (String, S
                 ])
                 .status();
         }
-        return (monorepo_hwy, monorepo_hwy_build);
+        return (hwy_src, monorepo_hwy_build);
     }
 
     let hwy_build = format!("{}/hwy-build", out_dir);
