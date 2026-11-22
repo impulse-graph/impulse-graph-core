@@ -53,6 +53,8 @@ op_COLLECT_VALUE_MAP: {
     vmap.keys.clear();
     vmap.values.clear();
     vmap.owned_keys.clear();
+    vmap.key_char_arena.clear();
+    vmap.key_char_offsets.clear();
 
     const bool nodes_is_bitset = (vm_state->register_types[nodes_reg] == TYPE_BITSET_HANDLE);
     const bool vals_is_double = (vm_state->register_types[vals_reg] == TYPE_DOUBLE_VECTOR);
@@ -65,12 +67,14 @@ op_COLLECT_VALUE_MAP: {
 
     auto add_entry = [&](uint64_t u) {
         const char* str_ptr = nullptr;
+        size_t arena_off = SIZE_MAX;
         if (attr && attr->data_ptr && base_type == IMP_TYPE_CODE_VAR_STRING) {
             const char* raw_ptr = nullptr;
             size_t raw_len = 0;
             if (extract_var_string_slice(*attr, dom_rows, u, &raw_ptr, &raw_len) && raw_ptr) {
-                vmap.owned_keys.emplace_back(raw_ptr, raw_len);
-                str_ptr = vmap.owned_keys.back().c_str();
+                arena_off = vmap.key_char_arena.size();
+                vmap.key_char_arena.insert(vmap.key_char_arena.end(), raw_ptr, raw_ptr + raw_len);
+                vmap.key_char_arena.push_back('\0');
             }
         }
 
@@ -89,20 +93,20 @@ op_COLLECT_VALUE_MAP: {
             }
         }
 
-        if (!str_ptr && vm_state->query_context->snapshot) {
-            std::string formatted;
-            if (format_snapshot_node_key(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), formatted) &&
-                !formatted.empty()) {
-                vmap.owned_keys.push_back(std::move(formatted));
-                str_ptr = vmap.owned_keys.back().c_str();
+        if (!str_ptr && arena_off == SIZE_MAX && vm_state->query_context->snapshot) {
+            size_t off = format_snapshot_node_key_to_arena(
+                vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), vmap.key_char_arena);
+            if (off != SIZE_MAX && vmap.key_char_arena[off] != '\0') {
+                arena_off = off;
             } else if (vmap.keys.size() < vmap.fallback_keys.size()) {
                 char* buf = vmap.fallback_keys[vmap.keys.size()].data();
                 std::snprintf(buf, OP_93_FALLBACK_KEY_BUF_LEN, "%llu", static_cast<unsigned long long>(u));
                 str_ptr = buf;
             }
         }
-        if (str_ptr) {
+        if (str_ptr || arena_off != SIZE_MAX) {
             vmap.keys.push_back(str_ptr);
+            vmap.key_char_offsets.push_back(arena_off);
             vmap.values.push_back(val);
         }
     };
@@ -150,6 +154,12 @@ op_COLLECT_VALUE_MAP: {
     } else if (vm_state->register_types[nodes_reg] == TYPE_NODE_ID || vm_state->register_types[nodes_reg] == TYPE_INT64) {
         const uint64_t u = vm_state->registers[nodes_reg];
         if (u < max_nodes) add_entry(u);
+    }
+
+    for (size_t i = 0; i < vmap.key_char_offsets.size(); ++i) {
+        if (vmap.key_char_offsets[i] != SIZE_MAX) {
+            vmap.keys[i] = vmap.key_char_arena.data() + vmap.key_char_offsets[i];
+        }
     }
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);

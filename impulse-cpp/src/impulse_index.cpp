@@ -4,6 +4,7 @@
  */
 
 #include "impulse_index.h"
+#include "impulse_graph_internal.hpp"
 #include "impulse_assert.h"
 
 #include <vector>
@@ -109,6 +110,7 @@ impulse_status_t impulse_index_build_permutation(
     size_t* out_size
 ) {
     if (!attr_data || element_count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     std::vector<uint32_t> perm(element_count);
     std::iota(perm.begin(), perm.end(), 0);
@@ -166,6 +168,7 @@ impulse_status_t impulse_index_build_permutation(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_permutation_range_query(
@@ -251,6 +254,7 @@ impulse_status_t impulse_index_build_zone_map(
     size_t* out_size
 ) {
     if (!attr_data || element_count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     const uint32_t PAGE_SIZE = 1024;
     uint32_t page_count = static_cast<uint32_t>((element_count + PAGE_SIZE - 1) / PAGE_SIZE);
@@ -299,6 +303,7 @@ impulse_status_t impulse_index_build_zone_map(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_zone_map_filter(
@@ -351,6 +356,7 @@ impulse_status_t impulse_index_build_inverted_bitset(
     size_t* out_size
 ) {
     if (!keys || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     size_t words_per_bitset = (count + 63) / 64;
     std::unordered_map<std::string, std::vector<uint64_t>> bitsets;
@@ -420,6 +426,7 @@ impulse_status_t impulse_index_build_inverted_bitset(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_inverted_bitset_lookup(
@@ -495,6 +502,7 @@ impulse_status_t impulse_index_build_minimal_perfect_hash(
     size_t* out_size
 ) {
     if (!keys || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     uint64_t seed = 0x123456789ABCDEF0ULL;
     std::string string_pool(1, '\0');
@@ -545,6 +553,7 @@ impulse_status_t impulse_index_build_minimal_perfect_hash(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_minimal_perfect_hash_lookup(
@@ -612,6 +621,7 @@ impulse_status_t impulse_index_build_trigram(
     size_t* out_size
 ) {
     if (!keys || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     size_t words_per_bitset = (count + 63) / 64;
     std::unordered_map<std::string, std::vector<uint64_t>> trigram_map;
@@ -677,6 +687,7 @@ impulse_status_t impulse_index_build_trigram(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_trigram_search(
@@ -752,6 +763,7 @@ impulse_status_t impulse_index_build_domain_split(
     size_t* out_size
 ) {
     if (!keys || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     std::vector<const char*> domain_keys(count);
     for (size_t i = 0; i < count; ++i) {
@@ -765,6 +777,7 @@ impulse_status_t impulse_index_build_domain_split(
     }
 
     return impulse_index_build_inverted_bitset(domain_keys.data(), count, out_bytes, out_size);
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_domain_split_lookup(
@@ -789,6 +802,7 @@ impulse_status_t impulse_index_build_temporal_interval(
     size_t* out_size
 ) {
     if (!interval_data || count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     std::vector<TemporalIntervalEntry> entries(count);
     uint8_t base_type = type_code & 0x7F;
@@ -835,6 +849,7 @@ impulse_status_t impulse_index_build_temporal_interval(
     *out_bytes = buf;
     *out_size = total_size;
     return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_index_temporal_interval_query(

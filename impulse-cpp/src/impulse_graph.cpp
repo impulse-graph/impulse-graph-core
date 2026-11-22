@@ -1868,6 +1868,7 @@ impulse_status_t impulse_snapshot_resolve_key(
     if (!snapshot || !key_bytes || !out_node_id) return IMPULSE_ERR_INVALID_ARGUMENT;
     if (domain_id >= snapshot->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
 
+    try {
     const auto& dom = snapshot->domains[domain_id];
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
 
@@ -2011,6 +2012,7 @@ impulse_status_t impulse_snapshot_resolve_key(
     }
 
     return IMPULSE_ERR_INVALID_ARGUMENT;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_snapshot_resolve_dense_id(
