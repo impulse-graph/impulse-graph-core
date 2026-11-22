@@ -77,15 +77,17 @@ op_LANE_REDUCE_ATTR: {
                     uint64_t h = vm_state->registers[attr_or_reg];
                     if (t == TYPE_FLOAT_VECTOR && h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vectors_allocated[h]) {
                         const auto& fv = vm_state->query_context->float_vectors[h];
-                        return (u < fv.size()) ? fv[u] : 0.0f;
+                        size_t flen = std::min(vm_state->query_context->float_vector_lengths[h], fv.size());
+                        return (u < flen) ? fv[u] : std::numeric_limits<float>::quiet_NaN();
                     } else if (t == TYPE_DOUBLE_VECTOR && h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->double_vectors_allocated[h]) {
                         const auto& dv = vm_state->query_context->double_vectors[h];
-                        return (u < dv.size()) ? static_cast<float>(dv[u]) : 0.0f;
+                        size_t dlen = std::min(vm_state->query_context->double_vector_lengths[h], dv.size());
+                        return (u < dlen) ? static_cast<float>(dv[u]) : std::numeric_limits<float>::quiet_NaN();
                     } else if (t == TYPE_NODE_VECTOR || t == TYPE_UINT64_VECTOR) {
                         const uint64_t* ptr = nullptr;
                         size_t len = 0;
-                        if (get_node_vector_slice(vm_state->query_context, h, &ptr, &len) && u < len) {
-                            return static_cast<float>(ptr[u]);
+                        if (get_node_vector_slice(vm_state->query_context, h, &ptr, &len)) {
+                            return (u < len) ? static_cast<float>(static_cast<int64_t>(ptr[u])) : std::numeric_limits<float>::quiet_NaN();
                         }
                     }
                 }

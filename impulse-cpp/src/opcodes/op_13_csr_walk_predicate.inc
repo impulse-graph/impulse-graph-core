@@ -48,7 +48,7 @@ op_CSR_WALK_PREDICATE: {
     IMPULSE_ASSERT(dst < IMP_VM_GPR_COUNT && src < IMP_VM_GPR_COUNT);
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
-    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET);
+    IMPULSE_CHECK_REG_TYPE(vm_state, src, IMP_TYPES_SOURCE_SET | IMP_TYPE_BIT(TYPE_NULL));
 
     IMP_REQUIRE_REL_SLOT(vm_state, rel);
     const auto& slot = vm_state->query_context->slots[rel];
@@ -67,16 +67,17 @@ op_CSR_WALK_PREDICATE: {
     }
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
+    bool src_is_null = (vm_state->register_types[src] == TYPE_NULL);
     bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     IMPULSE_TESTCASE(src_is_bitset);
     int h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
     if (src_is_bitset) {
         IMP_REQUIRE_BITSET_HANDLE(vm_state, h_src);
     }
-    uint64_t scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+    uint64_t scalar_src = (!src_is_bitset && !src_is_null) ? vm_state->registers[src] : 0;
     uint64_t max_nodes = vm_state->query_context->max_nodes;
 
-    if (slot.offsets_ptr && slot.targets_ptr) {
+    if (!src_is_null && slot.offsets_ptr && slot.targets_ptr) {
         if (src_is_bitset) {
             #pragma omp parallel for schedule(dynamic, 64)
             for (size_t i = 0; i < vm_state->query_context->words_per_bitset; ++i) {

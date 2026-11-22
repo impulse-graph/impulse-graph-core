@@ -122,6 +122,9 @@ op_VEC_MATH_TERNARY: {
     int h_s1 = static_cast<int>(vm_state->registers[src1]);
     int h_s2 = static_cast<int>(vm_state->registers[src2]);
     int h_s3 = static_cast<int>(vm_state->registers[src3]);
+    double pre_c1 = is_vec1 ? 0.0 : read_scalar_f64(src1);
+    double pre_c2 = is_vec2 ? 0.0 : read_scalar_f64(src2);
+    double pre_c3 = is_vec3 ? 0.0 : read_scalar_f64(src3);
 
     if (use_f64) {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
@@ -141,9 +144,9 @@ op_VEC_MATH_TERNARY: {
             const double* s3 = vm_state->query_context->double_vectors[h_s3].data();
             impulse_vector_math_ternary_f64(func_id, d, s1, s2, s3, N);
         } else {
-            double c1 = is_vec1 ? 0.0 : read_scalar_f64(src1);
-            double c2 = is_vec2 ? 0.0 : read_scalar_f64(src2);
-            double c3 = is_vec3 ? 0.0 : read_scalar_f64(src3);
+            double c1 = pre_c1;
+            double c2 = pre_c2;
+            double c3 = pre_c3;
             for (size_t i = 0; i < N; ++i) {
                 double a = (t1 == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[h_s1][i]
                          : (t1 == TYPE_FLOAT_VECTOR ? static_cast<double>(vm_state->query_context->float_vectors[h_s1][i]) : c1);
@@ -172,9 +175,9 @@ op_VEC_MATH_TERNARY: {
             const float* s3 = vm_state->query_context->float_vectors[h_s3].data();
             impulse_vector_math_ternary_f32(func_id, d, s1, s2, s3, N);
         } else {
-            float c1 = is_vec1 ? 0.0f : static_cast<float>(read_scalar_f64(src1));
-            float c2 = is_vec2 ? 0.0f : static_cast<float>(read_scalar_f64(src2));
-            float c3 = is_vec3 ? 0.0f : static_cast<float>(read_scalar_f64(src3));
+            float c1 = static_cast<float>(pre_c1);
+            float c2 = static_cast<float>(pre_c2);
+            float c3 = static_cast<float>(pre_c3);
             for (size_t i = 0; i < N; ++i) {
                 float a = is_vec1 ? vm_state->query_context->float_vectors[h_s1][i] : c1;
                 float b = is_vec2 ? vm_state->query_context->float_vectors[h_s2][i] : c2;

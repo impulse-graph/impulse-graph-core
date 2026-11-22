@@ -64,32 +64,34 @@ op_LANE_PRUNE_MASK: {
         IMPULSE_TESTCASE(mode == OP_C5_MODE_PASSTHROUGH);
 
         if (mode == OP_C5_MODE_MASK_CLEAR) {
-            IMP_VALIDATE_GPR(arg1);
-            IMPULSE_CHECK_REG_TYPE(vm_state, arg1, (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC | IMP_TYPES_INT_OR_NODE));
-            uint8_t t_arg = vm_state->register_types[arg1];
-            if (t_arg == TYPE_BITSET_HANDLE) {
-                uint64_t h_bs = vm_state->registers[arg1];
-                if (h_bs >= VM_MAX_BITSET_HANDLES || !vm_state->query_context->bitset_allocated[h_bs]) {
-                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                }
-                const auto& bs = vm_state->query_context->bitsets[h_bs];
-                for (size_t u = 0; u < n_nodes; ++u) {
-                    if (bs.test(u)) lf_dst.lanes[u] = 0ULL;
-                }
-            } else if (t_arg == TYPE_NODE_VECTOR || t_arg == TYPE_UINT64_VECTOR) {
-                const uint64_t* m_ptr = nullptr;
-                size_t m_len = 0;
-                if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[arg1], &m_ptr, &m_len)) {
-                    return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-                }
-                size_t lim = std::min(n_nodes, m_len);
-                for (size_t u = 0; u < lim; ++u) {
-                    lf_dst.lanes[u] &= ~m_ptr[u];
-                }
-            } else if (t_arg == TYPE_INT64 || t_arg == TYPE_NODE_ID) {
-                uint64_t mask = vm_state->registers[arg1];
-                for (size_t u = 0; u < n_nodes; ++u) {
-                    lf_dst.lanes[u] &= ~mask;
+            if (arg1 != 0) {
+                IMP_VALIDATE_GPR(arg1);
+                IMPULSE_CHECK_REG_TYPE(vm_state, arg1, (IMP_TYPE_BIT(TYPE_NULL) | IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_NODE_VEC | IMP_TYPE_BIT(TYPE_INT64)));
+                uint8_t t_arg = vm_state->register_types[arg1];
+                if (t_arg == TYPE_BITSET_HANDLE) {
+                    uint64_t h_bs = vm_state->registers[arg1];
+                    if (h_bs >= VM_MAX_BITSET_HANDLES || !vm_state->query_context->bitset_allocated[h_bs]) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    const auto& bs = vm_state->query_context->bitsets[h_bs];
+                    for (size_t u = 0; u < n_nodes; ++u) {
+                        if (bs.test(u)) lf_dst.lanes[u] = 0ULL;
+                    }
+                } else if (t_arg == TYPE_NODE_VECTOR || t_arg == TYPE_UINT64_VECTOR) {
+                    const uint64_t* m_ptr = nullptr;
+                    size_t m_len = 0;
+                    if (!get_node_vector_slice(vm_state->query_context, vm_state->registers[arg1], &m_ptr, &m_len)) {
+                        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+                    }
+                    size_t lim = std::min(n_nodes, m_len);
+                    for (size_t u = 0; u < lim; ++u) {
+                        lf_dst.lanes[u] &= ~m_ptr[u];
+                    }
+                } else if (t_arg == TYPE_INT64) {
+                    uint64_t mask = vm_state->registers[arg1];
+                    for (size_t u = 0; u < n_nodes; ++u) {
+                        lf_dst.lanes[u] &= ~mask;
+                    }
                 }
             }
         } else if (mode == OP_C5_MODE_ALLOW_DENY_HALF) {

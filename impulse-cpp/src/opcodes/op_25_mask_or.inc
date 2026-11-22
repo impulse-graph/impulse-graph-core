@@ -80,6 +80,11 @@ op_MASK_OR: {
         bs_dst.words[w] = val;
         if (val != 0) is_empty = false;
     }
+    if (dst == src1 && h1 >= 0 && h1 != h_dst) {
+        release_bitset(vm_state->query_context, h1);
+    } else if (dst == src2 && h2 >= 0 && h2 != h_dst) {
+        release_bitset(vm_state->query_context, h2);
+    }
     IMP_VM_SET_ZF(vm_state, is_empty);
     vm_state->pc++;
     DISPATCH();

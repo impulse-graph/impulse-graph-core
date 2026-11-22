@@ -140,6 +140,7 @@ op_ISLAND_DETECT: {
     IMPULSE_TESTCASE(critical_pairs_count == 0ULL);
     vm_state->registers[dst] = critical_pairs_count;
     vm_state->register_types[dst] = TYPE_INT64;
+    IMP_VM_SET_ZF(vm_state, false);
 
     vm_state->pc++;
     DISPATCH();

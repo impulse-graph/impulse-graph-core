@@ -53,13 +53,19 @@ op_VECTOR_DIV: {
 
     if (num_is_double || denom_is_double) {
         int h_dst = -1;
+        size_t out_len = size;
         if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            if (h_dst >= 0 && static_cast<size_t>(h_dst) < VM_MAX_VECTOR_HANDLES) {
+                out_len = std::min(vm_state->query_context->double_vector_lengths[h_dst],
+                                   vm_state->query_context->double_vectors[h_dst].size());
+            }
         } else {
             h_dst = acquire_double_vector(vm_state->query_context);
             if (h_dst < 0) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
+            out_len = std::min(size, vm_state->query_context->double_vectors[h_dst].size());
         }
         IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->double_vectors.size());
         double* dst_vec = vm_state->query_context->double_vectors[h_dst].data();
@@ -86,26 +92,49 @@ op_VECTOR_DIV: {
             else denom_scalar = static_cast<double>(vm_state->registers[denom]);
         }
 
+        size_t num_len = (vm_state->register_types[num] == TYPE_DOUBLE_VECTOR)
+            ? vm_state->query_context->double_vector_lengths[vm_state->registers[num]]
+            : ((vm_state->register_types[num] == TYPE_FLOAT_VECTOR)
+                ? vm_state->query_context->float_vector_lengths[vm_state->registers[num]]
+                : out_len);
+        size_t denom_len = (vm_state->register_types[denom] == TYPE_DOUBLE_VECTOR)
+            ? vm_state->query_context->double_vector_lengths[vm_state->registers[denom]]
+            : ((vm_state->register_types[denom] == TYPE_FLOAT_VECTOR)
+                ? vm_state->query_context->float_vector_lengths[vm_state->registers[denom]]
+                : out_len);
+        size_t active_len = std::min({out_len, num_len, denom_len});
+        vm_state->query_context->double_vector_lengths[h_dst] = out_len;
+
 #if defined(_OPENMP)
         #pragma omp parallel for schedule(static)
 #endif
-        for (size_t i = 0; i < size; ++i) {
-            double nv = num_dvec ? num_dvec[i] : (num_fvec ? static_cast<double>(num_fvec[i]) : num_scalar);
-            double dv = denom_dvec ? denom_dvec[i] : (denom_fvec ? static_cast<double>(denom_fvec[i]) : denom_scalar);
-            dst_vec[i] = (dv != 0.0) ? (nv / dv) : 0.0;
+        for (size_t i = 0; i < out_len; ++i) {
+            if (i < active_len) {
+                double nv = num_dvec ? num_dvec[i] : (num_fvec ? static_cast<double>(num_fvec[i]) : num_scalar);
+                double dv = denom_dvec ? denom_dvec[i] : (denom_fvec ? static_cast<double>(denom_fvec[i]) : denom_scalar);
+                dst_vec[i] = (dv != 0.0) ? (nv / dv) : 0.0;
+            } else {
+                dst_vec[i] = 0.0;
+            }
         }
 
         vm_state->registers[dst] = h_dst;
         vm_state->register_types[dst] = TYPE_DOUBLE_VECTOR;
     } else {
         int h_dst = -1;
+        size_t out_len = size;
         if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
+            if (h_dst >= 0 && static_cast<size_t>(h_dst) < VM_MAX_VECTOR_HANDLES) {
+                out_len = std::min(vm_state->query_context->float_vector_lengths[h_dst],
+                                   vm_state->query_context->float_vectors[h_dst].size());
+            }
         } else {
             h_dst = acquire_float_vector(vm_state->query_context);
             if (h_dst < 0) {
                 return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             }
+            out_len = std::min(size, vm_state->query_context->float_vectors[h_dst].size());
         }
         IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->float_vectors.size());
         float* dst_vec = vm_state->query_context->float_vectors[h_dst].data();
@@ -126,13 +155,26 @@ op_VECTOR_DIV: {
             else denom_scalar = static_cast<float>(vm_state->registers[denom]);
         }
 
+        size_t num_len = (vm_state->register_types[num] == TYPE_FLOAT_VECTOR)
+            ? vm_state->query_context->float_vector_lengths[vm_state->registers[num]]
+            : out_len;
+        size_t denom_len = (vm_state->register_types[denom] == TYPE_FLOAT_VECTOR)
+            ? vm_state->query_context->float_vector_lengths[vm_state->registers[denom]]
+            : out_len;
+        size_t active_len = std::min({out_len, num_len, denom_len});
+        vm_state->query_context->float_vector_lengths[h_dst] = out_len;
+
 #if defined(_OPENMP)
         #pragma omp parallel for schedule(static)
 #endif
-        for (size_t i = 0; i < size; ++i) {
-            float nv = num_fvec ? num_fvec[i] : num_scalar;
-            float dv = denom_fvec ? denom_fvec[i] : denom_scalar;
-            dst_vec[i] = (dv != 0.0f) ? (nv / dv) : 0.0f;
+        for (size_t i = 0; i < out_len; ++i) {
+            if (i < active_len) {
+                float nv = num_fvec ? num_fvec[i] : num_scalar;
+                float dv = denom_fvec ? denom_fvec[i] : denom_scalar;
+                dst_vec[i] = (dv != 0.0f) ? (nv / dv) : 0.0f;
+            } else {
+                dst_vec[i] = 0.0f;
+            }
         }
 
         vm_state->registers[dst] = h_dst;

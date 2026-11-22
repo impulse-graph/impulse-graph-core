@@ -69,6 +69,7 @@ op_READ_EDGE_WEIGHT: {
     vm_state->registers[dst] = 0;
     reinterpret_cast<float&>(vm_state->registers[dst]) = weight;
     vm_state->register_types[dst] = TYPE_FLOAT;
+    IMP_VM_SET_ZF(vm_state, false);
 
     vm_state->pc++;
     DISPATCH();

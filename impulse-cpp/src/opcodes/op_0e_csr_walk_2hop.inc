@@ -59,6 +59,7 @@ op_CSR_WALK_2HOP: {
     const auto& slot2 = vm_state->query_context->slots[rel2];
 
     bool src_is_bitset = false;
+    bool src_is_null = false;
     int h_src = -1;
     uint64_t scalar_src = 0;
 
@@ -70,9 +71,10 @@ op_CSR_WALK_2HOP: {
             IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE |
             IMP_TYPE_BIT(TYPE_NODE_VECTOR) | IMP_TYPE_BIT(TYPE_UINT64_VECTOR) |
             IMP_TYPE_BIT(TYPE_CSR_SPAN) | IMP_TYPE_BIT(TYPE_NULL));
+        src_is_null = (vm_state->register_types[src] == TYPE_NULL);
         src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
         h_src = src_is_bitset ? static_cast<int>(vm_state->registers[src]) : -1;
-        scalar_src = !src_is_bitset ? vm_state->registers[src] : 0;
+        scalar_src = (!src_is_bitset && !src_is_null) ? vm_state->registers[src] : 0;
     }
     IMPULSE_TESTCASE(src_is_bitset);
     IMPULSE_TESTCASE(dst == src && src_is_bitset);
@@ -96,7 +98,7 @@ op_CSR_WALK_2HOP: {
 
     auto& bs_dst = vm_state->query_context->bitsets[h_dst];
 
-    if (slot1.offsets_ptr && slot1.targets_ptr && slot2.offsets_ptr && slot2.targets_ptr) {
+    if (!src_is_null && slot1.offsets_ptr && slot1.targets_ptr && slot2.offsets_ptr && slot2.targets_ptr) {
         if (src_is_bitset) {
             const auto& bs_src = vm_state->query_context->bitsets[h_src];
             for (size_t w = 0; w < vm_state->query_context->words_per_bitset; ++w) {

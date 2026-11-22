@@ -23,9 +23,9 @@
  */
 #ifndef OP_27_CONTRACT_DEFINED
 #define OP_27_CONTRACT_DEFINED 1
-#define OP_27_ALLOWED_SRC_TYPES  (IMP_TYPE_BIT(TYPE_BITSET_HANDLE) | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
-#define OP_27_ALLOWED_AUX1_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
-#define OP_27_ALLOWED_AUX2_TYPES (IMP_TYPES_NUMERIC_VEC | IMP_TYPES_INT_OR_NODE | IMP_TYPE_BIT(TYPE_NULL))
+#define OP_27_ALLOWED_SRC_TYPES  (IMP_TYPE_BIT(TYPE_BITSET_HANDLE))
+#define OP_27_ALLOWED_AUX1_TYPES (IMP_TYPES_FLOAT_OR_DBL)
+#define OP_27_ALLOWED_AUX2_TYPES (IMP_TYPES_FLOAT_OR_DBL)
 #endif
 
 // Opcode 0x27: OP_VEC_BLEND
@@ -47,24 +47,27 @@ op_VEC_BLEND: {
     IMPULSE_CHECK_REG_TYPE(vm_state, src_false, OP_27_ALLOWED_AUX2_TYPES);
 
     uint8_t type_true = vm_state->register_types[src_true];
-    IMPULSE_TESTCASE(type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR);
-    if (type_true != TYPE_DOUBLE_VECTOR && type_true != TYPE_FLOAT_VECTOR) {
-        return IMPULSE_VM_ERR_INVALID_REGISTER;
-    }
+    uint8_t type_false = vm_state->register_types[src_false];
+    const bool t1_dbl = (type_true == TYPE_DOUBLE_VECTOR);
+    const bool t2_dbl = (type_false == TYPE_DOUBLE_VECTOR);
+    const bool use_f64 = (t1_dbl || t2_dbl);
 
     int h_mask = static_cast<int>(vm_state->registers[mask_reg]);
     int h_true = static_cast<int>(vm_state->registers[src_true]);
     int h_false = static_cast<int>(vm_state->registers[src_false]);
-    bool has_mask = (vm_state->register_types[mask_reg] == TYPE_BITSET_HANDLE &&
-                     h_mask >= 0 && h_mask < static_cast<int>(vm_state->query_context->bitsets.size()));
+    bool has_mask = (h_mask >= 0 && h_mask < static_cast<int>(vm_state->query_context->bitsets.size()));
     IMPULSE_TESTCASE(!has_mask);
-    IMPULSE_TESTCASE(type_true == TYPE_DOUBLE_VECTOR);
+    IMPULSE_TESTCASE(use_f64);
     IMPULSE_TESTCASE(dst == src_true || dst == src_false);
     size_t N = vm_state->query_context->max_nodes;
 
-    if (type_true == TYPE_DOUBLE_VECTOR) {
-        size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_true] : N;
-        size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_false] : N;
+    if (use_f64) {
+        size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES)
+            ? (t1_dbl ? vm_state->query_context->double_vector_lengths[h_true] : vm_state->query_context->float_vector_lengths[h_true])
+            : N;
+        size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES)
+            ? (t2_dbl ? vm_state->query_context->double_vector_lengths[h_false] : vm_state->query_context->float_vector_lengths[h_false])
+            : N;
         size_t active_len = std::min(std::max(len1, len2), N);
 
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
@@ -77,12 +80,14 @@ op_VEC_BLEND: {
         int h_dst = static_cast<int>(vm_state->registers[dst]);
         vm_state->query_context->double_vector_lengths[h_dst] = active_len;
         double* d = vm_state->query_context->double_vectors[h_dst].data();
-        const double* vt = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_true].data() : nullptr;
-        const double* vf = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_false].data() : nullptr;
+        const double* vt_d = (t1_dbl && h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_true].data() : nullptr;
+        const float* vt_f = (!t1_dbl && h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vectors[h_true].data() : nullptr;
+        const double* vf_d = (t2_dbl && h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vectors[h_false].data() : nullptr;
+        const float* vf_f = (!t2_dbl && h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vectors[h_false].data() : nullptr;
         for (size_t i = 0; i < active_len; ++i) {
             bool bit = has_mask && vm_state->query_context->bitsets[h_mask].test(i);
-            double val1 = (vt && i < len1) ? vt[i] : 0.0;
-            double val2 = (vf && i < len2) ? vf[i] : 0.0;
+            double val1 = (i < len1) ? (vt_d ? vt_d[i] : (vt_f ? static_cast<double>(vt_f[i]) : 0.0)) : 0.0;
+            double val2 = (i < len2) ? (vf_d ? vf_d[i] : (vf_f ? static_cast<double>(vf_f[i]) : 0.0)) : 0.0;
             d[i] = bit ? val1 : val2;
         }
     } else {

@@ -51,6 +51,9 @@ op_LANE_SET_EDGE_MASK: {
         IMP_REQUIRE_CONTEXT(vm_state);
         IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
+        if (rel_id >= VM_MAX_REL_SLOTS) {
+            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        }
         IMPULSE_CHECK_REG_TYPE(vm_state, src_reg, OP_C2_OUTPUT_DST_TYPES);
         size_t h_src = static_cast<size_t>(vm_state->registers[src_reg]);
         IMPULSE_TESTCASE(h_src >= VM_MAX_LANE_FRONTIER_HANDLES || h_src >= vm_state->query_context->lane_frontiers_count);
@@ -62,9 +65,6 @@ op_LANE_SET_EDGE_MASK: {
         IMPULSE_ASSERT(static_cast<size_t>(h_dst) < VM_MAX_LANE_FRONTIER_HANDLES);
         auto& lf_dst = vm_state->query_context->lane_frontiers[h_dst];
 
-        if (rel_id >= VM_MAX_REL_SLOTS) {
-            return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        }
         size_t rel_slot = rel_id;
         IMPULSE_ASSERT(rel_slot < VM_MAX_REL_SLOTS);
         size_t n_edges = OP_C2_MIN_EDGE_MASK_CAP;

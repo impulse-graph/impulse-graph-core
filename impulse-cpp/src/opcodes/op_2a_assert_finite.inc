@@ -62,7 +62,7 @@ op_ASSERT_FINITE: {
         }
         IMPULSE_ASSERT(vm_state->query_context != nullptr);
         const float* vec = vm_state->query_context->float_vectors[h].data();
-        size_t N = vm_state->query_context->float_vectors[h].size();
+        size_t N = std::min(vm_state->query_context->float_vector_lengths[h], vm_state->query_context->float_vectors[h].size());
         for (size_t i = 0; i < N; ++i) {
             float v = vec[i];
             if (std::isnan(v) || std::isinf(v)) {
@@ -79,7 +79,7 @@ op_ASSERT_FINITE: {
         }
         IMPULSE_ASSERT(vm_state->query_context != nullptr);
         const double* vec = vm_state->query_context->double_vectors[h].data();
-        size_t N = vm_state->query_context->double_vectors[h].size();
+        size_t N = std::min(vm_state->query_context->double_vector_lengths[h], vm_state->query_context->double_vectors[h].size());
         for (size_t i = 0; i < N; ++i) {
             double v = vec[i];
             if (std::isnan(v) || std::isinf(v)) {
@@ -89,6 +89,8 @@ op_ASSERT_FINITE: {
                 return IMPULSE_VM_ERR_FLOATING_POINT;
             }
         }
+    } else {
+        return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
     vm_state->pc++;
     DISPATCH();

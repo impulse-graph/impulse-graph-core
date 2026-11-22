@@ -36,7 +36,7 @@ op_L1_NORM_DIFF: {
     IMPULSE_CHECK_REG_TYPE(vm_state, src2, OP_39_ALLOWED_AUX1_TYPES);
 
     size_t N = vm_state->query_context->max_nodes;
-    float l1_diff = 0.0f;
+    double l1_diff = 0.0;
     IMPULSE_TESTCASE(src1 == src2);
 
     if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR && vm_state->register_types[src2] == TYPE_FLOAT_VECTOR) {
@@ -48,24 +48,29 @@ op_L1_NORM_DIFF: {
         }
         const auto& v1 = vm_state->query_context->float_vectors[h1];
         const auto& v2 = vm_state->query_context->float_vectors[h2];
-        N = std::min(N, std::min(v1.size(), v2.size()));
+        size_t len1 = (static_cast<size_t>(h1) < VM_MAX_VECTOR_HANDLES)
+            ? std::min(vm_state->query_context->float_vector_lengths[h1], v1.size()) : v1.size();
+        size_t len2 = (static_cast<size_t>(h2) < VM_MAX_VECTOR_HANDLES)
+            ? std::min(vm_state->query_context->float_vector_lengths[h2], v2.size()) : v2.size();
+        N = std::min(N, std::min(len1, len2));
         const float* vec1 = v1.data();
         const float* vec2 = v2.data();
 
         #pragma omp parallel for reduction(+:l1_diff) schedule(static)
         for (size_t i = 0; i < N; ++i) {
-            l1_diff += std::abs(vec1[i] - vec2[i]);
+            l1_diff += std::abs(static_cast<double>(vec1[i]) - static_cast<double>(vec2[i]));
         }
     } else {
         return IMPULSE_VM_ERR_INVALID_REGISTER;
     }
-    IMPULSE_TESTCASE(l1_diff == 0.0f);
+    float l1_f32 = static_cast<float>(l1_diff);
+    IMPULSE_TESTCASE(l1_f32 == 0.0f);
 
     vm_state->registers[dst] = 0;
-    reinterpret_cast<float&>(vm_state->registers[dst]) = l1_diff;
+    reinterpret_cast<float&>(vm_state->registers[dst]) = l1_f32;
     vm_state->register_types[dst] = TYPE_FLOAT;
 
-    IMP_VM_SET_ZF(vm_state, l1_diff < OP_39_CONVERGENCE_EPSILON);
+    IMP_VM_SET_ZF(vm_state, l1_diff < 1e-4);
 
     vm_state->pc++;
     DISPATCH();

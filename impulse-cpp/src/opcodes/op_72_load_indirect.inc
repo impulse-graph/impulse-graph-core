@@ -74,15 +74,18 @@ op_LOAD_INDIRECT: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         const auto& vec = vm_state->query_context->float_vectors[h_vec];
+        const size_t logical_len = (static_cast<size_t>(h_vec) < VM_MAX_VECTOR_HANDLES)
+            ? std::min(vm_state->query_context->float_vector_lengths[h_vec], vec.size())
+            : vec.size();
         IMPULSE_TESTCASE(idx == 0ULL);
-        IMPULSE_TESTCASE(idx >= vec.size());
-        if (idx >= vec.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
-        IMPULSE_ASSERT(idx < vec.size());
-        const float val = vec[idx];
-        uint32_t raw_bits = 0u;
-        std::memcpy(&raw_bits, &val, sizeof(uint32_t));
-        vm_state->registers[dst] = raw_bits;
-        vm_state->register_types[dst] = TYPE_FLOAT;
+        IMPULSE_TESTCASE(idx >= logical_len);
+        if (idx < logical_len) {
+            const float val = vec[idx];
+            uint32_t raw_bits = 0u;
+            std::memcpy(&raw_bits, &val, sizeof(uint32_t));
+            vm_state->registers[dst] = raw_bits;
+            vm_state->register_types[dst] = TYPE_FLOAT;
+        }
     }
 
     vm_state->pc++;

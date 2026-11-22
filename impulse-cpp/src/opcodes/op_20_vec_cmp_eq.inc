@@ -83,9 +83,20 @@ op_VEC_CMP_EQ: {
             for (size_t i = 0; i < N; ++i) {
                 if (v[i] == v2[i]) bs.set(i);
             }
+        } else if (type2 == TYPE_FLOAT_VECTOR) {
+            int h_src2 = static_cast<int>(val2);
+            size_t N2 = (h_src2 >= 0 && h_src2 < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+                ? std::min(vm_state->query_context->float_vector_lengths[h_src2], vm_state->query_context->max_nodes)
+                : vm_state->query_context->max_nodes;
+            N = std::min(N, N2);
+            const float* v2 = vm_state->query_context->float_vectors[h_src2].data();
+            for (size_t i = 0; i < N; ++i) {
+                if (v[i] == static_cast<double>(v2[i])) bs.set(i);
+            }
         } else {
-            double target = (type2 == TYPE_DOUBLE) ?
-                imp_bit_cast<double>(val2) : static_cast<double>(static_cast<int64_t>(val2));
+            double target = (type2 == TYPE_DOUBLE) ? imp_bit_cast<double>(val2)
+                : (type2 == TYPE_FLOAT) ? static_cast<double>(imp_bit_cast<float>(static_cast<uint32_t>(val2)))
+                : static_cast<double>(static_cast<int64_t>(val2));
             for (size_t i = 0; i < N; ++i) {
                 if (v[i] == target) bs.set(i);
             }
@@ -107,11 +118,22 @@ op_VEC_CMP_EQ: {
                 for (size_t i = 0; i < N; ++i) {
                     if (v[i] == v2[i]) bs.set(i);
                 }
-            } else {
-                float target = (type2 == TYPE_FLOAT) ?
-                    imp_bit_cast<float>(static_cast<uint32_t>(val2)) : static_cast<float>(static_cast<int64_t>(val2));
+            } else if (type2 == TYPE_DOUBLE_VECTOR) {
+                int h_src2 = static_cast<int>(val2);
+                size_t N2 = (h_src2 >= 0 && h_src2 < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+                    ? std::min(vm_state->query_context->double_vector_lengths[h_src2], vm_state->query_context->max_nodes)
+                    : vm_state->query_context->max_nodes;
+                N = std::min(N, N2);
+                const double* v2 = vm_state->query_context->double_vectors[h_src2].data();
                 for (size_t i = 0; i < N; ++i) {
-                    if (v[i] == target) bs.set(i);
+                    if (static_cast<double>(v[i]) == v2[i]) bs.set(i);
+                }
+            } else {
+                double target = (type2 == TYPE_DOUBLE) ? imp_bit_cast<double>(val2)
+                    : (type2 == TYPE_FLOAT) ? static_cast<double>(imp_bit_cast<float>(static_cast<uint32_t>(val2)))
+                    : static_cast<double>(static_cast<int64_t>(val2));
+                for (size_t i = 0; i < N; ++i) {
+                    if (static_cast<double>(v[i]) == target) bs.set(i);
                 }
             }
         }

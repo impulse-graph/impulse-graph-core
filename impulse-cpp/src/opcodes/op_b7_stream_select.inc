@@ -35,11 +35,14 @@
 #define OP_B7_DEFINED_FLAGS        IMP_FLAG_NONE
 #endif
                     case OP_STREAM_SELECT: {
+                        const uint8_t sFalseReg = IMP_INST_FLAGS(sInst);
+                        IMP_VALIDATE_STREAM_REG(sFalseReg);
                         IMPULSE_ASSERT(sDst < IMP_VM_STREAM_REG_COUNT &&
                                        sPayloadLow < IMP_VM_STREAM_REG_COUNT &&
-                                       sPayloadHigh < IMP_VM_STREAM_REG_COUNT);
+                                       sPayloadHigh < IMP_VM_STREAM_REG_COUNT &&
+                                       sFalseReg < IMP_VM_STREAM_REG_COUNT);
                         const bool take_high = (s_regs[sPayloadLow] != 0.0f);
                         IMPULSE_TESTCASE(take_high);
-                        s_regs[sDst] = take_high ? s_regs[sPayloadHigh] : s_regs[sDst];
+                        s_regs[sDst] = take_high ? s_regs[sPayloadHigh] : s_regs[sFalseReg];
                         break;
                     }
