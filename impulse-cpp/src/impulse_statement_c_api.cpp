@@ -4,6 +4,7 @@
  */
 
 #include "impulse_vm_fluent_internal.hpp"
+#include "impulse_graph_internal.hpp"
 
 namespace {
 
@@ -239,9 +240,10 @@ impulse_status_t impulse_compile_to_impas(
         }
         return IMPULSE_OK;
     } catch (const std::exception& e) {
-        std::cerr << "impulse_compile_to_impas error: " << e.what() << std::endl;
+        g_last_error = e.what() ? e.what() : "impulse_compile_to_impas error";
         return IMPULSE_ERR_CORRUPT_CHECKSUM;
     } catch (...) {
+        g_last_error = "impulse_compile_to_impas unknown exception";
         return IMPULSE_ERR_CORRUPT_CHECKSUM;
     }
 }
@@ -318,10 +320,20 @@ struct impulse_stmt {
     std::unordered_map<std::string, std::array<uint8_t, 16>> uuid_params;
     std::unordered_map<std::string, std::vector<float>> vector_params;
 
+    // Reusable VM execution context owned by the prepared statement (zero-alloc hot path)
+    impulse_vm_context_t* exec_ctx{nullptr};
+
     // Execution output state
     std::vector<impulse_column_desc_t> columns;
     size_t row_count{0};
     size_t total_bytes_written{0};
+
+    ~impulse_stmt() {
+        if (exec_ctx) {
+            impulse_vm_context_destroy(exec_ctx);
+            exec_ctx = nullptr;
+        }
+    }
 };
 
 static impulse_language_t detect_language(const std::string& q) {
@@ -374,12 +386,12 @@ impulse_status_t impulse_stmt_prepare(
         );
         stmt->return_bytes_needed = (min_ret_bytes + 127) & ~127ULL;
         stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
+        stmt->exec_ctx = impulse_vm_context_create(snapshot);
+        stmt->columns.reserve(8);
 
         *out_stmt = stmt.release();
         return IMPULSE_OK;
-    } catch (...) {
-        return IMPULSE_ERR_INVALID_ARGUMENT;
-    }
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt) {
@@ -392,70 +404,90 @@ void impulse_stmt_finalize(impulse_stmt_t* stmt) {
 
 impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->bound_seed_node = node_id;
-    stmt->has_seed_node = true;
-    stmt->node_params[param] = node_id;
-    return IMPULSE_OK;
+    try {
+        stmt->bound_seed_node = node_id;
+        stmt->has_seed_node = true;
+        stmt->node_params[param] = node_id;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_nodes(impulse_stmt_t* stmt, const char* param, const uint64_t* node_ids, size_t count) {
     if (!stmt || !param || (!node_ids && count > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->nodes_params[param] = std::vector<uint64_t>(node_ids, node_ids + count);
-    if (count > 0 && !stmt->has_seed_node) {
-        stmt->bound_seed_node = node_ids[0];
-        stmt->has_seed_node = true;
-    }
-    return IMPULSE_OK;
+    try {
+        stmt->nodes_params[param] = std::vector<uint64_t>(node_ids, node_ids + count);
+        if (count > 0 && !stmt->has_seed_node) {
+            stmt->bound_seed_node = node_ids[0];
+            stmt->has_seed_node = true;
+        }
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_bitset(impulse_stmt_t* stmt, const char* param, const uint64_t* words, size_t word_count) {
     if (!stmt || !param || (!words && word_count > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->bitset_params[param] = std::vector<uint64_t>(words, words + word_count);
-    return IMPULSE_OK;
+    try {
+        stmt->bitset_params[param] = std::vector<uint64_t>(words, words + word_count);
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_roaring(impulse_stmt_t* stmt, const char* param, const uint8_t* bytes, size_t len) {
     if (!stmt || !param || (!bytes && len > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->roaring_params[param] = std::vector<uint8_t>(bytes, bytes + len);
-    return IMPULSE_OK;
+    try {
+        stmt->roaring_params[param] = std::vector<uint8_t>(bytes, bytes + len);
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->int_params[param] = val;
-    return IMPULSE_OK;
+    try {
+        stmt->int_params[param] = val;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_uint(impulse_stmt_t* stmt, const char* param, uint64_t val) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->uint_params[param] = val;
-    return IMPULSE_OK;
+    try {
+        stmt->uint_params[param] = val;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_float(impulse_stmt_t* stmt, const char* param, double val) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->float_params[param] = val;
-    return IMPULSE_OK;
+    try {
+        stmt->float_params[param] = val;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const char* param, const char* str) {
     if (!stmt || !param || !str) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->str_params[param] = str;
-    return IMPULSE_OK;
+    try {
+        stmt->str_params[param] = str;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_uuid(impulse_stmt_t* stmt, const char* param, const uint8_t uuid_bytes[16]) {
     if (!stmt || !param || !uuid_bytes) return IMPULSE_ERR_INVALID_ARGUMENT;
-    std::array<uint8_t, 16> arr{};
-    std::memcpy(arr.data(), uuid_bytes, 16);
-    stmt->uuid_params[param] = arr;
-    return IMPULSE_OK;
+    try {
+        std::array<uint8_t, 16> arr{};
+        std::memcpy(arr.data(), uuid_bytes, 16);
+        stmt->uuid_params[param] = arr;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_bind_vector(impulse_stmt_t* stmt, const char* param, const float* data, size_t dim) {
     if (!stmt || !param || (!data && dim > 0)) return IMPULSE_ERR_INVALID_ARGUMENT;
-    stmt->vector_params[param] = std::vector<float>(data, data + dim);
-    return IMPULSE_OK;
+    try {
+        stmt->vector_params[param] = std::vector<float>(data, data + dim);
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_INVALID_ARGUMENT)
 }
 
 impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size) {
@@ -471,7 +503,14 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         impulse_vm_state_t vm_state{};
         std::memset(&vm_state, 0, sizeof(vm_state));
 
-        impulse_vm_context_t* ctx = impulse_vm_context_create(stmt->snapshot);
+        impulse_vm_context_t* ctx = stmt->exec_ctx;
+        if (!ctx) {
+            ctx = impulse_vm_context_create(stmt->snapshot);
+            stmt->exec_ctx = ctx;
+        } else {
+            impulse_vm_context_reset(ctx);
+            impulse_vm_context_bind_inline_data(ctx, nullptr, 0);
+        }
         vm_state.query_context = ctx;
 
         if (ctx && !stmt->nodes_params.empty() && !stmt->compiled_program.instructions.empty()) {
@@ -507,10 +546,7 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         );
 
         if (vm_rc != IMPULSE_VM_OK) {
-            if (ctx) {
-                impulse_vm_context_destroy(ctx);
-                vm_state.query_context = nullptr;
-            }
+            vm_state.query_context = nullptr;
             return IMPULSE_ERR_IO_FAILURE;
         }
 
@@ -671,15 +707,10 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
             stmt->total_bytes_written = n_words * sizeof(uint64_t);
         }
 
-        if (ctx) {
-            impulse_vm_context_destroy(ctx);
-            vm_state.query_context = nullptr;
-        }
+        vm_state.query_context = nullptr;
 
         return IMPULSE_OK;
-    } catch (...) {
-        return IMPULSE_ERR_IO_FAILURE;
-    }
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 size_t impulse_stmt_row_count(const impulse_stmt_t* stmt) {
