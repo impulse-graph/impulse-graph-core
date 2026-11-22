@@ -1028,4 +1028,77 @@ mod tests_issue_78 {
         );
         assert_eq!(st64.min_int_val, i64::MIN);
     }
+
+    #[test]
+    fn test_issue_117_singleton_extreme_min_max_sentinels() {
+        // Singleton [i64::MIN]: max_int_val must be i64::MIN, not 0
+        let only_min = i64::MIN.to_le_bytes();
+        let st_min = AttributeStatisticsCalculator::calculate_int64("only_min", &only_min);
+        assert_eq!(st_min.null_count, 0);
+        assert_eq!(st_min.min_int_val, i64::MIN);
+        assert_eq!(st_min.max_int_val, i64::MIN);
+
+        // Singleton [i64::MAX]: min_int_val must be i64::MAX, not 0
+        let only_max = i64::MAX.to_le_bytes();
+        let st_max = AttributeStatisticsCalculator::calculate_int64("only_max", &only_max);
+        assert_eq!(st_max.null_count, 0);
+        assert_eq!(st_max.min_int_val, i64::MAX);
+        assert_eq!(st_max.max_int_val, i64::MAX);
+
+        // Singleton [i32::MIN] and [i32::MAX]
+        let only_i32_min = i32::MIN.to_le_bytes();
+        let st32_min = AttributeStatisticsCalculator::calculate_int32("i32_min", &only_i32_min);
+        assert_eq!(st32_min.null_count, 0);
+        assert_eq!(st32_min.min_int_val, i32::MIN as i64);
+        assert_eq!(st32_min.max_int_val, i32::MIN as i64);
+    }
+
+    #[test]
+    fn test_issue_142_malformed_metadata_footer_no_panic() {
+        // Truncated total < 4 must return empty map without panicking
+        let buf = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06];
+        for total in 0..4 {
+            assert!(SnapshotReader::parse_metadata_slice(&buf, 0, total).is_empty());
+        }
+
+        // Overflowing start + total must return empty map without panicking
+        assert!(SnapshotReader::parse_metadata_slice(&buf, usize::MAX, 8).is_empty());
+        assert!(SnapshotReader::parse_metadata_slice(&buf, 4, usize::MAX).is_empty());
+
+        // Huge count (u32::MAX) with short slice terminates cleanly on first entry
+        let mut huge_count = Vec::new();
+        huge_count.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(SnapshotReader::parse_metadata_slice(&huge_count, 0, huge_count.len()).is_empty());
+
+        // Truncated key length (klen = 500 > remaining bytes)
+        let mut bad_klen = Vec::new();
+        bad_klen.extend_from_slice(&1u32.to_le_bytes());
+        bad_klen.extend_from_slice(&500u16.to_le_bytes());
+        bad_klen.extend_from_slice(b"abc");
+        assert!(SnapshotReader::parse_metadata_slice(&bad_klen, 0, bad_klen.len()).is_empty());
+
+        // Overflowing/huge value length (vlen = u32::MAX)
+        let mut bad_vlen = Vec::new();
+        bad_vlen.extend_from_slice(&1u32.to_le_bytes());
+        bad_vlen.extend_from_slice(&1u16.to_le_bytes());
+        bad_vlen.extend_from_slice(b"k");
+        bad_vlen.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(SnapshotReader::parse_metadata_slice(&bad_vlen, 0, bad_vlen.len()).is_empty());
+
+        // Valid 2-entry metadata payload round-trips cleanly
+        let mut valid = Vec::new();
+        valid.extend_from_slice(&2u32.to_le_bytes());
+        valid.extend_from_slice(&3u16.to_le_bytes());
+        valid.extend_from_slice(b"env");
+        valid.extend_from_slice(&4u32.to_le_bytes());
+        valid.extend_from_slice(b"prod");
+        valid.extend_from_slice(&3u16.to_le_bytes());
+        valid.extend_from_slice(b"ver");
+        valid.extend_from_slice(&6u32.to_le_bytes());
+        valid.extend_from_slice(b"0.10.1");
+        let parsed = SnapshotReader::parse_metadata_slice(&valid, 0, valid.len());
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed.get("env").map(String::as_str), Some("prod"));
+        assert_eq!(parsed.get("ver").map(String::as_str), Some("0.10.1"));
+    }
 }
