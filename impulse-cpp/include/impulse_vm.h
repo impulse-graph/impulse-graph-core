@@ -686,7 +686,16 @@ IMPULSE_API uint32_t impulse_stmt_column_dim(const impulse_stmt_t* stmt, uint32_
 IMPULSE_API const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx);
 IMPULSE_API bool impulse_stmt_column_is_null(const impulse_stmt_t* stmt, uint32_t col_idx, size_t row_idx);
 
-// One-Line Convenience
+/**
+ * @brief One-line convenience wrapper: prepare, bind `$seed`, execute, and finalize.
+ *
+ * @note Ownership & Lifetime: `out_result->data_ptr` points into an internal
+ *       thread-local execution buffer owned by the library. Callers MUST NOT
+ *       `free()` `out_result->data_ptr`. The buffer remains valid until the
+ *       next `impulse_exec()` call on the same thread or thread exit.
+ *       For concurrent/persistent result buffers or zero-compile hot paths,
+ *       use `impulse_stmt_prepare()` + `impulse_stmt_execute()`.
+ */
 IMPULSE_API impulse_status_t impulse_exec(
     const impulse_snapshot_t* snapshot,
     const char* query_text,

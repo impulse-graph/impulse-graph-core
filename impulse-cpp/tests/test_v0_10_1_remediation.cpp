@@ -350,6 +350,38 @@ void test_issue_136_extern_c_boundaries(const impulse_snapshot_t* snap) {
     std::printf("  [PASS] #136 extern \"C\" boundary & exception-guard tests\n");
 }
 
+// ============================================================================
+// #135: impulse_exec() must reuse a thread-local buffer (no per-call heap leak)
+// ============================================================================
+void test_issue_135_impulse_exec_thread_local_reuse(const impulse_snapshot_t* snap) {
+    std::printf("[TEST] #135 impulse_exec thread-local buffer reuse & leak prevention...\n");
+
+    const char* cypher = "MATCH (u:User)-[:Follows]->(v:User) WHERE u.id = $seed RETURN v";
+    impulse_execution_result_t res1{};
+    TEST_ASSERT(impulse_exec(snap, nullptr, 0, &res1) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_exec(snap, cypher, 0, nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // Invalid syntax must fail cleanly without leaking
+    impulse_execution_result_t err_res{};
+    TEST_ASSERT(impulse_exec(snap, "MATCH ((( BAD", 0, &err_res) != IMPULSE_OK);
+
+    // Two consecutive executions on the same thread must reuse the thread-local buffer
+    TEST_ASSERT(impulse_exec(snap, cypher, 0, &res1) == IMPULSE_OK);
+    TEST_ASSERT(res1.status == IMPULSE_VM_OK);
+    TEST_ASSERT(res1.row_count > 0);
+    TEST_ASSERT(res1.data_ptr != nullptr);
+    const void* ptr1 = res1.data_ptr;
+
+    impulse_execution_result_t res2{};
+    TEST_ASSERT(impulse_exec(snap, cypher, 1, &res2) == IMPULSE_OK);
+    TEST_ASSERT(res2.status == IMPULSE_VM_OK);
+    TEST_ASSERT(res2.row_count > 0);
+    TEST_ASSERT(res2.data_ptr != nullptr);
+    TEST_ASSERT(res2.data_ptr == ptr1);
+
+    std::printf("  [PASS] #135 impulse_exec reuses thread-local buffer without leaking\n");
+}
+
 } // namespace
 
 int main() {
@@ -366,6 +398,7 @@ int main() {
     test_issue_145_stmt_execute_zero_alloc(snap);
     test_issue_145_opcodes_zero_alloc(snap);
     test_issue_136_extern_c_boundaries(snap);
+    test_issue_135_impulse_exec_thread_local_reuse(snap);
 
     impulse_snapshot_close(snap);
     std::remove(snap_path.c_str());
