@@ -1357,55 +1357,97 @@ impl SnapshotReader {
         }
     }
 
-    pub fn get_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+    pub(crate) fn parse_metadata_slice(
+        slice: &[u8],
+        start: usize,
+        total: usize,
+    ) -> std::collections::HashMap<String, String> {
         let mut map = std::collections::HashMap::new();
-        if self.metadata_bytes < 4 {
-            return Ok(map);
+        if total < 4 {
+            return map;
         }
-
-        let slice = self.mmap.as_slice();
-        let start = self.metadata_offset as usize;
-        let total = self.metadata_bytes as usize;
-
-        if start + total > slice.len() {
-            return Ok(map);
-        }
+        let end = match start.checked_add(total) {
+            Some(e) if e <= slice.len() => e,
+            _ => return map,
+        };
 
         let mut cur = start;
-        let count = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
-        cur += 4;
+        let next = match cur.checked_add(4) {
+            Some(n) if n <= end => n,
+            _ => return map,
+        };
+        let count_bytes: [u8; 4] = match slice.get(cur..next).and_then(|b| b.try_into().ok()) {
+            Some(b) => b,
+            None => return map,
+        };
+        let count = u32::from_le_bytes(count_bytes) as usize;
+        cur = next;
 
         for _ in 0..count {
-            if cur + 2 > start + total {
-                break;
-            }
-            let klen = u16::from_le_bytes(slice[cur..cur + 2].try_into().unwrap()) as usize;
-            cur += 2;
-            if cur + klen > start + total {
-                break;
-            }
-            let key = std::str::from_utf8(&slice[cur..cur + klen])
-                .unwrap_or("")
-                .to_string();
-            cur += klen;
+            let klen_end = match cur.checked_add(2) {
+                Some(n) if n <= end => n,
+                _ => break,
+            };
+            let klen_bytes: [u8; 2] = match slice.get(cur..klen_end).and_then(|b| b.try_into().ok())
+            {
+                Some(b) => b,
+                None => break,
+            };
+            let klen = u16::from_le_bytes(klen_bytes) as usize;
+            cur = klen_end;
 
-            if cur + 4 > start + total {
-                break;
-            }
-            let vlen = u32::from_le_bytes(slice[cur..cur + 4].try_into().unwrap()) as usize;
-            cur += 4;
-            if cur + vlen > start + total {
-                break;
-            }
-            let val = std::str::from_utf8(&slice[cur..cur + vlen])
-                .unwrap_or("")
-                .to_string();
-            cur += vlen;
+            let key_end = match cur.checked_add(klen) {
+                Some(n) if n <= end => n,
+                _ => break,
+            };
+            let key = match slice.get(cur..key_end) {
+                Some(b) => std::str::from_utf8(b).unwrap_or("").to_string(),
+                None => break,
+            };
+            cur = key_end;
+
+            let vlen_end = match cur.checked_add(4) {
+                Some(n) if n <= end => n,
+                _ => break,
+            };
+            let vlen_bytes: [u8; 4] = match slice.get(cur..vlen_end).and_then(|b| b.try_into().ok())
+            {
+                Some(b) => b,
+                None => break,
+            };
+            let vlen = u32::from_le_bytes(vlen_bytes) as usize;
+            cur = vlen_end;
+
+            let val_end = match cur.checked_add(vlen) {
+                Some(n) if n <= end => n,
+                _ => break,
+            };
+            let val = match slice.get(cur..val_end) {
+                Some(b) => std::str::from_utf8(b).unwrap_or("").to_string(),
+                None => break,
+            };
+            cur = val_end;
 
             map.insert(key, val);
         }
 
-        Ok(map)
+        map
+    }
+
+    pub fn get_metadata(&self) -> Result<std::collections::HashMap<String, String>, ImpulseError> {
+        let start = match usize::try_from(self.metadata_offset) {
+            Ok(v) => v,
+            Err(_) => return Ok(std::collections::HashMap::new()),
+        };
+        let total = match usize::try_from(self.metadata_bytes) {
+            Ok(v) => v,
+            Err(_) => return Ok(std::collections::HashMap::new()),
+        };
+        Ok(Self::parse_metadata_slice(
+            self.mmap.as_slice(),
+            start,
+            total,
+        ))
     }
 
     pub fn get_attribute_data(

@@ -85,34 +85,22 @@ pub fn run(
                         0x02 => {
                             for &chunk in data.as_chunks::<2>().0 {
                                 let v = i16::from_le_bytes(chunk);
-                                if v == i16::MIN {
-                                    hist.offer_null();
-                                } else {
-                                    hll.offer_long(v as u64);
-                                    hist.offer(v as f64);
-                                }
+                                hll.offer_long(v as u64);
+                                hist.offer(v as f64);
                             }
                         }
                         0x03 => {
                             for &chunk in data.as_chunks::<4>().0 {
                                 let v = i32::from_le_bytes(chunk);
-                                if v == i32::MIN {
-                                    hist.offer_null();
-                                } else {
-                                    hll.offer_long(v as u64);
-                                    hist.offer(v as f64);
-                                }
+                                hll.offer_long(v as u64);
+                                hist.offer(v as f64);
                             }
                         }
                         0x04 => {
                             for &chunk in data.as_chunks::<8>().0 {
                                 let v = i64::from_le_bytes(chunk);
-                                if v == i64::MIN {
-                                    hist.offer_null();
-                                } else {
-                                    hll.offer_long(v as u64);
-                                    hist.offer(v as f64);
-                                }
+                                hll.offer_long(v as u64);
+                                hist.offer(v as f64);
                             }
                         }
                         0x06 => {
