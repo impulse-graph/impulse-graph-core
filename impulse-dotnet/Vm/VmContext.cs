@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using ImpulseGraph.Native;
 
 namespace ImpulseGraph.Vm;
@@ -11,17 +12,25 @@ public sealed class VmContext : IDisposable
 {
     private readonly Snapshot _snapshot;
     private nint _handle;
-    public nint Handle => _handle;
+    public nint Handle => Volatile.Read(ref _handle);
 
     public VmContext(Snapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        if (!snapshot.IsOpen)
+        var snapHandle = snapshot.Handle;
+        if (snapHandle == nint.Zero)
         {
             throw new ObjectDisposedException(nameof(Snapshot), "Snapshot file handle has been closed or disposed.");
         }
         _snapshot = snapshot;
-        _handle = NativeMethods.impulse_vm_context_create(snapshot.Handle);
+        try
+        {
+            _handle = NativeMethods.impulse_vm_context_create(snapHandle);
+        }
+        finally
+        {
+            GC.KeepAlive(snapshot);
+        }
         if (_handle == nint.Zero)
         {
             throw new InvalidOperationException("Failed to allocate native Impulse VM execution context");
@@ -38,10 +47,10 @@ public sealed class VmContext : IDisposable
 
     private void Dispose(bool disposing)
     {
-        if (_handle != nint.Zero)
+        var handle = Interlocked.Exchange(ref _handle, nint.Zero);
+        if (handle != nint.Zero)
         {
-            NativeMethods.impulse_vm_context_destroy(_handle);
-            _handle = nint.Zero;
+            NativeMethods.impulse_vm_context_destroy(handle);
         }
     }
 }

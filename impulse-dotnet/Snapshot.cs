@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using ImpulseGraph.Native;
 using ImpulseGraph.Vm;
 
@@ -13,13 +14,52 @@ public sealed class Snapshot : IDisposable
 {
     private nint _handle;
 
-    public nint Handle => _handle;
-    public bool IsOpen => _handle != nint.Zero;
+    public nint Handle => Volatile.Read(ref _handle);
+    public bool IsOpen => Volatile.Read(ref _handle) != nint.Zero;
 
-    public uint Magic => IsOpen ? NativeMethods.impulse_snapshot_magic(_handle) : 0U;
-    public ushort Version => IsOpen ? NativeMethods.impulse_snapshot_version(_handle) : (ushort)0;
-    public ushort DomainCount => IsOpen ? NativeMethods.impulse_snapshot_domain_count(_handle) : (ushort)0;
-    public ushort RelationCount => IsOpen ? NativeMethods.impulse_snapshot_relation_count(_handle) : (ushort)0;
+    public uint Magic
+    {
+        get
+        {
+            var h = Volatile.Read(ref _handle);
+            if (h == nint.Zero) return 0U;
+            try { return NativeMethods.impulse_snapshot_magic(h); }
+            finally { GC.KeepAlive(this); }
+        }
+    }
+
+    public ushort Version
+    {
+        get
+        {
+            var h = Volatile.Read(ref _handle);
+            if (h == nint.Zero) return 0;
+            try { return NativeMethods.impulse_snapshot_version(h); }
+            finally { GC.KeepAlive(this); }
+        }
+    }
+
+    public ushort DomainCount
+    {
+        get
+        {
+            var h = Volatile.Read(ref _handle);
+            if (h == nint.Zero) return 0;
+            try { return NativeMethods.impulse_snapshot_domain_count(h); }
+            finally { GC.KeepAlive(this); }
+        }
+    }
+
+    public ushort RelationCount
+    {
+        get
+        {
+            var h = Volatile.Read(ref _handle);
+            if (h == nint.Zero) return 0;
+            try { return NativeMethods.impulse_snapshot_relation_count(h); }
+            finally { GC.KeepAlive(this); }
+        }
+    }
 
     public Snapshot(string filePath)
     {
@@ -36,19 +76,33 @@ public sealed class Snapshot : IDisposable
 
     public ImpulseRelationEntry GetRelationEntry(ushort relationIndex)
     {
-        EnsureOpen();
-        var status = NativeMethods.impulse_snapshot_get_relation_entry(_handle, relationIndex, out var entry);
-        if (status != ImpulseStatus.Ok)
+        var h = EnsureOpen();
+        try
         {
-            throw new ArgumentOutOfRangeException(nameof(relationIndex), $"Invalid relation index {relationIndex}: {status}");
+            var status = NativeMethods.impulse_snapshot_get_relation_entry(h, relationIndex, out var entry);
+            if (status != ImpulseStatus.Ok)
+            {
+                throw new ArgumentOutOfRangeException(nameof(relationIndex), $"Invalid relation index {relationIndex}: {status}");
+            }
+            return entry;
         }
-        return entry;
+        finally
+        {
+            GC.KeepAlive(this);
+        }
     }
 
     public bool IsReachable(ushort relationIndex, ulong srcId, ulong tgtId)
     {
-        EnsureOpen();
-        return NativeMethods.impulse_snapshot_is_reachable(_handle, relationIndex, srcId, tgtId);
+        var h = EnsureOpen();
+        try
+        {
+            return NativeMethods.impulse_snapshot_is_reachable(h, relationIndex, srcId, tgtId);
+        }
+        finally
+        {
+            GC.KeepAlive(this);
+        }
     }
 
     public unsafe ExecutionResult ExecuteQuery(Query query, ulong inputParam = 0UL)
@@ -83,12 +137,25 @@ public sealed class Snapshot : IDisposable
         }
 
         ImpulseVmState state = default;
-        state.QueryContext = context.Handle;
+        var ctxHandle = context.Handle;
+        if (ctxHandle == nint.Zero)
+        {
+            throw new ObjectDisposedException(nameof(VmContext), "VM context handle has been disposed.");
+        }
+        state.QueryContext = ctxHandle;
 
         ImpulseVmStatus status;
-        fixed (ImpulseInstruction* ptr = span)
+        try
         {
-            status = NativeMethods.impulse_vm_execute(ptr, (nuint)span.Length, &state, inputParam);
+            fixed (ImpulseInstruction* ptr = span)
+            {
+                status = NativeMethods.impulse_vm_execute(ptr, (nuint)span.Length, &state, inputParam);
+            }
+        }
+        finally
+        {
+            GC.KeepAlive(this);
+            GC.KeepAlive(context);
         }
 
         ulong[] registers = new ulong[64];
@@ -102,10 +169,12 @@ public sealed class Snapshot : IDisposable
 
     ~Snapshot() => Dispose(disposing: false);
 
-    private void EnsureOpen()
+    private nint EnsureOpen()
     {
-        if (!IsOpen)
+        var h = Volatile.Read(ref _handle);
+        if (h == nint.Zero)
             throw new ObjectDisposedException(nameof(Snapshot), "Snapshot file handle has been closed or disposed.");
+        return h;
     }
 
     public void Dispose()
@@ -116,10 +185,10 @@ public sealed class Snapshot : IDisposable
 
     private void Dispose(bool disposing)
     {
-        if (_handle != nint.Zero)
+        var handle = Interlocked.Exchange(ref _handle, nint.Zero);
+        if (handle != nint.Zero)
         {
-            NativeMethods.impulse_snapshot_close(_handle);
-            _handle = nint.Zero;
+            NativeMethods.impulse_snapshot_close(handle);
         }
     }
 }

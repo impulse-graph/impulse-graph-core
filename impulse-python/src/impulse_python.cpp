@@ -9,6 +9,7 @@
 #include "impulse_assert.h"
 #include <string>
 #include <vector>
+#include <memory>
 #include <stdexcept>
 #include <cstdint>
 #include <cstring>
@@ -18,15 +19,43 @@
 
 namespace py = pybind11;
 
+// Reference-counted lease over the underlying mmap snapshot handle so exported
+// zero-copy memoryviews / NumPy arrays / PyTorch tensors cannot trigger a UAF
+// if Snapshot.close() / __exit__() is called while views remain alive (#138).
+struct SnapshotLease {
+    impulse_snapshot_t* handle = nullptr;
+    explicit SnapshotLease(impulse_snapshot_t* h) : handle(h) {}
+    ~SnapshotLease() {
+        if (handle) {
+            impulse_snapshot_close(handle);
+            handle = nullptr;
+        }
+    }
+    SnapshotLease(const SnapshotLease&) = delete;
+    SnapshotLease& operator=(const SnapshotLease&) = delete;
+};
+
+struct PySnapshotBufferView {
+    std::shared_ptr<SnapshotLease> lease;
+    const void* ptr = nullptr;
+    size_t size = 0;
+};
+
 class PyImpulseSnapshot {
 public:
     PyImpulseSnapshot(const std::string& path) {
         impulse_status_t status = IMPULSE_OK;
-        snapshot_ = impulse_snapshot_open(path.c_str(), &status);
-        if (!snapshot_ || status != IMPULSE_OK) {
+        impulse_snapshot_t* raw = nullptr;
+        {
+            py::gil_scoped_release release;
+            raw = impulse_snapshot_open(path.c_str(), &status);
+        }
+        if (!raw || status != IMPULSE_OK) {
             throw std::runtime_error("Failed to open snapshot '" + path + "': " + std::string(impulse_get_last_error()));
         }
-        IMPULSE_ASSERT(snapshot_ != nullptr);
+        IMPULSE_ASSERT(raw != nullptr);
+        lease_ = std::make_shared<SnapshotLease>(raw);
+        snapshot_ = raw;
     }
 
     ~PyImpulseSnapshot() {
@@ -34,17 +63,18 @@ public:
     }
 
     void close() {
-        if (snapshot_) {
-            impulse_snapshot_close(snapshot_);
-            snapshot_ = nullptr;
-        }
+        snapshot_ = nullptr;
+        lease_.reset();
     }
 
     const impulse_snapshot_t* raw_handle() const { return snapshot_; }
+    std::shared_ptr<SnapshotLease> lease() const { return lease_; }
 
     bool is_reachable(uint16_t relation_index, uint64_t src_id, uint64_t tgt_id) const {
-        if (!snapshot_) return false;
-        return impulse_snapshot_is_reachable(snapshot_, relation_index, src_id, tgt_id);
+        auto lease = lease_;
+        if (!lease || !lease->handle) return false;
+        py::gil_scoped_release release;
+        return impulse_snapshot_is_reachable(lease->handle, relation_index, src_id, tgt_id);
     }
 
     uint16_t domain_count() const {
@@ -100,11 +130,16 @@ public:
         return res;
     }
 
+    py::memoryview make_pinned_memoryview(const void* ptr, size_t size) const {
+        py::object owner = py::cast(PySnapshotBufferView{lease_, ptr, size});
+        return py::memoryview(owner);
+    }
+
     py::memoryview get_buffer(uint64_t offset, uint64_t size) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        if (!snapshot_ || !lease_) throw std::runtime_error("Snapshot is closed");
         const void* ptr = impulse_snapshot_get_buffer(snapshot_, offset, size);
         if (!ptr) throw std::runtime_error("Invalid buffer offset or size");
-        return py::memoryview::from_memory(const_cast<void*>(ptr), size, true);
+        return make_pinned_memoryview(ptr, static_cast<size_t>(size));
     }
 
     py::memoryview get_csr_row_offsets(uint16_t index) const {
@@ -122,7 +157,7 @@ public:
     }
 
     py::memoryview get_csc_row_offsets(uint16_t index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        if (!snapshot_ || !lease_) throw std::runtime_error("Snapshot is closed");
         const uint32_t* csc_offsets = nullptr;
         const uint32_t* csc_targets = nullptr;
         uint64_t row_count = 0, edge_count = 0;
@@ -132,11 +167,11 @@ public:
         if (st != IMPULSE_OK || !csc_offsets) {
             throw std::runtime_error("CSC buffers not available for relation " + std::to_string(index));
         }
-        return py::memoryview::from_memory(const_cast<uint32_t*>(csc_offsets), (row_count + 1) * sizeof(uint32_t), true);
+        return make_pinned_memoryview(csc_offsets, static_cast<size_t>((row_count + 1) * sizeof(uint32_t)));
     }
 
     py::memoryview get_csc_col_indices(uint16_t index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        if (!snapshot_ || !lease_) throw std::runtime_error("Snapshot is closed");
         const uint32_t* csc_offsets = nullptr;
         const uint32_t* csc_targets = nullptr;
         uint64_t row_count = 0, edge_count = 0;
@@ -146,11 +181,11 @@ public:
         if (st != IMPULSE_OK || !csc_targets) {
             throw std::runtime_error("CSC buffers not available for relation " + std::to_string(index));
         }
-        return py::memoryview::from_memory(const_cast<uint32_t*>(csc_targets), edge_count * sizeof(uint32_t), true);
+        return make_pinned_memoryview(csc_targets, static_cast<size_t>(edge_count * sizeof(uint32_t)));
     }
 
     py::memoryview get_attribute_data(uint16_t relation_index, uint16_t attribute_index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        if (!snapshot_ || !lease_) throw std::runtime_error("Snapshot is closed");
         const void* data = nullptr;
         uint64_t data_bytes = 0;
         const void* offsets = nullptr;
@@ -164,11 +199,11 @@ public:
         if (st != IMPULSE_OK || !data) {
             throw std::runtime_error("Attribute buffer not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
         }
-        return py::memoryview::from_memory(const_cast<void*>(data), data_bytes, true);
+        return make_pinned_memoryview(data, static_cast<size_t>(data_bytes));
     }
 
     py::object get_attribute_offsets(uint16_t relation_index, uint16_t attribute_index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        if (!snapshot_ || !lease_) throw std::runtime_error("Snapshot is closed");
         const void* data = nullptr;
         uint64_t data_bytes = 0;
         const void* offsets = nullptr;
@@ -182,7 +217,7 @@ public:
         if (st != IMPULSE_OK || !offsets || offsets_bytes == 0) {
             return py::none();
         }
-        return py::memoryview::from_memory(const_cast<void*>(offsets), offsets_bytes, true);
+        return make_pinned_memoryview(offsets, static_cast<size_t>(offsets_bytes));
     }
 
     py::dict get_attribute_info(uint16_t relation_index, uint16_t attribute_index) const {
@@ -209,11 +244,16 @@ public:
     }
 
     py::tuple sample_neighbors(uint16_t relation_index, const std::vector<uint64_t>& nodes, int k_samples, uint64_t seed) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
         size_t out_count = 0;
-        impulse_status_t status = impulse_snapshot_sample_neighbors(
-            snapshot_, relation_index, nodes.data(), nodes.size(), k_samples, seed, nullptr, nullptr, 0, &out_count
-        );
+        impulse_status_t status = IMPULSE_OK;
+        {
+            py::gil_scoped_release release;
+            status = impulse_snapshot_sample_neighbors(
+                lease->handle, relation_index, nodes.data(), nodes.size(), k_samples, seed, nullptr, nullptr, 0, &out_count
+            );
+        }
         if (status != IMPULSE_OK) {
             throw std::runtime_error("Failed to dry-run sample_neighbors: " + std::string(impulse_get_last_error()));
         }
@@ -222,10 +262,15 @@ public:
         py::array_t<uint64_t> tgt_arr(out_count);
 
         if (out_count > 0) {
-            status = impulse_snapshot_sample_neighbors(
-                snapshot_, relation_index, nodes.data(), nodes.size(), k_samples, seed,
-                src_arr.mutable_data(), tgt_arr.mutable_data(), out_count, &out_count
-            );
+            uint64_t* src_ptr = src_arr.mutable_data();
+            uint64_t* tgt_ptr = tgt_arr.mutable_data();
+            {
+                py::gil_scoped_release release;
+                status = impulse_snapshot_sample_neighbors(
+                    lease->handle, relation_index, nodes.data(), nodes.size(), k_samples, seed,
+                    src_ptr, tgt_ptr, out_count, &out_count
+                );
+            }
             if (status != IMPULSE_OK) {
                 throw std::runtime_error("Failed to execute sample_neighbors: " + std::string(impulse_get_last_error()));
             }
@@ -235,14 +280,21 @@ public:
 
 
     impulse::vm::QueryResult execute_query(const impulse::vm::CompiledQuery& query, uint64_t input_param = 0) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
-        return query.execute(snapshot_, input_param);
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        py::gil_scoped_release release;
+        return query.execute(lease->handle, input_param);
     }
 
     uint32_t resolve_dense_id(uint16_t domain_id, const std::string& key) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
         uint32_t node_id = 0;
-        impulse_status_t status = impulse_snapshot_resolve_key(snapshot_, domain_id, key.data(), key.size(), &node_id);
+        impulse_status_t status = IMPULSE_OK;
+        {
+            py::gil_scoped_release release;
+            status = impulse_snapshot_resolve_key(lease->handle, domain_id, key.data(), key.size(), &node_id);
+        }
         if (status == IMPULSE_ERR_INVALID_ARGUMENT) {
             throw py::key_error("Key '" + key + "' not found in domain " + std::to_string(domain_id));
         } else if (status != IMPULSE_OK) {
@@ -265,6 +317,7 @@ public:
     }
 
 private:
+    std::shared_ptr<SnapshotLease> lease_;
     impulse_snapshot_t* snapshot_ = nullptr;
 };
 
@@ -772,14 +825,18 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("result_register", &impulse::vm::CompiledQuery::resultRegister)
         .def("instruction_count", &impulse::vm::CompiledQuery::instructionCount)
         .def("execute", [](const impulse::vm::CompiledQuery& self, const PyImpulseSnapshot* snap, uint64_t input_param) {
-            const impulse_snapshot_t* s_ptr = snap ? snap->raw_handle() : nullptr;
+            auto lease = snap ? snap->lease() : nullptr;
+            const impulse_snapshot_t* s_ptr = lease ? lease->handle : nullptr;
+            py::gil_scoped_release release;
             return self.execute(s_ptr, input_param);
         }, py::arg("snapshot") = nullptr, py::arg("input_param") = 0)
         .def("execute_with_context", [](const impulse::vm::CompiledQuery& self, PyImpulseVmContext& ctx, impulse_vm_state_t& state, uint64_t input_param) {
             if (!ctx.raw_handle()) {
                 throw std::runtime_error("ImpulseVmContext has been destroyed");
             }
-            return self.executeWithContext(ctx.raw_handle(), &state, input_param);
+            impulse_vm_context_t* raw_ctx = ctx.raw_handle();
+            py::gil_scoped_release release;
+            return self.executeWithContext(raw_ctx, &state, input_param);
         }, py::arg("context"), py::arg("state"), py::arg("input_param") = 0);
 
     py::class_<impulse::vm::QueryBuilder>(m, "QueryBuilder")
@@ -854,6 +911,19 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def_property("current_register", &impulse::vm::QueryBuilder::currentRegister, &impulse::vm::QueryBuilder::setCurrentRegister)
         .def("raw_instructions", &impulse::vm::QueryBuilder::rawInstructions)
         .def("compile", &impulse::vm::QueryBuilder::compile);
+
+    py::class_<PySnapshotBufferView>(m, "_SnapshotBufferView", py::buffer_protocol())
+        .def_buffer([](PySnapshotBufferView& v) -> py::buffer_info {
+            return py::buffer_info(
+                const_cast<void*>(v.ptr),
+                sizeof(uint8_t),
+                py::format_descriptor<uint8_t>::format(),
+                1,
+                {v.size},
+                {sizeof(uint8_t)},
+                /*readonly=*/true
+            );
+        });
 
     py::class_<PyImpulseSnapshot>(m, "Snapshot")
         .def(py::init<const std::string&>(), py::arg("path"))

@@ -39,10 +39,12 @@ func OpenSnapshot(path string) (*Snapshot, error) {
 	if poolCap < 8 {
 		poolCap = 8
 	}
-	return &Snapshot{
+	s := &Snapshot{
 		ptr:    ptr,
 		vmPool: make(chan *VMContext, poolCap),
-	}, nil
+	}
+	runtime.SetFinalizer(s, (*Snapshot).Close)
+	return s, nil
 }
 
 // AcquireVMContext borrows a pooled VMContext bound to this Snapshot, or creates one if the pool is empty.
@@ -102,6 +104,7 @@ drained:
 		C.impulse_snapshot_close(s.ptr)
 		s.ptr = nil
 	}
+	runtime.SetFinalizer(s, nil)
 	s.poolMu.Unlock()
 }
 
@@ -252,9 +255,13 @@ func (s *Snapshot) MaxNodeCount() uint64 {
 	return uint64(C.impulse_snapshot_max_node_count(s.ptr))
 }
 
-// GetRelationBuffers returns zero-copy slice views into the CSR row offsets and column target buffers.
+// GetRelationBuffers returns safe Go copies of the CSR row offsets and column target buffers
+// (preventing dangling mmap slice views after Snapshot.Close).
 func (s *Snapshot) GetRelationBuffers(relationIndex uint16) (offsets []uint32, targets []uint32, nodeCount uint64, edgeCount uint64, err error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return nil, nil, 0, 0, ErrInvalidArgument
 	}
 
@@ -280,18 +287,26 @@ func (s *Snapshot) GetRelationBuffers(relationIndex uint16) (offsets []uint32, t
 	edgeCount = uint64(cEdgeCount)
 
 	if cOffsets != nil {
-		offsets = unsafe.Slice((*uint32)(unsafe.Pointer(cOffsets)), nodeCount+1)
+		rawOffsets := unsafe.Slice((*uint32)(unsafe.Pointer(cOffsets)), nodeCount+1)
+		offsets = make([]uint32, len(rawOffsets))
+		copy(offsets, rawOffsets)
 	}
 	if cTargets != nil {
-		targets = unsafe.Slice((*uint32)(unsafe.Pointer(cTargets)), edgeCount)
+		rawTargets := unsafe.Slice((*uint32)(unsafe.Pointer(cTargets)), edgeCount)
+		targets = make([]uint32, len(rawTargets))
+		copy(targets, rawTargets)
 	}
 
 	return offsets, targets, nodeCount, edgeCount, nil
 }
 
-// GetRelationCSCBuffers returns zero-copy slice views into the CSC column offsets and row target buffers.
+// GetRelationCSCBuffers returns safe Go copies of the CSC column offsets and row target buffers
+// (preventing dangling mmap slice views after Snapshot.Close).
 func (s *Snapshot) GetRelationCSCBuffers(relationIndex uint16) (cscOffsets []uint32, cscTargets []uint32, rowCount uint64, edgeCount uint64, err error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return nil, nil, 0, 0, ErrInvalidArgument
 	}
 
@@ -317,18 +332,26 @@ func (s *Snapshot) GetRelationCSCBuffers(relationIndex uint16) (cscOffsets []uin
 	edgeCount = uint64(cEdgeCount)
 
 	if cCSCOffsets != nil {
-		cscOffsets = unsafe.Slice((*uint32)(unsafe.Pointer(cCSCOffsets)), rowCount+1)
+		rawOffsets := unsafe.Slice((*uint32)(unsafe.Pointer(cCSCOffsets)), rowCount+1)
+		cscOffsets = make([]uint32, len(rawOffsets))
+		copy(cscOffsets, rawOffsets)
 	}
 	if cCSCTargets != nil {
-		cscTargets = unsafe.Slice((*uint32)(unsafe.Pointer(cCSCTargets)), edgeCount)
+		rawTargets := unsafe.Slice((*uint32)(unsafe.Pointer(cCSCTargets)), edgeCount)
+		cscTargets = make([]uint32, len(rawTargets))
+		copy(cscTargets, rawTargets)
 	}
 
 	return cscOffsets, cscTargets, rowCount, edgeCount, nil
 }
 
-// GetAttributeBuffers returns attribute raw data byte slice and offset buffer views for a relation attribute.
+// GetAttributeBuffers returns safe Go copies of the attribute raw data and offset buffers
+// (preventing dangling mmap slice views after Snapshot.Close).
 func (s *Snapshot) GetAttributeBuffers(relationIndex, attributeIndex uint16) (data []byte, offsets []uint32, typeCode uint8, dimension uint32, err error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return nil, nil, 0, 0, ErrInvalidArgument
 	}
 
@@ -359,10 +382,14 @@ func (s *Snapshot) GetAttributeBuffers(relationIndex, attributeIndex uint16) (da
 	dimension = uint32(cDimension)
 
 	if cData != nil && cDataBytes > 0 {
-		data = unsafe.Slice((*byte)(cData), uint64(cDataBytes))
+		rawData := unsafe.Slice((*byte)(cData), uint64(cDataBytes))
+		data = make([]byte, len(rawData))
+		copy(data, rawData)
 	}
 	if cOffsets != nil && cOffsetsBytes > 0 {
-		offsets = unsafe.Slice((*uint32)(cOffsets), uint64(cOffsetsBytes)/4)
+		rawOffsets := unsafe.Slice((*uint32)(cOffsets), uint64(cOffsetsBytes)/4)
+		offsets = make([]uint32, len(rawOffsets))
+		copy(offsets, rawOffsets)
 	}
 
 	return data, offsets, typeCode, dimension, nil
