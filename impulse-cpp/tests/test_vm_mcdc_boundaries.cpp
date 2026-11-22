@@ -1234,15 +1234,16 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     impulse_vm_context_double_vector_set(ctx, h_d3, 0, 1.5);
 
     // 1. OP_VEC_MATH_UNARY: float and double, type_tag == 0 vs 1, dst allocated vs unallocated
+    // Canonical encoding: payload = src_reg | (func_id << 8)
     std::vector<impulse_instruction_t> unary_bc = {
         // Float unary (type_tag=0, dst unallocated)
-        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) }, // sqrt(R1)
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8)) }, // sqrt(R1)
         // Float unary (type_tag=0, dst already allocated as FLOAT_VECTOR)
-        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8)) },
         // Double unary (type_tag=1, dst unallocated)
-        { OP_VEC_MATH_UNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8)) }, // sqrt(R3)
+        { OP_VEC_MATH_UNARY, 1, 11, static_cast<uint32_t>(3 | (2 << 8)) }, // sqrt(R3)
         // Double unary (type_tag=0, src is TYPE_DOUBLE_VECTOR)
-        { OP_VEC_MATH_UNARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 12, static_cast<uint32_t>(3 | (2 << 8)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[1] = static_cast<uint64_t>(h_f1);

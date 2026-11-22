@@ -38,23 +38,10 @@ op_VEC_MATH_UNARY: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    const uint16_t p0 = IMP_INST_U8_0(inst);
+    const uint16_t src = IMP_INST_U8_0(inst);
     const uint16_t p1 = IMP_INST_U8_1(inst);
     const uint16_t p2 = IMP_INST_U8_2(inst);
-
-    bool p0_is_vec = (p0 < IMP_VM_GPR_COUNT && (vm_state->register_types[p0] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT));
-    bool p1_is_vec = (p1 < IMP_VM_GPR_COUNT && (vm_state->register_types[p1] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p1] == TYPE_FLOAT_VECTOR || vm_state->register_types[p1] == TYPE_FLOAT));
-
-    uint16_t src;
-    uint8_t func_id;
-    IMPULSE_TESTCASE(!p0_is_vec && p1_is_vec);
-    if (!p0_is_vec && p1_is_vec) {
-        src = p1;
-        func_id = static_cast<uint8_t>(p0);
-    } else {
-        src = p0;
-        func_id = static_cast<uint8_t>(p1 ? p1 : p2);
-    }
+    const uint8_t func_id = static_cast<uint8_t>(p1 ? p1 : p2);
     VALIDATE_REG(src);
     IMPULSE_ASSERT(src < IMP_VM_GPR_COUNT);
     IMPULSE_CHECK_REG_TYPE(vm_state, src, OP_2D_ALLOWED_SRC_TYPES);

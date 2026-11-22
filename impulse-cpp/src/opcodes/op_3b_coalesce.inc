@@ -72,8 +72,7 @@ op_COALESCE: {
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len1 = vm_state->query_context->float_vector_lengths[h1];
-        size_t active_len = (len1 > 0) ? len1 : v1.size();
-        active_len = std::min(active_len, vDst.size());
+        size_t active_len = std::min(len1, vDst.size());
         vm_state->query_context->float_vector_lengths[hDst] = active_len;
         float fallback = 0.0f;
         if (vm_state->register_types[src2] == TYPE_FLOAT) {
@@ -121,8 +120,7 @@ op_COALESCE: {
         auto& vDst = vm_state->query_context->double_vectors[hDst];
         auto& v1 = vm_state->query_context->double_vectors[h1];
         size_t len1 = vm_state->query_context->double_vector_lengths[h1];
-        size_t active_len = (len1 > 0) ? len1 : v1.size();
-        active_len = std::min(active_len, vDst.size());
+        size_t active_len = std::min(len1, vDst.size());
         vm_state->query_context->double_vector_lengths[hDst] = active_len;
         double fallback = 0.0;
         if (vm_state->register_types[src2] == TYPE_DOUBLE) {
