@@ -169,6 +169,10 @@ install(FILES
     include/impulse_impk.hpp
     include/impulse_implog.hpp
     include/impulse_impscm.hpp
+    include/impulse_opcode_contracts.hpp
+    include/impulse_bytecode_emitter.hpp
+    include/impulse_opcode_macros.h
+    include/impulse_sexpr.hpp
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets

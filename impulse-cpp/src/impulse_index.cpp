@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cfloat>
+#include <cmath>
+#include <limits>
 
 #pragma pack(push, 1)
 struct PermutationHeader {
@@ -123,10 +125,26 @@ impulse_status_t impulse_index_build_permutation(
         std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
     } else if (base_type == 0x06) {
         const float* data = static_cast<const float*>(attr_data);
-        std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
+        std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) {
+            const float va = data[a];
+            const float vb = data[b];
+            const bool a_nan = std::isnan(va);
+            const bool b_nan = std::isnan(vb);
+            if (a_nan != b_nan) return !a_nan; // NaNs sort deterministically last
+            if (a_nan) return false;
+            return va < vb;
+        });
     } else if (base_type == 0x07) {
         const double* data = static_cast<const double*>(attr_data);
-        std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
+        std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) {
+            const double va = data[a];
+            const double vb = data[b];
+            const bool a_nan = std::isnan(va);
+            const bool b_nan = std::isnan(vb);
+            if (a_nan != b_nan) return !a_nan; // NaNs sort deterministically last
+            if (a_nan) return false;
+            return va < vb;
+        });
     } else {
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
@@ -204,13 +222,15 @@ impulse_status_t impulse_index_permutation_range_query(
 
         auto low_it = std::lower_bound(perm, perm + hdr.count, fmin, [data, count = hdr.count](uint32_t idx, float val) {
             if (idx >= count) return false;
-            return data[idx] < val;
+            float v = data[idx];
+            if (std::isnan(v)) return false; // NaNs are sorted after all finite values
+            return v < val;
         });
         for (auto it = low_it; it != perm + hdr.count; ++it) {
             uint32_t node_id = *it;
             if (node_id >= hdr.count) continue;
             float val = data[node_id];
-            if (val > fmax) break;
+            if (std::isnan(val) || val > fmax) break;
             if (matched < max_nodes) out_node_ids[matched] = node_id;
             matched++;
         }
@@ -252,31 +272,59 @@ impulse_status_t impulse_index_build_zone_map(
 ) {
     if (!attr_data || element_count == 0 || !out_bytes || !out_size) return IMPULSE_ERR_INVALID_ARGUMENT;
 
+    uint8_t base_type = type_code & 0x7F;
+    if (base_type != 0x03 && base_type != 0x04 && base_type != 0x06 && base_type != 0x07) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
     const uint32_t PAGE_SIZE = 1024;
     uint32_t page_count = static_cast<uint32_t>((element_count + PAGE_SIZE - 1) / PAGE_SIZE);
 
     std::vector<ZoneMapBlock> blocks(page_count);
-    uint8_t base_type = type_code & 0x7F;
 
     for (uint32_t p = 0; p < page_count; ++p) {
         size_t start = static_cast<size_t>(p) * PAGE_SIZE;
         size_t end = std::min(start + PAGE_SIZE, element_count);
 
-        double min_val = DBL_MAX;
-        double max_val = -DBL_MAX;
-
-        for (size_t i = start; i < end; ++i) {
-            double val = 0.0;
-            if (base_type == 0x06) val = static_cast<const float*>(attr_data)[i];
-            else if (base_type == 0x03) val = static_cast<const int32_t*>(attr_data)[i];
-            else if (base_type == 0x07) val = static_cast<const double*>(attr_data)[i];
-            else if (base_type == 0x04) val = static_cast<const int64_t*>(attr_data)[i];
-            if (val < min_val) min_val = val;
-            if (val > max_val) max_val = val;
+        if (base_type == 0x04) {
+            const int64_t* i64 = static_cast<const int64_t*>(attr_data);
+            int64_t min_i64 = std::numeric_limits<int64_t>::max();
+            int64_t max_i64 = std::numeric_limits<int64_t>::min();
+            for (size_t i = start; i < end; ++i) {
+                if (i64[i] < min_i64) min_i64 = i64[i];
+                if (i64[i] > max_i64) max_i64 = i64[i];
+            }
+            // Conservative outward rounding to IEEE-754 double so values > 2^53 never cause false-negative pruning.
+            constexpr double kTwoPow63 = 9223372036854775808.0; // exact 2^63
+            double dmin = static_cast<double>(min_i64);
+            if (min_i64 != std::numeric_limits<int64_t>::min()) {
+                if (dmin >= kTwoPow63 || static_cast<int64_t>(dmin) > min_i64) {
+                    dmin = std::nextafter(dmin, -std::numeric_limits<double>::infinity());
+                }
+            }
+            double dmax = static_cast<double>(max_i64);
+            if (max_i64 != std::numeric_limits<int64_t>::max()) {
+                if (dmax < kTwoPow63 && static_cast<int64_t>(dmax) < max_i64) {
+                    dmax = std::nextafter(dmax, std::numeric_limits<double>::infinity());
+                }
+            }
+            blocks[p].min_val = dmin;
+            blocks[p].max_val = dmax;
+        } else {
+            double min_val = DBL_MAX;
+            double max_val = -DBL_MAX;
+            for (size_t i = start; i < end; ++i) {
+                double val = 0.0;
+                if (base_type == 0x06) val = static_cast<const float*>(attr_data)[i];
+                else if (base_type == 0x03) val = static_cast<const int32_t*>(attr_data)[i];
+                else val = static_cast<const double*>(attr_data)[i];
+                if (std::isnan(val)) continue;
+                if (val < min_val) min_val = val;
+                if (val > max_val) max_val = val;
+            }
+            blocks[p].min_val = min_val;
+            blocks[p].max_val = max_val;
         }
-
-        blocks[p].min_val = min_val;
-        blocks[p].max_val = max_val;
     }
 
     size_t header_size = sizeof(ZoneMapHeader);
