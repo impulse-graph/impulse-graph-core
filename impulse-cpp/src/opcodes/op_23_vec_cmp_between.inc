@@ -70,8 +70,9 @@ op_VEC_CMP_BETWEEN: {
 
     if (type_vec == TYPE_DOUBLE_VECTOR) {
         int h_src = static_cast<int>(val_vec);
-        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES) && vm_state->query_context->double_vector_lengths[h_src] > 0)
-            ? vm_state->query_context->double_vector_lengths[h_src] : vm_state->query_context->max_nodes;
+        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+            ? std::min(vm_state->query_context->double_vector_lengths[h_src], vm_state->query_context->max_nodes)
+            : vm_state->query_context->max_nodes;
         const double* v = vm_state->query_context->double_vectors[h_src].data();
         const double* min_dvec = (type_min == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[static_cast<int>(val_min)].data() : nullptr;
         const float* min_fvec = (type_min == TYPE_FLOAT_VECTOR) ? vm_state->query_context->float_vectors[static_cast<int>(val_min)].data() : nullptr;
@@ -91,8 +92,9 @@ op_VEC_CMP_BETWEEN: {
         }
     } else if (type_vec == TYPE_FLOAT_VECTOR) {
         int h_src = static_cast<int>(val_vec);
-        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES) && vm_state->query_context->float_vector_lengths[h_src] > 0)
-            ? vm_state->query_context->float_vector_lengths[h_src] : vm_state->query_context->max_nodes;
+        size_t N = (h_src >= 0 && h_src < static_cast<int>(VM_MAX_VECTOR_HANDLES))
+            ? std::min(vm_state->query_context->float_vector_lengths[h_src], vm_state->query_context->max_nodes)
+            : vm_state->query_context->max_nodes;
         const float* v = vm_state->query_context->float_vectors[h_src].data();
         const float* min_fvec = (type_min == TYPE_FLOAT_VECTOR) ? vm_state->query_context->float_vectors[static_cast<int>(val_min)].data() : nullptr;
         const double* min_dvec = (type_min == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[static_cast<int>(val_min)].data() : nullptr;

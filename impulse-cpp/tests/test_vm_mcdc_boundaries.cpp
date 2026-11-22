@@ -1255,16 +1255,16 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     impulse_vm_status_t st = impulse_vm_execute(unary_bc.data(), unary_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
 
-    // 2. OP_VEC_MATH_BINARY: float and double
+    // 2. OP_VEC_MATH_BINARY: float and double (canonical encoding: src1 | (src2 << 8) | (func_id << 16))
     std::vector<impulse_instruction_t> binary_bc = {
         // Float binary (func=0 add, type_tag=0)
-        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
         // Float binary (dst already allocated)
-        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
         // Double binary (func=0 add, type_tag=1)
-        { OP_VEC_MATH_BINARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        { OP_VEC_MATH_BINARY, 1, 11, static_cast<uint32_t>(3 | (4 << 8) | (0 << 16)) },
         // Double binary (func=0 add, type_tag=0, src is TYPE_DOUBLE_VECTOR)
-        { OP_VEC_MATH_BINARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 12, static_cast<uint32_t>(3 | (4 << 8) | (0 << 16)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[2] = static_cast<uint64_t>(h_f2);
@@ -1276,12 +1276,12 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     st = impulse_vm_execute(binary_bc.data(), binary_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
 
-    // 3. OP_VEC_MATH_TERNARY: float and double
+    // 3. OP_VEC_MATH_TERNARY: float and double (canonical encoding: src1 | (src2 << 8) | (src3 << 16) | (func_id << 24))
     std::vector<impulse_instruction_t> ternary_bc = {
         // Float ternary (fma: R1 * R2 + R5)
-        { OP_VEC_MATH_TERNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16) | (5 << 24)) },
+        { OP_VEC_MATH_TERNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (5 << 16) | (0 << 24)) },
         // Double ternary (fma: R3 * R4 + R6)
-        { OP_VEC_MATH_TERNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16) | (6 << 24)) },
+        { OP_VEC_MATH_TERNARY, 1, 11, static_cast<uint32_t>(3 | (4 << 8) | (6 << 16) | (0 << 24)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[5] = static_cast<uint64_t>(h_f3);

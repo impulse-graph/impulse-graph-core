@@ -65,7 +65,7 @@ op_VEC_BLEND: {
     if (type_true == TYPE_DOUBLE_VECTOR) {
         size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_true] : N;
         size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_false] : N;
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : (len1 > 0 ? len1 : (len2 > 0 ? len2 : N));
+        size_t active_len = std::min(std::max(len1, len2), N);
 
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
             int h = acquire_double_vector(vm_state->query_context);
@@ -88,7 +88,7 @@ op_VEC_BLEND: {
     } else {
         size_t len1 = (h_true >= 0 && static_cast<size_t>(h_true) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_true] : N;
         size_t len2 = (h_false >= 0 && static_cast<size_t>(h_false) < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->float_vector_lengths[h_false] : N;
-        size_t active_len = (len1 > 0 && len2 > 0) ? std::max(len1, len2) : (len1 > 0 ? len1 : (len2 > 0 ? len2 : N));
+        size_t active_len = std::min(std::max(len1, len2), N);
 
         if (vm_state->register_types[dst] != TYPE_FLOAT_VECTOR) {
             int h = acquire_float_vector(vm_state->query_context);

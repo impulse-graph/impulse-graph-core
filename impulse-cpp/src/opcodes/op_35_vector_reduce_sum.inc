@@ -38,7 +38,7 @@ op_VECTOR_REDUCE_SUM: {
     if (src_type == TYPE_DOUBLE_VECTOR) {
         size_t h = vm_state->registers[src];
         IMPULSE_ASSERT(h < vm_state->query_context->double_vectors.size());
-        if (h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->double_vector_lengths[h] > 0) {
+        if (h < VM_MAX_VECTOR_HANDLES) {
             size = std::min(size, vm_state->query_context->double_vector_lengths[h]);
         }
         const double* vec = vm_state->query_context->double_vectors[h].data();
@@ -50,7 +50,7 @@ op_VECTOR_REDUCE_SUM: {
     } else if (src_type == TYPE_FLOAT_VECTOR) {
         size_t h = vm_state->registers[src];
         IMPULSE_ASSERT(h < vm_state->query_context->float_vectors.size());
-        if (h < VM_MAX_VECTOR_HANDLES && vm_state->query_context->float_vector_lengths[h] > 0) {
+        if (h < VM_MAX_VECTOR_HANDLES) {
             size = std::min(size, vm_state->query_context->float_vector_lengths[h]);
         }
         const float* vec = vm_state->query_context->float_vectors[h].data();

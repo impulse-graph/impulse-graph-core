@@ -37,28 +37,10 @@ op_VEC_MATH_TERNARY: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    const uint16_t p0 = IMP_INST_U8_0(inst);
-    const uint16_t p1 = IMP_INST_U8_1(inst);
-    const uint16_t p2 = IMP_INST_U8_2(inst);
-    const uint16_t p3 = IMP_INST_U8_3(inst);
-
-    bool p0_is_vec_t = (p0 < IMP_VM_GPR_COUNT && (vm_state->register_types[p0] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT_VECTOR));
-    bool p3_is_vec_t = (p3 < IMP_VM_GPR_COUNT && (vm_state->register_types[p3] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p3] == TYPE_FLOAT_VECTOR));
-
-    uint16_t src1, src2, src3;
-    uint8_t func_id;
-    IMPULSE_TESTCASE(!p0_is_vec_t && p3_is_vec_t);
-    if (!p0_is_vec_t && p3_is_vec_t) {
-        func_id = static_cast<uint8_t>(p0);
-        src1 = p1;
-        src2 = p2;
-        src3 = p3;
-    } else {
-        src1 = p0;
-        src2 = p1;
-        src3 = p2;
-        func_id = static_cast<uint8_t>(p3);
-    }
+    const uint16_t src1 = IMP_INST_U8_0(inst);
+    const uint16_t src2 = IMP_INST_U8_1(inst);
+    const uint16_t src3 = IMP_INST_U8_2(inst);
+    const uint8_t func_id = static_cast<uint8_t>(IMP_INST_U8_3(inst));
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
