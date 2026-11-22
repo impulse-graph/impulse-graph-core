@@ -758,36 +758,45 @@ impulse_status_t impulse_exec(
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
 
-    impulse_stmt_t* stmt = nullptr;
-    impulse_status_t rc = impulse_stmt_prepare(snapshot, query_text, &stmt);
-    if (rc != IMPULSE_OK) {
+    try {
+        impulse_stmt_t* raw_stmt = nullptr;
+        impulse_status_t rc = impulse_stmt_prepare(snapshot, query_text, &raw_stmt);
+        if (rc != IMPULSE_OK) {
+            return rc;
+        }
+        std::unique_ptr<impulse_stmt_t, decltype(&impulse_stmt_finalize)> stmt(raw_stmt, &impulse_stmt_finalize);
+
+        rc = impulse_stmt_bind_node(stmt.get(), "$seed", seed_node);
+        if (rc != IMPULSE_OK) {
+            return rc;
+        }
+
+        // Thread-local reusable execution buffer: avoids per-call heap leaks while
+        // preserving exact impulse_execution_result_t C-ABI layout. Valid until the
+        // next impulse_exec() call on the same thread or thread exit.
+        static thread_local std::vector<uint8_t> tls_exec_buf;
+        size_t buf_size = impulse_stmt_buffer_size(stmt.get());
+        if (tls_exec_buf.size() < buf_size) {
+            tls_exec_buf.resize(buf_size);
+        }
+
+        rc = impulse_stmt_execute(stmt.get(), tls_exec_buf.data(), tls_exec_buf.size());
+        if (rc == IMPULSE_OK) {
+            out_result->status = IMPULSE_VM_OK;
+            out_result->row_count = impulse_stmt_row_count(stmt.get());
+            out_result->column_count = impulse_stmt_column_count(stmt.get());
+            out_result->total_bytes_written = stmt->total_bytes_written;
+            out_result->data_ptr = impulse_stmt_column_data(stmt.get(), 0);
+            out_result->scalar_value = seed_node;
+        } else {
+            out_result->data_ptr = nullptr;
+            out_result->row_count = 0;
+            out_result->column_count = 0;
+            out_result->total_bytes_written = 0;
+        }
+
         return rc;
-    }
-
-    impulse_stmt_bind_node(stmt, "$seed", seed_node);
-
-    // Allocate persistent execution buffer stored on stmt or heap
-    size_t buf_size = impulse_stmt_buffer_size(stmt);
-    uint8_t* auto_buf = static_cast<uint8_t*>(std::malloc(buf_size));
-    if (!auto_buf) {
-        impulse_stmt_finalize(stmt);
-        return IMPULSE_ERR_BUFFER_OVERFLOW;
-    }
-
-    rc = impulse_stmt_execute(stmt, auto_buf, buf_size);
-    if (rc == IMPULSE_OK) {
-        out_result->status = IMPULSE_VM_OK;
-        out_result->row_count = impulse_stmt_row_count(stmt);
-        out_result->column_count = impulse_stmt_column_count(stmt);
-        out_result->total_bytes_written = stmt->total_bytes_written;
-        out_result->data_ptr = impulse_stmt_column_data(stmt, 0);
-        out_result->scalar_value = seed_node;
-    } else {
-        std::free(auto_buf);
-    }
-
-    impulse_stmt_finalize(stmt);
-    return rc;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 } // extern "C"
