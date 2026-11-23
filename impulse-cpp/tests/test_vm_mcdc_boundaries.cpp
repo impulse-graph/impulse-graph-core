@@ -664,12 +664,12 @@ void test_mcdc_load_indirect_and_indexing() {
     st = impulse_vm_execute(vec_indirect_bc.data(), vec_indirect_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
 
-    // Vector indirect out-of-bounds index
+    // Vector indirect out-of-bounds index (no-op matching Java/OCaml 4-way oracle)
     vec_indirect_bc[0].payload = static_cast<uint32_t>(h_f);
     vec_indirect_bc[1].payload = 99999999; // out-of-bounds index
     state.pc = 0;
     st = impulse_vm_execute(vec_indirect_bc.data(), vec_indirect_bc.size(), &state, 0);
-    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+    assert(st == IMPULSE_VM_OK);
 
     impulse_vm_context_destroy(ctx);
 }
@@ -2136,10 +2136,13 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
     assert(impulse_vm_execute(direct_null_bc.data(), direct_null_bc.size(), &state, 0) == IMPULSE_VM_ERR_NULL_SNAPSHOT);
 
     // 4. Roaring Bitmaps Logic & Predicate Range Check
+    int h_bv = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_bv, 0, 5.0f);
+    state.registers[0] = static_cast<uint64_t>(h_bv);
+    state.register_types[0] = TYPE_FLOAT_VECTOR;
     std::vector<impulse_instruction_t> roaring_and_not_bc = {
         { OP_ROARING_BITMAP_AND_NOT, 0, 3, 1 | (2 << 16) },
         { OP_ROARING_BITMAP_OR, 0, 3, 1 | (2 << 16) },
-        { OP_LOAD_CONST_INT, 0, 0, 5 },
         { OP_LOAD_CONST_INT, 0, 9, 0 },
         { OP_LOAD_CONST_INT, 0, 10, 10 },
         { OP_VEC_CMP_BETWEEN, 0, 4, 0 | (9 << 8) | (10 << 16) }, // between min/max
