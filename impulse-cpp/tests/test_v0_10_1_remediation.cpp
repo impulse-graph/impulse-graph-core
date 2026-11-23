@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <new>
 #include <string>
 #include <vector>
@@ -385,7 +386,8 @@ void test_issue_135_impulse_exec_thread_local_reuse(const impulse_snapshot_t* sn
 } // namespace
 
 int main() {
-    const std::string snap_path = build_test_snapshot_file("/tmp/impulse_test_v0101_wave1a.imps");
+    const std::string tmp_snap = (std::filesystem::temp_directory_path() / "impulse_test_v0101_wave1a.imps").string();
+    const std::string snap_path = build_test_snapshot_file(tmp_snap.c_str());
     impulse_status_t open_st = IMPULSE_ERR_IO_FAILURE;
     impulse_snapshot_t* snap = impulse_snapshot_open(snap_path.c_str(), &open_st);
     if (open_st != IMPULSE_OK) {
