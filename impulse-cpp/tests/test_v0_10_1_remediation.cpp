@@ -32,10 +32,10 @@
 // ============================================================================
 // Thread-local heap allocation counter (active in non-ASan builds)
 // ============================================================================
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 #define IMPULSE_HAS_ASAN 1
 #elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #define IMPULSE_HAS_ASAN 1
 #else
 #define IMPULSE_HAS_ASAN 0
