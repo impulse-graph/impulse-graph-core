@@ -411,7 +411,7 @@ jobs:
           EOF
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.prerelease_check.outputs.release_tag }}
           name: "Impulse Graph Core ${{ steps.prerelease_check.outputs.release_tag }}"
