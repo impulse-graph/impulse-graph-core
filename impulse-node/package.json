@@ -1,6 +1,6 @@
 {
   "name": "impulse-graph",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Impulse Graph Engine Node.js & Bun Zero-Copy C-ABI Native Binding",
   "main": "index.js",
   "types": "index.d.ts",

@@ -1,6 +1,6 @@
 [package]
 name = "impulse-graph"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 description = "Impulse Graph Engine Core Crate (Spec v0.10.0)"
 license = "MIT OR Apache-2.0"

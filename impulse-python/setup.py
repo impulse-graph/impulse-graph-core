@@ -79,7 +79,7 @@ extra_compile_args = (
     else ["-std=c++20"]
 )
 
-version = os.environ.get("IMPULSE_VERSION", "0.10.0").strip()
+version = os.environ.get("IMPULSE_VERSION", "0.10.1").strip()
 if version.startswith("v"):
     version = version[1:]
 
