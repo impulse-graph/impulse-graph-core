@@ -169,6 +169,10 @@ install(FILES
     include/impulse_impk.hpp
     include/impulse_implog.hpp
     include/impulse_impscm.hpp
+    include/impulse_opcode_contracts.hpp
+    include/impulse_bytecode_emitter.hpp
+    include/impulse_opcode_macros.h
+    include/impulse_sexpr.hpp
     DESTINATION include
 )
 install(EXPORT ImpulseGraphTargets
@@ -379,6 +383,10 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_issue_78_swe_sweep tests/test_issue_78_swe_sweep.cpp)
     target_link_libraries(test_issue_78_swe_sweep PRIVATE impulse_graph_static)
     add_test(NAME test_issue_78_swe_sweep COMMAND test_issue_78_swe_sweep)
+
+    add_executable(test_v0_10_1_remediation tests/test_v0_10_1_remediation.cpp)
+    target_link_libraries(test_v0_10_1_remediation PRIVATE impulse_graph_static)
+    add_test(NAME test_v0_10_1_remediation COMMAND test_v0_10_1_remediation)
 
     add_executable(test_issue_77_opcodes tests/test_issue_77_opcodes.cpp)
     target_link_libraries(test_issue_77_opcodes PRIVATE impulse_graph_static)

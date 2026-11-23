@@ -725,12 +725,16 @@ void impulse_vm_context_reset(impulse_vm_context_t* ctx) {
             ctx->string_vectors_allocated[i] = false;
             ctx->string_vectors[i].clear();
             ctx->string_vector_owned[i].clear();
+            ctx->string_vector_char_arena[i].clear();
+            ctx->string_vector_char_offsets[i].clear();
         }
         if (ctx->value_maps_allocated[i]) {
             ctx->value_maps_allocated[i] = false;
             ctx->value_maps[i].keys.clear();
             ctx->value_maps[i].values.clear();
             ctx->value_maps[i].owned_keys.clear();
+            ctx->value_maps[i].key_char_arena.clear();
+            ctx->value_maps[i].key_char_offsets.clear();
         }
     }
     for (size_t i = 0; i < VM_MAX_LANE_FRONTIER_HANDLES; ++i) {
@@ -1030,7 +1034,8 @@ void impulse_vm_context_mock_csr_typed(
     uint8_t node_id_width,
     uint8_t edge_index_width
 ) {
-    if (ctx) {
+    if (!ctx) return;
+    try {
         if (relation_index >= ctx->slots.size()) {
             ctx->slots.resize(relation_index + 1);
         }
@@ -1040,6 +1045,7 @@ void impulse_vm_context_mock_csr_typed(
         ctx->slots[relation_index].edge_count = edge_count;
         ctx->slots[relation_index].node_id_width = node_id_width ? node_id_width : 4;
         ctx->slots[relation_index].edge_index_width = edge_index_width ? edge_index_width : 4;
+    } catch (...) {
     }
 }
 

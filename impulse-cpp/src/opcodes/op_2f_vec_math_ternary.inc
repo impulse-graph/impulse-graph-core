@@ -37,28 +37,10 @@ op_VEC_MATH_TERNARY: {
     IMP_REQUIRE_CONTEXT(vm_state);
     IMPULSE_ASSERT(vm_state->query_context != nullptr);
 
-    const uint16_t p0 = IMP_INST_U8_0(inst);
-    const uint16_t p1 = IMP_INST_U8_1(inst);
-    const uint16_t p2 = IMP_INST_U8_2(inst);
-    const uint16_t p3 = IMP_INST_U8_3(inst);
-
-    bool p0_is_vec_t = (p0 < IMP_VM_GPR_COUNT && (vm_state->register_types[p0] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p0] == TYPE_FLOAT_VECTOR));
-    bool p3_is_vec_t = (p3 < IMP_VM_GPR_COUNT && (vm_state->register_types[p3] == TYPE_DOUBLE_VECTOR || vm_state->register_types[p3] == TYPE_FLOAT_VECTOR));
-
-    uint16_t src1, src2, src3;
-    uint8_t func_id;
-    IMPULSE_TESTCASE(!p0_is_vec_t && p3_is_vec_t);
-    if (!p0_is_vec_t && p3_is_vec_t) {
-        func_id = static_cast<uint8_t>(p0);
-        src1 = p1;
-        src2 = p2;
-        src3 = p3;
-    } else {
-        src1 = p0;
-        src2 = p1;
-        src3 = p2;
-        func_id = static_cast<uint8_t>(p3);
-    }
+    const uint16_t src1 = IMP_INST_U8_0(inst);
+    const uint16_t src2 = IMP_INST_U8_1(inst);
+    const uint16_t src3 = IMP_INST_U8_2(inst);
+    const uint8_t func_id = static_cast<uint8_t>(IMP_INST_U8_3(inst));
     VALIDATE_REG(src1);
     VALIDATE_REG(src2);
     VALIDATE_REG(src3);
@@ -140,6 +122,9 @@ op_VEC_MATH_TERNARY: {
     int h_s1 = static_cast<int>(vm_state->registers[src1]);
     int h_s2 = static_cast<int>(vm_state->registers[src2]);
     int h_s3 = static_cast<int>(vm_state->registers[src3]);
+    double pre_c1 = is_vec1 ? 0.0 : read_scalar_f64(src1);
+    double pre_c2 = is_vec2 ? 0.0 : read_scalar_f64(src2);
+    double pre_c3 = is_vec3 ? 0.0 : read_scalar_f64(src3);
 
     if (use_f64) {
         if (vm_state->register_types[dst] != TYPE_DOUBLE_VECTOR) {
@@ -159,9 +144,9 @@ op_VEC_MATH_TERNARY: {
             const double* s3 = vm_state->query_context->double_vectors[h_s3].data();
             impulse_vector_math_ternary_f64(func_id, d, s1, s2, s3, N);
         } else {
-            double c1 = is_vec1 ? 0.0 : read_scalar_f64(src1);
-            double c2 = is_vec2 ? 0.0 : read_scalar_f64(src2);
-            double c3 = is_vec3 ? 0.0 : read_scalar_f64(src3);
+            double c1 = pre_c1;
+            double c2 = pre_c2;
+            double c3 = pre_c3;
             for (size_t i = 0; i < N; ++i) {
                 double a = (t1 == TYPE_DOUBLE_VECTOR) ? vm_state->query_context->double_vectors[h_s1][i]
                          : (t1 == TYPE_FLOAT_VECTOR ? static_cast<double>(vm_state->query_context->float_vectors[h_s1][i]) : c1);
@@ -190,9 +175,9 @@ op_VEC_MATH_TERNARY: {
             const float* s3 = vm_state->query_context->float_vectors[h_s3].data();
             impulse_vector_math_ternary_f32(func_id, d, s1, s2, s3, N);
         } else {
-            float c1 = is_vec1 ? 0.0f : static_cast<float>(read_scalar_f64(src1));
-            float c2 = is_vec2 ? 0.0f : static_cast<float>(read_scalar_f64(src2));
-            float c3 = is_vec3 ? 0.0f : static_cast<float>(read_scalar_f64(src3));
+            float c1 = static_cast<float>(pre_c1);
+            float c2 = static_cast<float>(pre_c2);
+            float c3 = static_cast<float>(pre_c3);
             for (size_t i = 0; i < N; ++i) {
                 float a = is_vec1 ? vm_state->query_context->float_vectors[h_s1][i] : c1;
                 float b = is_vec2 ? vm_state->query_context->float_vectors[h_s2][i] : c2;

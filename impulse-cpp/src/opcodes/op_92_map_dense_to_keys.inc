@@ -48,8 +48,12 @@ op_MAP_DENSE_TO_KEYS: {
     IMPULSE_ASSERT(h_dst >= 0 && static_cast<size_t>(h_dst) < vm_state->query_context->string_vectors.size());
     auto& svec = vm_state->query_context->string_vectors[h_dst];
     auto& sowned = vm_state->query_context->string_vector_owned[h_dst];
+    auto& char_arena = vm_state->query_context->string_vector_char_arena[h_dst];
+    auto& char_offsets = vm_state->query_context->string_vector_char_offsets[h_dst];
     svec.clear();
     sowned.clear();
+    char_arena.clear();
+    char_offsets.clear();
 
     const bool src_is_bitset = (vm_state->register_types[src] == TYPE_BITSET_HANDLE);
     IMPULSE_TESTCASE(src_is_bitset);
@@ -59,10 +63,10 @@ op_MAP_DENSE_TO_KEYS: {
 
     auto add_key = [&](uint64_t u) {
         if (vm_state->query_context->snapshot) {
-            std::string formatted;
-            if (format_snapshot_node_key(vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), formatted)) {
-                sowned.push_back(std::move(formatted));
-                svec.push_back(sowned.back().c_str());
+            size_t off = format_snapshot_node_key_to_arena(
+                vm_state->query_context->snapshot, domain_id, static_cast<uint32_t>(u), char_arena);
+            if (off != SIZE_MAX) {
+                char_offsets.push_back(off);
                 return;
             }
         }
@@ -70,14 +74,22 @@ op_MAP_DENSE_TO_KEYS: {
             const char* str_ptr = nullptr;
             size_t str_len = 0;
             if (extract_var_string_slice(*attr, dom_rows, u, &str_ptr, &str_len) && str_ptr) {
-                sowned.emplace_back(str_ptr, str_len);
-                svec.push_back(sowned.back().c_str());
+                size_t off = char_arena.size();
+                char_arena.insert(char_arena.end(), str_ptr, str_ptr + str_len);
+                char_arena.push_back('\0');
+                char_offsets.push_back(off);
                 return;
             }
         }
         if (vm_state->query_context->snapshot) {
-            sowned.push_back(std::to_string(u));
-            svec.push_back(sowned.back().c_str());
+            char num_buf[32];
+            int n = std::snprintf(num_buf, sizeof(num_buf), "%llu", static_cast<unsigned long long>(u));
+            size_t off = char_arena.size();
+            if (n > 0) {
+                char_arena.insert(char_arena.end(), num_buf, num_buf + static_cast<size_t>(n));
+            }
+            char_arena.push_back('\0');
+            char_offsets.push_back(off);
         }
     };
 
@@ -124,6 +136,11 @@ op_MAP_DENSE_TO_KEYS: {
     } else if (vm_state->register_types[src] == TYPE_NODE_ID || vm_state->register_types[src] == TYPE_INT64) {
         const uint64_t u = vm_state->registers[src];
         if (u < max_nodes) add_key(u);
+    }
+
+    svec.resize(char_offsets.size());
+    for (size_t i = 0; i < char_offsets.size(); ++i) {
+        svec[i] = char_arena.data() + char_offsets[i];
     }
 
     vm_state->registers[dst] = static_cast<uint64_t>(h_dst);

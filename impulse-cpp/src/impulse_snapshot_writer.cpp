@@ -9,36 +9,42 @@ extern "C" {
 
 impulse_writer_t* impulse_writer_create(const char* output_file_path, uint64_t global_features) {
     if (!output_file_path) return nullptr;
-    auto w = std::make_unique<impulse_writer_t>();
-    w->output_path = output_file_path;
-    w->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED;
-    return w.release();
+    try {
+        auto w = std::make_unique<impulse_writer_t>();
+        w->output_path = output_file_path;
+        w->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED;
+        return w.release();
+    } IMPULSE_C_ABI_CATCH_PTR()
 }
 
 impulse_writer_t* impulse_writer_create_stream(impulse_write_fn write_cb, void* user_data, uint64_t global_features) {
     if (!write_cb) return nullptr;
-    auto w = std::make_unique<impulse_writer_t>();
-    w->write_cb = write_cb;
-    w->user_data = user_data;
-    w->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED | IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
-    return w.release();
+    try {
+        auto w = std::make_unique<impulse_writer_t>();
+        w->write_cb = write_cb;
+        w->user_data = user_data;
+        w->global_features = global_features | IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED | IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
+        return w.release();
+    } IMPULSE_C_ABI_CATCH_PTR()
 }
 
 impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name) {
     if (!writer || !name) return IMPULSE_ERR_INVALID_ARGUMENT;
-    impulse_domain_catalog_entry_t dom{};
-    dom.domain_id = domain_id;
-    dom.key_type = key_type;
-    dom.reserved1 = 0;
-    dom.name_offset = 0; // Set during finalize via string table
-    dom.node_count = 0;
-    dom.attr_count = 0;
-    dom.key_attr_index = 0xFFFF;
+    try {
+        impulse_domain_catalog_entry_t dom{};
+        dom.domain_id = domain_id;
+        dom.key_type = key_type;
+        dom.reserved1 = 0;
+        dom.name_offset = 0; // Set during finalize via string table
+        dom.node_count = 0;
+        dom.attr_count = 0;
+        dom.key_attr_index = 0xFFFF;
 
-    writer->domains.push_back(dom);
-    writer->domain_names.push_back(name);
-    writer->domain_attributes.emplace_back();
-    return IMPULSE_OK;
+        writer->domains.push_back(dom);
+        writer->domain_names.push_back(name);
+        writer->domain_attributes.emplace_back();
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_writer_set_domain_node_count(impulse_writer_t* writer, uint16_t domain_index, uint64_t node_count) {
@@ -63,27 +69,29 @@ impulse_status_t impulse_writer_add_domain_attribute(
     const void* offsets, uint64_t offsets_bytes
 ) {
     if (!writer || !name || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
-    if (writer->domain_attributes.size() <= domain_index) {
-        writer->domain_attributes.resize(writer->domains.size());
-    }
+    try {
+        if (writer->domain_attributes.size() <= domain_index) {
+            writer->domain_attributes.resize(writer->domains.size());
+        }
 
-    impulse_writer_attr attr;
-    attr.name = name;
-    attr.type_code = type_code;
-    attr.dimension = dimension;
+        impulse_writer_attr attr;
+        attr.name = name;
+        attr.type_code = type_code;
+        attr.dimension = dimension;
 
-    if (data && data_bytes > 0) {
-        attr.data.resize(data_bytes);
-        std::memcpy(attr.data.data(), data, data_bytes);
-    }
-    if (offsets && offsets_bytes > 0) {
-        attr.offsets.resize(offsets_bytes);
-        std::memcpy(attr.offsets.data(), offsets, offsets_bytes);
-    }
+        if (data && data_bytes > 0) {
+            attr.data.resize(data_bytes);
+            std::memcpy(attr.data.data(), data, data_bytes);
+        }
+        if (offsets && offsets_bytes > 0) {
+            attr.offsets.resize(offsets_bytes);
+            std::memcpy(attr.offsets.data(), offsets, offsets_bytes);
+        }
 
-    writer->domain_attributes[domain_index].push_back(std::move(attr));
-    writer->domains[domain_index].attr_count = static_cast<uint16_t>(writer->domain_attributes[domain_index].size());
-    return IMPULSE_OK;
+        writer->domain_attributes[domain_index].push_back(std::move(attr));
+        writer->domains[domain_index].attr_count = static_cast<uint16_t>(writer->domain_attributes[domain_index].size());
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_writer_add_relation(
@@ -98,30 +106,31 @@ impulse_status_t impulse_writer_add_relation(
     const void* col_indices_data, uint64_t col_indices_bytes
 ) {
     if (!writer || !row_offsets_data || !col_indices_data) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        impulse_writer_relation rel;
+        rel.relation_id = static_cast<uint16_t>(writer->relations.size());
+        rel.src_domain_id = src_domain_id;
+        rel.tgt_domain_id = tgt_domain_id;
+        rel.encoding_id = encoding_id;
+        rel.node_id_width = (edge_count > 0 && col_indices_bytes == edge_count * 2) ? 2 : ((edge_count > 0 && col_indices_bytes == edge_count * 8) ? 8 : 4);
+        rel.edge_index_width = (node_count > 0 && row_offsets_bytes == (node_count + 1) * 8) ? 8 : 4;
+        rel.node_count = node_count;
+        rel.edge_count = edge_count;
+        rel.section_features = section_features;
 
-    impulse_writer_relation rel;
-    rel.relation_id = static_cast<uint16_t>(writer->relations.size());
-    rel.src_domain_id = src_domain_id;
-    rel.tgt_domain_id = tgt_domain_id;
-    rel.encoding_id = encoding_id;
-    rel.node_id_width = (edge_count > 0 && col_indices_bytes == edge_count * 2) ? 2 : ((edge_count > 0 && col_indices_bytes == edge_count * 8) ? 8 : 4);
-    rel.edge_index_width = (node_count > 0 && row_offsets_bytes == (node_count + 1) * 8) ? 8 : 4;
-    rel.node_count = node_count;
-    rel.edge_count = edge_count;
-    rel.section_features = section_features;
+        rel.row_offsets.resize(row_offsets_bytes);
+        if (row_offsets_bytes > 0 && row_offsets_data != nullptr) {
+            std::memcpy(rel.row_offsets.data(), row_offsets_data, row_offsets_bytes);
+        }
 
-    rel.row_offsets.resize(row_offsets_bytes);
-    if (row_offsets_bytes > 0 && row_offsets_data != nullptr) {
-        std::memcpy(rel.row_offsets.data(), row_offsets_data, row_offsets_bytes);
-    }
+        rel.col_indices.resize(col_indices_bytes);
+        if (col_indices_bytes > 0 && col_indices_data != nullptr) {
+            std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+        }
 
-    rel.col_indices.resize(col_indices_bytes);
-    if (col_indices_bytes > 0 && col_indices_data != nullptr) {
-        std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
-    }
-
-    writer->relations.push_back(std::move(rel));
-    return IMPULSE_OK;
+        writer->relations.push_back(std::move(rel));
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_writer_add_attribute(
@@ -134,24 +143,26 @@ impulse_status_t impulse_writer_add_attribute(
     const void* offsets, uint64_t offsets_bytes
 ) {
     if (!writer || !name || relation_index >= writer->relations.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
-    auto& rel = writer->relations[relation_index];
+    try {
+        auto& rel = writer->relations[relation_index];
 
-    impulse_writer_attr attr;
-    attr.name = name;
-    attr.type_code = type_code;
-    attr.dimension = dimension;
+        impulse_writer_attr attr;
+        attr.name = name;
+        attr.type_code = type_code;
+        attr.dimension = dimension;
 
-    if (data && data_bytes > 0) {
-        attr.data.resize(data_bytes);
-        std::memcpy(attr.data.data(), data, data_bytes);
-    }
-    if (offsets && offsets_bytes > 0) {
-        attr.offsets.resize(offsets_bytes);
-        std::memcpy(attr.offsets.data(), offsets, offsets_bytes);
-    }
+        if (data && data_bytes > 0) {
+            attr.data.resize(data_bytes);
+            std::memcpy(attr.data.data(), data, data_bytes);
+        }
+        if (offsets && offsets_bytes > 0) {
+            attr.offsets.resize(offsets_bytes);
+            std::memcpy(attr.offsets.data(), offsets, offsets_bytes);
+        }
 
-    rel.attributes.push_back(std::move(attr));
-    return IMPULSE_OK;
+        rel.attributes.push_back(std::move(attr));
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_writer_add_index(
@@ -165,34 +176,38 @@ impulse_status_t impulse_writer_add_index(
     uint64_t payload_feature_mask
 ) {
     if (!writer || !index_name) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        impulse_writer_index idx;
+        idx.index_id = static_cast<uint32_t>(writer->indexes.size());
+        idx.domain_id = domain_id;
+        idx.relation_id = relation_id;
+        idx.attribute_index = attribute_index;
+        idx.index_type = index_type;
+        idx.index_name = index_name;
+        idx.payload_feature_mask = payload_feature_mask;
 
-    impulse_writer_index idx;
-    idx.index_id = static_cast<uint32_t>(writer->indexes.size());
-    idx.domain_id = domain_id;
-    idx.relation_id = relation_id;
-    idx.attribute_index = attribute_index;
-    idx.index_type = index_type;
-    idx.index_name = index_name;
-    idx.payload_feature_mask = payload_feature_mask;
+        if (index_data && index_bytes > 0) {
+            idx.data.resize(index_bytes);
+            std::memcpy(idx.data.data(), index_data, index_bytes);
+        }
 
-    if (index_data && index_bytes > 0) {
-        idx.data.resize(index_bytes);
-        std::memcpy(idx.data.data(), index_data, index_bytes);
-    }
-
-    writer->indexes.push_back(std::move(idx));
-    return IMPULSE_OK;
+        writer->indexes.push_back(std::move(idx));
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value) {
     if (!writer || !key || !value) return IMPULSE_ERR_INVALID_ARGUMENT;
-    writer->metadata[key] = value;
-    return IMPULSE_OK;
+    try {
+        writer->metadata[key] = value;
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 
 impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     if (!writer) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
 
     bool footer_catalog = (writer->global_features & IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG) != 0 || (writer->write_cb != nullptr);
     if (footer_catalog) {
@@ -576,6 +591,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         }
         return IMPULSE_OK;
     }
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 void impulse_writer_destroy(impulse_writer_t* writer) {
@@ -583,26 +599,32 @@ void impulse_writer_destroy(impulse_writer_t* writer) {
 }
 
 impulse_delta_layer_t* impulse_delta_layer_create(uint16_t src_domain_id, uint16_t tgt_domain_id, const char* relation_name) {
-    auto dl = std::make_unique<impulse_delta_layer_t>();
-    dl->src_domain_id = src_domain_id;
-    dl->tgt_domain_id = tgt_domain_id;
-    dl->relation_name = relation_name ? relation_name : "";
-    return dl.release();
+    try {
+        auto dl = std::make_unique<impulse_delta_layer_t>();
+        dl->src_domain_id = src_domain_id;
+        dl->tgt_domain_id = tgt_domain_id;
+        dl->relation_name = relation_name ? relation_name : "";
+        return dl.release();
+    } IMPULSE_C_ABI_CATCH_PTR()
 }
 
 impulse_status_t impulse_delta_layer_add_edge(impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
     if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
-    std::unique_lock<std::shared_mutex> lock(delta->mutex);
-    delta->tombstones.erase({src_node, tgt_node});
-    delta->additions[src_node].push_back(tgt_node);
-    return IMPULSE_OK;
+    try {
+        std::unique_lock<std::shared_mutex> lock(delta->mutex);
+        delta->tombstones.erase({src_node, tgt_node});
+        delta->additions[src_node].push_back(tgt_node);
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_delta_layer_tombstone_edge(impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
     if (!delta) return IMPULSE_ERR_INVALID_ARGUMENT;
-    std::unique_lock<std::shared_mutex> lock(delta->mutex);
-    delta->tombstones.insert({src_node, tgt_node});
-    return IMPULSE_OK;
+    try {
+        std::unique_lock<std::shared_mutex> lock(delta->mutex);
+        delta->tombstones.insert({src_node, tgt_node});
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 bool impulse_delta_layer_is_tombstoned(const impulse_delta_layer_t* delta, uint64_t src_node, uint64_t tgt_node) {
@@ -800,20 +822,20 @@ impulse_status_t impulse_snapshot_compact_to_file(
     const char* output_file_path
 ) {
     if (!base_snapshot || !output_file_path) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        uint64_t gfeat = 0;
+        if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+            gfeat = base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
+        }
+        std::unique_ptr<impulse_writer_t, decltype(&impulse_writer_destroy)> writer(
+            impulse_writer_create(output_file_path, gfeat), &impulse_writer_destroy);
+        if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    uint64_t gfeat = 0;
-    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
-        gfeat = base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
-    }
-    impulse_writer_t* writer = impulse_writer_create(output_file_path, gfeat);
-    if (!writer) return IMPULSE_ERR_IO_FAILURE;
+        std::vector<std::vector<uint8_t>> owned_buffers;
+        populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
 
-    std::vector<std::vector<uint8_t>> owned_buffers;
-    populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer, owned_buffers);
-
-    impulse_status_t st = impulse_writer_finalize(writer);
-    impulse_writer_destroy(writer);
-    return st;
+        return impulse_writer_finalize(writer.get());
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 impulse_status_t impulse_snapshot_compact_to_stream(
@@ -824,20 +846,20 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     void* user_data
 ) {
     if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
+        if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+            gfeat |= (base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED);
+        }
+        std::unique_ptr<impulse_writer_t, decltype(&impulse_writer_destroy)> writer(
+            impulse_writer_create_stream(write_cb, user_data, gfeat), &impulse_writer_destroy);
+        if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
-    uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
-    if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
-        gfeat |= (base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED);
-    }
-    impulse_writer_t* writer = impulse_writer_create_stream(write_cb, user_data, gfeat);
-    if (!writer) return IMPULSE_ERR_IO_FAILURE;
+        std::vector<std::vector<uint8_t>> owned_buffers;
+        populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
 
-    std::vector<std::vector<uint8_t>> owned_buffers;
-    populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer, owned_buffers);
-
-    impulse_status_t st = impulse_writer_finalize(writer);
-    impulse_writer_destroy(writer);
-    return st;
+        return impulse_writer_finalize(writer.get());
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
 

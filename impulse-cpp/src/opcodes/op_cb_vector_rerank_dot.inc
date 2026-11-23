@@ -175,7 +175,7 @@ op_VECTOR_RERANK_DOT: {
         size_t out_len = std::min(cands.size(), scores.size());
         vm_state->query_context->float_vector_lengths[h_out] = out_len;
 
-        std::vector<float> unpack_buf;
+        auto& unpack_buf = vm_state->query_context->scratch_f32_a;
         for (size_t i = 0; i < out_len; ++i) {
             size_t u = cands[i];
             float score = 0.0f;

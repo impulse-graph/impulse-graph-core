@@ -751,5 +751,11 @@ class Writer:
 
 from .traversal import Traversal  # noqa: E402
 
-__version__ = "0.9.0"
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("impulse-graph")
+except Exception:
+    __version__ = "0.10.1"
+
 __all__ = ["Snapshot", "DomainView", "Writer", "Traversal", "vm"]

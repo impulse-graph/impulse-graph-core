@@ -291,8 +291,8 @@ impl AttributeStatisticsCalculator {
             return AttributeStatistics::empty(name);
         }
 
-        let mut min = i64::MAX;
-        let mut max = i64::MIN;
+        let mut min: Option<i64> = None;
+        let mut max: Option<i64> = None;
         let null_count = 0u64;
         let mut distinct = HashSet::new();
 
@@ -308,13 +308,16 @@ impl AttributeStatisticsCalculator {
         for i in 0..count {
             let chunk: [u8; 4] = data[i * 4..i * 4 + 4].try_into().unwrap();
             let val = i32::from_le_bytes(chunk);
+            let val64 = val as i64;
 
-            if (val as i64) < min {
-                min = val as i64;
-            }
-            if (val as i64) > max {
-                max = val as i64;
-            }
+            min = Some(match min {
+                Some(cur) => cur.min(val64),
+                None => val64,
+            });
+            max = Some(match max {
+                Some(cur) => cur.max(val64),
+                None => val64,
+            });
             if distinct.len() < 10_000 {
                 distinct.insert(val);
             }
@@ -358,10 +361,10 @@ impl AttributeStatisticsCalculator {
 
         AttributeStatistics {
             name: name.to_string(),
-            min_int_val: if min == i64::MAX { 0 } else { min },
-            max_int_val: if max == i64::MIN { 0 } else { max },
-            min_float_val: if min == i64::MAX { 0.0 } else { min as f64 },
-            max_float_val: if max == i64::MIN { 0.0 } else { max as f64 },
+            min_int_val: min.unwrap_or(0),
+            max_int_val: max.unwrap_or(0),
+            min_float_val: min.map(|v| v as f64).unwrap_or(0.0),
+            max_float_val: max.map(|v| v as f64).unwrap_or(0.0),
             min_str_val: String::new(),
             max_str_val: String::new(),
             null_count,
@@ -377,8 +380,8 @@ impl AttributeStatisticsCalculator {
             return AttributeStatistics::empty(name);
         }
 
-        let mut min = i64::MAX;
-        let mut max = i64::MIN;
+        let mut min: Option<i64> = None;
+        let mut max: Option<i64> = None;
         let null_count = 0u64;
         let mut distinct = HashSet::new();
 
@@ -395,12 +398,14 @@ impl AttributeStatisticsCalculator {
             let chunk: [u8; 8] = data[i * 8..i * 8 + 8].try_into().unwrap();
             let val = i64::from_le_bytes(chunk);
 
-            if val < min {
-                min = val;
-            }
-            if val > max {
-                max = val;
-            }
+            min = Some(match min {
+                Some(cur) => cur.min(val),
+                None => val,
+            });
+            max = Some(match max {
+                Some(cur) => cur.max(val),
+                None => val,
+            });
             if distinct.len() < 10_000 {
                 distinct.insert(val);
             }
@@ -444,10 +449,10 @@ impl AttributeStatisticsCalculator {
 
         AttributeStatistics {
             name: name.to_string(),
-            min_int_val: if min == i64::MAX { 0 } else { min },
-            max_int_val: if max == i64::MIN { 0 } else { max },
-            min_float_val: if min == i64::MAX { 0.0 } else { min as f64 },
-            max_float_val: if max == i64::MIN { 0.0 } else { max as f64 },
+            min_int_val: min.unwrap_or(0),
+            max_int_val: max.unwrap_or(0),
+            min_float_val: min.map(|v| v as f64).unwrap_or(0.0),
+            max_float_val: max.map(|v| v as f64).unwrap_or(0.0),
             min_str_val: String::new(),
             max_str_val: String::new(),
             null_count,

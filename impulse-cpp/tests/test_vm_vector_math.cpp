@@ -187,15 +187,15 @@ static void test_vm_vector_math_opcodes() {
         // Load inline float array into R1
         { OP_LOAD_INLINE_ARRAY, 0, 1, 0 | (8 << 16) },
         // R2 = exp(R1)
-        { OP_VEC_MATH_UNARY, 0, 2, (uint32_t)(MATH_FUNC_EXP | (1 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 2, (uint32_t)(1 | (MATH_FUNC_EXP << 8)) },
         // R3 = relu(R1)
-        { OP_VEC_MATH_UNARY, 0, 3, (uint32_t)(MATH_FUNC_RELU | (1 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 3, (uint32_t)(1 | (MATH_FUNC_RELU << 8)) },
         // R4 = gelu(R1)
-        { OP_VEC_MATH_UNARY, 0, 4, (uint32_t)(MATH_FUNC_GELU | (1 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 4, (uint32_t)(1 | (MATH_FUNC_GELU << 8)) },
         // R5 = sigmoid(R1)
-        { OP_VEC_MATH_UNARY, 0, 5, (uint32_t)(MATH_FUNC_SIGMOID | (1 << 8)) },
-        // R6 = pow(R1, 2)
-        { OP_VEC_MATH_BINARY, 0, 6, (uint32_t)(MATH_FUNC_POW | (1 << 8) | (1 << 16)) },
+        { OP_VEC_MATH_UNARY, 0, 5, (uint32_t)(1 | (MATH_FUNC_SIGMOID << 8)) },
+        // R6 = pow(R1, R1)
+        { OP_VEC_MATH_BINARY, 0, 6, (uint32_t)(1 | (1 << 8) | (MATH_FUNC_POW << 16)) },
         { OP_HALT, 0, 0, 0 }
     };
 

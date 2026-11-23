@@ -664,12 +664,12 @@ void test_mcdc_load_indirect_and_indexing() {
     st = impulse_vm_execute(vec_indirect_bc.data(), vec_indirect_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
 
-    // Vector indirect out-of-bounds index
+    // Vector indirect out-of-bounds index (no-op matching Java/OCaml 4-way oracle)
     vec_indirect_bc[0].payload = static_cast<uint32_t>(h_f);
     vec_indirect_bc[1].payload = 99999999; // out-of-bounds index
     state.pc = 0;
     st = impulse_vm_execute(vec_indirect_bc.data(), vec_indirect_bc.size(), &state, 0);
-    assert(st == IMPULSE_VM_ERR_OUT_OF_BOUNDS);
+    assert(st == IMPULSE_VM_OK);
 
     impulse_vm_context_destroy(ctx);
 }
@@ -1234,15 +1234,16 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     impulse_vm_context_double_vector_set(ctx, h_d3, 0, 1.5);
 
     // 1. OP_VEC_MATH_UNARY: float and double, type_tag == 0 vs 1, dst allocated vs unallocated
+    // Canonical encoding: payload = src_reg | (func_id << 8)
     std::vector<impulse_instruction_t> unary_bc = {
         // Float unary (type_tag=0, dst unallocated)
-        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) }, // sqrt(R1)
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8)) }, // sqrt(R1)
         // Float unary (type_tag=0, dst already allocated as FLOAT_VECTOR)
-        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8)) },
         // Double unary (type_tag=1, dst unallocated)
-        { OP_VEC_MATH_UNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8)) }, // sqrt(R3)
+        { OP_VEC_MATH_UNARY, 1, 11, static_cast<uint32_t>(3 | (2 << 8)) }, // sqrt(R3)
         // Double unary (type_tag=0, src is TYPE_DOUBLE_VECTOR)
-        { OP_VEC_MATH_UNARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8)) },
+        { OP_VEC_MATH_UNARY, 0, 12, static_cast<uint32_t>(3 | (2 << 8)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[1] = static_cast<uint64_t>(h_f1);
@@ -1254,16 +1255,16 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     impulse_vm_status_t st = impulse_vm_execute(unary_bc.data(), unary_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
 
-    // 2. OP_VEC_MATH_BINARY: float and double
+    // 2. OP_VEC_MATH_BINARY: float and double (canonical encoding: src1 | (src2 << 8) | (func_id << 16))
     std::vector<impulse_instruction_t> binary_bc = {
         // Float binary (func=0 add, type_tag=0)
-        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
         // Float binary (dst already allocated)
-        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (0 << 16)) },
         // Double binary (func=0 add, type_tag=1)
-        { OP_VEC_MATH_BINARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        { OP_VEC_MATH_BINARY, 1, 11, static_cast<uint32_t>(3 | (4 << 8) | (0 << 16)) },
         // Double binary (func=0 add, type_tag=0, src is TYPE_DOUBLE_VECTOR)
-        { OP_VEC_MATH_BINARY, 0, 12, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16)) },
+        { OP_VEC_MATH_BINARY, 0, 12, static_cast<uint32_t>(3 | (4 << 8) | (0 << 16)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[2] = static_cast<uint64_t>(h_f2);
@@ -1275,12 +1276,12 @@ void test_mcdc_opcodes_vector_math_unary_binary_ternary() {
     st = impulse_vm_execute(binary_bc.data(), binary_bc.size(), &state, 0);
     assert(st == IMPULSE_VM_OK);
 
-    // 3. OP_VEC_MATH_TERNARY: float and double
+    // 3. OP_VEC_MATH_TERNARY: float and double (canonical encoding: src1 | (src2 << 8) | (src3 << 16) | (func_id << 24))
     std::vector<impulse_instruction_t> ternary_bc = {
         // Float ternary (fma: R1 * R2 + R5)
-        { OP_VEC_MATH_TERNARY, 0, 10, static_cast<uint32_t>(0 | (1 << 8) | (2 << 16) | (5 << 24)) },
+        { OP_VEC_MATH_TERNARY, 0, 10, static_cast<uint32_t>(1 | (2 << 8) | (5 << 16) | (0 << 24)) },
         // Double ternary (fma: R3 * R4 + R6)
-        { OP_VEC_MATH_TERNARY, 1, 11, static_cast<uint32_t>(0 | (3 << 8) | (4 << 16) | (6 << 24)) },
+        { OP_VEC_MATH_TERNARY, 1, 11, static_cast<uint32_t>(3 | (4 << 8) | (6 << 16) | (0 << 24)) },
         { OP_HALT, 0, 0, 0 }
     };
     state.registers[5] = static_cast<uint64_t>(h_f3);
@@ -2135,10 +2136,13 @@ void test_mcdc_pass11_exhaustive_vm_matrix() {
     assert(impulse_vm_execute(direct_null_bc.data(), direct_null_bc.size(), &state, 0) == IMPULSE_VM_ERR_NULL_SNAPSHOT);
 
     // 4. Roaring Bitmaps Logic & Predicate Range Check
+    int h_bv = impulse_vm_context_acquire_float_vector(ctx);
+    impulse_vm_context_float_vector_set(ctx, h_bv, 0, 5.0f);
+    state.registers[0] = static_cast<uint64_t>(h_bv);
+    state.register_types[0] = TYPE_FLOAT_VECTOR;
     std::vector<impulse_instruction_t> roaring_and_not_bc = {
         { OP_ROARING_BITMAP_AND_NOT, 0, 3, 1 | (2 << 16) },
         { OP_ROARING_BITMAP_OR, 0, 3, 1 | (2 << 16) },
-        { OP_LOAD_CONST_INT, 0, 0, 5 },
         { OP_LOAD_CONST_INT, 0, 9, 0 },
         { OP_LOAD_CONST_INT, 0, 10, 10 },
         { OP_VEC_CMP_BETWEEN, 0, 4, 0 | (9 << 8) | (10 << 16) }, // between min/max

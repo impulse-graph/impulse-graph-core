@@ -123,7 +123,8 @@ op_VXM: {
             vm_state->query_context->double_vectors[h_dst].resize(N, 0.0);
         }
         vm_state->query_context->double_vector_lengths[h_dst] = N;
-        size_t eff_src_bound = std::min(src_bound, vm_state->query_context->double_vectors[h_src].size());
+        size_t src_len = std::min(vm_state->query_context->double_vector_lengths[h_src], vm_state->query_context->double_vectors[h_src].size());
+        size_t eff_src_bound = std::min(src_bound, src_len);
         double* dst_data = vm_state->query_context->double_vectors[h_dst].data();
         const double* src_data = vm_state->query_context->double_vectors[h_src].data();
 
@@ -190,7 +191,8 @@ op_VXM: {
             vm_state->query_context->float_vectors[h_dst].resize(N, 0.0f);
         }
         vm_state->query_context->float_vector_lengths[h_dst] = N;
-        size_t eff_src_bound = std::min(src_bound, vm_state->query_context->float_vectors[h_src].size());
+        size_t src_len = std::min(vm_state->query_context->float_vector_lengths[h_src], vm_state->query_context->float_vectors[h_src].size());
+        size_t eff_src_bound = std::min(src_bound, src_len);
         float* dst_data = vm_state->query_context->float_vectors[h_dst].data();
         const float* src_data = vm_state->query_context->float_vectors[h_src].data();
 

@@ -37,14 +37,14 @@ op_KCORE_DECOMPOSITION: {
     }
 
     uint16_t rel_id = static_cast<uint16_t>(vm_state->registers[r_src]);
-    if (rel_id == 0u && vm_state->register_types[r_src] == TYPE_NULL && r_src > 0u) {
-        rel_id = r_src;
-    }
     size_t n = 0;
     const BoundRelationSlot* slot_ptr = nullptr;
     if (rel_id < vm_state->query_context->slots.size()) {
         slot_ptr = &vm_state->query_context->slots[rel_id];
         n = std::max(slot_ptr->node_count, slot_ptr->csc_node_count);
+    }
+    if (!slot_ptr || !slot_ptr->offsets_ptr || !slot_ptr->targets_ptr) {
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     if (n == 0) n = vm_state->query_context->max_nodes;
 

@@ -45,7 +45,7 @@ op_COALESCE: {
             return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         }
         int hDst = acquire_float_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (hDst < 0 || static_cast<size_t>(hDst) >= vm_state->query_context->float_vectors.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->float_vectors.size());
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
@@ -65,15 +65,14 @@ op_COALESCE: {
     } else if (vm_state->register_types[src1] == TYPE_FLOAT_VECTOR &&
                vm_state->register_types[src2] == TYPE_FLOAT) {
         int hDst = acquire_float_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (hDst < 0 || static_cast<size_t>(hDst) >= vm_state->query_context->float_vectors.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->float_vectors.size());
         IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->float_vectors.size());
         auto& vDst = vm_state->query_context->float_vectors[hDst];
         auto& v1 = vm_state->query_context->float_vectors[h1];
         size_t len1 = vm_state->query_context->float_vector_lengths[h1];
-        size_t active_len = (len1 > 0) ? len1 : v1.size();
-        active_len = std::min(active_len, vDst.size());
+        size_t active_len = std::min(len1, vDst.size());
         vm_state->query_context->float_vector_lengths[hDst] = active_len;
         float fallback = 0.0f;
         if (vm_state->register_types[src2] == TYPE_FLOAT) {
@@ -90,7 +89,7 @@ op_COALESCE: {
         vm_state->register_types[dst] = TYPE_FLOAT_VECTOR;
     } else if (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR && vm_state->register_types[src2] == TYPE_DOUBLE_VECTOR) {
         int hDst = acquire_double_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (hDst < 0 || static_cast<size_t>(hDst) >= vm_state->query_context->double_vectors.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         int h2 = static_cast<int>(vm_state->registers[src2]);
         IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->double_vectors.size());
@@ -114,15 +113,14 @@ op_COALESCE: {
     } else if (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR &&
                (vm_state->register_types[src2] == TYPE_DOUBLE || vm_state->register_types[src2] == TYPE_FLOAT)) {
         int hDst = acquire_double_vector(vm_state->query_context);
-        if (hDst < 0) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
+        if (hDst < 0 || static_cast<size_t>(hDst) >= vm_state->query_context->double_vectors.size()) return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
         int h1 = static_cast<int>(vm_state->registers[src1]);
         IMPULSE_ASSERT(static_cast<size_t>(hDst) < vm_state->query_context->double_vectors.size());
         IMPULSE_ASSERT(h1 >= 0 && static_cast<size_t>(h1) < vm_state->query_context->double_vectors.size());
         auto& vDst = vm_state->query_context->double_vectors[hDst];
         auto& v1 = vm_state->query_context->double_vectors[h1];
         size_t len1 = vm_state->query_context->double_vector_lengths[h1];
-        size_t active_len = (len1 > 0) ? len1 : v1.size();
-        active_len = std::min(active_len, vDst.size());
+        size_t active_len = std::min(len1, vDst.size());
         vm_state->query_context->double_vector_lengths[hDst] = active_len;
         double fallback = 0.0;
         if (vm_state->register_types[src2] == TYPE_DOUBLE) {

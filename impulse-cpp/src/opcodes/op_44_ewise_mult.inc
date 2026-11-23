@@ -40,7 +40,9 @@ op_EWISE_MULT: {
     }
 
     size_t N = vm_state->query_context->max_nodes;
-    bool is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+    const bool s1_is_double = (vm_state->register_types[src1] == TYPE_DOUBLE_VECTOR);
+    const bool s2_is_double = (vm_state->register_types[src2] == TYPE_DOUBLE_VECTOR);
+    bool is_double = (s1_is_double || s2_is_double);
     IMPULSE_TESTCASE(is_double);
     IMPULSE_TESTCASE(src1 == src2);
     IMPULSE_TESTCASE(dst == src1 || dst == src2);
@@ -48,8 +50,12 @@ op_EWISE_MULT: {
     if (is_double) {
         size_t h_s1 = vm_state->registers[src1];
         size_t h_s2 = vm_state->registers[src2];
-        size_t len1 = (h_s1 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s1] : N;
-        size_t len2 = (h_s2 < VM_MAX_VECTOR_HANDLES) ? vm_state->query_context->double_vector_lengths[h_s2] : N;
+        size_t len1 = (h_s1 < VM_MAX_VECTOR_HANDLES)
+            ? (s1_is_double ? vm_state->query_context->double_vector_lengths[h_s1] : vm_state->query_context->float_vector_lengths[h_s1])
+            : N;
+        size_t len2 = (h_s2 < VM_MAX_VECTOR_HANDLES)
+            ? (s2_is_double ? vm_state->query_context->double_vector_lengths[h_s2] : vm_state->query_context->float_vector_lengths[h_s2])
+            : N;
         size_t active_len = std::min(len1, len2);
         int h_dst = acquire_double_vector(vm_state->query_context);
         if (h_dst < 0) {
@@ -60,15 +66,20 @@ op_EWISE_MULT: {
         IMPULSE_ASSERT(vm_state->registers[dst] < vm_state->query_context->double_vectors.size());
         vm_state->query_context->double_vector_lengths[vm_state->registers[dst]] = active_len;
         double* dst_data = vm_state->query_context->double_vectors[vm_state->registers[dst]].data();
-        const double* s1_data = vm_state->query_context->double_vectors[h_s1].data();
-        const double* s2_data = vm_state->query_context->double_vectors[h_s2].data();
+        const double* d1_data = s1_is_double ? vm_state->query_context->double_vectors[h_s1].data() : nullptr;
+        const float* f1_data = !s1_is_double ? vm_state->query_context->float_vectors[h_s1].data() : nullptr;
+        const double* d2_data = s2_is_double ? vm_state->query_context->double_vectors[h_s2].data() : nullptr;
+        const float* f2_data = !s2_is_double ? vm_state->query_context->float_vectors[h_s2].data() : nullptr;
+        size_t loop_n = std::min(active_len, N);
 
         #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < N; ++i) {
-            if (op_id == BINARY_OP_MUL) dst_data[i] = s1_data[i] * s2_data[i];
-            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(s1_data[i], s2_data[i]);
-            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(s1_data[i], s2_data[i]);
-            else dst_data[i] = s1_data[i] * s2_data[i];
+        for (size_t i = 0; i < loop_n; ++i) {
+            double a = d1_data ? d1_data[i] : static_cast<double>(f1_data[i]);
+            double b = d2_data ? d2_data[i] : static_cast<double>(f2_data[i]);
+            if (op_id == BINARY_OP_MUL) dst_data[i] = a * b;
+            else if (op_id == BINARY_OP_MIN) dst_data[i] = std::min(a, b);
+            else if (op_id == BINARY_OP_MAX) dst_data[i] = std::max(a, b);
+            else dst_data[i] = a * b;
         }
     } else {
         size_t h_s1 = vm_state->registers[src1];

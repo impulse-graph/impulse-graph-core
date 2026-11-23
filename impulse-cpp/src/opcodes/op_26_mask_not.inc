@@ -46,7 +46,6 @@ op_MASK_NOT: {
         size_t len = (static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->float_vector_lengths[h_src]
             : vm_state->query_context->max_nodes;
-        if (len == 0) len = vm_state->query_context->max_nodes;
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_FLOAT_VECTOR && dst != src) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
@@ -88,7 +87,6 @@ op_MASK_NOT: {
         size_t len = (static_cast<size_t>(h_src) < VM_MAX_VECTOR_HANDLES)
             ? vm_state->query_context->double_vector_lengths[h_src]
             : vm_state->query_context->max_nodes;
-        if (len == 0) len = vm_state->query_context->max_nodes;
         int h_dst = -1;
         if (vm_state->register_types[dst] == TYPE_DOUBLE_VECTOR && dst != src) {
             h_dst = static_cast<int>(vm_state->registers[dst]);
@@ -168,6 +166,9 @@ op_MASK_NOT: {
         }
         bs_dst.words[w] = val;
         if (val != 0) is_empty = false;
+    }
+    if (dst == src && h_src >= 0 && h_src != h_dst) {
+        release_bitset(vm_state->query_context, h_src);
     }
     IMP_VM_SET_ZF(vm_state, is_empty);
     vm_state->pc++;

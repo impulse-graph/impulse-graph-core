@@ -201,6 +201,8 @@ struct BoundValueMap {
     std::vector<float> values;
     std::vector<std::array<char, 24>> fallback_keys;
     std::deque<std::string> owned_keys;
+    std::vector<char> key_char_arena;
+    std::vector<size_t> key_char_offsets;
 };
 
 // Maximum concurrent bitset and vector handles per VM query context
@@ -265,6 +267,8 @@ struct impulse_vm_context {
     std::array<bool, VM_MAX_VECTOR_HANDLES> node_vector_length_explicit{};
     std::array<std::vector<const char*>, VM_MAX_VECTOR_HANDLES> string_vectors;
     std::array<std::deque<std::string>, VM_MAX_VECTOR_HANDLES> string_vector_owned;
+    std::array<std::vector<char>, VM_MAX_VECTOR_HANDLES> string_vector_char_arena;
+    std::array<std::vector<size_t>, VM_MAX_VECTOR_HANDLES> string_vector_char_offsets;
     std::array<bool, VM_MAX_VECTOR_HANDLES> string_vectors_allocated;
     std::array<BoundValueMap, VM_MAX_VECTOR_HANDLES> value_maps;
     std::array<bool, VM_MAX_VECTOR_HANDLES> value_maps_allocated;
@@ -1069,6 +1073,162 @@ inline bool format_snapshot_node_key(
         default:
             out_str.assign(static_cast<const char*>(key_bytes), key_len);
             return true;
+    }
+}
+
+// Zero-allocation (post-warmup) variant of format_snapshot_node_key that appends a
+// NUL-terminated key string into a reusable char arena and returns its byte offset
+// (or SIZE_MAX on failure).
+inline size_t format_snapshot_node_key_to_arena(
+    const impulse_snapshot_t* snap,
+    uint16_t domain_id,
+    uint32_t node_id,
+    std::vector<char>& arena
+) {
+    if (!snap) return SIZE_MAX;
+    const void* key_bytes = nullptr;
+    size_t key_len = 0;
+    if (impulse_snapshot_resolve_dense_id(snap, domain_id, node_id, &key_bytes, &key_len) != IMPULSE_OK || !key_bytes) {
+        return SIZE_MAX;
+    }
+
+    auto append_slice = [&](const char* ptr, size_t len) -> size_t {
+        size_t off = arena.size();
+        arena.insert(arena.end(), ptr, ptr + len);
+        arena.push_back('\0');
+        return off;
+    };
+
+    impulse_domain_catalog_entry_t dom{};
+    if (impulse_snapshot_get_domain_entry(snap, domain_id, &dom, nullptr) != IMPULSE_OK || dom.key_attr_index == 0xFFFF) {
+        return append_slice(static_cast<const char*>(key_bytes), key_len);
+    }
+
+    const void* d = nullptr;
+    uint64_t db = 0;
+    const void* o = nullptr;
+    uint64_t ob = 0;
+    uint8_t tc = 0;
+    uint32_t dim = 1;
+    if (impulse_snapshot_get_domain_attribute_buffers(snap, domain_id, dom.key_attr_index, &d, &db, &o, &ob, &tc, &dim) != IMPULSE_OK) {
+        return append_slice(static_cast<const char*>(key_bytes), key_len);
+    }
+
+    uint8_t base_type = static_cast<uint8_t>(tc & 0x7Fu);
+    if (base_type == 0x0B || (base_type == 0x09 && o != nullptr)) {
+        return append_slice(static_cast<const char*>(key_bytes), key_len);
+    }
+    if (base_type == 0x0A) {
+        const auto* b = static_cast<const uint8_t*>(key_bytes);
+        if (key_len == 16) {
+            char buf[40];
+            int n = std::snprintf(
+                buf, sizeof(buf),
+                "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            );
+            return append_slice(buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        size_t off = arena.size();
+        for (size_t i = 0; i < key_len; ++i) {
+            char hex[4];
+            std::snprintf(hex, sizeof(hex), "%02x", b[i]);
+            arena.push_back(hex[0]);
+            arena.push_back(hex[1]);
+        }
+        arena.push_back('\0');
+        return off;
+    }
+
+    char num_buf[32];
+    int n = 0;
+    switch (base_type) {
+        case 0x01: {
+            if (key_len < 1) return SIZE_MAX;
+            if (dom.key_type == 5) {
+                uint8_t v = 0;
+                std::memcpy(&v, key_bytes, 1);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%u", static_cast<unsigned>(v));
+            } else {
+                int8_t v = 0;
+                std::memcpy(&v, key_bytes, 1);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%d", static_cast<int>(v));
+            }
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x11: {
+            if (key_len < 1) return SIZE_MAX;
+            uint8_t v = 0;
+            std::memcpy(&v, key_bytes, 1);
+            n = std::snprintf(num_buf, sizeof(num_buf), "%u", static_cast<unsigned>(v));
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x02: {
+            if (key_len < 2) return SIZE_MAX;
+            if (dom.key_type == 6) {
+                uint16_t v = 0;
+                std::memcpy(&v, key_bytes, 2);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%u", static_cast<unsigned>(v));
+            } else {
+                int16_t v = 0;
+                std::memcpy(&v, key_bytes, 2);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%d", static_cast<int>(v));
+            }
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x12: {
+            if (key_len < 2) return SIZE_MAX;
+            uint16_t v = 0;
+            std::memcpy(&v, key_bytes, 2);
+            n = std::snprintf(num_buf, sizeof(num_buf), "%u", static_cast<unsigned>(v));
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x03: {
+            if (key_len < 4) return SIZE_MAX;
+            if (dom.key_type == 7) {
+                uint32_t v = 0;
+                std::memcpy(&v, key_bytes, 4);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%u", v);
+            } else {
+                int32_t v = 0;
+                std::memcpy(&v, key_bytes, 4);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%d", v);
+            }
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x13: {
+            if (key_len < 4) return SIZE_MAX;
+            uint32_t v = 0;
+            std::memcpy(&v, key_bytes, 4);
+            n = std::snprintf(num_buf, sizeof(num_buf), "%u", v);
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x04:
+        case 0x08:
+        case 0x09:
+        case 0x0D: {
+            if (key_len < 8) return SIZE_MAX;
+            if (dom.key_type == 8) {
+                uint64_t v = 0;
+                std::memcpy(&v, key_bytes, 8);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%llu", static_cast<unsigned long long>(v));
+            } else {
+                int64_t v = 0;
+                std::memcpy(&v, key_bytes, 8);
+                n = std::snprintf(num_buf, sizeof(num_buf), "%lld", static_cast<long long>(v));
+            }
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        case 0x14: {
+            if (key_len < 8) return SIZE_MAX;
+            uint64_t v = 0;
+            std::memcpy(&v, key_bytes, 8);
+            n = std::snprintf(num_buf, sizeof(num_buf), "%llu", static_cast<unsigned long long>(v));
+            return append_slice(num_buf, n > 0 ? static_cast<size_t>(n) : 0u);
+        }
+        default:
+            return append_slice(static_cast<const char*>(key_bytes), key_len);
     }
 }
 

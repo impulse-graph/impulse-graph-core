@@ -59,6 +59,41 @@
 
 extern thread_local std::string g_last_error;
 
+// Standardized C-ABI exception barrier macros: prevent C++ exceptions from
+// unwinding across extern "C" boundaries (which is UB / std::terminate across FFI).
+#define IMPULSE_C_ABI_CATCH_STATUS(oom_status, err_status)                     \
+    catch (const std::bad_alloc&) {                                            \
+        g_last_error = "Out of memory";                                        \
+        return (oom_status);                                                   \
+    } catch (const std::exception& e) {                                        \
+        g_last_error = e.what() ? e.what() : "C++ exception";                  \
+        return (err_status);                                                   \
+    } catch (...) {                                                            \
+        g_last_error = "Unknown C++ exception";                                \
+        return (err_status);                                                   \
+    }
+
+#define IMPULSE_C_ABI_CATCH_PTR()                                              \
+    catch (const std::bad_alloc&) {                                            \
+        g_last_error = "Out of memory";                                        \
+        return nullptr;                                                        \
+    } catch (const std::exception& e) {                                        \
+        g_last_error = e.what() ? e.what() : "C++ exception";                  \
+        return nullptr;                                                        \
+    } catch (...) {                                                            \
+        g_last_error = "Unknown C++ exception";                                \
+        return nullptr;                                                        \
+    }
+
+#define IMPULSE_C_ABI_CATCH_VOID()                                             \
+    catch (const std::bad_alloc&) {                                            \
+        g_last_error = "Out of memory";                                        \
+    } catch (const std::exception& e) {                                        \
+        g_last_error = e.what() ? e.what() : "C++ exception";                  \
+    } catch (...) {                                                            \
+        g_last_error = "Unknown C++ exception";                                \
+    }
+
 struct FdGuard {
     int fd;
     explicit FdGuard(int f) : fd(f) {}

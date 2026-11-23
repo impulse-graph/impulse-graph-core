@@ -11,6 +11,19 @@
 #include <string>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+
+#define TEST_CHECK(cond)                                                               \
+    do {                                                                               \
+        if (!(cond)) {                                                                 \
+            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", #cond, __FILE__, __LINE__);     \
+            std::abort();                                                              \
+        }                                                                              \
+    } while (0)
 
 void test_index_1_permutation() {
     std::cout << ">>> Testing Index #1 (IMP_INDEX_PERMUTATION 0x01)..." << std::endl;
@@ -236,6 +249,152 @@ void test_secondary_indexes_null_and_boundaries() {
     std::cout << "    All Secondary Index null & boundary checks PASSED!" << std::endl;
 }
 
+void test_issue_137_permutation_nan_total_order() {
+    std::cout << ">>> Testing #137 Permutation Index NaN total-order (float & double)..." << std::endl;
+    const size_t N = 2048;
+
+    // Float (0x06) with NaNs, -NaNs, +/-inf, -0.0, +0.0, finite values
+    std::vector<float> fvals(N);
+    size_t f_nan_count = 0;
+    for (size_t i = 0; i < N; ++i) {
+        if (i % 13 == 0) {
+            fvals[i] = std::numeric_limits<float>::quiet_NaN();
+            ++f_nan_count;
+        } else if (i % 17 == 0) {
+            fvals[i] = -std::numeric_limits<float>::quiet_NaN();
+            ++f_nan_count;
+        } else if (i % 29 == 0) {
+            fvals[i] = std::numeric_limits<float>::infinity();
+        } else if (i % 31 == 0) {
+            fvals[i] = -std::numeric_limits<float>::infinity();
+        } else if (i % 7 == 0) {
+            fvals[i] = -0.0f;
+        } else {
+            fvals[i] = static_cast<float>((static_cast<int>(i * 37) % 500) - 250) * 0.5f;
+        }
+    }
+
+    void* f_bytes = nullptr;
+    size_t f_size = 0;
+    impulse_status_t st = impulse_index_build_permutation(fvals.data(), N, 0x06, &f_bytes, &f_size);
+    TEST_CHECK(st == IMPULSE_OK && f_bytes != nullptr);
+
+    const uint32_t* f_perm = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(f_bytes) + 16);
+    bool seen_nan = false;
+    size_t verified_nans = 0;
+    for (size_t i = 0; i < N; ++i) {
+        float v = fvals[f_perm[i]];
+        if (std::isnan(v)) {
+            seen_nan = true;
+            ++verified_nans;
+        } else {
+            TEST_CHECK(!seen_nan);
+            if (i > 0) {
+                float prev = fvals[f_perm[i - 1]];
+                TEST_CHECK(!std::isnan(prev) && prev <= v);
+            }
+        }
+    }
+    TEST_CHECK(verified_nans == f_nan_count);
+
+    std::vector<uint32_t> out_nodes(N);
+    size_t out_count = 0;
+    st = impulse_index_permutation_range_query(f_bytes, f_size, -50.0, 50.0, fvals.data(), out_nodes.data(), N, &out_count);
+    TEST_CHECK(st == IMPULSE_OK && out_count > 0);
+    for (size_t i = 0; i < out_count; ++i) {
+        float v = fvals[out_nodes[i]];
+        TEST_CHECK(!std::isnan(v) && v >= -50.0f && v <= 50.0f);
+    }
+    impulse_index_free(f_bytes);
+
+    // Double (0x07) with NaNs
+    std::vector<double> dvals(N);
+    size_t d_nan_count = 0;
+    for (size_t i = 0; i < N; ++i) {
+        if (i % 11 == 0) {
+            dvals[i] = std::numeric_limits<double>::quiet_NaN();
+            ++d_nan_count;
+        } else {
+            dvals[i] = static_cast<double>((static_cast<int>(i * 53) % 1000) - 500) * 0.25;
+        }
+    }
+    void* d_bytes = nullptr;
+    size_t d_size = 0;
+    st = impulse_index_build_permutation(dvals.data(), N, 0x07, &d_bytes, &d_size);
+    TEST_CHECK(st == IMPULSE_OK && d_bytes != nullptr);
+    const uint32_t* d_perm = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(d_bytes) + 16);
+    seen_nan = false;
+    verified_nans = 0;
+    for (size_t i = 0; i < N; ++i) {
+        double v = dvals[d_perm[i]];
+        if (std::isnan(v)) {
+            seen_nan = true;
+            ++verified_nans;
+        } else {
+            TEST_CHECK(!seen_nan);
+            if (i > 0) {
+                double prev = dvals[d_perm[i - 1]];
+                TEST_CHECK(!std::isnan(prev) && prev <= v);
+            }
+        }
+    }
+    TEST_CHECK(verified_nans == d_nan_count);
+    impulse_index_free(d_bytes);
+    std::cout << "    #137 NaN total-order permutation tests PASSED!" << std::endl;
+}
+
+void test_issue_143_zone_map_types_and_i64_precision() {
+    std::cout << ">>> Testing #143 Zone Map unsupported types & int64 precision..." << std::endl;
+    const uint64_t dummy_data[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    const uint8_t unsupported_types[] = {0x00, 0x01, 0x02, 0x05, 0x08, 0x0B, 0x7F};
+    for (uint8_t tc : unsupported_types) {
+        void* out_bytes = nullptr;
+        size_t out_size = 0;
+        impulse_status_t st = impulse_index_build_zone_map(dummy_data, 8, tc, &out_bytes, &out_size);
+        TEST_CHECK(st == IMPULSE_ERR_INVALID_ARGUMENT);
+        TEST_CHECK(out_bytes == nullptr);
+    }
+
+    const int64_t base = (1LL << 53);
+    std::vector<int64_t> i64_vals(2048, base + 1);
+    i64_vals[0] = base + 3;
+    i64_vals[1024] = -base - 3;
+
+    void* zm_bytes = nullptr;
+    size_t zm_size = 0;
+    impulse_status_t st = impulse_index_build_zone_map(i64_vals.data(), i64_vals.size(), 0x04, &zm_bytes, &zm_size);
+    TEST_CHECK(st == IMPULSE_OK && zm_bytes != nullptr);
+
+    struct ZmBlockView { double min_val; double max_val; };
+    const auto* blocks = reinterpret_cast<const ZmBlockView*>(static_cast<const uint8_t*>(zm_bytes) + 24);
+    TEST_CHECK(blocks[0].min_val <= static_cast<double>(base + 1));
+
+    // Page where max_i64 = base + 1 (rounds DOWN to double(base) < base + 1 -> MUST round UP!)
+    std::vector<int64_t> i64_down(1024, base + 1);
+    void* zm2_bytes = nullptr;
+    size_t zm2_size = 0;
+    st = impulse_index_build_zone_map(i64_down.data(), i64_down.size(), 0x04, &zm2_bytes, &zm2_size);
+    TEST_CHECK(st == IMPULSE_OK && zm2_bytes != nullptr);
+    const auto* b2 = reinterpret_cast<const ZmBlockView*>(static_cast<const uint8_t*>(zm2_bytes) + 24);
+    TEST_CHECK(b2[0].max_val > static_cast<double>(base));
+    TEST_CHECK(b2[0].min_val <= static_cast<double>(base));
+
+    // Page where min_i64 = -base - 1 (rounds UP toward 0 to -double(base) > -base - 1 -> MUST round DOWN!)
+    std::vector<int64_t> i64_neg(1024, -base - 1);
+    void* zm3_bytes = nullptr;
+    size_t zm3_size = 0;
+    st = impulse_index_build_zone_map(i64_neg.data(), i64_neg.size(), 0x04, &zm3_bytes, &zm3_size);
+    TEST_CHECK(st == IMPULSE_OK && zm3_bytes != nullptr);
+    const auto* b3 = reinterpret_cast<const ZmBlockView*>(static_cast<const uint8_t*>(zm3_bytes) + 24);
+    TEST_CHECK(b3[0].min_val < static_cast<double>(-base));
+    TEST_CHECK(b3[0].max_val >= static_cast<double>(-base));
+
+    impulse_index_free(zm_bytes);
+    impulse_index_free(zm2_bytes);
+    impulse_index_free(zm3_bytes);
+    std::cout << "    #143 Zone Map type validation & int64 outward rounding PASSED!" << std::endl;
+}
+
 int main() {
     std::cout << "\n=========================================================================" << std::endl;
     std::cout << "  IMPULSE GRAPH ENGINE - COMPLETE 7 SECONDARY INDEXES UNIT TEST SUITE    " << std::endl;
@@ -249,6 +408,8 @@ int main() {
     test_index_6_domain_split();
     test_index_7_temporal_interval();
     test_secondary_indexes_null_and_boundaries();
+    test_issue_137_permutation_nan_total_order();
+    test_issue_143_zone_map_types_and_i64_precision();
 
     std::cout << "=========================================================================" << std::endl;
     std::cout << "  ALL 7 SECONDARY INDEXES PASSED 100% CLEANLY!                           " << std::endl;
