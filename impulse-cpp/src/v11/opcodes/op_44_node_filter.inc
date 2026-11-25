@@ -51,8 +51,10 @@ V11_OP_CASE(NODE_FILTER) {
         } else if (col_valid) {
             if (col->elem_tag == kVecTagF64) {
                 double x = col->f64_data[u];
-                bool lo_ok = !std::isnan(x) && (scalar_rhs ? p4_is_scalar_f64_valid(ws, s2)
-                                                           : (p4_is_numeric_vec(v_s2) && u < v_s2->length && v_s2->is_valid_at(u)));
+                bool rhs_ok = scalar_rhs
+                    ? p4_is_scalar_f64_valid(ws, s2)
+                    : (p4_is_numeric_vec(v_s2) && u < v_s2->length && v_s2->is_valid_at(u));
+                bool lo_ok = !std::isnan(x) && rhs_ok;
                 if (lo_ok) {
                     double lo = scalar_rhs ? p4_read_scalar_f64(ws, s2) : p4_vec_to_f64(*v_s2, u);
                     if (!std::isnan(lo)) {

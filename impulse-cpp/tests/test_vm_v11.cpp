@@ -771,6 +771,262 @@ static void test_validator_zero_malloc_large_and_branchy() {
     std::printf("test_validator_zero_malloc_large_and_branchy: PASS (0 allocs, words=%zu)\n", words.size());
 }
 
+static void test_mcdc_validator_planner_and_cabi() {
+    // 1. v11_memory_planner.cpp: cover every MC/DC condition (null args, short len, invalid impb,
+    //    max_dop=0 vs >0, snapshot null vs non-null, SPMV, MORSEL_COMMIT, GRAPH_KERNEL subops 0..4,
+    //    COLLECT, FLAG_EXTENDED).
+    impulse_vm_memory_plan_t plan{};
+    std::vector<uint64_t> planner_prog = {
+        enc(0x05, FLAG_EXTENDED, 4, 0, 0, 0, 0, 0),            // LOAD_CONST.i64 (ext)
+        enc(0xFF, 0, 0, 0, 0, 0, 0, 42),                       // EXTENSION_PAYLOAD
+        enc(0x34, 0, 0, 1, 0, 0, 0, 0),                        // OP_SPMV
+        enc(0x3B, 0, 0, 0, 0, 0, 0, 0),                        // OP_GRAPH_KERNEL subop=0
+        enc(0x3B, 0, 1, 0, 0, 0, 0, 0),                        // OP_GRAPH_KERNEL subop=1
+        enc(0x3B, 0, 2, 0, 0, 0, 0, 0),                        // OP_GRAPH_KERNEL subop=2
+        enc(0x3B, 0, 3, 0, 0, 0, 0, 0),                        // OP_GRAPH_KERNEL subop=3
+        enc(0x3B, 0, 4, 0, 0, 0, 0, 0),                        // OP_GRAPH_KERNEL subop=4
+        enc(0x35, 0, 0, 0, 0, 0, 0, (2u << 16) | 0u),          // OP_WALK_MORSEL
+        enc(0x37, 0, 0, 1, 9, 0, 0, 0),                        // OP_MORSEL_COMMIT
+        enc(0x38, 0, 0, 0, 0, 0, 0, (2u << 16)),               // OP_MORSEL_END
+        enc(0x57, 0, 0, 0, 0, 0, 0, 0),                        // OP_COLLECT
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),                        // OP_HALT
+    };
+    auto planner_impb = build_impb(planner_prog);
+    CHECK(impulse_vm_plan_memory(nullptr, planner_impb.size(), nullptr, 1, &plan) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_vm_plan_memory(planner_impb.data(), planner_impb.size(), nullptr, 1, nullptr) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_vm_plan_memory(planner_impb.data(), 4, nullptr, 1, &plan) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    auto bad_impb = planner_impb;
+    bad_impb[0] = 0; // corrupt magic
+    CHECK(impulse_vm_plan_memory(bad_impb.data(), bad_impb.size(), nullptr, 1, &plan) != IMPULSE_VM_V11_OK);
+    CHECK(impulse_vm_plan_memory(planner_impb.data(), planner_impb.size(), nullptr, 0, &plan) == IMPULSE_VM_V11_OK);
+    CHECK(plan.min_scratch_bytes > 0 && plan.guaranteed_scratch_bytes >= plan.min_scratch_bytes && plan.max_result_bytes > 0);
+    CHECK(impulse_vm_plan_memory(planner_impb.data(), planner_impb.size(), nullptr, 4, &plan) == IMPULSE_VM_V11_OK);
+
+    // 2. C-ABI entrypoints in v11_vm_dispatch.cpp (null/alignment/size/header/params guards)
+    alignas(128) uint8_t raw[512 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(nullptr, sizeof(raw), &ws) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_workspace_init(raw, sizeof(raw), nullptr) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_workspace_init(raw + 1, sizeof(raw) - 1, &ws) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_workspace_init(raw, 64, &ws) == IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW);
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+    CHECK(impulse_vm_v11_get_state(nullptr) == nullptr);
+    CHECK(impulse_vm_v11_get_state(ws) != nullptr);
+    impulse_vm_ictx_v2_t null_h = impulse_vm_v11_compute_ictx_v2(nullptr);
+    CHECK(null_h.logical_hash == 0ULL && null_h.physical_hash == 0ULL);
+    impulse_vm_v11_reset_opcode_stats(ws);
+    impulse_vm_v11_opcode_stat_t stats_buf[128]{};
+    (void)impulse_vm_v11_get_opcode_stats(ws, stats_buf);
+
+    std::vector<uint64_t> halt_prog = { enc(0x00, 0, 0, 0, 0, 0, 0, 0) };
+    auto halt_impb = build_impb(halt_prog);
+    CHECK(impulse_vm_execute_v11(nullptr, halt_impb.size(), nullptr, nullptr, ws, nullptr, 0, nullptr) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_vm_execute_v11(halt_impb.data(), halt_impb.size(), nullptr, nullptr, nullptr, nullptr, 0, nullptr) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(impulse_vm_execute_v11(halt_impb.data(), 4, nullptr, nullptr, ws, nullptr, 0, nullptr) == IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    // required_domains > 0 with null snapshot -> ERR_NULL_SNAPSHOT
+    auto req_dom_impb = halt_impb;
+    impulse_impb_header_v11_t rhdr{};
+    std::memcpy(&rhdr, req_dom_impb.data(), sizeof(rhdr));
+    rhdr.required_domains = 1u;
+    std::memcpy(req_dom_impb.data(), &rhdr, sizeof(rhdr));
+    CHECK(impulse_vm_execute_v11(req_dom_impb.data(), req_dom_impb.size(), nullptr, nullptr, ws, nullptr, 0, nullptr) == IMPULSE_VM_V11_ERR_NULL_SNAPSHOT);
+    // Execute with params (geometry_override + gas_limit)
+    impulse_vm_geometry_v11_t geom = kGeomP1;
+    impulse_vm_params_v11_t prm{};
+    prm.gas_limit = 100ULL;
+    prm.geometry_override = &geom;
+    CHECK(impulse_vm_execute_v11(halt_impb.data(), halt_impb.size(), nullptr, &prm, ws, nullptr, 0, nullptr) == IMPULSE_VM_V11_OK);
+
+    // 3. v11_validator.cpp MC/DC: validate_word MBZ conditions for every opcode case
+    auto val_one = [](uint64_t w) -> impulse_vm_status_v11_t {
+        uint64_t prog[2] = { w, enc(0x00, 0, 0, 0, 0, 0, 0, 0) };
+        return impulse_vm_validate_words_v11(prog, 2).status;
+    };
+    // HALT/NOP/RET MBZ: toggle each of dst, s1, s2, s3, imm32 independently
+    CHECK(val_one(enc(0x01, 0, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x01, 0, 0, 1, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x01, 0, 0, 0, 1, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x01, 0, 0, 0, 0, 1, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x01, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x01, 0, 0, 0, 0, 0, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    // EXTENSION_PAYLOAD MBZ: toggle each of flags, subop, dst, s1, s2, s3 independently
+    {
+        uint64_t p_ok[3] = { enc(0x05, FLAG_EXTENDED, 4, 0, 0, 0, 0, 0), enc(0xFF, 0, 0, 0, 0, 0, 0, 99), enc(0x00, 0, 0, 0, 0, 0, 0, 0) };
+        CHECK(impulse_vm_validate_words_v11(p_ok, 3).status == IMPULSE_VM_V11_OK);
+        uint64_t bad_exts[6] = {
+            enc(0xFF, 1, 0, 0, 0, 0, 0, 0), enc(0xFF, 0, 1, 0, 0, 0, 0, 0),
+            enc(0xFF, 0, 0, 1, 0, 0, 0, 0), enc(0xFF, 0, 0, 0, 1, 0, 0, 0),
+            enc(0xFF, 0, 0, 0, 0, 1, 0, 0), enc(0xFF, 0, 0, 0, 0, 0, 1, 0),
+        };
+        for (uint64_t bw : bad_exts) {
+            uint64_t p_bad[3] = { enc(0x05, FLAG_EXTENDED, 4, 0, 0, 0, 0, 0), bw, enc(0x00, 0, 0, 0, 0, 0, 0, 0) };
+            CHECK(impulse_vm_validate_words_v11(p_bad, 3).status != IMPULSE_VM_V11_OK);
+        }
+    }
+    // LOAD_CONST MBZ: ext_valid, null_valid (subop=7 imm!=0), s1/s2/s3!=0
+    CHECK(val_one(enc(0x05, 0, 7, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x05, 0, 7, 0, 0, 0, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x05, 0, 0, 0, 1, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x05, 0, 0, 0, 0, 1, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x05, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x05, 0, 4, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    // SPILL/RELOAD MBZ: imm_lo >= 16, imm_hi != 0
+    CHECK(val_one(enc(0x0A, 0, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x0A, 0, 0, 0, 0, 0, 0, 16)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x0A, 0, 0, 0, 0, 0, 0, (1u << 16))) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    // JMP MBZ: dst/s1/s2/s3 != 0, offset == 0, OOB negative/positive, jump to EXTENSION_PAYLOAD
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 0, 0, 1)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x0F, 0, 0, 1, 0, 0, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 1, 0, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 1, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 0, 1, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 0, 0, static_cast<uint32_t>(-1))) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+    CHECK(val_one(enc(0x0F, 0, 0, 0, 0, 0, 0, 10)) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+    // SPMV MBZ: subop>=7 with ACCUM, !mask with s3!=0
+    CHECK(val_one(enc(0x34, 0, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x34, FLAG_ACCUM, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x34, FLAG_ACCUM, 7, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x34, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x34, FLAG_MASKED_S3, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_OK);
+    // VEC_CMP MBZ: subop=6 (mask/imm32), subop=7 (scalar/mask/s3), other (mask/s3)
+    CHECK(val_one(enc(0x45, 0, 6, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x45, FLAG_MASKED_S3, 6, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x45, 0, 6, 0, 0, 0, 0, 1)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x45, 0, 7, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x45, FLAG_SCALAR_RHS, 7, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x45, 0, 7, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x45, FLAG_MASKED_S3, 7, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x45, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x45, FLAG_MASKED_S3, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_OK);
+    // VEC_TERNARY MBZ: subop=8 with scalar
+    CHECK(val_one(enc(0x4D, 0, 8, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x4D, FLAG_SCALAR_RHS, 8, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x4D, FLAG_SCALAR_RHS, 0, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    // LANE_WALK MBZ: subop=8 with s2!=0, !mask with s3!=0
+    CHECK(val_one(enc(0x63, 0, 8, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x63, 0, 8, 0, 0, 1, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x63, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x63, FLAG_MASKED_S3, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_OK);
+    // LANE_STATE_WALK MBZ: subop=3/8 with scalar, !mask with s3!=0
+    CHECK(val_one(enc(0x6C, 0, 3, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_OK);
+    CHECK(val_one(enc(0x6C, FLAG_SCALAR_RHS, 3, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x6C, FLAG_SCALAR_RHS, 8, 0, 0, 0, 0, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x6C, 0, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    CHECK(val_one(enc(0x6C, FLAG_MASKED_S3, 0, 0, 0, 0, 1, 0)) == IMPULSE_VM_V11_OK);
+
+    // 4. v11_validator.cpp MC/DC: has_uninitialized_morsel_v_read across all morsel-legal ops
+    //    Inside WALK_MORSEL: V8..V11 are pre-initialized, V12..V15 are uninitialized.
+    auto check_morsel_body = [](uint64_t body_op, impulse_vm_status_v11_t expected) {
+        uint64_t prog[4] = {
+            enc(0x35, 0, 0, 0, 0, 0, 0, (2u << 16) | 0u), // WALK_MORSEL
+            body_op,
+            enc(0x38, 0, 0, 0, 0, 0, 0, (2u << 16)),      // MORSEL_END
+            enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+        };
+        auto got = impulse_vm_validate_words_v11(prog, 4).status;
+        if (got != expected) {
+            std::fprintf(stderr, "morsel_body mismatch op=0x%02x sub=%u flg=%u got=%d exp=%d\n",
+                         (unsigned)IMP_V11_OPCODE(body_op), (unsigned)IMP_V11_SUBOP(body_op),
+                         (unsigned)IMP_V11_FLAGS(body_op), (int)got, (int)expected);
+        }
+        CHECK(got == expected);
+    };
+    // MOV.v / SWAP.v / SPILL.v / SET_CONVERT / GATHER_* / GATHER_VEC
+    check_morsel_body(enc(0x08, 0, 2, 12, 8, 0, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x08, 0, 2, 12, 13, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x09, 0, 2, 8, 9, 0, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x09, 0, 2, 12, 8, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x09, 0, 2, 8, 12, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x0A, 0, 2, 0, 8, 0, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x0A, 0, 2, 0, 12, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x26, 0, 1, 8, 8, 0, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x26, 0, 1, 8, 12, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x26, 0, 2, 8, 12, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x41, 0, 0, 12, 13, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x42, 0, 0, 12, 13, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x43, 0, 0, 12, 8, 9, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x43, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x43, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    // VEC_CMP / VEC_3VL_OP / VEC_STR_PRED / COALESCE / VEC_MATH_* / VEC_INT_BITWISE / VEC_TERNARY / VEC_BLEND / MORSEL_COMMIT
+    check_morsel_body(enc(0x45, 0, 0, 12, 8, 9, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x45, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x45, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x45, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x45, 0, 6, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x45, FLAG_SCALAR_RHS, 6, 12, 8, 13, 14, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x46, 0, 0, 12, 8, 9, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x46, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x46, 0, 1, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x46, 0, 3, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x46, 0, 2, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x47, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x47, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4F, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4F, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x48, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x48, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x48, 0, 8, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x49, 0, 8, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x49, 0, 10, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x49, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4A, 0, 6, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4A, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4B, 0, 1, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4B, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4C, 0, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4C, 0, 4, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4C, 0, 3, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4D, 0, 0, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4D, 0, 0, 12, 8, 13, 9, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4D, 0, 1, 12, 8, 9, 13, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x4E, 0, 0, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4E, 0, 0, 12, 8, 13, 9, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x4E, 0, 1, 12, 8, 9, 13, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x37, 0, 0, 1, 13, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x37, 0, 2, 1, 9, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+    check_morsel_body(enc(0x37, FLAG_SCALAR_RHS, 2, 1, 9, 13, 0, 0), IMPULSE_VM_V11_OK);
+    check_morsel_body(enc(0x37, 0, 8, 1, 13, 14, 0, 0), IMPULSE_VM_V11_OK);
+
+    // Toggle remaining C1/scalar/subop MC/DC pairs in has_uninitialized_morsel_v_read & writes_bank_inside_morsel
+    check_morsel_body(enc(0x08, 0, 1, 8, 8, 0, 0, 0), IMPULSE_VM_V11_OK);   // MOV.f (subop!=2)
+    check_morsel_body(enc(0x09, 0, 1, 8, 8, 0, 0, 0), IMPULSE_VM_V11_OK);   // SWAP.f (subop!=2)
+    check_morsel_body(enc(0x0A, 0, 1, 0, 8, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // SPILL.f rejected in morsel
+    check_morsel_body(enc(0x26, 0, 0, 12, 8, 0, 0, 0), IMPULSE_VM_V11_OK);  // SET_CONVERT subop=0 (V write)
+    check_morsel_body(enc(0x26, 0, 2, 8, 8, 0, 0, 0), IMPULSE_VM_V11_OK);   // SET_CONVERT subop=2 (F write)
+    check_morsel_body(enc(0x41, 0, 0, 12, 8, 0, 0, 0), IMPULSE_VM_V11_OK);  // GATHER_NODE_ATTR subop=0 ok
+    check_morsel_body(enc(0x42, 0, 0, 12, 8, 0, 0, 0), IMPULSE_VM_V11_OK);  // GATHER_EDGE_ATTR subop=0 ok
+    check_morsel_body(enc(0x45, 0, 7, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK); // VEC_CMP subop=7 (ignores s2)
+    check_morsel_body(enc(0x46, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // 3VL s1 uninit
+    check_morsel_body(enc(0x46, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);      // 3VL scalar=true
+    check_morsel_body(enc(0x47, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // STR_PRED s1 uninit
+    check_morsel_body(enc(0x4F, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // COALESCE s1 uninit
+    check_morsel_body(enc(0x48, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // ARITH s1 uninit
+    check_morsel_body(enc(0x49, 0, 8, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // EXP_LOG s1 uninit
+    check_morsel_body(enc(0x49, FLAG_SCALAR_RHS, 8, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);      // EXP_LOG scalar=true
+    check_morsel_body(enc(0x4A, 0, 6, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // TRIG_HYP s1 uninit
+    check_morsel_body(enc(0x4A, FLAG_SCALAR_RHS, 6, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);      // TRIG_HYP scalar=true
+    check_morsel_body(enc(0x4B, 0, 1, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // ACT s1 uninit
+    check_morsel_body(enc(0x4B, FLAG_SCALAR_RHS, 1, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);      // ACT scalar=true
+    check_morsel_body(enc(0x4C, 0, 0, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // INT_BITWISE s1 uninit
+    check_morsel_body(enc(0x4C, FLAG_SCALAR_RHS, 0, 12, 8, 13, 0, 0), IMPULSE_VM_V11_OK);      // INT_BITWISE scalar=true
+    check_morsel_body(enc(0x4D, 0, 0, 12, 13, 8, 9, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // TERNARY s1 uninit
+    check_morsel_body(enc(0x4D, FLAG_SCALAR_RHS, 0, 12, 8, 13, 9, 0), IMPULSE_VM_V11_OK);      // TERNARY scalar=true
+    check_morsel_body(enc(0x4D, 0, 2, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // TERNARY subop=2 s3
+    check_morsel_body(enc(0x4D, 0, 4, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // TERNARY subop=4 s3
+    check_morsel_body(enc(0x4D, 0, 6, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // TERNARY subop=6 s3
+    check_morsel_body(enc(0x4E, 0, 0, 12, 13, 8, 9, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // BLEND s1 uninit
+    check_morsel_body(enc(0x4E, FLAG_SCALAR_RHS, 0, 12, 8, 13, 9, 0), IMPULSE_VM_V11_OK);      // BLEND scalar=true
+    check_morsel_body(enc(0x4E, 0, 2, 12, 8, 9, 13, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // BLEND subop=2 s3
+    check_morsel_body(enc(0x6A, 0, 4, 12, 8, 9, 0, 0), IMPULSE_VM_V11_OK);                     // RERANK subop=4 ok
+    check_morsel_body(enc(0x6A, 0, 4, 12, 13, 8, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // RERANK s1 uninit
+    check_morsel_body(enc(0x6A, 0, 4, 12, 8, 13, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // RERANK s2 uninit
+    check_morsel_body(enc(0x51, 0, 2, 12, 8, 0, 0, 0), IMPULSE_VM_V11_OK);                     // VEC_POINT subop=2 ok
+    check_morsel_body(enc(0x51, 0, 2, 12, 13, 0, 0, 0), IMPULSE_VM_V11_ERR_VALIDATION_FAILED); // VEC_POINT s1 uninit
+
+    std::printf("test_mcdc_validator_planner_and_cabi: PASS\n");
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -782,6 +1038,7 @@ int main() {
     test_real_imps_bridge_e2e();
     test_full_pillars_zero_malloc_and_tight_arena_oom();
     test_validator_zero_malloc_large_and_branchy();
+    test_mcdc_validator_planner_and_cabi();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
