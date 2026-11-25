@@ -12,6 +12,7 @@
 #include "v11_internal.hpp"
 #include "opcodes/shared/v11_p1_helpers.hpp"
 #include "opcodes/shared/v11_p2_helpers.hpp"
+#include "opcodes/shared/v11_p3_helpers.hpp"
 #include "impulse_graph_internal.hpp"
 
 #include <atomic>
@@ -138,6 +139,19 @@ static impulse_vm_status_v11_t run_words_unlocked(
     #include "opcodes/op_25_set_contains.inc"
     #include "opcodes/op_26_set_convert.inc"
     #include "opcodes/op_27_stable_check.inc"
+
+    // --- Pillar 3: Topology, SpMV, Lexical Morsels & Structural Kernels (0x30..0x3B) ---
+    #include "opcodes/op_30_walk.inc"
+    #include "opcodes/op_31_walk_filtered.inc"
+    #include "opcodes/op_33_degree.inc"
+    #include "opcodes/op_34_spmv.inc"
+    #include "opcodes/op_35_walk_morsel.inc"
+    #include "opcodes/op_36_filter_morsel.inc"
+    #include "opcodes/op_37_morsel_commit.inc"
+    #include "opcodes/op_38_morsel_end.inc"
+    #include "opcodes/op_39_sample_neighbors.inc"
+    #include "opcodes/op_3a_has_topology.inc"
+    #include "opcodes/op_3b_graph_kernel.inc"
 
 #if V11_HAS_COMPUTED_GOTO
     op_INVALID:

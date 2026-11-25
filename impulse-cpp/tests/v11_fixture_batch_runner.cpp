@@ -472,6 +472,37 @@ std::string run_fixture_json(const std::string& profile,
                 }
                 rel_dense[rid] = std::move(rows);
                 rel_flags[rid][3] = true;
+            } else if (kind == ".key_catalog" && kv) {
+                uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
+                V11KeyCatalog kc{};
+                kc.dom_id = dom;
+                if (const JsonVal* kl = kv->get("keys"); kl && kl->kind == JsonVal::Kind::Array) {
+                    kc.count = static_cast<uint32_t>(kl->arr.size());
+                    if (kc.count > 0u) {
+                        auto* arr = ws->arena.alloc_array<V11StrSlice>(kc.count, 8);
+                        for (uint32_t i = 0; i < kc.count; ++i) {
+                            std::string s = as_str(&kl->arr[i]);
+                            char* copy = nullptr;
+                            if (!s.empty()) {
+                                copy = static_cast<char*>(ws->arena.alloc(s.size(), 1));
+                                std::memcpy(copy, s.data(), s.size());
+                            }
+                            arr[i] = {copy, static_cast<uint32_t>(s.size()), 1u};
+                        }
+                        kc.keys = arr;
+                    }
+                }
+                key_catalogs.push_back(kc);
+            } else if (kind == ".index" && kv) {
+                uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
+                uint16_t attr = static_cast<uint16_t>(as_i64(kv->get("attr"), 0));
+                std::string ik = kv->get("kind") ? as_str(kv->get("kind")) : "sorted";
+                char* copy = nullptr;
+                if (!ik.empty()) {
+                    copy = static_cast<char*>(ws->arena.alloc(ik.size(), 1));
+                    std::memcpy(copy, ik.data(), ik.size());
+                }
+                indexes.push_back({dom, attr, {copy, static_cast<uint32_t>(ik.size()), 1u}});
             } else if (kind == ".node_attr" && kv) {
                 uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
                 uint16_t aid = static_cast<uint16_t>(as_i64(kv->get("attr"), 0));
@@ -651,16 +682,104 @@ std::string run_fixture_json(const std::string& profile,
     const V11SnapshotView* snap_ptr = nullptr;
     std::vector<uint64_t> dom_cards;
     std::vector<V11RelView> rel_views;
+    std::vector<std::vector<uint32_t>> owned_row_offs;
+    std::vector<std::vector<uint64_t>> owned_col_tgts;
+    std::vector<std::vector<uint32_t>> owned_ea_ids;
+    std::vector<std::vector<V11Vector*>> owned_ea_vecs;
     if (!dom_tbl.empty() || !rel_meta.empty()) {
         int max_dom = -1;
         for (const auto& kv : dom_tbl) if (kv.first > max_dom) max_dom = kv.first;
         dom_cards.assign(static_cast<size_t>(max_dom + 1), 0ULL);
         for (const auto& kv : dom_tbl) dom_cards[kv.first] = kv.second;
 
+        int max_rel = -1;
+        for (const auto& kv : rel_meta) if (kv.first > max_rel) max_rel = kv.first;
+        size_t n_rel = (max_rel >= 0) ? static_cast<size_t>(max_rel + 1) : 0u;
+        rel_views.resize(n_rel);
+        owned_row_offs.resize(n_rel);
+        owned_col_tgts.resize(n_rel);
+        owned_ea_ids.resize(n_rel);
+        owned_ea_vecs.resize(n_rel);
+
+        for (size_t rid = 0; rid < n_rel; ++rid) {
+            uint16_t r16 = static_cast<uint16_t>(rid);
+            auto meta_it = rel_meta.find(r16);
+            uint16_t sd = (meta_it != rel_meta.end()) ? meta_it->second.first : 0u;
+            uint16_t td = (meta_it != rel_meta.end()) ? meta_it->second.second : 0u;
+            uint32_t n_src = (sd < dom_cards.size()) ? static_cast<uint32_t>(dom_cards[sd]) : 0u;
+            auto fl_it = rel_flags.find(r16);
+            std::array<bool, 4> fl = (fl_it != rel_flags.end()) ? fl_it->second : std::array<bool, 4>{false, false, false, false};
+
+            if (auto it = rel_csr.find(r16); it != rel_csr.end()) {
+                owned_row_offs[rid] = it->second.first;
+                owned_col_tgts[rid] = it->second.second;
+            } else if (auto it = rel_coo.find(r16); it != rel_coo.end()) {
+                const auto& srcs = it->second.first;
+                const auto& tgts = it->second.second;
+                std::vector<std::vector<uint64_t>> buckets(n_src);
+                size_t lim = std::min(srcs.size(), tgts.size());
+                for (size_t i = 0; i < lim; ++i) {
+                    if (srcs[i] < n_src) buckets[srcs[i]].push_back(tgts[i]);
+                }
+                owned_row_offs[rid].assign(n_src + 1u, 0u);
+                for (uint32_t u = 0; u < n_src; ++u) {
+                    owned_row_offs[rid][u + 1u] = owned_row_offs[rid][u] + static_cast<uint32_t>(buckets[u].size());
+                    owned_col_tgts[rid].insert(owned_col_tgts[rid].end(), buckets[u].begin(), buckets[u].end());
+                }
+            } else if (auto it = rel_dense.find(r16); it != rel_dense.end()) {
+                const auto& rows = it->second;
+                owned_row_offs[rid].assign(n_src + 1u, 0u);
+                for (uint32_t u = 0; u < n_src; ++u) {
+                    uint32_t cnt = 0u;
+                    if (u < rows.size()) {
+                        for (size_t v = 0; v < rows[u].size(); ++v) {
+                            if (rows[u][v] != 0) {
+                                owned_col_tgts[rid].push_back(static_cast<uint64_t>(v));
+                                ++cnt;
+                            }
+                        }
+                    }
+                    owned_row_offs[rid][u + 1u] = owned_row_offs[rid][u] + cnt;
+                }
+            } else {
+                owned_row_offs[rid].assign(n_src + 1u, 0u);
+            }
+
+            if (auto ea_it = edge_attrs.find(r16); ea_it != edge_attrs.end()) {
+                for (const auto& pair : ea_it->second) {
+                    owned_ea_ids[rid].push_back(pair.first);
+                    owned_ea_vecs[rid].push_back(pair.second);
+                }
+            }
+
+            V11RelView rv{};
+            rv.rel_id = r16;
+            rv.src_dom = sd;
+            rv.tgt_dom = td;
+            rv.row_offsets = owned_row_offs[rid].data();
+            rv.row_off_len = static_cast<uint32_t>(owned_row_offs[rid].size());
+            rv.col_targets = owned_col_tgts[rid].data();
+            rv.col_tgt_len = static_cast<uint32_t>(owned_col_tgts[rid].size());
+            rv.has_csr = fl[0];
+            rv.has_csc = fl[1];
+            rv.has_coo = fl[2];
+            rv.has_dense = fl[3];
+            rv.edge_attr_ids = owned_ea_ids[rid].data();
+            rv.edge_attrs = owned_ea_vecs[rid].data();
+            rv.edge_attr_count = static_cast<uint32_t>(owned_ea_ids[rid].size());
+            rel_views[rid] = rv;
+        }
+
         snap_view.domain_cards = dom_cards.data();
         snap_view.domain_count = static_cast<uint32_t>(dom_cards.size());
+        snap_view.relations = rel_views.data();
+        snap_view.relation_count = static_cast<uint32_t>(rel_views.size());
         snap_view.node_attrs = node_attrs.data();
         snap_view.node_attr_count = static_cast<uint32_t>(node_attrs.size());
+        snap_view.key_catalogs = key_catalogs.data();
+        snap_view.key_catalog_count = static_cast<uint32_t>(key_catalogs.size());
+        snap_view.indexes = indexes.data();
+        snap_view.index_count = static_cast<uint32_t>(indexes.size());
         snap_ptr = &snap_view;
     }
 
