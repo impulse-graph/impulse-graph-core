@@ -14,6 +14,7 @@
 #include "opcodes/shared/v11_p2_helpers.hpp"
 #include "opcodes/shared/v11_p3_helpers.hpp"
 #include "opcodes/shared/v11_p4_helpers.hpp"
+#include "opcodes/shared/v11_p5_helpers.hpp"
 #include "impulse_graph_internal.hpp"
 
 #include <atomic>
@@ -183,6 +184,22 @@ static impulse_vm_status_v11_t run_words_unlocked(
     #include "opcodes/op_55_map_keys_to_dense.inc"
     #include "opcodes/op_56_map_dense_to_keys.inc"
     #include "opcodes/op_57_collect.inc"
+
+    // --- Pillar 5: Multi-Lane, Vector ANN/Rerank/Pool & MITra LANE_STATE (0x60..0x6F) ---
+    #include "opcodes/op_60_lane_init_seeds.inc"
+    #include "opcodes/op_61_lane_init_groups.inc"
+    #include "opcodes/op_63_lane_walk.inc"
+    #include "opcodes/op_64_lane_bitwise.inc"
+    #include "opcodes/op_65_lane_filter_quorum.inc"
+    #include "opcodes/op_66_lane_reduce_and.inc"
+    #include "opcodes/op_67_lane_reduce_attr.inc"
+    #include "opcodes/op_69_vector_ann_search.inc"
+    #include "opcodes/op_6a_vector_rerank.inc"
+    #include "opcodes/op_6b_lane_state_init.inc"
+    #include "opcodes/op_6c_lane_state_walk.inc"
+    #include "opcodes/op_6d_lane_state_op.inc"
+    #include "opcodes/op_6e_lane_state_reduce.inc"
+    #include "opcodes/op_6f_vector_pool.inc"
 
 #if V11_HAS_COMPUTED_GOTO
     op_INVALID:
