@@ -165,9 +165,137 @@ static void test_workspace_guards_and_zero_malloc() {
     CHECK(d1.logical_hash == d2.logical_hash && d1.physical_hash == d2.physical_hash);
 }
 
+static void test_swe_sweep_p1_regressions() {
+    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    // Finding #1: impulse_vm_execute_v11 must check in_use CAS BEFORE mutating workspace
+    std::vector<uint64_t> simple = {
+        enc(0x05, 0, 0, 0, 0, 0, 0, 7),
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    auto simple_impb = build_impb(simple);
+    ws->state.pc = 99u;
+    ws->status = IMPULSE_VM_V11_ERR_TRAP;
+    ws->in_use.store(1u, std::memory_order_relaxed);
+    alignas(64) uint8_t res_buf[256];
+    size_t res_bytes = 0;
+    CHECK(impulse_vm_execute_v11(simple_impb.data(), simple_impb.size(), nullptr, nullptr, ws,
+                                 res_buf, sizeof(res_buf), &res_bytes) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
+    // Workspace state must NOT have been clobbered!
+    CHECK(ws->state.pc == 99u);
+    CHECK(ws->status == IMPULSE_VM_V11_ERR_TRAP);
+    ws->in_use.store(0u, std::memory_order_relaxed);
+
+    // Finding #2a: .impb hdr.entry_pc must be respected at execution
+    std::vector<uint64_t> entry_prog = {
+        enc(0x05, 0, 0, 0, 0, 0, 0, 111), // pc=0 (skipped)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),   // pc=1
+        enc(0x05, 0, 0, 0, 0, 0, 0, 222), // pc=2 (entry_pc)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),   // pc=3
+    };
+    auto entry_impb = build_impb(entry_prog);
+    {
+        impulse_impb_header_v11_t hdr{};
+        std::memcpy(&hdr, entry_impb.data(), sizeof(hdr));
+        hdr.entry_pc = 2u;
+        std::memcpy(entry_impb.data(), &hdr, sizeof(hdr));
+    }
+    CHECK(impulse_vm_execute_v11(entry_impb.data(), entry_impb.size(), nullptr, nullptr, ws,
+                                 res_buf, sizeof(res_buf), &res_bytes) == IMPULSE_VM_V11_OK);
+    CHECK(impulse_vm_v11_get_state(ws)->r_regs[0] == 222ULL);
+
+    // Finding #2b: .impb hdr.max_call_depth enforced at runtime
+    std::vector<uint64_t> call_prog = {
+        enc(0x12, 0, 0, 0, 0, 0, 0, 2), // pc=0: CALL +2
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0), // pc=1: HALT
+        enc(0x13, 0, 0, 0, 0, 0, 0, 0), // pc=2: RET
+    };
+    auto call_impb = build_impb(call_prog);
+    {
+        impulse_impb_header_v11_t hdr{};
+        std::memcpy(&hdr, call_impb.data(), sizeof(hdr));
+        hdr.max_call_depth = 0u;
+        std::memcpy(call_impb.data(), &hdr, sizeof(hdr));
+    }
+    CHECK(impulse_vm_execute_v11(call_impb.data(), call_impb.size(), nullptr, nullptr, ws,
+                                 res_buf, sizeof(res_buf), &res_bytes) == IMPULSE_VM_V11_ERR_STACK_OVERFLOW);
+
+    // Finding #9: entry_pc pointing to 0xFF OP_EXTENSION_PAYLOAD rejected by validator
+    std::vector<uint64_t> ext_prog = {
+        enc(0x05, 0x8, 4, 0, 0, 0, 0, 1), // pc=0: LOAD_CONST.i64.ext
+        encode_extension_word(0),          // pc=1: 0xFF
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),   // pc=2: HALT
+    };
+    auto ext_impb = build_impb(ext_prog);
+    {
+        impulse_impb_header_v11_t hdr{};
+        std::memcpy(&hdr, ext_impb.data(), sizeof(hdr));
+        hdr.entry_pc = 1u;
+        std::memcpy(ext_impb.data(), &hdr, sizeof(hdr));
+    }
+    CHECK(impulse_vm_validate_v11(ext_impb.data(), ext_impb.size()).status == IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+
+    // Finding #6: OP_STABLE_CHECK.vec_l1 converts kVecTagU64 as signed int64_t (matching OCaml/Java)
+    ws->reset_execution_state();
+    int64_t u64_a[1] = {static_cast<int64_t>(0xFFFFFFFFFFFFFFFFULL)}; // -1 signed
+    int64_t u64_b[1] = {0};
+    uint64_t vbits[1] = {1ULL};
+    V11Vector va{};
+    va.elem_tag = kVecTagU64;
+    va.length = 1;
+    va.i64_data = u64_a;
+    va.valid_bits = vbits;
+    V11Vector vb{};
+    vb.elem_tag = kVecTagU64;
+    vb.length = 1;
+    vb.i64_data = u64_b;
+    vb.valid_bits = vbits;
+    ws->v_regs[0] = &va;
+    ws->v_regs[1] = &vb;
+    double eps = 2.0;
+    uint64_t eps_bits = 0;
+    std::memcpy(&eps_bits, &eps, 8);
+    ws->write_r(2, static_cast<uint8_t>(ScalarType::SCALAR_F64), eps_bits);
+    uint64_t stable_w = enc(0x27, 0, 1, 3, 0, 1, 2, 0); // STABLE_CHECK.vec_l1 R3, V0, V1, R2
+    CHECK(step_pillar2(*ws, nullptr, stable_w) == kStepStepped);
+    CHECK(ws->status == IMPULSE_VM_V11_OK);
+    double diff = 0.0;
+    std::memcpy(&diff, &ws->state.r_regs[3], 8);
+    CHECK(diff == 1.0); // |-1.0 - 0.0| == 1.0, NOT 1.84467e19!
+    CHECK(ws->flag_st());
+
+    // Finding #7: load_frontier_ids .accum on kTierAllSpan must recompute tier with is_all_span=false
+    ws->reset_execution_state();
+    uint64_t dom_cards[1] = {4ULL};
+    V11SnapshotView snap{};
+    snap.domain_cards = dom_cards;
+    snap.domain_count = 1u;
+    ws->f_regs[0].reset_empty(0u, 4ULL);
+    ws->f_regs[0].tier = kTierAllSpan;
+    ws->f_regs[0].cached_card = 4;
+    ws->set_f_init(0, true);
+    uint64_t f_ids[1] = {1ULL};
+    ws->const_pool[0] = {ConstPoolKind::Frontier, 0u, nullptr, f_ids, 1u, {}};
+    ws->const_pool_count = 1u;
+    uint64_t lcp_w = enc(0x06, FLAG_ACCUM, 1, 0, 0, 0, 0, 0); // LOAD_CONST_POOL.frontier.accum F0, pool=0, dom=0
+    CHECK(step_pillar1(*ws, &snap, &lcp_w, 1, lcp_w) == kStepStepped);
+    CHECK(ws->status == IMPULSE_VM_V11_OK);
+    CHECK(ws->f_regs[0].tier == kTier0Inline);
+    CHECK(ws->f_regs[0].node_count == 4u);
+
+    // Finding #10: V11Frontier::init_from_sorted_ids with know_card=false still caches card for Tier0_inline
+    uint32_t small_ids[2] = {0u, 2u};
+    CHECK(ws->f_regs[1].init_from_sorted_ids(ws->arena, 0u, 100ULL, small_ids, 2u, kGeomP0, false));
+    CHECK(ws->f_regs[1].tier == kTier0Inline);
+    CHECK(ws->f_regs[1].cached_card == 2);
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
+    test_swe_sweep_p1_regressions();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
