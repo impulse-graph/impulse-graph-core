@@ -505,6 +505,40 @@ static void test_swe_sweep_p4_regressions() {
     CHECK(ws->flag_zf());
 }
 
+static void test_swe_sweep_p5_regressions() {
+    alignas(128) uint8_t raw[4 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    uint64_t dom_cards[1] = {2ULL};
+    V11SnapshotView snap{};
+    snap.domain_cards = dom_cards;
+    snap.domain_count = 1u;
+
+    // P5 Finding #1 (P0) & #2 (P1): LANE_STATE_INIT k=256 -> to_lane_frontier must clamp active_lane_count <= 64 (not wrap to 0)
+    // and k=65 -> to_lane_frontier -> LANE_REDUCE_ATTR.count must NOT shift 1ULL << 64 (UBSan clean).
+    ws->reset_execution_state();
+    uint64_t p5_clamp_prog[4] = {
+        enc(0x6B, 0, 0, 0, 0, 0, 0, (256u << 16) | 0u), // LANE_STATE_INIT.zero_f32 V0, dom=0, k=256
+        enc(0x6D, 0, 3, 0, 0, 0, 0, 0),                 // LANE_STATE_OP.to_lane_frontier F0, V0
+        enc(0x67, 0, 3, 1, 0, 0, 0, 0),                 // LANE_REDUCE_ATTR.count V1, F0
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(p5_clamp_prog, 4, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(ws->f_regs[0].active_lane_count == 64u);
+    CHECK(ws->v_regs[1] != nullptr && ws->v_regs[1]->length == 64u);
+
+    ws->reset_execution_state();
+    uint64_t p5_shift_prog[4] = {
+        enc(0x6B, 0, 0, 0, 0, 0, 0, (65u << 16) | 0u),  // LANE_STATE_INIT.zero_f32 V0, dom=0, k=65
+        enc(0x6D, 0, 3, 0, 0, 0, 0, 0),                 // LANE_STATE_OP.to_lane_frontier F0, V0
+        enc(0x67, 0, 3, 1, 0, 0, 0, 0),                 // LANE_REDUCE_ATTR.count V1, F0 (would UB-shift 1ULL<<64)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(p5_shift_prog, 4, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(ws->f_regs[0].active_lane_count == 64u);
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -512,6 +546,7 @@ int main() {
     test_swe_sweep_p2_regressions();
     test_swe_sweep_p3_regressions();
     test_swe_sweep_p4_regressions();
+    test_swe_sweep_p5_regressions();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
