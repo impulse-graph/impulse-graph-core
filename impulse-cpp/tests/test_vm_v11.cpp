@@ -339,11 +339,112 @@ static void test_swe_sweep_p2_regressions() {
     CHECK(!ws->flag_zf());
 }
 
+static void test_swe_sweep_p3_regressions() {
+    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    uint64_t dom_cards[1] = {4ULL};
+    uint32_t row_off[5] = {0u, 1u, 2u, 2u, 2u};
+    uint64_t col_tgt[2] = {1ULL, 2ULL};
+    V11RelView rel{};
+    rel.src_dom = 0u;
+    rel.tgt_dom = 0u;
+    rel.row_offsets = row_off;
+    rel.row_off_len = 5u;
+    rel.col_targets = col_tgt;
+    rel.col_tgt_len = 2u;
+    rel.has_csr = true;
+    V11SnapshotView snap{};
+    snap.domain_cards = dom_cards;
+    snap.domain_count = 1u;
+    snap.relations = &rel;
+    snap.relation_count = 1u;
+
+    // P3 Finding #1 (P0): OP_SAMPLE_NEIGHBORS.vec_wr OOB node ID in switch-dispatch must trap at pc=0 without overwriting V[dst]
+    ws->reset_execution_state();
+    int64_t seed_ids[2] = {0, 99}; // 99 >= dcard(4) -> OOB
+    uint64_t vbits_all[1] = {3ULL};
+    V11Vector v_seeds{};
+    v_seeds.elem_tag = kVecTagU64;
+    v_seeds.length = 2u;
+    v_seeds.i64_data = seed_ids;
+    v_seeds.valid_bits = vbits_all;
+    ws->v_regs[0] = &v_seeds;
+    ws->v_regs[1] = &v_seeds; // sentinel
+    ws->write_r(2, static_cast<uint8_t>(ScalarType::SCALAR_U64), 42ULL);
+    uint64_t samp_oob[2] = {
+        enc(0x39, 0, 1, 1, 0, 2, 0, (1u << 16) | 0u), // SAMPLE_NEIGHBORS.vec_wr V1, V0, R2, rel=0, k=1
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(samp_oob, 2, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+    CHECK(ws->state.pc == 0u);
+    CHECK(ws->v_regs[1] == &v_seeds);
+
+    // P3 Finding #4 (P1): OP_MORSEL_COMMIT.scatter_add targeting valid zero-length V0
+    ws->reset_execution_state();
+    V11Vector v_empty_f64{};
+    v_empty_f64.elem_tag = kVecTagF64;
+    v_empty_f64.length = 0u;
+    ws->v_regs[0] = &v_empty_f64;
+    ws->f_regs[0].reset_empty(0u, 4ULL);
+    ws->set_f_init(0, true);
+    double one = 1.0;
+    uint64_t one_bits = 0;
+    std::memcpy(&one_bits, &one, 8);
+    ws->write_r(1, static_cast<uint8_t>(ScalarType::SCALAR_F64), one_bits);
+    uint64_t morsel_empty_vec[4] = {
+        enc(0x36, 0, 0, 0, 0, 0, 0, (2u << 16)),           // FILTER_MORSEL F0, end_off=2
+        enc(0x37, FLAG_SCALAR_RHS, 2, 0, 8, 1, 0, 0xFFFF), // MORSEL_COMMIT.scatter_add.s V0, M0(V8), R1
+        enc(0x38, 0, 0, 0, 0, 0, 0, 0),                    // MORSEL_END
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),                    // HALT
+    };
+    // With 0 items -> OK
+    CHECK(execute_words_internal(morsel_empty_vec, 4, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    // With 1 item -> ERR_OUT_OF_BOUNDS (not ERR_TYPE_MISMATCH)
+    ws->v_regs[0] = &v_empty_f64;
+    uint32_t id0[1] = {0u};
+    CHECK(ws->f_regs[0].init_from_sorted_ids(ws->arena, 0u, 4ULL, id0, 1u, kGeomP0, true));
+    CHECK(execute_words_internal(morsel_empty_vec, 4, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+
+    // P3 Finding #2 (P0): OP_MORSEL_COMMIT with dst >= 8 on unvalidated bytecode traps ERR_VALIDATION_FAILED
+    ws->reset_execution_state();
+    ws->f_regs[0].reset_empty(0u, 4ULL);
+    ws->set_f_init(0, true);
+    uint64_t morsel_bad_dst[4] = {
+        enc(0x36, 0, 0, 0, 0, 0, 0, (2u << 16)),
+        enc(0x37, 0, 8, 9, 0, 0, 0, 0), // dst = 9 >= 8
+        enc(0x38, 0, 0, 0, 0, 0, 0, 0),
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(morsel_bad_dst, 4, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_VALIDATION_FAILED);
+
+    // P3 Finding #14 (P2): OP_WALK_FILTERED .is_not_null on kVecTagLaneState edge attr returns empty
+    ws->reset_execution_state();
+    V11Vector ls_attr{};
+    ls_attr.elem_tag = kVecTagLaneState;
+    ls_attr.length = 2u;
+    uint32_t ea_ids[1] = {0u};
+    V11Vector* ea_ptrs[1] = {&ls_attr};
+    rel.edge_attr_ids = ea_ids;
+    rel.edge_attrs = ea_ptrs;
+    rel.edge_attr_count = 1u;
+    CHECK(ws->f_regs[0].init_from_sorted_ids(ws->arena, 0u, 4ULL, id0, 1u, kGeomP0, true));
+    ws->set_f_init(0, true);
+    uint64_t wf_ls[2] = {
+        enc(0x31, 0, 6, 1, 0, 0, 0, (0u << 16) | 0u), // WALK_FILTERED.is_not_null F1, F0, rel=0, attr=0
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(wf_ls, 2, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(ws->flag_zf());
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
     test_swe_sweep_p1_regressions();
     test_swe_sweep_p2_regressions();
+    test_swe_sweep_p3_regressions();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
