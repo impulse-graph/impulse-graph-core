@@ -258,22 +258,51 @@ bool has_uninitialized_morsel_v_read(uint8_t op, uint8_t subop, bool scalar,
     }
 }
 
-bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc) {
-    std::vector<uint8_t> visited(n, 0);
-    std::vector<size_t> stack;
-    stack.reserve(n);
+bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, V11Arena* arena, bool* out_oom) {
+    uint8_t stack_vis[2048];
+    size_t stack_dfs[2048];
+    std::vector<uint8_t> heap_vis;
+    std::vector<size_t> heap_dfs;
+    uint8_t* visited = nullptr;
+    size_t* stack_buf = nullptr;
+    size_t saved_pos = arena ? arena->pos : 0u;
+
+    if (n <= 2048u) {
+        std::memset(stack_vis, 0, n);
+        visited = stack_vis;
+        stack_buf = stack_dfs;
+    } else if (arena != nullptr) {
+        visited = arena->alloc_array<uint8_t>(n, 8);
+        stack_buf = arena->alloc_array<size_t>(n, 8);
+        if (!visited || !stack_buf) {
+            arena->pos = saved_pos;
+            if (out_oom) *out_oom = true;
+            return false;
+        }
+        std::memset(visited, 0, n);
+    } else {
+        heap_vis.assign(n, 0);
+        heap_dfs.resize(n);
+        visited = heap_vis.data();
+        stack_buf = heap_dfs.data();
+    }
+    size_t sp = 0u;
+
+    auto finish = [&](bool r) -> bool {
+        if (arena != nullptr) arena->pos = saved_pos;
+        return r;
+    };
 
     bool ext0 = (IMP_V11_FLAGS(words[target_pc]) & FLAG_EXTENDED) != 0u;
     size_t start = target_pc + (ext0 ? 2u : 1u);
     if (start < n) {
-        if (start == target_pc) return true;
+        if (start == target_pc) return finish(true);
         visited[start] = 1;
-        stack.push_back(start);
+        stack_buf[sp++] = start;
     }
 
-    while (!stack.empty()) {
-        size_t cur = stack.back();
-        stack.pop_back();
+    while (sp > 0u) {
+        size_t cur = stack_buf[--sp];
         uint64_t w = words[cur];
         uint8_t op = IMP_V11_OPCODE(w);
         bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
@@ -288,10 +317,10 @@ bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc) {
                 break;
             case Opcode::OP_JMP: {
                 int64_t t = static_cast<int64_t>(cur) + imm32;
-                if (t == static_cast<int64_t>(target_pc)) return true;
+                if (t == static_cast<int64_t>(target_pc)) return finish(true);
                 if (t >= 0 && static_cast<size_t>(t) < n && !visited[static_cast<size_t>(t)]) {
                     visited[static_cast<size_t>(t)] = 1;
-                    stack.push_back(static_cast<size_t>(t));
+                    stack_buf[sp++] = static_cast<size_t>(t);
                 }
                 break;
             }
@@ -299,41 +328,49 @@ bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc) {
             case Opcode::OP_LOOP_DECR:
             case Opcode::OP_CALL: {
                 int64_t t = static_cast<int64_t>(cur) + imm32;
-                if (t == static_cast<int64_t>(target_pc) || next_pc == target_pc) return true;
+                if (t == static_cast<int64_t>(target_pc) || next_pc == target_pc) return finish(true);
                 if (next_pc < n && !visited[next_pc]) {
                     visited[next_pc] = 1;
-                    stack.push_back(next_pc);
+                    stack_buf[sp++] = next_pc;
                 }
                 if (t >= 0 && static_cast<size_t>(t) < n && !visited[static_cast<size_t>(t)]) {
                     visited[static_cast<size_t>(t)] = 1;
-                    stack.push_back(static_cast<size_t>(t));
+                    stack_buf[sp++] = static_cast<size_t>(t);
                 }
                 break;
             }
             default: {
-                if (next_pc == target_pc) return true;
+                if (next_pc == target_pc) return finish(true);
                 if (next_pc < n && !visited[next_pc]) {
                     visited[next_pc] = 1;
-                    stack.push_back(next_pc);
+                    stack_buf[sp++] = next_pc;
                 }
                 break;
             }
         }
     }
-    return false;
+    return finish(false);
 }
 
 } // namespace
-} // namespace impulse::vm::v11
 
-extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11(
+impulse_vm_validation_v11_t validate_words_in_arena(
     const uint64_t* words,
-    size_t word_count
-) {
-    using namespace impulse::vm::v11;
+    size_t word_count,
+    V11Arena* arena
+) noexcept {
     if (!words || word_count == 0) {
         return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
     }
+    const size_t saved_arena_pos = arena ? arena->pos : 0u;
+    struct ArenaRewind {
+        V11Arena* a;
+        size_t pos;
+        ~ArenaRewind() noexcept { if (a) a->pos = pos; }
+    } rewind_guard{arena, saved_arena_pos};
+    auto ret = [&](impulse_vm_validation_v11_t v) noexcept {
+        return v;
+    };
 
     // Pass 1: Decode words and verify 128-bit FLAG_EXTENDED <-> 0xFF pairing
     size_t pc = 0;
@@ -371,14 +408,23 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
     size_t m_end_pc = 0;
     uint8_t m_outer_src_f = 0;
     int m_outer_mask_f = -1;
-    std::vector<uint8_t> m_has_join;
-    std::vector<std::array<bool, 8>> m_join_written;
+    uint8_t stack_mj[256];
+    uint8_t stack_mw[256];
+    std::vector<uint8_t> heap_mj;
+    std::vector<uint8_t> heap_mw;
+    uint8_t* m_has_join = nullptr;
+    uint8_t* m_join_written = nullptr;
     std::array<bool, 8> m_written_v{};
+
     uint8_t stack_mi[2048];
     std::vector<uint8_t> heap_mi;
     uint8_t* in_morsel_interior = stack_mi;
     if (word_count <= 2048u) {
         std::memset(stack_mi, 0, word_count);
+    } else if (arena != nullptr) {
+        in_morsel_interior = arena->alloc_array<uint8_t>(word_count, 8);
+        if (!in_morsel_interior) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
+        std::memset(in_morsel_interior, 0, word_count);
     } else {
         heap_mi.assign(word_count, 0);
         in_morsel_interior = heap_mi.data();
@@ -425,8 +471,24 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
                 m_end_pc = end_pc;
                 m_outer_src_f = s1;
                 m_outer_mask_f = mask ? static_cast<int>(s3) : -1;
-                m_has_join.assign(end_pc - pc + 1, 0);
-                m_join_written.assign(end_pc - pc + 1, std::array<bool, 8>{});
+                size_t m_span = end_pc - pc + 1u;
+                if (m_span <= 256u) {
+                    std::memset(stack_mj, 0, m_span);
+                    std::memset(stack_mw, 0, m_span);
+                    m_has_join = stack_mj;
+                    m_join_written = stack_mw;
+                } else if (arena != nullptr) {
+                    m_has_join = arena->alloc_array<uint8_t>(m_span, 8);
+                    m_join_written = arena->alloc_array<uint8_t>(m_span, 8);
+                    if (!m_has_join || !m_join_written) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
+                    std::memset(m_has_join, 0, m_span);
+                    std::memset(m_join_written, 0, m_span);
+                } else {
+                    heap_mj.assign(m_span, 0);
+                    heap_mw.assign(m_span, 0);
+                    m_has_join = heap_mj.data();
+                    m_join_written = heap_mw.data();
+                }
                 m_written_v.fill(false);
                 m_written_v[0] = true; // M0
                 m_written_v[3] = true; // M3
@@ -450,8 +512,9 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
             } else {
                 size_t rel_cur = pc - static_cast<size_t>(m_hdr_pc);
                 if (m_has_join[rel_cur]) {
+                    uint8_t jm = m_join_written[rel_cur];
                     for (size_t k = 0; k < 8; ++k) {
-                        m_written_v[k] = m_written_v[k] && m_join_written[rel_cur][k];
+                        m_written_v[k] = m_written_v[k] && (((jm >> k) & 1u) != 0u);
                     }
                 }
                 if (has_uninitialized_morsel_v_read(op, subop, scalar, dst, s1, s2, s3, m_written_v)) {
@@ -475,13 +538,13 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
                             return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         size_t rel = static_cast<size_t>(tgt) - static_cast<size_t>(m_hdr_pc);
+                        uint8_t cur_mask = 0u;
+                        for (size_t k = 0; k < 8; ++k) if (m_written_v[k]) cur_mask |= static_cast<uint8_t>(1u << k);
                         if (!m_has_join[rel]) {
                             m_has_join[rel] = 1;
-                            m_join_written[rel] = m_written_v;
+                            m_join_written[rel] = cur_mask;
                         } else {
-                            for (size_t k = 0; k < 8; ++k) {
-                                m_join_written[rel][k] = m_join_written[rel][k] && m_written_v[k];
-                            }
+                            m_join_written[rel] &= cur_mask;
                         }
                         break;
                     }
@@ -577,62 +640,80 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
         uint8_t subop = IMP_V11_SUBOP(w);
         bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
         if (op == static_cast<uint8_t>(Opcode::OP_SAMPLE_NEIGHBORS) && subop == 1u) {
-            if (is_in_cfg_cycle(words, word_count, pc)) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+            bool oom = false;
+            if (is_in_cfg_cycle(words, word_count, pc, arena, &oom)) {
+                return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)});
+            }
+            if (oom) {
+                return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
             }
         }
         pc += ext ? 2u : 1u;
     }
 
-    return {IMPULSE_VM_V11_OK, 0u};
+    return ret({IMPULSE_VM_V11_OK, 0u});
 }
 
-extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
+impulse_vm_validation_v11_t validate_impb_in_arena(
     const void* impb_bytes,
-    size_t impb_len
-) {
-    using namespace impulse::vm::v11;
+    size_t impb_len,
+    V11Arena* arena
+) noexcept {
+    const size_t saved_arena_pos = arena ? arena->pos : 0u;
+    struct ArenaRewind {
+        V11Arena* a;
+        size_t pos;
+        ~ArenaRewind() noexcept { if (a) a->pos = pos; }
+    } rewind_guard{arena, saved_arena_pos};
+    auto ret = [&](impulse_vm_validation_v11_t v) noexcept {
+        return v;
+    };
     try {
         if (!impb_bytes || impb_len < sizeof(impulse_impb_header_v11_t)) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
         }
         impulse_impb_header_v11_t hdr{};
         std::memcpy(&hdr, impb_bytes, sizeof(hdr));
         if (hdr.magic != kImpbMagic || hdr.isa_version != kImpbVersion ||
             (hdr.header_flags & 0xFEu) != 0u || hdr.max_call_depth > kMaxCallDepth ||
             hdr.reserved != 0u || hdr.code_word_count == 0u) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
         }
         size_t code_bytes = static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t);
         size_t payload_bytes = code_bytes + static_cast<size_t>(hdr.const_pool_bytes);
         if (payload_bytes < code_bytes || sizeof(hdr) + payload_bytes > impb_len) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
         }
         if (hdr.entry_pc >= hdr.code_word_count) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
         }
         const auto* payload_ptr = static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr);
         if (hdr.program_xxh3_64 != 0ULL) {
             uint64_t actual = V11Xxh3::hash64(payload_ptr, payload_bytes);
             if (actual != hdr.program_xxh3_64) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+                return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
             }
         }
         uint64_t stack_words[2048];
         std::vector<uint64_t> heap_words;
         uint64_t* words_ptr = stack_words;
         if (hdr.code_word_count > 2048u) {
-            heap_words.resize(hdr.code_word_count);
-            words_ptr = heap_words.data();
+            if (arena != nullptr) {
+                words_ptr = arena->alloc_array<uint64_t>(hdr.code_word_count, 8);
+                if (!words_ptr) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
+            } else {
+                heap_words.resize(hdr.code_word_count);
+                words_ptr = heap_words.data();
+            }
         }
         std::memcpy(words_ptr, payload_ptr, code_bytes);
-        impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words_ptr, hdr.code_word_count);
+        impulse_vm_validation_v11_t vr = validate_words_in_arena(words_ptr, hdr.code_word_count, arena);
         if (vr.status != IMPULSE_VM_V11_OK) {
-            return vr;
+            return ret(vr);
         }
         // Reject entry_pc landing on 0xFF OP_EXTENSION_PAYLOAD or inside a morsel interior
         if (IMP_V11_OPCODE(words_ptr[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
         }
         for (size_t pc = 0; pc < hdr.code_word_count; ) {
             uint64_t w = words_ptr[pc];
@@ -642,15 +723,31 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
                 op == static_cast<uint8_t>(Opcode::OP_FILTER_MORSEL)) {
                 size_t end_pc = pc + IMP_V11_IMM16_HI(w);
                 if (hdr.entry_pc > pc && hdr.entry_pc <= end_pc) {
-                    return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+                    return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
                 }
                 pc = end_pc + 1u;
             } else {
                 pc += ext ? 2u : 1u;
             }
         }
-        return {IMPULSE_VM_V11_OK, 0u};
+        return ret({IMPULSE_VM_V11_OK, 0u});
     } catch (...) {
-        return {IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u};
+        return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
     }
+}
+
+} // namespace impulse::vm::v11
+
+extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11(
+    const uint64_t* words,
+    size_t word_count
+) {
+    return impulse::vm::v11::validate_words_in_arena(words, word_count, nullptr);
+}
+
+extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
+    const void* impb_bytes,
+    size_t impb_len
+) {
+    return impulse::vm::v11::validate_impb_in_arena(impb_bytes, impb_len, nullptr);
 }

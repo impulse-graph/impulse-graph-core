@@ -691,6 +691,16 @@ struct impulse_vm_workspace_v11 {
 
 namespace impulse::vm::v11 {
 
+impulse_vm_validation_v11_t validate_words_in_arena(
+    const uint64_t* words,
+    size_t word_count,
+    V11Arena* arena) noexcept;
+
+impulse_vm_validation_v11_t validate_impb_in_arena(
+    const void* impb_bytes,
+    size_t impb_len,
+    V11Arena* arena) noexcept;
+
 impulse_vm_status_v11_t execute_words_internal(
     const uint64_t* words,
     size_t word_count,
