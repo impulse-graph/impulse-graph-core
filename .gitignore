@@ -29,6 +29,7 @@ target/
 # C / C++ / CMake
 build/
 build-*/
+build_*/
 Testing/
 CMakeFiles/
 CMakeCache.txt
