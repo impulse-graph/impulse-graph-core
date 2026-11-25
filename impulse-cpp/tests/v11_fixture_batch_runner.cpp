@@ -1,0 +1,794 @@
+/**
+ * @file v11_fixture_batch_runner.cpp
+ * @brief Persistent stdin/stdout JSONL Fixture Batch Runner for ImpulseVM v0.11.0 (C++20).
+ *
+ * Implements the exact line protocol of `impulse-ocaml --v11-fixture-batch` and
+ * `V11FixtureBatchMain.java`:
+ *   Input:  `<profile>\t<max_steps|->\t<fixture_json>\n`
+ *   Output: `<result_json>\n`
+ */
+#include "v11/v11_internal.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace impulse::vm::v11;
+
+namespace {
+
+// --- Minimal zero-dependency JSON value & parser ---
+struct JsonVal {
+    enum class Kind { Null, Bool, Int, Double, String, Array, Object };
+    Kind kind = Kind::Null;
+    bool bval = false;
+    int64_t ival = 0;
+    double dval = 0.0;
+    std::string sval;
+    std::vector<JsonVal> arr;
+    std::map<std::string, JsonVal> obj;
+
+    const JsonVal* get(const std::string& k) const {
+        if (kind != Kind::Object) return nullptr;
+        auto it = obj.find(k);
+        return (it != obj.end()) ? &it->second : nullptr;
+    }
+};
+
+class MiniJsonParser {
+public:
+    explicit MiniJsonParser(const std::string& s) : s_(s), pos_(0) {}
+
+    JsonVal parse() {
+        skip_ws();
+        if (pos_ >= s_.size()) return {};
+        char c = s_[pos_];
+        if (c == '{') return parse_object();
+        if (c == '[') return parse_array();
+        if (c == '"') {
+            JsonVal v;
+            v.kind = JsonVal::Kind::String;
+            v.sval = parse_string();
+            return v;
+        }
+        if (c == 't') { pos_ += 4; JsonVal v; v.kind = JsonVal::Kind::Bool; v.bval = true; return v; }
+        if (c == 'f') { pos_ += 5; JsonVal v; v.kind = JsonVal::Kind::Bool; v.bval = false; return v; }
+        if (c == 'n') { pos_ += 4; return {}; }
+        return parse_number();
+    }
+
+private:
+    const std::string& s_;
+    size_t pos_;
+
+    void skip_ws() {
+        while (pos_ < s_.size() && (s_[pos_] == ' ' || s_[pos_] == '\t' || s_[pos_] == '\r' || s_[pos_] == '\n')) {
+            ++pos_;
+        }
+    }
+
+    std::string parse_string() {
+        ++pos_; // skip '"'
+        std::string out;
+        while (pos_ < s_.size() && s_[pos_] != '"') {
+            char c = s_[pos_++];
+            if (c == '\\' && pos_ < s_.size()) {
+                char esc = s_[pos_++];
+                switch (esc) {
+                    case '"':  out.push_back('"'); break;
+                    case '\\': out.push_back('\\'); break;
+                    case '/':  out.push_back('/'); break;
+                    case 'b':  out.push_back('\b'); break;
+                    case 'f':  out.push_back('\f'); break;
+                    case 'n':  out.push_back('\n'); break;
+                    case 'r':  out.push_back('\r'); break;
+                    case 't':  out.push_back('\t'); break;
+                    case 'u': {
+                        if (pos_ + 4 <= s_.size()) {
+                            unsigned cp = static_cast<unsigned>(std::stoul(s_.substr(pos_, 4), nullptr, 16));
+                            pos_ += 4;
+                            if (cp < 0x80) {
+                                out.push_back(static_cast<char>(cp));
+                            } else if (cp < 0x800) {
+                                out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                            } else {
+                                out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                                out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                            }
+                        }
+                        break;
+                    }
+                    default: out.push_back(esc); break;
+                }
+            } else {
+                out.push_back(c);
+            }
+        }
+        if (pos_ < s_.size() && s_[pos_] == '"') ++pos_;
+        return out;
+    }
+
+    JsonVal parse_number() {
+        size_t start = pos_;
+        bool is_float = false;
+        if (pos_ < s_.size() && s_[pos_] == '-') ++pos_;
+        while (pos_ < s_.size()) {
+            char c = s_[pos_];
+            if (c >= '0' && c <= '9') {
+                ++pos_;
+            } else if (c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-') {
+                is_float = true;
+                ++pos_;
+            } else {
+                break;
+            }
+        }
+        std::string tok = s_.substr(start, pos_ - start);
+        JsonVal v;
+        if (is_float) {
+            v.kind = JsonVal::Kind::Double;
+            v.dval = std::strtod(tok.c_str(), nullptr);
+        } else {
+            v.kind = JsonVal::Kind::Int;
+            if (!tok.empty() && tok[0] == '-') {
+                v.ival = std::strtoll(tok.c_str(), nullptr, 10);
+            } else {
+                uint64_t u = std::strtoull(tok.c_str(), nullptr, 10);
+                v.ival = static_cast<int64_t>(u);
+            }
+        }
+        return v;
+    }
+
+    JsonVal parse_array() {
+        ++pos_; // skip '['
+        JsonVal v;
+        v.kind = JsonVal::Kind::Array;
+        skip_ws();
+        if (pos_ < s_.size() && s_[pos_] == ']') { ++pos_; return v; }
+        while (pos_ < s_.size()) {
+            v.arr.push_back(parse());
+            skip_ws();
+            if (pos_ < s_.size() && s_[pos_] == ',') { ++pos_; continue; }
+            if (pos_ < s_.size() && s_[pos_] == ']') { ++pos_; break; }
+            break;
+        }
+        return v;
+    }
+
+    JsonVal parse_object() {
+        ++pos_; // skip '{'
+        JsonVal v;
+        v.kind = JsonVal::Kind::Object;
+        skip_ws();
+        if (pos_ < s_.size() && s_[pos_] == '}') { ++pos_; return v; }
+        while (pos_ < s_.size()) {
+            skip_ws();
+            std::string key = parse_string();
+            skip_ws();
+            if (pos_ < s_.size() && s_[pos_] == ':') ++pos_;
+            v.obj[std::move(key)] = parse();
+            skip_ws();
+            if (pos_ < s_.size() && s_[pos_] == ',') { ++pos_; continue; }
+            if (pos_ < s_.size() && s_[pos_] == '}') { ++pos_; break; }
+            break;
+        }
+        return v;
+    }
+};
+
+uint64_t parse_hex_or_dec_u64(const std::string& raw) {
+    size_t i = 0;
+    while (i < raw.size() && std::isspace(static_cast<unsigned char>(raw[i]))) ++i;
+    std::string s = raw.substr(i);
+    if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        return std::strtoull(s.c_str() + 2, nullptr, 16);
+    }
+    if (!s.empty() && s[0] == '-') {
+        return static_cast<uint64_t>(std::strtoll(s.c_str(), nullptr, 10));
+    }
+    return std::strtoull(s.c_str(), nullptr, 10);
+}
+
+int64_t as_i64(const JsonVal* v, int64_t def = 0) {
+    if (!v) return def;
+    if (v->kind == JsonVal::Kind::Int) return v->ival;
+    if (v->kind == JsonVal::Kind::Double) return static_cast<int64_t>(v->dval);
+    if (v->kind == JsonVal::Kind::String) return static_cast<int64_t>(parse_hex_or_dec_u64(v->sval));
+    if (v->kind == JsonVal::Kind::Bool) return v->bval ? 1 : 0;
+    return def;
+}
+
+double as_f64(const JsonVal* v, double def = 0.0) {
+    if (!v) return def;
+    if (v->kind == JsonVal::Kind::Double) return v->dval;
+    if (v->kind == JsonVal::Kind::Int) return static_cast<double>(v->ival);
+    if (v->kind == JsonVal::Kind::String) {
+        if (v->sval == "inf" || v->sval == "+inf" || v->sval == "Inf") return std::numeric_limits<double>::infinity();
+        if (v->sval == "-inf" || v->sval == "-Inf") return -std::numeric_limits<double>::infinity();
+        if (v->sval == "nan" || v->sval == "NaN") return std::numeric_limits<double>::quiet_NaN();
+        return std::strtod(v->sval.c_str(), nullptr);
+    }
+    return def;
+}
+
+std::string as_str(const JsonVal* v) {
+    if (!v || v->kind != JsonVal::Kind::String) return "";
+    return v->sval;
+}
+
+V11Vector* parse_vec_into_arena(V11Arena& arena, const std::string& ty, const JsonVal* vals_v) {
+    auto* vec = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+    if (!vec) return nullptr;
+    new (vec) V11Vector();
+
+    size_t n = (vals_v && vals_v->kind == JsonVal::Kind::Array) ? vals_v->arr.size() : 0;
+    vec->length = static_cast<uint32_t>(n);
+    size_t words = std::max<size_t>(1, (n + 63) / 64);
+
+    if (ty == "i64" || ty == "i64_vec" || ty == "i32" || ty == "i16" || ty == "i8" ||
+        ty == "u64" || ty == "u64_vec" || ty == "u32" || ty == "u16" || ty == "u8") {
+        vec->elem_tag = (ty[0] == 'u') ? kVecTagU64 : kVecTagI64;
+        vec->i64_data = (n > 0) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
+        vec->valid_bits = arena.alloc_array<uint64_t>(words, 8);
+        std::memset(vec->valid_bits, 0, words * sizeof(uint64_t));
+        for (size_t i = 0; i < n; ++i) {
+            const JsonVal& elem = vals_v->arr[i];
+            if (elem.kind != JsonVal::Kind::Null) {
+                vec->i64_data[i] = as_i64(&elem);
+                vec->valid_bits[i >> 6] |= (1ULL << (i & 63));
+            }
+        }
+    } else if (ty == "str" || ty == "str_vec") {
+        vec->elem_tag = kVecTagStr;
+        vec->str_data = (n > 0) ? arena.alloc_array<V11StrSlice>(n, 8) : nullptr;
+        for (size_t i = 0; i < n; ++i) {
+            const JsonVal& elem = vals_v->arr[i];
+            if (elem.kind == JsonVal::Kind::Null) {
+                vec->str_data[i] = {nullptr, 0u, 0u};
+            } else {
+                std::string s = as_str(&elem);
+                char* copy = nullptr;
+                if (!s.empty()) {
+                    copy = static_cast<char*>(arena.alloc(s.size(), 1));
+                    std::memcpy(copy, s.data(), s.size());
+                }
+                vec->str_data[i] = {copy, static_cast<uint32_t>(s.size()), 1u};
+            }
+        }
+    } else if (ty == "bool" || ty == "bool_3vl" || ty == "bool_3vl_vec") {
+        vec->elem_tag = kVecTagBool3vl;
+        vec->valid_bits = arena.alloc_array<uint64_t>(words, 8);
+        vec->bool_data_bits = arena.alloc_array<uint64_t>(words, 8);
+        std::memset(vec->valid_bits, 0, words * sizeof(uint64_t));
+        std::memset(vec->bool_data_bits, 0, words * sizeof(uint64_t));
+        for (size_t i = 0; i < n; ++i) {
+            const JsonVal& elem = vals_v->arr[i];
+            if (elem.kind != JsonVal::Kind::Null) {
+                uint64_t bit = 1ULL << (i & 63);
+                vec->valid_bits[i >> 6] |= bit;
+                bool is_true = (elem.kind == JsonVal::Kind::Bool) ? elem.bval : (as_i64(&elem) != 0);
+                if (is_true) vec->bool_data_bits[i >> 6] |= bit;
+            }
+        }
+    } else if (ty == "f32_emb" || ty == "emb") {
+        vec->elem_tag = kVecTagEmb;
+        vec->emb_rows = (n > 0) ? arena.alloc_array<double*>(n, 8) : nullptr;
+        uint32_t dim = 0;
+        for (size_t i = 0; i < n; ++i) {
+            const JsonVal& elem = vals_v->arr[i];
+            if (elem.kind == JsonVal::Kind::Array) {
+                size_t rl = elem.arr.size();
+                double* row = (rl > 0) ? arena.alloc_array<double>(rl, 8) : nullptr;
+                for (size_t j = 0; j < rl; ++j) row[j] = as_f64(&elem.arr[j]);
+                vec->emb_rows[i] = row;
+                if (rl > dim) dim = static_cast<uint32_t>(rl);
+            } else {
+                vec->emb_rows[i] = nullptr;
+            }
+        }
+        vec->emb_dim = dim;
+    } else {
+        vec->elem_tag = kVecTagF64;
+        vec->f64_data = (n > 0) ? arena.alloc_array<double>(n, 8) : nullptr;
+        vec->valid_bits = arena.alloc_array<uint64_t>(words, 8);
+        std::memset(vec->valid_bits, 0, words * sizeof(uint64_t));
+        for (size_t i = 0; i < n; ++i) {
+            const JsonVal& elem = vals_v->arr[i];
+            if (elem.kind != JsonVal::Kind::Null) {
+                double f = as_f64(&elem);
+                if (!std::isnan(f)) {
+                    vec->f64_data[i] = f;
+                    vec->valid_bits[i >> 6] |= (1ULL << (i & 63));
+                }
+            }
+        }
+    }
+    return vec;
+}
+
+const char* status_name(impulse_vm_status_v11_t st) {
+    switch (st) {
+        case IMPULSE_VM_V11_OK:                    return "IMPULSE_VM_OK";
+        case IMPULSE_VM_V11_ERR_INVALID_OPCODE:    return "IMPULSE_VM_ERR_INVALID_OPCODE";
+        case IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS:     return "IMPULSE_VM_ERR_OUT_OF_BOUNDS";
+        case IMPULSE_VM_V11_ERR_NULL_SNAPSHOT:     return "IMPULSE_VM_ERR_NULL_SNAPSHOT";
+        case IMPULSE_VM_V11_ERR_STACK_OVERFLOW:    return "IMPULSE_VM_ERR_STACK_OVERFLOW";
+        case IMPULSE_VM_V11_ERR_STACK_UNDERFLOW:   return "IMPULSE_VM_ERR_STACK_UNDERFLOW";
+        case IMPULSE_VM_V11_ERR_INVALID_OPERAND:   return "IMPULSE_VM_ERR_INVALID_OPERAND";
+        case IMPULSE_VM_V11_ERR_USER_THROW:        return "IMPULSE_VM_ERR_USER_THROW";
+        case IMPULSE_VM_V11_ERR_ASSERTION_FAILED:  return "IMPULSE_VM_ERR_ASSERTION_FAILED";
+        case IMPULSE_VM_V11_ERR_TRAP:              return "IMPULSE_VM_ERR_TRAP";
+        case IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH:   return "IMPULSE_VM_ERR_DOMAIN_MISMATCH";
+        case IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW:   return "IMPULSE_VM_ERR_BUFFER_OVERFLOW";
+        case IMPULSE_VM_V11_ERR_FLOATING_POINT:    return "IMPULSE_VM_ERR_FLOATING_POINT";
+        case IMPULSE_VM_V11_ERR_GAS_EXHAUSTED:     return "IMPULSE_VM_ERR_GAS_EXHAUSTED";
+        case IMPULSE_VM_V11_ERR_TYPE_MISMATCH:     return "IMPULSE_VM_ERR_TYPE_MISMATCH";
+        case IMPULSE_VM_V11_ERR_VALIDATION_FAILED: return "IMPULSE_VM_ERR_VALIDATION_FAILED";
+        default:                                   return "IMPULSE_VM_ERR_UNKNOWN";
+    }
+}
+
+void append_json_string(std::ostringstream& oss, const char* ptr, uint32_t len) {
+    oss << '"';
+    for (uint32_t i = 0; i < len; ++i) {
+        unsigned char c = static_cast<unsigned char>(ptr[i]);
+        switch (c) {
+            case '"':  oss << "\\\""; break;
+            case '\\': oss << "\\\\"; break;
+            case '\n': oss << "\\n"; break;
+            case '\r': oss << "\\r"; break;
+            case '\t': oss << "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned>(c));
+                    oss << buf;
+                } else {
+                    oss << static_cast<char>(c);
+                }
+                break;
+        }
+    }
+    oss << '"';
+}
+
+std::string hex64(uint64_t v) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "0x%016llx", static_cast<unsigned long long>(v));
+    return std::string(buf);
+}
+
+impulse_vm_geometry_v11_t geometry_of_profile(const std::string& prof) {
+    if (prof == "P1") return kGeomP1;
+    if (prof == "P2") return kGeomP2;
+    if (prof == "P3") return kGeomP3;
+    if (prof == "P4") return kGeomP4;
+    return kGeomP0;
+}
+
+std::string run_fixture_json(const std::string& profile,
+                             bool has_max_steps_override,
+                             uint64_t max_steps_override,
+                             const std::string& raw_json,
+                             void* scratch_buf,
+                             size_t scratch_bytes) {
+    JsonVal root = MiniJsonParser(raw_json).parse();
+
+    std::vector<uint64_t> words;
+    if (const JsonVal* wh = root.get("words_hex"); wh && wh->kind == JsonVal::Kind::Array) {
+        words.reserve(wh->arr.size());
+        for (const auto& item : wh->arr) {
+            words.push_back(parse_hex_or_dec_u64(as_str(&item)));
+        }
+    }
+
+    uint64_t max_steps = has_max_steps_override
+        ? max_steps_override
+        : (root.get("max_steps") ? static_cast<uint64_t>(as_i64(root.get("max_steps"), 100000)) : 100000ULL);
+
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    impulse_workspace_init(scratch_buf, scratch_bytes, &ws);
+    ws->geometry = geometry_of_profile(profile);
+
+    std::map<uint16_t, uint64_t> dom_tbl;
+    std::map<uint16_t, std::pair<uint16_t, uint16_t>> rel_meta;
+    std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint64_t>>> rel_csr;
+    std::map<uint16_t, std::array<bool, 4>> rel_flags;
+    std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint64_t>>> rel_coo;
+    std::map<uint16_t, std::vector<std::vector<int>>> rel_dense;
+    std::vector<V11DomAttrEntry> node_attrs;
+    std::map<uint16_t, std::vector<std::pair<uint32_t, V11Vector*>>> edge_attrs;
+    std::vector<V11KeyCatalog> key_catalogs;
+    std::vector<V11IndexEntry> indexes;
+
+    if (const JsonVal* ddirs = root.get("data_directives"); ddirs && ddirs->kind == JsonVal::Kind::Array) {
+        for (const auto& d : ddirs->arr) {
+            std::string kind = as_str(d.get("directive"));
+            const JsonVal* args = d.get("args");
+            const JsonVal* kv = d.get("kv");
+            if (kind == ".domain") {
+                uint16_t id = (args && !args->arr.empty()) ? static_cast<uint16_t>(as_i64(&args->arr[0])) : 0u;
+                uint64_t cnt = kv ? static_cast<uint64_t>(as_i64(kv->get("count"), 0)) : 0ULL;
+                dom_tbl[id] = cnt;
+            } else if (kind == ".relation") {
+                uint16_t id = (args && !args->arr.empty()) ? static_cast<uint16_t>(as_i64(&args->arr[0])) : 0u;
+                uint16_t sd = kv ? static_cast<uint16_t>(as_i64(kv->get("src_dom"), 0)) : 0u;
+                uint16_t td = kv ? static_cast<uint16_t>(as_i64(kv->get("tgt_dom"), 0)) : 0u;
+                rel_meta[id] = {sd, td};
+            } else if (kind == ".csr_inline" && kv) {
+                uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                std::vector<uint32_t> offs;
+                std::vector<uint64_t> tgts;
+                if (const JsonVal* o = kv->get("offsets"); o && o->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : o->arr) offs.push_back(static_cast<uint32_t>(as_i64(&x)));
+                }
+                if (const JsonVal* t = kv->get("targets"); t && t->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : t->arr) tgts.push_back(static_cast<uint64_t>(as_i64(&x)));
+                }
+                rel_csr[rid] = {std::move(offs), std::move(tgts)};
+                rel_flags[rid][0] = true;
+            } else if (kind == ".csc_inline" && kv) {
+                uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                rel_flags[rid][1] = true;
+            } else if (kind == ".coo_inline" && kv) {
+                uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                std::vector<uint32_t> srcs;
+                std::vector<uint64_t> tgts;
+                if (const JsonVal* s = kv->get("sources"); s && s->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : s->arr) srcs.push_back(static_cast<uint32_t>(as_i64(&x)));
+                }
+                if (const JsonVal* t = kv->get("targets"); t && t->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : t->arr) tgts.push_back(static_cast<uint64_t>(as_i64(&x)));
+                }
+                rel_coo[rid] = {std::move(srcs), std::move(tgts)};
+                rel_flags[rid][2] = true;
+            } else if (kind == ".dense_inline" && kv) {
+                uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                std::vector<std::vector<int>> rows;
+                if (const JsonVal* rl = kv->get("rows"); rl && rl->kind == JsonVal::Kind::Array) {
+                    for (const auto& r : rl->arr) {
+                        std::vector<int> row;
+                        if (r.kind == JsonVal::Kind::Array) {
+                            for (const auto& x : r.arr) row.push_back(static_cast<int>(as_i64(&x)));
+                        }
+                        rows.push_back(std::move(row));
+                    }
+                }
+                rel_dense[rid] = std::move(rows);
+                rel_flags[rid][3] = true;
+            } else if (kind == ".node_attr" && kv) {
+                uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
+                uint16_t aid = static_cast<uint16_t>(as_i64(kv->get("attr"), 0));
+                std::string ty = kv->get("type") ? as_str(kv->get("type")) : "f64";
+                V11Vector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
+                node_attrs.push_back({dom, aid, v});
+            } else if (kind == ".edge_attr" && kv) {
+                uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                uint32_t aid = static_cast<uint32_t>(as_i64(kv->get("attr"), 0));
+                std::string ty = kv->get("type") ? as_str(kv->get("type")) : "f64";
+                V11Vector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
+                edge_attrs[rid].push_back({aid, v});
+            } else if (kind == ".tier_thresholds" && kv) {
+                if (kv->get("tier0_max"))  ws->geometry.tier0_max  = static_cast<uint32_t>(as_i64(kv->get("tier0_max")));
+                if (kv->get("page_shift")) ws->geometry.page_shift = static_cast<uint32_t>(as_i64(kv->get("page_shift")));
+                if (kv->get("morsel_max")) ws->geometry.morsel_max = static_cast<uint32_t>(as_i64(kv->get("morsel_max")));
+            } else if (kind == ".param" && kv && ws->param_count < kMaxParams) {
+                uint32_t pid = (args && !args->arr.empty()) ? static_cast<uint32_t>(as_i64(&args->arr[0])) : 0u;
+                std::string ty = kv->get("type") ? as_str(kv->get("type")) : "i64";
+                V11ParamEntry pe{};
+                pe.id = pid;
+                if (ty == "frontier") {
+                    pe.kind = ParamKind::Frontier;
+                    pe.dom_id = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
+                    if (const JsonVal* vl = kv->get("values"); vl && vl->kind == JsonVal::Kind::Array) {
+                        pe.f_len = static_cast<uint32_t>(vl->arr.size());
+                        if (pe.f_len > 0) {
+                            pe.f_ids = ws->arena.alloc_array<uint64_t>(pe.f_len, 8);
+                            for (uint32_t i = 0; i < pe.f_len; ++i) pe.f_ids[i] = static_cast<uint64_t>(as_i64(&vl->arr[i]));
+                        }
+                    }
+                } else if (ty == "multilane") {
+                    pe.kind = ParamKind::MultiLane;
+                    pe.dom_id = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
+                    pe.ml_width = static_cast<uint8_t>(as_i64(kv->get("width"), 64));
+                    pe.ml_active = static_cast<uint8_t>(as_i64(kv->get("active_lanes"), 0));
+                    if (const JsonVal* el = kv->get("entries"); el && el->kind == JsonVal::Kind::Array) {
+                        std::vector<uint64_t> ns, ms;
+                        for (const auto& item : el->arr) {
+                            std::string s = as_str(&item);
+                            auto colon = s.find(':');
+                            if (colon != std::string::npos && colon > 0) {
+                                ns.push_back(parse_hex_or_dec_u64(s.substr(0, colon)));
+                                ms.push_back(parse_hex_or_dec_u64(s.substr(colon + 1)));
+                            }
+                        }
+                        pe.ml_len = static_cast<uint32_t>(ns.size());
+                        if (pe.ml_len > 0) {
+                            pe.ml_nodes = ws->arena.alloc_array<uint64_t>(pe.ml_len, 8);
+                            pe.ml_masks = ws->arena.alloc_array<uint64_t>(pe.ml_len, 8);
+                            std::memcpy(pe.ml_nodes, ns.data(), pe.ml_len * sizeof(uint64_t));
+                            std::memcpy(pe.ml_masks, ms.data(), pe.ml_len * sizeof(uint64_t));
+                        }
+                    }
+                } else if (ty == "str" || ty == "str_handle") {
+                    pe.kind = ParamKind::Str;
+                    const JsonVal* v = kv->get("value");
+                    if (!v || v->kind == JsonVal::Kind::Null) {
+                        pe.str = {nullptr, 0u, 0u};
+                    } else {
+                        std::string s = as_str(v);
+                        char* copy = nullptr;
+                        if (!s.empty()) {
+                            copy = static_cast<char*>(ws->arena.alloc(s.size(), 1));
+                            std::memcpy(copy, s.data(), s.size());
+                        }
+                        pe.str = {copy, static_cast<uint32_t>(s.size()), 1u};
+                    }
+                } else if (ty == "i64" || ty == "u64") {
+                    pe.kind = ParamKind::Scalar;
+                    pe.scalar_type = (ty == "u64") ? static_cast<uint8_t>(ScalarType::SCALAR_U64)
+                                                   : static_cast<uint8_t>(ScalarType::SCALAR_I64);
+                    const JsonVal* v = kv->get("value");
+                    if (!v || v->kind == JsonVal::Kind::Null) {
+                        pe.scalar_valid = false;
+                        pe.scalar_bits = 0ULL;
+                    } else {
+                        pe.scalar_valid = true;
+                        pe.scalar_bits = static_cast<uint64_t>(as_i64(v));
+                    }
+                } else if (ty == "f64") {
+                    pe.kind = ParamKind::Scalar;
+                    pe.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_F64);
+                    const JsonVal* v = kv->get("value");
+                    if (!v || v->kind == JsonVal::Kind::Null) {
+                        pe.scalar_valid = false;
+                        pe.scalar_bits = 0ULL;
+                    } else {
+                        double f = as_f64(v);
+                        if (std::isnan(f)) {
+                            pe.scalar_valid = false;
+                            pe.scalar_bits = 0ULL;
+                        } else {
+                            pe.scalar_valid = true;
+                            std::memcpy(&pe.scalar_bits, &f, 8);
+                        }
+                    }
+                } else if (ty == "bool" || ty == "bool_3vl") {
+                    pe.kind = ParamKind::Scalar;
+                    pe.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_BOOL_3VL);
+                    const JsonVal* v = kv->get("value");
+                    if (!v || v->kind == JsonVal::Kind::Null) {
+                        pe.scalar_valid = false;
+                        pe.scalar_bits = 0ULL;
+                    } else {
+                        pe.scalar_valid = true;
+                        bool b = (v->kind == JsonVal::Kind::Bool) ? v->bval : (as_i64(v) != 0);
+                        pe.scalar_bits = b ? 1ULL : 0ULL;
+                    }
+                } else if (ty == "null") {
+                    pe.kind = ParamKind::Scalar;
+                    pe.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_NULL_UNSET);
+                    pe.scalar_valid = false;
+                    pe.scalar_bits = 0ULL;
+                } else if (ty == "i64_vec" || ty == "u64_vec" || ty == "f64_vec" ||
+                           ty == "f32" || ty == "f32_vec" || ty == "str_vec" || ty == "bool_3vl_vec") {
+                    pe.kind = ParamKind::Vec;
+                    pe.vec = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
+                }
+                if (pe.kind != ParamKind::Empty) {
+                    // Replace existing param with same id if present
+                    bool replaced = false;
+                    for (uint32_t i = 0; i < ws->param_count; ++i) {
+                        if (ws->params[i].id == pid) { ws->params[i] = pe; replaced = true; break; }
+                    }
+                    if (!replaced) ws->params[ws->param_count++] = pe;
+                }
+            }
+        }
+    }
+
+    if (const JsonVal* cpool = root.get("const_pool"); cpool && cpool->kind == JsonVal::Kind::Array) {
+        for (const auto& p : cpool->arr) {
+            if (ws->const_pool_count >= kMaxConstPool) break;
+            const JsonVal* args = p.get("args");
+            const JsonVal* kv = p.get("kv");
+            uint32_t pid = (args && !args->arr.empty()) ? static_cast<uint32_t>(as_i64(&args->arr[0])) : 0u;
+            std::string ty = (kv && kv->get("type")) ? as_str(kv->get("type")) : "i64_vec";
+            V11ConstPoolEntry ce{};
+            ce.id = pid;
+            if (ty == "str") {
+                ce.kind = ConstPoolKind::Str;
+                std::string s = kv ? as_str(kv->get("value")) : "";
+                char* copy = nullptr;
+                if (!s.empty()) {
+                    copy = static_cast<char*>(ws->arena.alloc(s.size(), 1));
+                    std::memcpy(copy, s.data(), s.size());
+                }
+                ce.str = {copy, static_cast<uint32_t>(s.size()), 1u};
+            } else if (ty == "frontier") {
+                ce.kind = ConstPoolKind::Frontier;
+                if (kv) {
+                    if (const JsonVal* vl = kv->get("values"); vl && vl->kind == JsonVal::Kind::Array) {
+                        ce.f_len = static_cast<uint32_t>(vl->arr.size());
+                        if (ce.f_len > 0) {
+                            ce.f_ids = ws->arena.alloc_array<uint64_t>(ce.f_len, 8);
+                            for (uint32_t i = 0; i < ce.f_len; ++i) {
+                                ce.f_ids[i] = static_cast<uint64_t>(as_i64(&vl->arr[i]));
+                            }
+                        }
+                    }
+                }
+            } else {
+                ce.kind = ConstPoolKind::Vec;
+                ce.vec = parse_vec_into_arena(ws->arena, ty, kv ? kv->get("values") : nullptr);
+            }
+            bool replaced = false;
+            for (uint32_t i = 0; i < ws->const_pool_count; ++i) {
+                if (ws->const_pool[i].id == pid) { ws->const_pool[i] = ce; replaced = true; break; }
+            }
+            if (!replaced) ws->const_pool[ws->const_pool_count++] = ce;
+        }
+    }
+
+    // Build V11SnapshotView if any domains/relations were declared
+    V11SnapshotView snap_view{};
+    const V11SnapshotView* snap_ptr = nullptr;
+    std::vector<uint64_t> dom_cards;
+    std::vector<V11RelView> rel_views;
+    if (!dom_tbl.empty() || !rel_meta.empty()) {
+        int max_dom = -1;
+        for (const auto& kv : dom_tbl) if (kv.first > max_dom) max_dom = kv.first;
+        dom_cards.assign(static_cast<size_t>(max_dom + 1), 0ULL);
+        for (const auto& kv : dom_tbl) dom_cards[kv.first] = kv.second;
+
+        snap_view.domain_cards = dom_cards.data();
+        snap_view.domain_count = static_cast<uint32_t>(dom_cards.size());
+        snap_view.node_attrs = node_attrs.data();
+        snap_view.node_attr_count = static_cast<uint32_t>(node_attrs.size());
+        snap_ptr = &snap_view;
+    }
+
+    // Set arena watermark after fixture bindings so execution preserves bindings
+    ws->arena.mark = ws->arena.pos;
+
+    execute_words_internal(words.data(), words.size(), snap_ptr, *ws, max_steps);
+    impulse_vm_ictx_v2_t digest = impulse_vm_v11_compute_ictx_v2(ws);
+
+    // Format JSON response matching V11FixtureBatchMain.java / impulse-ocaml
+    std::ostringstream oss;
+    oss << '{';
+    oss << "\"status\":\"" << status_name(ws->status) << "\",";
+    oss << "\"status_code\":" << ws->status << ',';
+    oss << "\"user_throw_code\":" << static_cast<uint64_t>(ws->user_throw_code) << ',';
+    oss << "\"pc\":" << ws->state.pc << ',';
+    oss << "\"max_dop\":" << ws->state.max_dop << ',';
+    oss << "\"flags\":{\"zf\":" << (ws->flag_zf() ? "true" : "false")
+        << ",\"st\":" << (ws->flag_st() ? "true" : "false")
+        << ",\"nf\":" << (ws->flag_nf() ? "true" : "false")
+        << ",\"raw\":" << (ws->state.vm_flags & 7u) << "},";
+    oss << "\"logical_hash\":\"" << hex64(digest.logical_hash) << "\",";
+    oss << "\"physical_hash\":\"" << hex64(digest.physical_hash) << "\",";
+    oss << "\"r_valid_mask\":" << static_cast<unsigned>(ws->state.r_valid_mask) << ',';
+    oss << "\"r_type_word\":\"" << hex64(ws->canonical_r_type_word()) << "\",";
+
+    oss << "\"r_regs\":{";
+    const uint64_t* r_regs = ws->r_bank();
+    for (uint8_t i = 0; i < 16; ++i) {
+        if (i > 0) oss << ',';
+        oss << "\"R" << static_cast<unsigned>(i) << "\":";
+        if (!ws->is_r_valid(i)) {
+            oss << "null";
+        } else if (ws->read_r_type(i) == static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE)) {
+            V11StrSlice s = ws->resolve_scalar_str(r_regs[i]);
+            append_json_string(oss, s.valid ? s.ptr : "", s.valid ? s.len : 0u);
+        } else {
+            oss << static_cast<int64_t>(r_regs[i]);
+        }
+    }
+    oss << "},\"r_types\":{";
+    for (uint8_t i = 0; i < 16; ++i) {
+        if (i > 0) oss << ',';
+        oss << "\"R" << static_cast<unsigned>(i) << "\":"
+            << static_cast<unsigned>(ws->is_r_valid(i) ? ws->read_r_type(i) : 0u);
+    }
+    oss << "},\"f_regs\":{";
+    for (uint8_t i = 0; i < 16; ++i) {
+        if (i > 0) oss << ',';
+        oss << "\"F" << static_cast<unsigned>(i) << "\":";
+        if (!ws->is_f_init(i)) {
+            oss << "null";
+        } else {
+            const V11Frontier& f = ws->f_regs[i];
+            oss << "{\"domain_id\":" << f.domain_id
+                << ",\"tier\":" << static_cast<unsigned>(f.tier)
+                << ",\"nodes\":[";
+            if (!f.multi_lane) {
+                if (f.tier == kTierAllSpan) {
+                    for (uint64_t u = 0; u < f.domain_card; ++u) {
+                        if (u > 0) oss << ',';
+                        oss << u;
+                    }
+                } else {
+                    for (uint32_t k = 0; k < f.node_count; ++k) {
+                        if (k > 0) oss << ',';
+                        oss << static_cast<uint64_t>(f.nodes[k]);
+                    }
+                }
+            } else {
+                for (uint32_t k = 0; k < f.ml_count; ++k) {
+                    if (k > 0) oss << ',';
+                    char buf[48];
+                    std::snprintf(buf, sizeof(buf), "\"%llu:0x%llx\"",
+                                  static_cast<unsigned long long>(f.ml_nodes[k]),
+                                  static_cast<unsigned long long>(f.ml_masks[k]));
+                    oss << buf;
+                }
+            }
+            oss << "]}";
+        }
+    }
+    oss << "},\"outputs\":{}}";
+    return oss.str();
+}
+
+} // namespace
+
+int main() {
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+
+    constexpr size_t kScratchSize = 16u * 1024u * 1024u; // 16 MB 128B-aligned caller buffer
+    void* scratch_buf = nullptr;
+#if defined(_WIN32)
+    scratch_buf = _aligned_malloc(kScratchSize, 128);
+#else
+    if (posix_memalign(&scratch_buf, 128, kScratchSize) != 0) {
+        return 1;
+    }
+#endif
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        bool blank = true;
+        for (char c : line) {
+            if (!std::isspace(static_cast<unsigned char>(c))) { blank = false; break; }
+        }
+        if (blank) continue;
+
+        size_t t1 = line.find('\t');
+        size_t t2 = (t1 != std::string::npos) ? line.find('\t', t1 + 1) : std::string::npos;
+        std::string profile = (t1 != std::string::npos) ? line.substr(0, t1) : "P0";
+        std::string ms_str = (t1 != std::string::npos && t2 != std::string::npos)
+            ? line.substr(t1 + 1, t2 - t1 - 1) : "-";
+        std::string raw_json = (t2 != std::string::npos) ? line.substr(t2 + 1) : line;
+
+        bool has_ms = (!ms_str.empty() && ms_str != "-");
+        uint64_t ms_val = has_ms ? std::strtoull(ms_str.c_str(), nullptr, 10) : 0ULL;
+
+        std::string resp = run_fixture_json(profile, has_ms, ms_val, raw_json, scratch_buf, kScratchSize);
+        std::cout << resp << '\n' << std::flush;
+    }
+
+#if defined(_WIN32)
+    _aligned_free(scratch_buf);
+#else
+    std::free(scratch_buf);
+#endif
+    return 0;
+}
