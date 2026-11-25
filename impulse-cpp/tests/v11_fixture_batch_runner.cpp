@@ -688,17 +688,16 @@ std::string run_fixture_json(const std::string& profile,
     oss << "\"r_type_word\":\"" << hex64(ws->canonical_r_type_word()) << "\",";
 
     oss << "\"r_regs\":{";
-    const uint64_t* r_regs = ws->r_bank();
     for (uint8_t i = 0; i < 16; ++i) {
         if (i > 0) oss << ',';
         oss << "\"R" << static_cast<unsigned>(i) << "\":";
         if (!ws->is_r_valid(i)) {
             oss << "null";
         } else if (ws->read_r_type(i) == static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE)) {
-            V11StrSlice s = ws->resolve_scalar_str(r_regs[i]);
+            V11StrSlice s = ws->resolve_scalar_str(ws->read_r_raw(i));
             append_json_string(oss, s.valid ? s.ptr : "", s.valid ? s.len : 0u);
         } else {
-            oss << static_cast<int64_t>(r_regs[i]);
+            oss << static_cast<int64_t>(ws->read_r_raw(i));
         }
     }
     oss << "},\"r_types\":{";

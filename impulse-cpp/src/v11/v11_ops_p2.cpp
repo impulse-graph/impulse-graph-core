@@ -3,7 +3,7 @@
  * @brief Pillar 2 Evaluator (0x20..0x27) — currently OP_STABLE_CHECK for Pillar 1
  *        compliance; remaining Pillar 2 opcodes implemented in M3.2.
  */
-#if defined(__clang__)
+#if defined(__clang__) || defined(__GNUC__)
   #pragma STDC FP_CONTRACT OFF
 #endif
 
@@ -23,8 +23,8 @@ inline bool is_numeric_vec(const V11Vector* v) noexcept {
 
 inline double read_numeric_as_f64(const V11Vector& v, uint32_t idx) noexcept {
     if (v.elem_tag == kVecTagF64) return v.f64_data[idx];
-    if (v.elem_tag == kVecTagI64) return static_cast<double>(v.i64_data[idx]);
-    return static_cast<double>(static_cast<uint64_t>(v.i64_data[idx]));
+    // Matches OCaml Int64.to_float and Java (double) v.i64Data[idx] for both I64 and U64
+    return static_cast<double>(v.i64_data[idx]);
 }
 
 void exec_stable_check(impulse_vm_workspace_v11_t& ws,
@@ -83,7 +83,8 @@ void exec_stable_check(impulse_vm_workspace_v11_t& ws,
             return;
         }
         double eps = 0.0;
-        std::memcpy(&eps, &ws.r_bank()[s3], 8);
+        uint64_t eps_raw = ws.read_r_raw(s3);
+        std::memcpy(&eps, &eps_raw, 8);
         if (std::isnan(eps)) {
             ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
             return;
