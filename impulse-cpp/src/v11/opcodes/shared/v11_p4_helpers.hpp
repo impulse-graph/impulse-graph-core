@@ -408,9 +408,38 @@ inline bool p4_i128_mul_div(int64_t a, int64_t b, int64_t d, int64_t* out) noexc
     *out = static_cast<int64_t>(q);
     return true;
 #else
-    long double q = (static_cast<long double>(a) * static_cast<long double>(b)) / static_cast<long double>(d);
-    if (q < static_cast<long double>(INT64_MIN) || q > static_cast<long double>(INT64_MAX)) return false;
-    *out = static_cast<int64_t>(q);
+    bool neg = (a < 0) ^ (b < 0) ^ (d < 0);
+    uint64_t ua = (a < 0) ? (0ULL - static_cast<uint64_t>(a)) : static_cast<uint64_t>(a);
+    uint64_t ub = (b < 0) ? (0ULL - static_cast<uint64_t>(b)) : static_cast<uint64_t>(b);
+    uint64_t ud = (d < 0) ? (0ULL - static_cast<uint64_t>(d)) : static_cast<uint64_t>(d);
+    // Exact 64x64 -> 128-bit product (hi:lo)
+    uint64_t a_lo = ua & 0xFFFFFFFFULL, a_hi = ua >> 32;
+    uint64_t b_lo = ub & 0xFFFFFFFFULL, b_hi = ub >> 32;
+    uint64_t p0 = a_lo * b_lo;
+    uint64_t p1 = a_lo * b_hi;
+    uint64_t p2 = a_hi * b_lo;
+    uint64_t p3 = a_hi * b_hi;
+    uint64_t mid = (p0 >> 32) + (p1 & 0xFFFFFFFFULL) + (p2 & 0xFFFFFFFFULL);
+    uint64_t hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+    uint64_t lo = (p0 & 0xFFFFFFFFULL) | (mid << 32);
+    if (hi >= ud) return false; // quotient >= 2^64
+    // Bitwise 128 / 64 unsigned division
+    uint64_t q = 0ULL, rem = hi;
+    for (int bit = 63; bit >= 0; --bit) {
+        uint64_t carry = rem >> 63;
+        rem = (rem << 1) | ((lo >> bit) & 1ULL);
+        if (carry || rem >= ud) {
+            rem -= ud;
+            q |= (1ULL << bit);
+        }
+    }
+    if (neg) {
+        if (q > (1ULL << 63)) return false;
+        *out = static_cast<int64_t>(0ULL - q);
+    } else {
+        if (q > static_cast<uint64_t>(INT64_MAX)) return false;
+        *out = static_cast<int64_t>(q);
+    }
     return true;
 #endif
 }

@@ -51,19 +51,21 @@ V11_OP_CASE(NODE_FILTER) {
         } else if (col_valid) {
             if (col->elem_tag == kVecTagF64) {
                 double x = col->f64_data[u];
-                bool lo_ok = scalar_rhs ? p4_is_scalar_f64_valid(ws, s2)
-                                        : (p4_is_numeric_vec(v_s2) && u < v_s2->length && v_s2->is_valid_at(u));
+                bool lo_ok = !std::isnan(x) && (scalar_rhs ? p4_is_scalar_f64_valid(ws, s2)
+                                                           : (p4_is_numeric_vec(v_s2) && u < v_s2->length && v_s2->is_valid_at(u)));
                 if (lo_ok) {
                     double lo = scalar_rhs ? p4_read_scalar_f64(ws, s2) : p4_vec_to_f64(*v_s2, u);
-                    if (subop == 6u) { // .between
-                        bool hi_ok = scalar_rhs ? p4_is_scalar_f64_valid(ws, s3)
-                                                : (p4_is_numeric_vec(v_s3) && u < v_s3->length && v_s3->is_valid_at(u));
-                        if (hi_ok) {
-                            double hi = scalar_rhs ? p4_read_scalar_f64(ws, s3) : p4_vec_to_f64(*v_s3, u);
-                            keep = (x >= lo && x <= hi);
+                    if (!std::isnan(lo)) {
+                        if (subop == 6u) { // .between
+                            bool hi_ok = scalar_rhs ? p4_is_scalar_f64_valid(ws, s3)
+                                                    : (p4_is_numeric_vec(v_s3) && u < v_s3->length && v_s3->is_valid_at(u));
+                            if (hi_ok) {
+                                double hi = scalar_rhs ? p4_read_scalar_f64(ws, s3) : p4_vec_to_f64(*v_s3, u);
+                                keep = !std::isnan(hi) && (x >= lo && x <= hi);
+                            }
+                        } else {
+                            keep = p4_eval_cmp_f64(subop, x, lo);
                         }
-                    } else {
-                        keep = p4_eval_cmp_f64(subop, x, lo);
                     }
                 }
             } else if (col->elem_tag == kVecTagI64 || col->elem_tag == kVecTagU64) {

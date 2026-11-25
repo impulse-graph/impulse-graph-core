@@ -7,6 +7,8 @@ V11_OP_CASE(VEC_3VL_OP) {
     const uint8_t s2 = IMP_V11_S2(w);
     const uint8_t s3 = IMP_V11_S3(w);
 
+    if (subop >= 12u) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE; V11_DISPATCH(); }
+
     const V11Frontier* mask = p4_get_mask_frontier(ws, flags, s3);
     if (ws.status != IMPULSE_VM_V11_OK) V11_DISPATCH();
     const V11Vector* va = ws.v_regs[s1];
