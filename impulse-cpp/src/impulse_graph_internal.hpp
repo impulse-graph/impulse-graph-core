@@ -212,8 +212,15 @@ struct impulse_snapshot {
     std::vector<impulse_index_directory_entry_t> indexes;
     std::vector<std::string> index_names;
     std::unordered_map<std::string, std::string> metadata;
+    mutable void* v11_cached_view = nullptr;
+    mutable void (*v11_cached_view_dtor)(void*) = nullptr;
 
     ~impulse_snapshot() {
+        if (v11_cached_view && v11_cached_view_dtor) {
+            v11_cached_view_dtor(v11_cached_view);
+            v11_cached_view = nullptr;
+            v11_cached_view_dtor = nullptr;
+        }
         if (mmap_ptr && file_size > 0) {
 #ifdef _WIN32
             UnmapViewOfFile(mmap_ptr);

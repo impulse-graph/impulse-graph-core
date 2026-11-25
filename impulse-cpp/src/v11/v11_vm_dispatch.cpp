@@ -430,11 +430,33 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
     const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
     const size_t fsz = snapshot->file_size;
 
-    const size_t nd = snapshot->domains.size();
+    size_t nd = snapshot->domains.size();
+    for (size_t i = 0; i < snapshot->domains.size(); ++i) {
+        if (snapshot->domains[i].domain_id + 1u > nd) nd = snapshot->domains[i].domain_id + 1u;
+    }
+    for (size_t r = 0; r < snapshot->relations.size(); ++r) {
+        const auto& rd = snapshot->relations[r];
+        if (rd.src_domain_id + 1u > nd) nd = rd.src_domain_id + 1u;
+        if (rd.tgt_domain_id + 1u > nd) nd = rd.tgt_domain_id + 1u;
+    }
     uint64_t* dom_cards = (nd > 0) ? arena.alloc_array<uint64_t>(nd, 8) : nullptr;
     if (nd > 0 && !dom_cards) return false;
-    for (size_t i = 0; i < nd; ++i) {
-        dom_cards[i] = snapshot->domains[i].node_count;
+    if (nd > 0) std::memset(dom_cards, 0, nd * sizeof(uint64_t));
+    for (size_t i = 0; i < snapshot->domains.size(); ++i) {
+        uint16_t did = snapshot->domains[i].domain_id;
+        dom_cards[did] = snapshot->domains[i].node_count;
+    }
+    for (size_t r = 0; r < snapshot->relations.size(); ++r) {
+        const auto& rd = snapshot->relations[r];
+        if (dom_cards[rd.src_domain_id] < rd.node_count) {
+            dom_cards[rd.src_domain_id] = rd.node_count;
+        }
+        if (dom_cards[rd.tgt_domain_id] == 0u) {
+            dom_cards[rd.tgt_domain_id] = rd.node_count;
+        }
+        if (dom_cards[0] == 0u && rd.node_count > 0u) {
+            dom_cards[0] = rd.node_count;
+        }
     }
     view.domain_cards = dom_cards;
     view.domain_count = static_cast<uint32_t>(nd);
@@ -557,7 +579,350 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
     return true;
 }
 
+bool decode_impb_const_pool(const uint8_t* ptr,
+                            size_t len,
+                            impulse_vm_workspace_v11_t& ws) noexcept {
+    if (len == 0u) return true;
+    if (!ptr || len < 8u) return false;
+    uint32_t entry_count = 0u;
+    uint32_t reserved = 0u;
+    std::memcpy(&entry_count, ptr, 4u);
+    std::memcpy(&reserved, ptr + 4u, 4u);
+    if (reserved != 0u || entry_count > kMaxConstPool) return false;
+
+    size_t off = 8u;
+    for (uint32_t i = 0; i < entry_count; ++i) {
+        if (off + 16u > len) return false;
+        uint32_t id = 0u;
+        uint8_t kind = 0u;
+        uint8_t elem_tag = 0u;
+        uint16_t flags = 0u;
+        uint32_t count = 0u;
+        uint32_t extra = 0u;
+        std::memcpy(&id, ptr + off, 4u);
+        kind = ptr[off + 4u];
+        elem_tag = ptr[off + 5u];
+        std::memcpy(&flags, ptr + off + 6u, 2u);
+        std::memcpy(&count, ptr + off + 8u, 4u);
+        std::memcpy(&extra, ptr + off + 12u, 4u);
+        off += 16u;
+
+        V11ConstPoolEntry& ent = ws.const_pool[ws.const_pool_count];
+        ent = V11ConstPoolEntry{};
+        ent.id = id;
+
+        if (kind == static_cast<uint8_t>(ConstPoolKind::Str)) {
+            if (off + count > len) return false;
+            char* sbuf = (count > 0u) ? ws.arena.alloc_array<char>(count, 1) : nullptr;
+            if (count > 0u && !sbuf) return false;
+            if (count > 0u) std::memcpy(sbuf, ptr + off, count);
+            ent.kind = ConstPoolKind::Str;
+            ent.str = {sbuf, count, 1u};
+            off = (off + count + 7u) & ~size_t(7u);
+        } else if (kind == static_cast<uint8_t>(ConstPoolKind::Frontier)) {
+            size_t nbytes = static_cast<size_t>(count) * sizeof(uint64_t);
+            if (off + nbytes > len) return false;
+            uint64_t* ids = (count > 0u) ? ws.arena.alloc_array<uint64_t>(count, 8) : nullptr;
+            if (count > 0u && !ids) return false;
+            if (nbytes > 0u) std::memcpy(ids, ptr + off, nbytes);
+            ent.kind = ConstPoolKind::Frontier;
+            ent.f_ids = ids;
+            ent.f_len = count;
+            off += nbytes;
+        } else if (kind == static_cast<uint8_t>(ConstPoolKind::Vec)) {
+            auto* vec = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+            if (!vec) return false;
+            new (vec) V11Vector();
+            vec->elem_tag = elem_tag;
+            vec->length = count;
+            const size_t nwords = (count > 0u) ? ((static_cast<size_t>(count) + 63u) >> 6) : 0u;
+            if ((flags & 1u) != 0u && nwords > 0u) {
+                size_t vbytes = nwords * sizeof(uint64_t);
+                if (off + vbytes > len) return false;
+                uint64_t* vb = ws.arena.alloc_array<uint64_t>(nwords, 8);
+                if (!vb) return false;
+                std::memcpy(vb, ptr + off, vbytes);
+                vec->valid_bits = vb;
+                off += vbytes;
+            }
+            if (elem_tag == kVecTagI64 || elem_tag == kVecTagU64) {
+                size_t dbytes = static_cast<size_t>(count) * sizeof(int64_t);
+                if (off + dbytes > len) return false;
+                int64_t* d = (count > 0u) ? ws.arena.alloc_array<int64_t>(count, 8) : nullptr;
+                if (count > 0u && !d) return false;
+                if (dbytes > 0u) std::memcpy(d, ptr + off, dbytes);
+                vec->i64_data = d;
+                off += dbytes;
+            } else if (elem_tag == kVecTagF64) {
+                size_t dbytes = static_cast<size_t>(count) * sizeof(double);
+                if (off + dbytes > len) return false;
+                double* d = (count > 0u) ? ws.arena.alloc_array<double>(count, 8) : nullptr;
+                if (count > 0u && !d) return false;
+                if (dbytes > 0u) std::memcpy(d, ptr + off, dbytes);
+                vec->f64_data = d;
+                off += dbytes;
+            } else if (elem_tag == kVecTagBool3vl) {
+                size_t dbytes = nwords * sizeof(uint64_t);
+                if (off + dbytes > len) return false;
+                uint64_t* d = (nwords > 0u) ? ws.arena.alloc_array<uint64_t>(nwords, 8) : nullptr;
+                if (nwords > 0u && !d) return false;
+                if (dbytes > 0u) std::memcpy(d, ptr + off, dbytes);
+                vec->bool_data_bits = d;
+                off += dbytes;
+            } else if (elem_tag == kVecTagStr) {
+                V11StrSlice* d = (count > 0u) ? ws.arena.alloc_array<V11StrSlice>(count, alignof(V11StrSlice)) : nullptr;
+                if (count > 0u && !d) return false;
+                for (uint32_t k = 0; k < count; ++k) {
+                    if (off + 4u > len) return false;
+                    uint32_t slen = 0u;
+                    std::memcpy(&slen, ptr + off, 4u);
+                    off += 4u;
+                    if (slen == 0xFFFFFFFFu) {
+                        d[k] = {nullptr, 0u, 0u};
+                    } else {
+                        if (off + slen > len) return false;
+                        char* sbuf = (slen > 0u) ? ws.arena.alloc_array<char>(slen, 1) : nullptr;
+                        if (slen > 0u && !sbuf) return false;
+                        if (slen > 0u) std::memcpy(sbuf, ptr + off, slen);
+                        d[k] = {sbuf, slen, 1u};
+                        off += slen;
+                    }
+                }
+                vec->str_data = d;
+                off = (off + 7u) & ~size_t(7u);
+            } else {
+                return false;
+            }
+            ent.kind = ConstPoolKind::Vec;
+            ent.vec = vec;
+        } else {
+            return false;
+        }
+        ws.const_pool_count += 1u;
+    }
+    return off <= len;
+}
+
+bool bind_c_abi_params(const impulse_vm_params_v11_t* params,
+                       impulse_vm_workspace_v11_t& ws) noexcept {
+    if (!params || !params->bindings || params->binding_count == 0u) return true;
+    if (params->binding_count > kMaxParams) return false;
+    for (uint32_t i = 0; i < params->binding_count; ++i) {
+        const auto& b = params->bindings[i];
+        V11ParamEntry& e = ws.params[ws.param_count];
+        e = V11ParamEntry{};
+        e.id = b.param_id;
+        switch (b.kind) {
+            case IMPULSE_VM_V11_PARAM_SCALAR_NULL:
+                e.kind = ParamKind::Scalar;
+                e.scalar_type = 0u;
+                e.scalar_valid = false;
+                e.scalar_bits = 0ULL;
+                break;
+            case IMPULSE_VM_V11_PARAM_SCALAR_I64:
+                e.kind = ParamKind::Scalar;
+                e.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_I64);
+                e.scalar_valid = true;
+                e.scalar_bits = b.scalar_bits;
+                break;
+            case IMPULSE_VM_V11_PARAM_SCALAR_U64:
+                e.kind = ParamKind::Scalar;
+                e.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_U64);
+                e.scalar_valid = true;
+                e.scalar_bits = b.scalar_bits;
+                break;
+            case IMPULSE_VM_V11_PARAM_SCALAR_F64:
+                e.kind = ParamKind::Scalar;
+                e.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_F64);
+                e.scalar_valid = true;
+                e.scalar_bits = b.scalar_bits;
+                break;
+            case IMPULSE_VM_V11_PARAM_SCALAR_BOOL:
+                e.kind = ParamKind::Scalar;
+                e.scalar_type = static_cast<uint8_t>(ScalarType::SCALAR_BOOL_3VL);
+                e.scalar_valid = true;
+                e.scalar_bits = (b.scalar_bits != 0ULL) ? 1ULL : 0ULL;
+                break;
+            case IMPULSE_VM_V11_PARAM_SCALAR_STR: {
+                e.kind = ParamKind::Str;
+                char* sbuf = (b.count > 0u) ? ws.arena.alloc_array<char>(b.count, 1) : nullptr;
+                if (b.count > 0u && (!sbuf || !b.data_ptr)) return false;
+                if (b.count > 0u) std::memcpy(sbuf, b.data_ptr, b.count);
+                e.str = {sbuf, b.count, 1u};
+                break;
+            }
+            case IMPULSE_VM_V11_PARAM_FRONTIER_IDS: {
+                e.kind = ParamKind::Frontier;
+                e.dom_id = b.domain_id;
+                uint64_t* ids = (b.count > 0u) ? ws.arena.alloc_array<uint64_t>(b.count, 8) : nullptr;
+                if (b.count > 0u && (!ids || !b.data_ptr)) return false;
+                if (b.count > 0u) std::memcpy(ids, b.data_ptr, static_cast<size_t>(b.count) * sizeof(uint64_t));
+                e.f_ids = ids;
+                e.f_len = b.count;
+                break;
+            }
+            case IMPULSE_VM_V11_PARAM_VEC_I64:
+            case IMPULSE_VM_V11_PARAM_VEC_U64:
+            case IMPULSE_VM_V11_PARAM_VEC_F64: {
+                auto* vec = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+                if (!vec) return false;
+                new (vec) V11Vector();
+                vec->length = b.count;
+                if (b.valid_bits && b.count > 0u) {
+                    size_t nw = (static_cast<size_t>(b.count) + 63u) >> 6;
+                    uint64_t* vb = ws.arena.alloc_array<uint64_t>(nw, 8);
+                    if (!vb) return false;
+                    std::memcpy(vb, b.valid_bits, nw * sizeof(uint64_t));
+                    vec->valid_bits = vb;
+                }
+                if (b.kind == IMPULSE_VM_V11_PARAM_VEC_F64) {
+                    vec->elem_tag = kVecTagF64;
+                    double* d = (b.count > 0u) ? ws.arena.alloc_array<double>(b.count, 8) : nullptr;
+                    if (b.count > 0u && (!d || !b.data_ptr)) return false;
+                    if (b.count > 0u) std::memcpy(d, b.data_ptr, static_cast<size_t>(b.count) * sizeof(double));
+                    vec->f64_data = d;
+                } else {
+                    vec->elem_tag = (b.kind == IMPULSE_VM_V11_PARAM_VEC_U64) ? kVecTagU64 : kVecTagI64;
+                    int64_t* d = (b.count > 0u) ? ws.arena.alloc_array<int64_t>(b.count, 8) : nullptr;
+                    if (b.count > 0u && (!d || !b.data_ptr)) return false;
+                    if (b.count > 0u) std::memcpy(d, b.data_ptr, static_cast<size_t>(b.count) * sizeof(int64_t));
+                    vec->i64_data = d;
+                }
+                e.kind = ParamKind::Vec;
+                e.vec = vec;
+                break;
+            }
+            default:
+                return false;
+        }
+        ws.param_count += 1u;
+    }
+    return true;
+}
+
+impulse_vm_status_v11_t serialize_outputs_to_result_buf(
+    const impulse_vm_workspace_v11_t& ws,
+    void* result_buf,
+    size_t result_cap,
+    size_t* out_result_bytes
+) noexcept {
+    if (!result_buf) {
+        if (out_result_bytes) *out_result_bytes = 0u;
+        return IMPULSE_VM_V11_OK;
+    }
+    // Header: [output_count:u32, reserved:u32] + per-slot [slot:u16, elem_tag:u8, flags:u8, length:u32] + payload
+    size_t needed = 8u;
+    for (uint32_t i = 0; i < ws.output_count; ++i) {
+        const V11Vector* v = ws.outputs[i].vec;
+        needed += 8u;
+        if (!v) continue;
+        size_t nw = (v->length > 0u) ? ((static_cast<size_t>(v->length) + 63u) >> 6) : 0u;
+        if (v->valid_bits && nw > 0u) needed += nw * 8u;
+        if (v->elem_tag == kVecTagI64 || v->elem_tag == kVecTagU64 || v->elem_tag == kVecTagF64) {
+            needed += static_cast<size_t>(v->length) * 8u;
+        } else if (v->elem_tag == kVecTagBool3vl) {
+            needed += nw * 8u;
+        } else if (v->elem_tag == kVecTagStr && v->str_data) {
+            for (uint32_t k = 0; k < v->length; ++k) {
+                needed += 4u + (v->str_data[k].valid ? v->str_data[k].len : 0u);
+            }
+            needed = (needed + 7u) & ~size_t(7u);
+        }
+    }
+    if (out_result_bytes) *out_result_bytes = needed;
+    if (needed > result_cap) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
+    auto* dst = static_cast<uint8_t*>(result_buf);
+    uint32_t oc = ws.output_count;
+    uint32_t zero = 0u;
+    std::memcpy(dst, &oc, 4u);
+    std::memcpy(dst + 4u, &zero, 4u);
+    size_t pos = 8u;
+    for (uint32_t i = 0; i < ws.output_count; ++i) {
+        const V11Vector* v = ws.outputs[i].vec;
+        uint16_t slot = ws.outputs[i].slot;
+        uint8_t tag = v ? v->elem_tag : 0u;
+        uint8_t fl = (v && v->valid_bits && v->length > 0u) ? 1u : 0u;
+        uint32_t n = v ? v->length : 0u;
+        std::memcpy(dst + pos, &slot, 2u);
+        dst[pos + 2u] = tag;
+        dst[pos + 3u] = fl;
+        std::memcpy(dst + pos + 4u, &n, 4u);
+        pos += 8u;
+        if (!v) continue;
+        size_t nw = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 0u;
+        if (fl != 0u && nw > 0u) {
+            std::memcpy(dst + pos, v->valid_bits, nw * 8u);
+            pos += nw * 8u;
+        }
+        if ((tag == kVecTagI64 || tag == kVecTagU64) && n > 0u && v->i64_data) {
+            std::memcpy(dst + pos, v->i64_data, static_cast<size_t>(n) * 8u);
+            pos += static_cast<size_t>(n) * 8u;
+        } else if (tag == kVecTagF64 && n > 0u && v->f64_data) {
+            std::memcpy(dst + pos, v->f64_data, static_cast<size_t>(n) * 8u);
+            pos += static_cast<size_t>(n) * 8u;
+        } else if (tag == kVecTagBool3vl && nw > 0u && v->bool_data_bits) {
+            std::memcpy(dst + pos, v->bool_data_bits, nw * 8u);
+            pos += nw * 8u;
+        } else if (tag == kVecTagStr && v->str_data) {
+            for (uint32_t k = 0; k < n; ++k) {
+                uint32_t sl = v->str_data[k].valid ? v->str_data[k].len : 0xFFFFFFFFu;
+                std::memcpy(dst + pos, &sl, 4u);
+                pos += 4u;
+                if (v->str_data[k].valid && v->str_data[k].len > 0u) {
+                    std::memcpy(dst + pos, v->str_data[k].ptr, v->str_data[k].len);
+                    pos += v->str_data[k].len;
+                }
+            }
+            while ((pos & 7u) != 0u) dst[pos++] = 0u;
+        }
+    }
+    return IMPULSE_VM_V11_OK;
+}
+
+struct V11CachedSnapshotView {
+    uint8_t* buf = nullptr;
+    size_t cap = 0;
+    V11Arena arena{};
+    V11SnapshotView view{};
+    ~V11CachedSnapshotView() { std::free(buf); }
+};
+
+void destroy_cached_snapshot_view(void* p) {
+    delete static_cast<V11CachedSnapshotView*>(p);
+}
+
 } // namespace
+
+extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
+    const impulse_snapshot_t* snapshot
+) {
+    using namespace impulse::vm::v11;
+    if (!snapshot) return IMPULSE_VM_V11_ERR_NULL_SNAPSHOT;
+    if (snapshot->v11_cached_view != nullptr) return IMPULSE_VM_V11_OK;
+
+    // Estimate backing bytes for view (file_size * 3 + 1MB headroom)
+    size_t cap = snapshot->file_size * 3u + 1024u * 1024u;
+    void* raw = nullptr;
+    if (posix_memalign(&raw, 128, cap) != 0 || !raw) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
+    auto* cached = new V11CachedSnapshotView();
+    cached->buf = static_cast<uint8_t*>(raw);
+    cached->cap = cap;
+    cached->arena.base = cached->buf;
+    cached->arena.cap = cap;
+    cached->arena.pos = 0u;
+    cached->arena.mark = 0u;
+    if (!build_snapshot_view_from_imps(snapshot, cached->arena, cached->view)) {
+        delete cached;
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
+    snapshot->v11_cached_view = cached;
+    snapshot->v11_cached_view_dtor = &destroy_cached_snapshot_view;
+    return IMPULSE_VM_V11_OK;
+}
 
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     const void* impb_bytes,
@@ -613,6 +978,8 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     }
 
     scratch_ws->reset_execution_state();
+    scratch_ws->const_pool_count = 0u;
+    scratch_ws->param_count = 0u;
     scratch_ws->max_call_depth = hdr.max_call_depth;
     if (params && params->geometry_override) {
         scratch_ws->geometry = *params->geometry_override;
@@ -630,23 +997,93 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
                 static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr),
                 static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t));
 
+    if ((hdr.header_flags & 0x01u) != 0u && hdr.const_pool_bytes > 0u) {
+        const uint8_t* cp_ptr = static_cast<const uint8_t*>(impb_bytes) +
+                                sizeof(hdr) +
+                                static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t);
+        if (!decode_impb_const_pool(cp_ptr, hdr.const_pool_bytes, *scratch_ws)) {
+            scratch_ws->status = IMPULSE_VM_V11_ERR_VALIDATION_FAILED;
+            return IMPULSE_VM_V11_ERR_VALIDATION_FAILED;
+        }
+    }
+
+    if (!bind_c_abi_params(params, *scratch_ws)) {
+        scratch_ws->status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    }
+
     V11SnapshotView view{};
     const V11SnapshotView* view_ptr = nullptr;
     if (snapshot != nullptr) {
-        if (!build_snapshot_view_from_imps(snapshot, scratch_ws->arena, view)) {
-            scratch_ws->status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-            return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+        if (snapshot->v11_cached_view != nullptr) {
+            view_ptr = &static_cast<const V11CachedSnapshotView*>(snapshot->v11_cached_view)->view;
+        } else {
+            if (!build_snapshot_view_from_imps(snapshot, scratch_ws->arena, view)) {
+                scratch_ws->status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+            }
+            view_ptr = &view;
         }
-        view_ptr = &view;
     }
 
-    return run_words_unlocked(words, hdr.code_word_count, view_ptr, *scratch_ws, gas, hdr.entry_pc, true);
+    impulse_vm_status_v11_t st = run_words_unlocked(words, hdr.code_word_count, view_ptr, *scratch_ws, gas, hdr.entry_pc, true);
+    if (st == IMPULSE_VM_V11_OK && result_buf != nullptr) {
+        impulse_vm_status_v11_t ser_st = serialize_outputs_to_result_buf(*scratch_ws, result_buf, result_cap, out_result_bytes);
+        if (ser_st != IMPULSE_VM_V11_OK) {
+            scratch_ws->status = ser_st;
+            return ser_st;
+        }
+    }
+    return st;
 }
 
 extern "C" IMPULSE_API const impulse_vm_state_v11_t* impulse_vm_v11_get_state(
     const impulse_vm_workspace_v11_t* ws
 ) {
     return ws ? &ws->state : nullptr;
+}
+
+extern "C" IMPULSE_API uint32_t impulse_vm_v11_get_output_count(
+    const impulse_vm_workspace_v11_t* ws
+) {
+    return ws ? ws->output_count : 0u;
+}
+
+extern "C" IMPULSE_API int impulse_vm_v11_get_output(
+    const impulse_vm_workspace_v11_t* ws,
+    uint32_t index,
+    impulse_vm_output_view_v11_t* out
+) {
+    if (!ws || !out || index >= ws->output_count) return 0;
+    const auto& slot = ws->outputs[index];
+    const auto* v = slot.vec;
+    out->slot = slot.slot;
+    out->elem_tag = v ? v->elem_tag : 0u;
+    out->reserved = 0u;
+    out->length = v ? v->length : 0u;
+    out->i64_data = v ? v->i64_data : nullptr;
+    out->f64_data = v ? v->f64_data : nullptr;
+    out->valid_bits = v ? v->valid_bits : nullptr;
+    out->bool_data_bits = v ? v->bool_data_bits : nullptr;
+    return 1;
+}
+
+extern "C" IMPULSE_API int impulse_vm_v11_get_output_str(
+    const impulse_vm_workspace_v11_t* ws,
+    uint32_t index,
+    uint32_t elem_idx,
+    const char** out_ptr,
+    uint32_t* out_len,
+    int* out_valid
+) {
+    if (!ws || index >= ws->output_count) return 0;
+    const auto* v = ws->outputs[index].vec;
+    if (!v || v->elem_tag != impulse::vm::v11::kVecTagStr || !v->str_data || elem_idx >= v->length) return 0;
+    const auto& s = v->str_data[elem_idx];
+    if (out_ptr) *out_ptr = s.ptr;
+    if (out_len) *out_len = s.len;
+    if (out_valid) *out_valid = s.valid ? 1 : 0;
+    return 1;
 }
 
 extern "C" IMPULSE_API void impulse_vm_v11_reset_opcode_stats(

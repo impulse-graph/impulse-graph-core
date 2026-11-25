@@ -106,6 +106,8 @@ add_library(impulse_graph SHARED
     src/impulse_vm_fluent_multilane.cpp
     src/impulse_statement_c_api.cpp
     src/impulse_bytecode_emitter.cpp
+    src/v11/v11_bytecode_emitter.cpp
+    src/v11/v11_impscm_compiler.cpp
     src/v11/v11_ictx_v2.cpp
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
@@ -135,6 +137,8 @@ add_library(impulse_graph_static STATIC
     src/impulse_vm_fluent_multilane.cpp
     src/impulse_statement_c_api.cpp
     src/impulse_bytecode_emitter.cpp
+    src/v11/v11_bytecode_emitter.cpp
+    src/v11/v11_impscm_compiler.cpp
     src/v11/v11_ictx_v2.cpp
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
@@ -180,6 +184,8 @@ install(FILES
     include/impulse_impscm.hpp
     include/impulse_opcode_contracts.hpp
     include/impulse_bytecode_emitter.hpp
+    include/v11/impulse_v11_bytecode_emitter.hpp
+    include/v11/impulse_v11_impscm.hpp
     include/impulse_opcode_macros.h
     include/impulse_sexpr.hpp
     DESTINATION include
@@ -414,6 +420,9 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(v11_fixture_batch_runner tests/v11_fixture_batch_runner.cpp)
     target_link_libraries(v11_fixture_batch_runner PRIVATE impulse_graph_static)
+
+    add_executable(bench_v11_e2e tests/bench_v11_e2e.cpp)
+    target_link_libraries(bench_v11_e2e PRIVATE impulse_graph_static)
 endif()
 
 # --- Fuzz Targets --------------------------------------------------------
