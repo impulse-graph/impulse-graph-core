@@ -34,8 +34,8 @@ V11_OP_CASE(GRAPH_KERNEL) {
     uint64_t total_raw = 0ULL;
     for (uint32_t u = 0; u < n; ++u) {
         if (!node_in(u) || u + 1u >= rel->row_off_len) continue;
-        for (uint32_t e = rel->row_offsets[u]; e < rel->row_offsets[u + 1u]; ++e) {
-            uint64_t v64 = rel->col_targets[e];
+        for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+            uint64_t v64 = rel->csr_col_tgt(e);
             if (v64 < n && static_cast<uint32_t>(v64) != u && node_in(static_cast<uint32_t>(v64))) {
                 uint32_t v = static_cast<uint32_t>(v64);
                 raw_deg[u + 1u]++;
@@ -56,8 +56,8 @@ V11_OP_CASE(GRAPH_KERNEL) {
     if (n > 0u) std::memcpy(cur, raw_deg, static_cast<size_t>(n) * sizeof(uint32_t));
     for (uint32_t u = 0; u < n; ++u) {
         if (!node_in(u) || u + 1u >= rel->row_off_len) continue;
-        for (uint32_t e = rel->row_offsets[u]; e < rel->row_offsets[u + 1u]; ++e) {
-            uint64_t v64 = rel->col_targets[e];
+        for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+            uint64_t v64 = rel->csr_col_tgt(e);
             if (v64 < n && static_cast<uint32_t>(v64) != u && node_in(static_cast<uint32_t>(v64))) {
                 uint32_t v = static_cast<uint32_t>(v64);
                 adj_nbrs[cur[u]++] = v;

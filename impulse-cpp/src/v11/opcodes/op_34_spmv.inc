@@ -60,8 +60,8 @@ V11_OP_CASE(SPMV) {
                 uint32_t u = src_ids[i];
                 if (u + 1u >= row_off_len) continue;
                 uint64_t u64 = static_cast<uint64_t>(u);
-                for (uint32_t e = row_offsets[u]; e < row_offsets[u + 1u]; ++e) {
-                    uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+                    uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                     if (v >= n_out || (tgt_mask && !tgt_mask->contains_1bit(v))) continue;
                     bool has = ((valid[v >> 6] >> (v & 63u)) & 1ULL) != 0ULL;
                     if (!has) {
@@ -124,8 +124,8 @@ V11_OP_CASE(SPMV) {
                 if (!u_ok) continue;
                 double du = scalar_rhs ? scalar_val : (direct_f64_rhs ? rv->f64_data[u] : rhs_snap[u]);
                 uint64_t u64 = static_cast<uint64_t>(u);
-                for (uint32_t e = row_offsets[u]; e < row_offsets[u + 1u]; ++e) {
-                    uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+                    uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                     if (v >= n_out || (tgt_mask && !tgt_mask->contains_1bit(v))) continue;
                     if (weight_col && (e >= weight_col->length || !weight_col->is_valid_at(e))) continue;
                     double ew = weight_col ? p2_read_numeric_as_f64(*weight_col, e) : 1.0;
@@ -187,9 +187,9 @@ V11_OP_CASE(SPMV) {
                 if (!u_ok) continue;
                 double ru = scalar_rhs ? scalar_val : (direct_f64_rhs ? rv->f64_data[u] : rhs_snap[u]);
                 if (std::isnan(ru)) continue;
-                uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                 for (uint32_t e = e0; e < e1; ++e) {
-                    uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                    uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                     if (v >= n_out) continue;
                     double ew = 1.0;
                     if (w_data) {
@@ -214,9 +214,9 @@ V11_OP_CASE(SPMV) {
                 bool u_ok = scalar_rhs ? scalar_valid : (u < n_in && (direct_f64_rhs ? rv->is_valid_at(u) : rhs_snap_valid[u] != 0u));
                 if (!u_ok) continue;
                 double ru = scalar_rhs ? scalar_val : (direct_f64_rhs ? rv->f64_data[u] : rhs_snap[u]);
-                uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                 for (uint32_t e = e0; e < e1; ++e) {
-                    uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                    uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                     if (v >= n_out || (tgt_mask && !tgt_mask->contains_1bit(v))) continue;
                     if (weight_col && (e >= weight_col->length || !weight_col->is_valid_at(e))) continue;
                     double ew = weight_col ? p2_read_numeric_as_f64(*weight_col, e) : 1.0;

@@ -27,7 +27,7 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
         for (uint32_t i = 0; i < src_len; ++i) {
             uint32_t u = src_ids[i];
             if (u + 1u < rel->row_off_len) {
-                uint32_t deg = rel->row_offsets[u + 1u] - rel->row_offsets[u];
+                uint32_t deg = rel->csr_row_off(u + 1u) - rel->csr_row_off(u);
                 cap += (deg <= k) ? deg : k;
             }
         }
@@ -44,10 +44,10 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
         for (uint32_t i = 0; i < src_len; ++i) {
             uint32_t u = src_ids[i];
             if (rel->row_off_len == 0u || u >= rel->row_off_len - 1u) continue;
-            uint32_t lo = rel->row_offsets[u], hi = rel->row_offsets[u + 1u];
+            uint32_t lo = rel->csr_row_off(u), hi = rel->csr_row_off(u + 1u);
             uint32_t deg = hi - lo;
             if (deg <= k) {
-                for (uint32_t e = lo; e < hi; ++e) out_buf[cnt++] = static_cast<uint32_t>(rel->col_targets[e]);
+                for (uint32_t e = lo; e < hi; ++e) out_buf[cnt++] = static_cast<uint32_t>(rel->csr_col_tgt(e));
             } else {
                 if (!ht) {
                     ht = ws.arena.alloc_array<uint32_t>(ht_cap, 8);
@@ -69,7 +69,7 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
                     size_t islot = (static_cast<size_t>(pick) * 2654435761u) & ht_mask;
                     while (ht[islot] != UINT32_MAX && ht[islot] != pick) islot = (islot + 1u) & ht_mask;
                     ht[islot] = pick;
-                    out_buf[cnt++] = static_cast<uint32_t>(rel->col_targets[lo + pick]);
+                    out_buf[cnt++] = static_cast<uint32_t>(rel->csr_col_tgt(lo + pick));
                 }
             }
         }
@@ -110,15 +110,15 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
             uint64_t u64 = static_cast<uint64_t>(u_s);
             if (u_s < 0 || u64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
             uint32_t u = static_cast<uint32_t>(u64);
-            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u] : 0u;
-            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u + 1u] : 0u;
+            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->csr_row_off(u) : 0u;
+            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->csr_row_off(u + 1u) : 0u;
             uint32_t deg = hi - lo;
             if (deg > 0u) {
                 for (uint32_t j = 0; j < k; ++j) {
                     uint64_t r = p3_splitmix_sample(seed, u64, static_cast<uint64_t>(j));
                     uint32_t idx = static_cast<uint32_t>(r % static_cast<uint64_t>(deg));
                     uint32_t pos = i * k + j;
-                    out[pos] = static_cast<int64_t>(rel->col_targets[lo + idx]);
+                    out[pos] = static_cast<int64_t>(rel->csr_col_tgt(lo + idx));
                     vbits[pos >> 6] |= (1ULL << (pos & 63u));
                     any_valid = true;
                 }
@@ -154,8 +154,8 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
             uint64_t u64 = static_cast<uint64_t>(u_s);
             if (u_s < 0 || u64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
             uint32_t u = static_cast<uint32_t>(u64);
-            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u] : 0u;
-            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u + 1u] : 0u;
+            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->csr_row_off(u) : 0u;
+            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->csr_row_off(u + 1u) : 0u;
             uint32_t deg = hi - lo;
             if (deg == 0u) {
                 if (stay) {
@@ -166,7 +166,7 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
             } else {
                 uint64_t r = p3_splitmix_sample(seed, u64, static_cast<uint64_t>(i));
                 uint32_t idx = static_cast<uint32_t>(r % static_cast<uint64_t>(deg));
-                out[i] = static_cast<int64_t>(rel->col_targets[lo + idx]);
+                out[i] = static_cast<int64_t>(rel->csr_col_tgt(lo + idx));
                 vbits[i >> 6] |= (1ULL << (i & 63u));
                 any_valid = true;
             }

@@ -88,8 +88,8 @@ IMPULSE_V11_NOINLINE inline bool p3_build_rev_adj(V11Arena& arena,
     uint32_t n_src = (rel.row_off_len > 0u) ? (rel.row_off_len - 1u) : 0u;
     uint32_t total = 0u;
     for (uint32_t u = 0; u < n_src; ++u) {
-        for (uint32_t e = rel.row_offsets[u]; e < rel.row_offsets[u + 1u]; ++e) {
-            uint64_t v = rel.col_targets[e];
+        for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
+            uint64_t v = rel.csr_col_tgt(e);
             if (v < n_tgt64) {
                 offs[static_cast<uint32_t>(v) + 1u]++;
                 total++;
@@ -105,8 +105,8 @@ IMPULSE_V11_NOINLINE inline bool p3_build_rev_adj(V11Arena& arena,
     if (n_tgt > 0u) std::memcpy(cur, offs, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
 
     for (uint32_t u = 0; u < n_src; ++u) {
-        for (uint32_t e = rel.row_offsets[u]; e < rel.row_offsets[u + 1u]; ++e) {
-            uint64_t v = rel.col_targets[e];
+        for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
+            uint64_t v = rel.csr_col_tgt(e);
             if (v < n_tgt64) {
                 uint32_t pos = cur[static_cast<uint32_t>(v)]++;
                 srcs[pos]  = u;
@@ -135,7 +135,7 @@ inline bool p3_compute_in_degs(V11Arena& arena,
     if (!deg) return false;
     std::memset(deg, 0, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
     for (uint32_t e = 0; e < rel.col_tgt_len; ++e) {
-        uint64_t v = rel.col_targets[e];
+        uint64_t v = rel.csr_col_tgt(e);
         if (v < n_tgt64) deg[static_cast<uint32_t>(v)]++;
     }
     *out_deg = deg;
@@ -155,7 +155,7 @@ inline bool p3_fwd_step(V11Arena& arena,
     size_t cap = 0u;
     for (uint32_t i = 0; i < src_len; ++i) {
         uint32_t u = src[i];
-        if (u + 1u < rel.row_off_len) cap += (rel.row_offsets[u + 1u] - rel.row_offsets[u]);
+        if (u + 1u < rel.row_off_len) cap += (rel.csr_row_off(u + 1u) - rel.csr_row_off(u));
     }
     if (cap == 0u) { *out_ptr = nullptr; *out_len = 0u; return true; }
     uint32_t* buf = arena.alloc_array<uint32_t>(cap, 8);
@@ -164,8 +164,8 @@ inline bool p3_fwd_step(V11Arena& arena,
     for (uint32_t i = 0; i < src_len; ++i) {
         uint32_t u = src[i];
         if (u + 1u < rel.row_off_len) {
-            for (uint32_t e = rel.row_offsets[u]; e < rel.row_offsets[u + 1u]; ++e) {
-                uint32_t v = static_cast<uint32_t>(rel.col_targets[e]);
+            for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
+                uint32_t v = static_cast<uint32_t>(rel.csr_col_tgt(e));
                 if (!p3_sorted_contains(excl1, excl1_len, v) && !p3_sorted_contains(excl2, excl2_len, v)) {
                     buf[cnt++] = v;
                 }
@@ -590,8 +590,8 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     if (csr_src_idx >= s_len) goto csr_chunk_ready;
                     csr_cur_u = s_ids[csr_src_idx++];
                     if (csr_cur_u + 1u < rel.row_off_len) {
-                        csr_edge_idx = rel.row_offsets[csr_cur_u];
-                        csr_edge_end = rel.row_offsets[csr_cur_u + 1u];
+                        csr_edge_idx = rel.csr_row_off(csr_cur_u);
+                        csr_edge_end = rel.csr_row_off(csr_cur_u + 1u);
                     } else {
                         csr_edge_idx = 0u;
                         csr_edge_end = 0u;
@@ -602,7 +602,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 }
                 while (csr_edge_idx < csr_edge_end && len < m_max) {
                     uint32_t e = csr_edge_idx++;
-                    uint32_t v = static_cast<uint32_t>(rel.col_targets[e]);
+                    uint32_t v = static_cast<uint32_t>(rel.csr_col_tgt(e));
                     if (s_excl_len == 0u || !p3_sorted_contains(s_excl, s_excl_len, v)) {
                         m0[len] = static_cast<int64_t>(csr_cur_u);
                         m1[len] = static_cast<int64_t>(v);

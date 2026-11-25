@@ -414,6 +414,15 @@ struct V11RelView {
     uint16_t   rel_id       = 0;
     uint16_t   src_dom      = 0;
     uint16_t   tgt_dom      = 0;
+    // Direct zero-copy pointers into mmap_ptr (non-null for .imps snapshots)
+    const uint8_t*  csr_row_off_raw = nullptr;
+    const uint8_t*  csr_col_idx_raw = nullptr;
+    const uint8_t*  csc_row_off_raw = nullptr;
+    const uint8_t*  csc_col_idx_raw = nullptr;
+    uint32_t        csc_row_off_len = 0;
+    uint8_t         node_id_width   = 4;
+    uint8_t         edge_idx_width  = 4;
+    // In-memory compliance fixture arrays (used only when csr_row_off_raw == nullptr)
     const uint32_t* row_offsets = nullptr;
     uint32_t   row_off_len  = 0;
     const uint64_t* col_targets = nullptr;
@@ -426,6 +435,66 @@ struct V11RelView {
     const uint32_t*  edge_attr_ids  = nullptr;
     V11Vector* const* edge_attrs    = nullptr;
     uint32_t   edge_attr_count = 0;
+
+    inline uint32_t csr_row_off(uint32_t u) const noexcept {
+        if (csr_row_off_raw) {
+            if (edge_idx_width == 8u) {
+                uint64_t v = 0;
+                std::memcpy(&v, csr_row_off_raw + static_cast<size_t>(u) * 8u, 8u);
+                return static_cast<uint32_t>(v);
+            }
+            uint32_t v = 0;
+            std::memcpy(&v, csr_row_off_raw + static_cast<size_t>(u) * 4u, 4u);
+            return v;
+        }
+        return row_offsets[u];
+    }
+
+    inline uint64_t csr_col_tgt(uint32_t e) const noexcept {
+        if (csr_col_idx_raw) {
+            if (node_id_width == 4u) {
+                uint32_t v = 0;
+                std::memcpy(&v, csr_col_idx_raw + static_cast<size_t>(e) * 4u, 4u);
+                return v;
+            }
+            if (node_id_width == 2u) {
+                uint16_t v = 0;
+                std::memcpy(&v, csr_col_idx_raw + static_cast<size_t>(e) * 2u, 2u);
+                return v;
+            }
+            uint64_t v = 0;
+            std::memcpy(&v, csr_col_idx_raw + static_cast<size_t>(e) * 8u, 8u);
+            return v;
+        }
+        return col_targets[e];
+    }
+
+    inline uint32_t csc_row_off(uint32_t v) const noexcept {
+        if (edge_idx_width == 8u) {
+            uint64_t x = 0;
+            std::memcpy(&x, csc_row_off_raw + static_cast<size_t>(v) * 8u, 8u);
+            return static_cast<uint32_t>(x);
+        }
+        uint32_t x = 0;
+        std::memcpy(&x, csc_row_off_raw + static_cast<size_t>(v) * 4u, 4u);
+        return x;
+    }
+
+    inline uint64_t csc_col_src(uint32_t e) const noexcept {
+        if (node_id_width == 4u) {
+            uint32_t x = 0;
+            std::memcpy(&x, csc_col_idx_raw + static_cast<size_t>(e) * 4u, 4u);
+            return x;
+        }
+        if (node_id_width == 2u) {
+            uint16_t x = 0;
+            std::memcpy(&x, csc_col_idx_raw + static_cast<size_t>(e) * 2u, 2u);
+            return x;
+        }
+        uint64_t x = 0;
+        std::memcpy(&x, csc_col_idx_raw + static_cast<size_t>(e) * 8u, 8u);
+        return x;
+    }
 };
 
 struct V11DomAttrEntry {

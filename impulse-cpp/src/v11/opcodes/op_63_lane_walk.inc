@@ -40,8 +40,6 @@ V11_OP_CASE(LANE_WALK) {
             uint64_t* dense = (oc > 0u) ? ws.arena.alloc_array<uint64_t>(oc, 64) : nullptr;
             if (oc > 0u && !dense) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
             if (oc > 0u) std::memset(dense, 0, static_cast<size_t>(oc) * sizeof(uint64_t));
-            const uint32_t* __restrict roff = rel->row_offsets;
-            const uint64_t* __restrict ctgt = rel->col_targets;
             const uint32_t roff_len = rel->row_off_len;
             const uint32_t ctgt_len = rel->col_tgt_len;
             for (uint32_t i = 0; i < f_src->ml_count; ++i) {
@@ -49,11 +47,11 @@ V11_OP_CASE(LANE_WALK) {
                 if (m == 0ULL) continue;
                 uint64_t u64 = f_src->ml_nodes[i];
                 if (u64 + 1ULL >= roff_len) continue;
-                uint32_t s = roff[u64];
-                uint32_t e_end = roff[u64 + 1u];
+                uint32_t s = rel->csr_row_off(static_cast<uint32_t>(u64));
+                uint32_t e_end = rel->csr_row_off(static_cast<uint32_t>(u64) + 1u);
                 if (e_end > ctgt_len) e_end = ctgt_len;
                 for (uint32_t e = s; e < e_end; ++e) {
-                    uint64_t v = ctgt[e];
+                    uint64_t v = rel->csr_col_tgt(e);
                     if (v < oc) dense[v] |= m;
                 }
             }

@@ -68,8 +68,6 @@ V11_OP_CASE(WALK) {
                 }
             }
             const uint32_t row_off_len = rel->row_off_len;
-            const uint32_t* row_offsets = rel->row_offsets;
-            const uint64_t* col_targets = rel->col_targets;
             bool st_flag = ws.flag_st();
             uint32_t vis_cnt = 0u;
 
@@ -77,9 +75,9 @@ V11_OP_CASE(WALK) {
                 for (uint32_t i = 0; i < s_src_len; ++i) {
                     uint32_t u = s_src[i];
                     if (u + 1u >= row_off_len) continue;
-                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                     for (uint32_t e = e0; e < e1; ++e) {
-                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (v >= n_out) continue;
                         uint64_t bit = 1ULL << (v & 63u);
                         size_t wi = v >> 6;
@@ -95,9 +93,9 @@ V11_OP_CASE(WALK) {
                 for (uint32_t i = 0; i < s_src_len; ++i) {
                     uint32_t u = s_src[i];
                     if (u + 1u >= row_off_len) continue;
-                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                     for (uint32_t e = e0; e < e1; ++e) {
-                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (v >= n_out) continue;
                         uint64_t bit = 1ULL << (v & 63u);
                         size_t wi = v >> 6;
@@ -111,9 +109,9 @@ V11_OP_CASE(WALK) {
                 while (q_head < q_tail) {
                     uint32_t u = queue[q_head++];
                     if (u + 1u >= row_off_len) continue;
-                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                     for (uint32_t e = e0; e < e1; ++e) {
-                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (v >= n_out) continue;
                         uint64_t bit = 1ULL << (v & 63u);
                         size_t wi = v >> 6;
@@ -142,9 +140,9 @@ V11_OP_CASE(WALK) {
                 while (q_head < q_tail) {
                     uint32_t u = queue[q_head++];
                     if (u + 1u >= row_off_len) continue;
-                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                     for (uint32_t e = e0; e < e1; ++e) {
-                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (v >= n_out) continue;
                         uint64_t bit = 1ULL << (v & 63u);
                         size_t wi = v >> 6;
@@ -164,9 +162,9 @@ V11_OP_CASE(WALK) {
                 for (uint32_t i = 0; i < s_src_len; ++i) {
                     uint32_t u = s_src[i];
                     if (u + 1u >= row_off_len) continue;
-                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                     for (uint32_t e = e0; e < e1; ++e) {
-                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (v >= n_out) continue;
                         uint64_t bit = 1ULL << (v & 63u);
                         size_t wi = v >> 6;
@@ -185,9 +183,9 @@ V11_OP_CASE(WALK) {
                         while (q_head < level_end) {
                             uint32_t u = queue[q_head++];
                             if (u + 1u >= row_off_len) continue;
-                            uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                            uint32_t e0 = rel->csr_row_off(u), e1 = rel->csr_row_off(u + 1u);
                             for (uint32_t e = e0; e < e1; ++e) {
-                                uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                                uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                                 if (v >= n_out) continue;
                                 uint64_t bit = 1ULL << (v & 63u);
                                 size_t wi = v >> 6;

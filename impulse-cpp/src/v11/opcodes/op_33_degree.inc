@@ -20,7 +20,7 @@ V11_OP_CASE(DEGREE) {
             uint64_t sum = 0ULL;
             for (uint32_t i = 0; i < n; ++i) {
                 uint32_t u = ids[i];
-                if (u + 1u < rel->row_off_len) sum += (rel->row_offsets[u + 1u] - rel->row_offsets[u]);
+                if (u + 1u < rel->row_off_len) sum += (rel->csr_row_off(u + 1u) - rel->csr_row_off(u));
             }
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), sum);
             p1_set_scalar_flags(ws, true, sum);
@@ -63,7 +63,7 @@ V11_OP_CASE(DEGREE) {
             std::memset(valid, 0, vwords * sizeof(uint64_t));
             for (uint32_t u = 0; u < n; ++u) {
                 if (!fm || fm->contains_1bit(u)) {
-                    vals[u] = (u + 1u < rel->row_off_len) ? static_cast<int64_t>(rel->row_offsets[u + 1u] - rel->row_offsets[u]) : 0;
+                    vals[u] = (u + 1u < rel->row_off_len) ? static_cast<int64_t>(rel->csr_row_off(u + 1u) - rel->csr_row_off(u)) : 0;
                     valid[u >> 6] |= (1ULL << (u & 63u));
                 }
             }
@@ -107,7 +107,7 @@ V11_OP_CASE(DEGREE) {
             uint64_t dcard = (rel->src_dom < snap->domain_count) ? snap->domain_cards[rel->src_dom] : 0ULL;
             if (u64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
             uint32_t u = static_cast<uint32_t>(u64);
-            uint64_t deg = (u + 1u < rel->row_off_len) ? static_cast<uint64_t>(rel->row_offsets[u + 1u] - rel->row_offsets[u]) : 0ULL;
+            uint64_t deg = (u + 1u < rel->row_off_len) ? static_cast<uint64_t>(rel->csr_row_off(u + 1u) - rel->csr_row_off(u)) : 0ULL;
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), deg);
             p1_set_scalar_flags(ws, true, deg);
             ws.state.pc += 1u;
