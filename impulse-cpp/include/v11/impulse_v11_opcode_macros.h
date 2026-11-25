@@ -98,8 +98,22 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x26, SET_CONVERT)      \
     X(0x27, STABLE_CHECK)
 
+#define V11_IMPLEMENTED_PILLAR3_OPS(X) \
+    X(0x30, WALK)             \
+    X(0x31, WALK_FILTERED)    \
+    X(0x33, DEGREE)           \
+    X(0x34, SPMV)             \
+    X(0x35, WALK_MORSEL)      \
+    X(0x36, FILTER_MORSEL)    \
+    X(0x37, MORSEL_COMMIT)    \
+    X(0x38, MORSEL_END)       \
+    X(0x39, SAMPLE_NEIGHBORS) \
+    X(0x3A, HAS_TOPOLOGY)     \
+    X(0x3B, GRAPH_KERNEL)
+
 #define V11_IMPLEMENTED_OPS(X) \
     V11_IMPLEMENTED_PILLAR1_OPS(X) \
-    V11_IMPLEMENTED_PILLAR2_OPS(X)
+    V11_IMPLEMENTED_PILLAR2_OPS(X) \
+    V11_IMPLEMENTED_PILLAR3_OPS(X)
 
 #endif /* IMPULSE_V11_OPCODE_MACROS_H */
