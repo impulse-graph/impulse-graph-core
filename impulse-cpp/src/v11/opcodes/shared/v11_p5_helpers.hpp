@@ -171,6 +171,7 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
         }
     }
     if (cap == 0u) { out->nodes = nullptr; out->masks = nullptr; out->len = 0u; return true; }
+    if (cap > UINT32_MAX) return false;
     V11MlPair* pairs = arena.alloc_array<V11MlPair>(cap, 8);
     if (!pairs) return false;
     uint32_t cnt = 0u;

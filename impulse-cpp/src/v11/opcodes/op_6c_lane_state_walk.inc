@@ -45,15 +45,19 @@ V11_OP_CASE(LANE_STATE_WALK) {
     uint16_t k = ls->ls_k;
     bool has_wit = (ls->ls_witness != nullptr);
 
+    const V11Vector* dst_ls = nullptr;
+    if ((flags & FLAG_ACCUM) != 0u) {
+        dst_ls = ws.v_regs[dst];
+        if (!dst_ls || dst_ls->elem_tag != kVecTagLaneState) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+        if (dst_ls->ls_dom != out_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
+        if (dst_ls->length != n_out || dst_ls->ls_k != k) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+    }
+
     V11Vector* ov = p5_alloc_lane_state(ws.arena, out_dom, n_out, k, has_wit);
     if (!ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
 
     size_t out_total = static_cast<size_t>(n_out) * k;
-    if ((flags & FLAG_ACCUM) != 0u) {
-        const V11Vector* dst_ls = ws.v_regs[dst];
-        if (!dst_ls || dst_ls->elem_tag != kVecTagLaneState) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-        if (dst_ls->ls_dom != out_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
-        if (dst_ls->length != n_out || dst_ls->ls_k != k) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+    if (dst_ls != nullptr) {
         if (out_total > 0u) {
             std::memcpy(ov->ls_vals, dst_ls->ls_vals, out_total * sizeof(double));
             std::memcpy(ov->ls_valid, dst_ls->ls_valid, out_total);

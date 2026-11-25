@@ -91,7 +91,7 @@ V11_OP_CASE(LANE_STATE_OP) {
                 }
                 if (m != 0ULL) { ns[cnt] = u; ms[cnt] = m; ++cnt; }
             }
-            if (!ws.f_regs[dst].init_multi_lane(ws.arena, dom, n, p5_choose_width(k), static_cast<uint8_t>(k), ns, ms, cnt, ws.geometry)) {
+            if (!ws.f_regs[dst].init_multi_lane(ws.arena, dom, n, p5_choose_width(lim), static_cast<uint8_t>(lim), ns, ms, cnt, ws.geometry)) {
                 ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
             }
             ws.set_f_init(dst, true);
