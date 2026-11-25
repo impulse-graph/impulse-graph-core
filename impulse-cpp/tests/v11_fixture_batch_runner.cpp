@@ -861,7 +861,55 @@ std::string run_fixture_json(const std::string& profile,
             oss << "]}";
         }
     }
-    oss << "},\"outputs\":{}}";
+    oss << "},\"outputs\":{";
+    std::vector<uint32_t> out_order(ws->output_count);
+    for (uint32_t i = 0; i < ws->output_count; ++i) out_order[i] = i;
+    std::sort(out_order.begin(), out_order.end(), [&](uint32_t a, uint32_t b) {
+        return ws->outputs[a].slot < ws->outputs[b].slot;
+    });
+    for (size_t idx = 0; idx < out_order.size(); ++idx) {
+        if (idx > 0) oss << ',';
+        const V11OutputSlot& os = ws->outputs[out_order[idx]];
+        oss << '"' << os.slot << "\":[";
+        if (os.vec) {
+            const V11Vector& v = *os.vec;
+            for (uint32_t i = 0; i < v.length; ++i) {
+                if (i > 0) oss << ',';
+                switch (v.elem_tag) {
+                    case kVecTagI64:
+                    case kVecTagU64:
+                        if (!v.is_valid_at(i)) oss << "null";
+                        else oss << v.i64_data[i];
+                        break;
+                    case kVecTagF64:
+                        if (!v.is_valid_at(i)) oss << "null";
+                        else {
+                            double f = v.f64_data[i];
+                            if (std::isnan(f) || std::isinf(f)) oss << "null";
+                            else {
+                                char fbuf[64];
+                                std::snprintf(fbuf, sizeof(fbuf), "%.17g", f);
+                                oss << fbuf;
+                            }
+                        }
+                        break;
+                    case kVecTagStr:
+                        if (!v.is_valid_at(i)) oss << "null";
+                        else append_json_string(oss, v.str_data[i].ptr ? v.str_data[i].ptr : "", v.str_data[i].len);
+                        break;
+                    case kVecTagBool3vl:
+                        if (!v.is_valid_at(i)) oss << "null";
+                        else oss << (v.bool_data_at(i) ? "true" : "false");
+                        break;
+                    default:
+                        oss << "null";
+                        break;
+                }
+            }
+        }
+        oss << ']';
+    }
+    oss << "}}";
     return oss.str();
 }
 

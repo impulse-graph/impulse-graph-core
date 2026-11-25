@@ -111,9 +111,36 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x3A, HAS_TOPOLOGY)     \
     X(0x3B, GRAPH_KERNEL)
 
+#define V11_IMPLEMENTED_PILLAR4_OPS(X) \
+    X(0x40, LOAD_COLUMN)       \
+    X(0x41, GATHER_NODE_ATTR)  \
+    X(0x42, GATHER_EDGE_ATTR)  \
+    X(0x43, GATHER_VEC)        \
+    X(0x44, NODE_FILTER)       \
+    X(0x45, VEC_CMP)           \
+    X(0x46, VEC_3VL_OP)        \
+    X(0x47, VEC_STR_PRED)      \
+    X(0x48, VEC_MATH_ARITH)    \
+    X(0x49, VEC_MATH_EXP_LOG)  \
+    X(0x4A, VEC_MATH_TRIG_HYP) \
+    X(0x4B, VEC_MATH_ACT)      \
+    X(0x4C, VEC_INT_BITWISE)   \
+    X(0x4D, VEC_TERNARY)       \
+    X(0x4E, VEC_BLEND)         \
+    X(0x4F, COALESCE)          \
+    X(0x50, VEC_INIT)          \
+    X(0x51, VEC_POINT)         \
+    X(0x52, VEC_REDUCE)        \
+    X(0x53, TOP_K)             \
+    X(0x54, INDEX_SCAN)        \
+    X(0x55, MAP_KEYS_TO_DENSE) \
+    X(0x56, MAP_DENSE_TO_KEYS) \
+    X(0x57, COLLECT)
+
 #define V11_IMPLEMENTED_OPS(X) \
     V11_IMPLEMENTED_PILLAR1_OPS(X) \
     V11_IMPLEMENTED_PILLAR2_OPS(X) \
-    V11_IMPLEMENTED_PILLAR3_OPS(X)
+    V11_IMPLEMENTED_PILLAR3_OPS(X) \
+    V11_IMPLEMENTED_PILLAR4_OPS(X)
 
 #endif /* IMPULSE_V11_OPCODE_MACROS_H */
