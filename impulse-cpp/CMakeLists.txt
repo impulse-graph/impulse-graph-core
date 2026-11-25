@@ -106,6 +106,12 @@ add_library(impulse_graph SHARED
     src/impulse_vm_fluent_multilane.cpp
     src/impulse_statement_c_api.cpp
     src/impulse_bytecode_emitter.cpp
+    src/v11/v11_ictx_v2.cpp
+    src/v11/v11_validator.cpp
+    src/v11/v11_memory_planner.cpp
+    src/v11/v11_ops_p1.cpp
+    src/v11/v11_ops_p2.cpp
+    src/v11/v11_vm_dispatch.cpp
 )
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
@@ -131,6 +137,12 @@ add_library(impulse_graph_static STATIC
     src/impulse_vm_fluent_multilane.cpp
     src/impulse_statement_c_api.cpp
     src/impulse_bytecode_emitter.cpp
+    src/v11/v11_ictx_v2.cpp
+    src/v11/v11_validator.cpp
+    src/v11/v11_memory_planner.cpp
+    src/v11/v11_ops_p1.cpp
+    src/v11/v11_ops_p2.cpp
+    src/v11/v11_vm_dispatch.cpp
 )
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -160,6 +172,7 @@ install(FILES
     include/impulse_math_ops.h
     include/impulse_index.h
     include/impulse_vm.h
+    include/impulse_vm_v11.h
     include/impulse_vm_fluent.hpp
     include/impulse_cel.h
     include/impulse_scm_ast.hpp
@@ -398,6 +411,13 @@ if(IMPULSE_BUILD_TESTS)
     add_executable(test_multilane_frontend_golden tests/test_multilane_frontend_golden.cpp)
     target_link_libraries(test_multilane_frontend_golden PRIVATE impulse_graph_static)
     add_test(NAME test_multilane_frontend_golden COMMAND test_multilane_frontend_golden)
+
+    add_executable(test_vm_v11 tests/test_vm_v11.cpp)
+    target_link_libraries(test_vm_v11 PRIVATE impulse_graph_static)
+    add_test(NAME test_vm_v11 COMMAND test_vm_v11)
+
+    add_executable(v11_fixture_batch_runner tests/v11_fixture_batch_runner.cpp)
+    target_link_libraries(v11_fixture_batch_runner PRIVATE impulse_graph_static)
 endif()
 
 # --- Fuzz Targets --------------------------------------------------------
