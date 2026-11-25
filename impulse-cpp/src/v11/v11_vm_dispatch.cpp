@@ -13,6 +13,7 @@
 #include "opcodes/shared/v11_p1_helpers.hpp"
 #include "opcodes/shared/v11_p2_helpers.hpp"
 #include "opcodes/shared/v11_p3_helpers.hpp"
+#include "opcodes/shared/v11_p4_helpers.hpp"
 #include "impulse_graph_internal.hpp"
 
 #include <atomic>
@@ -156,6 +157,32 @@ static impulse_vm_status_v11_t run_words_unlocked(
     #include "opcodes/op_39_sample_neighbors.inc"
     #include "opcodes/op_3a_has_topology.inc"
     #include "opcodes/op_3b_graph_kernel.inc"
+
+    // --- Pillar 4: Vectorized Columnar, 3VL, Math, Strings, Keys & Collect (0x40..0x57) ---
+    #include "opcodes/op_40_load_column.inc"
+    #include "opcodes/op_41_gather_node_attr.inc"
+    #include "opcodes/op_42_gather_edge_attr.inc"
+    #include "opcodes/op_43_gather_vec.inc"
+    #include "opcodes/op_44_node_filter.inc"
+    #include "opcodes/op_45_vec_cmp.inc"
+    #include "opcodes/op_46_vec_3vl_op.inc"
+    #include "opcodes/op_47_vec_str_pred.inc"
+    #include "opcodes/op_48_vec_math_arith.inc"
+    #include "opcodes/op_49_vec_math_exp_log.inc"
+    #include "opcodes/op_4a_vec_math_trig_hyp.inc"
+    #include "opcodes/op_4b_vec_math_act.inc"
+    #include "opcodes/op_4c_vec_int_bitwise.inc"
+    #include "opcodes/op_4d_vec_ternary.inc"
+    #include "opcodes/op_4e_vec_blend.inc"
+    #include "opcodes/op_4f_coalesce.inc"
+    #include "opcodes/op_50_vec_init.inc"
+    #include "opcodes/op_51_vec_point.inc"
+    #include "opcodes/op_52_vec_reduce.inc"
+    #include "opcodes/op_53_top_k.inc"
+    #include "opcodes/op_54_index_scan.inc"
+    #include "opcodes/op_55_map_keys_to_dense.inc"
+    #include "opcodes/op_56_map_dense_to_keys.inc"
+    #include "opcodes/op_57_collect.inc"
 
 #if V11_HAS_COMPUTED_GOTO
     op_INVALID:
