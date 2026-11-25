@@ -46,6 +46,216 @@ V11_OP_CASE(WALK) {
     uint32_t s_src_len = 0u;
     if (!f_src->materialize_1bit(ws.arena, &s_src, &s_src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
 
+    uint64_t out_card = (out_dom < snap->domain_count) ? snap->domain_cards[out_dom] : 0ULL;
+
+    // Fast dense bitset + flat-queue BFS path for forward walks (subops 0, 3, 4, 7)
+    // when target domain fits in <= 4M nodes; rewinds arena & falls back to sparse path on tight arena.
+    if ((subop == 0u || subop == 3u || subop == 4u || subop == 7u) &&
+        out_card > 0ULL && out_card <= (1ULL << 22)) {
+        const uint32_t n_out = static_cast<uint32_t>(out_card);
+        const size_t n_words = (static_cast<size_t>(n_out) + 63u) >> 6;
+        const size_t saved_mark = ws.arena.pos;
+        uint64_t* vis_bits = ws.arena.alloc_array<uint64_t>(n_words, 64);
+        uint64_t* excl_bits = (s_excl_len > 0u) ? ws.arena.alloc_array<uint64_t>(n_words, 64) : nullptr;
+        uint32_t* queue = (subop != 0u) ? ws.arena.alloc_array<uint32_t>(n_out, 64) : nullptr;
+        if (vis_bits && (s_excl_len == 0u || excl_bits) && (subop == 0u || queue)) {
+            std::memset(vis_bits, 0, n_words * sizeof(uint64_t));
+            if (excl_bits) {
+                std::memset(excl_bits, 0, n_words * sizeof(uint64_t));
+                for (uint32_t i = 0; i < s_excl_len; ++i) {
+                    uint32_t x = s_excl[i];
+                    if (x < n_out) excl_bits[x >> 6] |= (1ULL << (x & 63u));
+                }
+            }
+            const uint32_t row_off_len = rel->row_off_len;
+            const uint32_t* row_offsets = rel->row_offsets;
+            const uint64_t* col_targets = rel->col_targets;
+            bool st_flag = ws.flag_st();
+            uint32_t vis_cnt = 0u;
+
+            if (subop == 0u) {
+                for (uint32_t i = 0; i < s_src_len; ++i) {
+                    uint32_t u = s_src[i];
+                    if (u + 1u >= row_off_len) continue;
+                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    for (uint32_t e = e0; e < e1; ++e) {
+                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        if (v >= n_out) continue;
+                        uint64_t bit = 1ULL << (v & 63u);
+                        size_t wi = v >> 6;
+                        if (excl_bits && (excl_bits[wi] & bit)) continue;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            ++vis_cnt;
+                        }
+                    }
+                }
+            } else if (subop == 3u) { // fixpoint_plus
+                uint32_t q_head = 0u, q_tail = 0u;
+                for (uint32_t i = 0; i < s_src_len; ++i) {
+                    uint32_t u = s_src[i];
+                    if (u + 1u >= row_off_len) continue;
+                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    for (uint32_t e = e0; e < e1; ++e) {
+                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        if (v >= n_out) continue;
+                        uint64_t bit = 1ULL << (v & 63u);
+                        size_t wi = v >> 6;
+                        if (excl_bits && (excl_bits[wi] & bit)) continue;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            queue[q_tail++] = v;
+                        }
+                    }
+                }
+                while (q_head < q_tail) {
+                    uint32_t u = queue[q_head++];
+                    if (u + 1u >= row_off_len) continue;
+                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    for (uint32_t e = e0; e < e1; ++e) {
+                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        if (v >= n_out) continue;
+                        uint64_t bit = 1ULL << (v & 63u);
+                        size_t wi = v >> 6;
+                        if (excl_bits && (excl_bits[wi] & bit)) continue;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            queue[q_tail++] = v;
+                        }
+                    }
+                }
+                vis_cnt = q_tail;
+                st_flag = true;
+            } else if (subop == 4u) { // fixpoint_star
+                uint32_t q_head = 0u, q_tail = 0u;
+                for (uint32_t i = 0; i < s_src_len; ++i) {
+                    uint32_t u = s_src[i];
+                    if (u >= n_out) continue;
+                    uint64_t bit = 1ULL << (u & 63u);
+                    size_t wi = u >> 6;
+                    if (excl_bits && (excl_bits[wi] & bit)) continue;
+                    if ((vis_bits[wi] & bit) == 0ULL) {
+                        vis_bits[wi] |= bit;
+                        queue[q_tail++] = u;
+                    }
+                }
+                while (q_head < q_tail) {
+                    uint32_t u = queue[q_head++];
+                    if (u + 1u >= row_off_len) continue;
+                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    for (uint32_t e = e0; e < e1; ++e) {
+                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        if (v >= n_out) continue;
+                        uint64_t bit = 1ULL << (v & 63u);
+                        size_t wi = v >> 6;
+                        if (excl_bits && (excl_bits[wi] & bit)) continue;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            queue[q_tail++] = v;
+                        }
+                    }
+                }
+                vis_cnt = q_tail;
+                st_flag = true;
+            } else { // subop == 7u: fwd_bounded k
+                uint32_t q_head = 0u, q_tail = 0u;
+                bool converged = false;
+                // Hop 0 expands from s_src
+                for (uint32_t i = 0; i < s_src_len; ++i) {
+                    uint32_t u = s_src[i];
+                    if (u + 1u >= row_off_len) continue;
+                    uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                    for (uint32_t e = e0; e < e1; ++e) {
+                        uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                        if (v >= n_out) continue;
+                        uint64_t bit = 1ULL << (v & 63u);
+                        size_t wi = v >> 6;
+                        if (excl_bits && (excl_bits[wi] & bit)) continue;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            queue[q_tail++] = v;
+                        }
+                    }
+                }
+                if (q_tail == 0u) {
+                    converged = true;
+                } else {
+                    for (uint16_t hop = 1u; hop < imm_hi; ++hop) {
+                        uint32_t level_end = q_tail;
+                        while (q_head < level_end) {
+                            uint32_t u = queue[q_head++];
+                            if (u + 1u >= row_off_len) continue;
+                            uint32_t e0 = row_offsets[u], e1 = row_offsets[u + 1u];
+                            for (uint32_t e = e0; e < e1; ++e) {
+                                uint32_t v = static_cast<uint32_t>(col_targets[e]);
+                                if (v >= n_out) continue;
+                                uint64_t bit = 1ULL << (v & 63u);
+                                size_t wi = v >> 6;
+                                if (excl_bits && (excl_bits[wi] & bit)) continue;
+                                if ((vis_bits[wi] & bit) == 0ULL) {
+                                    vis_bits[wi] |= bit;
+                                    queue[q_tail++] = v;
+                                }
+                            }
+                        }
+                        if (q_tail == level_end) {
+                            converged = true;
+                            break;
+                        }
+                    }
+                }
+                vis_cnt = q_tail;
+                st_flag = converged;
+            }
+
+            if (s_accum_len > 0u) {
+                for (uint32_t i = 0; i < s_accum_len; ++i) {
+                    uint32_t a = s_accum[i];
+                    if (a < n_out) {
+                        uint64_t bit = 1ULL << (a & 63u);
+                        size_t wi = a >> 6;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            ++vis_cnt;
+                        }
+                    }
+                }
+            }
+
+            uint32_t* final_s = (vis_cnt > 0u) ? ws.arena.alloc_array<uint32_t>(vis_cnt, 8) : nullptr;
+            if (vis_cnt > 0u && !final_s) {
+                // Tight arena: rewind and let sparse path handle (or report OOM cleanly)
+                ws.arena.pos = saved_mark;
+            } else {
+                uint32_t k = 0u;
+                for (size_t wi = 0; wi < n_words; ++wi) {
+                    uint64_t word = vis_bits[wi];
+                    uint32_t base = static_cast<uint32_t>(wi << 6);
+                    while (word != 0ULL) {
+                        uint32_t b = static_cast<uint32_t>(__builtin_ctzll(word));
+                        final_s[k++] = base + b;
+                        word &= (word - 1ULL);
+                    }
+                }
+                ws.f_regs[dst].reset_empty(out_dom, out_card);
+                if (k > 0u) {
+                    ws.f_regs[dst].nodes = final_s;
+                    ws.f_regs[dst].node_count = k;
+                    ws.f_regs[dst].tier = compute_tier(ws.geometry, out_card, k, false);
+                    ws.f_regs[dst].cached_card = (ws.f_regs[dst].tier == kTier0Inline || ws.f_regs[dst].tier == kTierAllSpan)
+                        ? static_cast<int64_t>(k) : -1;
+                }
+                ws.set_f_init(dst, true);
+                ws.set_zf(k == 0u);
+                ws.set_st(st_flag);
+                ws.state.pc += 1u;
+                V11_DISPATCH();
+            }
+        } else {
+            ws.arena.pos = saved_mark;
+        }
+    }
+
     V11RevAdj rev_adj{};
     if (subop == 1u || subop == 2u || subop == 5u || subop == 6u) {
         if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
@@ -149,7 +359,6 @@ V11_OP_CASE(WALK) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
     }
-    uint64_t out_card = (out_dom < snap->domain_count) ? snap->domain_cards[out_dom] : 0ULL;
     if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, out_dom, out_card, final_s, final_len, ws.geometry, false)) {
         ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
     }

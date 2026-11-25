@@ -30,30 +30,15 @@ V11_OP_CASE(WALK_MORSEL) {
     const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
     if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
 
+    if (!is_rev) {
+        V11MorselFwdCsr fwd_csr{rel, src_ids, src_len, s_excl, s_excl_len};
+        p3_run_morsel_block(ws, *snap, words, word_count, hdr_pc, end_pc, out_dom, false, nullptr, 0u, steps, max_steps, &fwd_csr);
+        V11_DISPATCH();
+    }
+
     V11MorselItem* items = nullptr;
     uint32_t item_cnt = 0u;
-    if (!is_rev) {
-        size_t cap = 0u;
-        for (uint32_t i = 0; i < src_len; ++i) {
-            uint32_t u = src_ids[i];
-            if (u + 1u < rel->row_off_len) cap += (rel->row_offsets[u + 1u] - rel->row_offsets[u]);
-        }
-        if (cap > 0u) {
-            items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-            if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-            for (uint32_t i = 0; i < src_len; ++i) {
-                uint32_t u = src_ids[i];
-                if (u + 1u < rel->row_off_len) {
-                    for (uint32_t e = rel->row_offsets[u]; e < rel->row_offsets[u + 1u]; ++e) {
-                        uint32_t v = static_cast<uint32_t>(rel->col_targets[e]);
-                        if (!p3_sorted_contains(s_excl, s_excl_len, v)) {
-                            items[item_cnt++] = {u, v, e, 1ULL};
-                        }
-                    }
-                }
-            }
-        }
-    } else {
+    {
         V11RevAdj rev_adj{};
         if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
         size_t cap = 0u;
