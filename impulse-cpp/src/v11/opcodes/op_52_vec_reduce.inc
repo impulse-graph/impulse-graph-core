@@ -54,49 +54,140 @@ V11_OP_CASE(VEC_REDUCE) {
             ws.state.pc += 1u;
             break;
         }
-        default: {
+        case subop::kVEC_REDUCE_SUM:
+        case subop::kVEC_REDUCE_MEAN: {
             if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
             uint64_t cnt = 0ULL;
-            double sum = 0.0, l1 = 0.0, l2sq = 0.0;
-            bool has_mn = false, has_mx = false;
-            double mn = 0.0, mx = 0.0;
-            int64_t argmn = -1, argmx = -1;
+            double sum = 0.0;
+            if (!mask && v->elem_tag == kVecTagF64) {
+                const double* data = v->f64_data;
+                const uint64_t* vbits = v->valid_bits;
+                if (!vbits) {
+                    for (uint32_t i = 0; i < n; ++i) {
+                        double x = data[i];
+                        if (!std::isnan(x)) { sum += x; ++cnt; }
+                    }
+                } else {
+                    for (uint32_t i = 0; i < n; ++i) {
+                        if (((vbits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL) continue;
+                        double x = data[i];
+                        if (!std::isnan(x)) { sum += x; ++cnt; }
+                    }
+                }
+            } else {
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
+                    double x = p4_vec_to_f64(*v, i);
+                    if (!std::isnan(x)) { sum += x; ++cnt; }
+                }
+            }
+            if (subop == subop::kVEC_REDUCE_SUM) {
+                p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : sum);
+            } else {
+                p4_write_f64_scalar(ws, dst, cnt > 0ULL, cnt > 0ULL ? (sum / static_cast<double>(cnt)) : std::numeric_limits<double>::quiet_NaN());
+            }
+            ws.state.pc += 1u;
+            break;
+        }
+        case subop::kVEC_REDUCE_L1_NORM: {
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            uint64_t cnt = 0ULL;
+            double l1 = 0.0;
+            if (!mask && v->elem_tag == kVecTagF64) {
+                const double* data = v->f64_data;
+                const uint64_t* vbits = v->valid_bits;
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (vbits && (((vbits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL)) continue;
+                    double x = data[i];
+                    if (!std::isnan(x)) { l1 += std::fabs(x); ++cnt; }
+                }
+            } else {
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
+                    double x = p4_vec_to_f64(*v, i);
+                    if (!std::isnan(x)) { l1 += std::fabs(x); ++cnt; }
+                }
+            }
+            p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : l1);
+            ws.state.pc += 1u;
+            break;
+        }
+        case subop::kVEC_REDUCE_L2_NORM_SQ: {
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            uint64_t cnt = 0ULL;
+            double l2sq = 0.0;
+            if (!mask && v->elem_tag == kVecTagF64) {
+                const double* data = v->f64_data;
+                const uint64_t* vbits = v->valid_bits;
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (vbits && (((vbits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL)) continue;
+                    double x = data[i];
+                    if (!std::isnan(x)) { l2sq += x * x; ++cnt; }
+                }
+            } else {
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
+                    double x = p4_vec_to_f64(*v, i);
+                    if (!std::isnan(x)) { l2sq += x * x; ++cnt; }
+                }
+            }
+            p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : l2sq);
+            ws.state.pc += 1u;
+            break;
+        }
+        case subop::kVEC_REDUCE_MIN:
+        case subop::kVEC_REDUCE_ARGMIN: {
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            bool has_mn = false;
+            double mn = 0.0;
+            int64_t argmn = -1;
             for (uint32_t i = 0; i < n; ++i) {
                 if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
                 double x = p4_vec_to_f64(*v, i);
                 if (std::isnan(x)) continue;
-                cnt++;
-                sum += x;
-                l1 += std::fabs(x);
-                l2sq += x * x;
                 if (!has_mn) { has_mn = true; mn = x; argmn = i; }
                 else if (x < mn) { mn = x; argmn = i; }
                 else if (x == 0.0 && mn == 0.0) { mn = p1_ieee_min_f64(mn, x); }
+            }
+            if (subop == subop::kVEC_REDUCE_MIN) {
+                p4_write_f64_scalar(ws, dst, has_mn, mn);
+            } else if (argmn < 0) {
+                ws.write_r_null(dst); ws.set_zf(true); ws.set_nf(true);
+            } else {
+                ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), static_cast<uint64_t>(argmn));
+                ws.set_zf(argmn == 0); ws.set_nf(false);
+            }
+            ws.state.pc += 1u;
+            break;
+        }
+        case subop::kVEC_REDUCE_MAX:
+        case subop::kVEC_REDUCE_ARGMAX: {
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            bool has_mx = false;
+            double mx = 0.0;
+            int64_t argmx = -1;
+            for (uint32_t i = 0; i < n; ++i) {
+                if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
+                double x = p4_vec_to_f64(*v, i);
+                if (std::isnan(x)) continue;
                 if (!has_mx) { has_mx = true; mx = x; argmx = i; }
                 else if (x > mx) { mx = x; argmx = i; }
                 else if (x == 0.0 && mx == 0.0) { mx = p1_ieee_max_f64(mx, x); }
             }
-            switch (subop) {
-                case subop::kVEC_REDUCE_SUM:        p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : sum); break;
-                case subop::kVEC_REDUCE_MIN:        p4_write_f64_scalar(ws, dst, has_mn, mn); break;
-                case subop::kVEC_REDUCE_MAX:        p4_write_f64_scalar(ws, dst, has_mx, mx); break;
-                case subop::kVEC_REDUCE_MEAN:       p4_write_f64_scalar(ws, dst, cnt > 0ULL, cnt > 0ULL ? (sum / static_cast<double>(cnt)) : std::numeric_limits<double>::quiet_NaN()); break;
-                case subop::kVEC_REDUCE_L1_NORM:    p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : l1); break;
-                case subop::kVEC_REDUCE_L2_NORM_SQ: p4_write_f64_scalar(ws, dst, true, cnt == 0ULL ? 0.0 : l2sq); break;
-                case subop::kVEC_REDUCE_ARGMIN:
-                    if (argmn < 0) { ws.write_r_null(dst); ws.set_zf(true); ws.set_nf(true); }
-                    else { ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), static_cast<uint64_t>(argmn)); ws.set_zf(argmn == 0); ws.set_nf(false); }
-                    break;
-                case subop::kVEC_REDUCE_ARGMAX:
-                    if (argmx < 0) { ws.write_r_null(dst); ws.set_zf(true); ws.set_nf(true); }
-                    else { ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), static_cast<uint64_t>(argmx)); ws.set_zf(argmx == 0); ws.set_nf(false); }
-                    break;
-                default:
-                    ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
-                    V11_DISPATCH();
+            if (subop == subop::kVEC_REDUCE_MAX) {
+                p4_write_f64_scalar(ws, dst, has_mx, mx);
+            } else if (argmx < 0) {
+                ws.write_r_null(dst); ws.set_zf(true); ws.set_nf(true);
+            } else {
+                ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), static_cast<uint64_t>(argmx));
+                ws.set_zf(argmx == 0); ws.set_nf(false);
             }
             ws.state.pc += 1u;
             break;
+        }
+        default: {
+            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            V11_DISPATCH();
         }
     }
     V11_DISPATCH();
