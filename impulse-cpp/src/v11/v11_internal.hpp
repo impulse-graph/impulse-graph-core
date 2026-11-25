@@ -240,7 +240,8 @@ struct V11Frontier {
         nodes = dst;
         node_count = count;
         tier = compute_tier(geom, dom_card, count, false);
-        cached_card = know_card ? static_cast<int64_t>(count) : -1;
+        cached_card = (count == 0u || tier == kTier0Inline || tier == kTierAllSpan || know_card)
+            ? static_cast<int64_t>(count) : -1;
         return true;
     }
 
@@ -448,6 +449,7 @@ struct impulse_vm_workspace_v11 {
     bool                      has_user_throw_payload;
     uint64_t                  user_throw_payload;
     uint16_t                  host_max_threads;
+    uint8_t                   max_call_depth;
     uint64_t                  gas_remaining;
     impulse_vm_geometry_v11_t geometry;
 
@@ -473,9 +475,24 @@ struct impulse_vm_workspace_v11 {
     // Caller-owned bump arena (starts right after this struct, 128B aligned)
     impulse::vm::v11::V11Arena arena;
 
-    // Convenience accessors for R0..R15 (contiguous across r_regs[4], r_regs_4_11[8], r_regs_12_15[4])
-    inline uint64_t* r_bank() noexcept { return &state.r_regs[0]; }
-    inline const uint64_t* r_bank() const noexcept { return &state.r_regs[0]; }
+    // UB-free accessors for R0..R15 across the 3 cache-line sub-arrays
+    inline uint64_t read_r_raw(uint8_t reg) const noexcept {
+        if (reg < 4u)  return state.r_regs[reg];
+        if (reg < 12u) return state.r_regs_4_11[reg - 4u];
+        return state.r_regs_12_15[reg - 12u];
+    }
+
+    inline void write_r_raw(uint8_t reg, uint64_t val) noexcept {
+        if (reg < 4u)       state.r_regs[reg] = val;
+        else if (reg < 12u) state.r_regs_4_11[reg - 4u] = val;
+        else                state.r_regs_12_15[reg - 12u] = val;
+    }
+
+    inline void clear_r_bank() noexcept {
+        std::memset(state.r_regs, 0, sizeof(state.r_regs));
+        std::memset(state.r_regs_4_11, 0, sizeof(state.r_regs_4_11));
+        std::memset(state.r_regs_12_15, 0, sizeof(state.r_regs_12_15));
+    }
 
     inline bool is_r_valid(uint8_t reg) const noexcept {
         return ((state.r_valid_mask >> reg) & 1u) != 0u;
@@ -487,13 +504,13 @@ struct impulse_vm_workspace_v11 {
     }
 
     inline void write_r_null(uint8_t reg) noexcept {
-        r_bank()[reg] = 0ULL;
+        write_r_raw(reg, 0ULL);
         state.r_valid_mask = static_cast<uint16_t>(state.r_valid_mask & ~(1u << reg));
         state.r_type_word &= ~(0xFULL << (reg * 4u));
     }
 
     inline void write_r(uint8_t reg, uint8_t scalar_type, uint64_t value) noexcept {
-        r_bank()[reg] = value;
+        write_r_raw(reg, value);
         state.r_valid_mask = static_cast<uint16_t>(state.r_valid_mask | (1u << reg));
         state.r_type_word = (state.r_type_word & ~(0xFULL << (reg * 4u))) |
                             (static_cast<uint64_t>(scalar_type & 0xFu) << (reg * 4u));
@@ -578,7 +595,7 @@ struct impulse_vm_workspace_v11 {
         state.max_dop = 1u;
         state.win_bases_packed = 0u;
         state.ws = this;
-        std::memset(r_bank(), 0, 16 * sizeof(uint64_t));
+        clear_r_bank();
         std::memset(state.f_handles, 0, sizeof(state.f_handles));
         std::memset(state.f_handles_8_15, 0, sizeof(state.f_handles_8_15));
         std::memset(state.v_handles, 0, sizeof(state.v_handles));
@@ -622,6 +639,8 @@ impulse_vm_status_v11_t execute_words_internal(
     size_t word_count,
     const V11SnapshotView* snap,
     impulse_vm_workspace_v11_t& ws,
-    uint64_t max_steps) noexcept;
+    uint64_t max_steps,
+    uint32_t entry_pc = 0u,
+    bool already_validated = false) noexcept;
 
 } // namespace impulse::vm::v11

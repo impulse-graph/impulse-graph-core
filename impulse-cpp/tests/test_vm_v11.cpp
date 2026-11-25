@@ -147,7 +147,7 @@ static void test_workspace_guards_and_zero_malloc() {
             if (r == kStepHalted) break;
         }
         CHECK(ws->status == IMPULSE_VM_V11_OK);
-        CHECK(ws->r_bank()[2] == 42ULL);
+        CHECK(ws->read_r_raw(2) == 42ULL);
     }
     uint64_t r_after = g_alloc_count.load(std::memory_order_relaxed);
     g_track_allocs.store(false, std::memory_order_relaxed);

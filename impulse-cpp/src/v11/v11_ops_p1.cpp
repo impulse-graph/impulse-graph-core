@@ -5,7 +5,7 @@
  * Strictly 0-ULP IEEE-754 bit-identical to V11_eval_p1 (impulse-ocaml) and
  * V11Pillar1Ops.java (impulse-graph-java). Zero heap allocations.
  */
-#if defined(__clang__)
+#if defined(__clang__) || defined(__GNUC__)
   #pragma STDC FP_CONTRACT OFF
 #endif
 
@@ -261,11 +261,33 @@ void load_frontier_ids(impulse_vm_workspace_v11_t& ws,
             return;
         }
         if (existing.tier == kTierAllSpan) {
-            ws.set_zf(dom_card == 0);
+            if (dom_card > UINT32_MAX) {
+                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                return;
+            }
+            uint32_t n_all = static_cast<uint32_t>(dom_card);
+            uint32_t* all_ids = (n_all > 0u) ? ws.arena.alloc_array<uint32_t>(n_all, 8) : nullptr;
+            if (n_all > 0u && !all_ids) {
+                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                return;
+            }
+            for (uint32_t idx = 0; idx < n_all; ++idx) {
+                all_ids[idx] = idx;
+            }
+            if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, dom_id, dom_card, all_ids, n_all, ws.geometry, true)) {
+                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                return;
+            }
+            ws.set_f_init(dst, true);
+            ws.set_zf(n_all == 0u);
             ws.state.pc += 1u;
             return;
         }
-        uint32_t max_merged = existing.node_count + in_uniq;
+        size_t max_merged = static_cast<size_t>(existing.node_count) + static_cast<size_t>(in_uniq);
+        if (max_merged > UINT32_MAX) {
+            ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+            return;
+        }
         uint32_t* merged = (max_merged > 0) ? ws.arena.alloc_array<uint32_t>(max_merged, 8) : nullptr;
         if (max_merged > 0 && !merged) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
@@ -441,7 +463,7 @@ void exec_load_param(impulse_vm_workspace_v11_t& ws,
                         ws.status = st;
                         return;
                     }
-                    struct Pair { uint64_t u; uint64_t m; };
+                    struct Pair { uint64_t u; uint32_t idx; uint64_t m; };
                     Pair* pairs = (e->ml_len > 0) ? ws.arena.alloc_array<Pair>(e->ml_len, 8) : nullptr;
                     if (e->ml_len > 0 && !pairs) {
                         ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
@@ -456,12 +478,12 @@ void exec_load_param(impulse_vm_workspace_v11_t& ws,
                             return;
                         }
                         if (m != 0ULL) {
-                            pairs[kept++] = {u, m};
+                            pairs[kept++] = {u, i, m};
                         }
                     }
-                    // Stable sort by node ID, last write wins for duplicate keys (matching TreeMap.put)
-                    std::stable_sort(pairs, pairs + kept, [](const Pair& a, const Pair& b) {
-                        return a.u < b.u;
+                    // Zero-malloc deterministic sort by (node_id, original_index); last write wins
+                    std::sort(pairs, pairs + kept, [](const Pair& a, const Pair& b) {
+                        return (a.u != b.u) ? (a.u < b.u) : (a.idx < b.idx);
                     });
                     uint32_t uniq = 0;
                     for (uint32_t i = 0; i < kept; ++i) {
@@ -529,7 +551,7 @@ void exec_mov(impulse_vm_workspace_v11_t& ws,
                 set_scalar_flags(ws, false, 0ULL);
             } else {
                 uint8_t ty = ws.read_r_type(s1);
-                uint64_t v = ws.r_bank()[s1];
+                uint64_t v = ws.read_r_raw(s1);
                 ws.write_r(dst, ty, v);
                 if (ty == static_cast<uint8_t>(ScalarType::SCALAR_F64)) {
                     set_f64_flags(ws, true, bits_to_f64(v));
@@ -601,10 +623,10 @@ void exec_swap(impulse_vm_workspace_v11_t& ws, uint8_t subop, uint8_t dst, uint8
     switch (subop) {
         case 0: { // .r
             bool vd = ws.is_r_valid(dst);
-            uint64_t val_d = ws.r_bank()[dst];
+            uint64_t val_d = ws.read_r_raw(dst);
             uint8_t ty_d = ws.read_r_type(dst);
             bool vs = ws.is_r_valid(s1);
-            uint64_t val_s = ws.r_bank()[s1];
+            uint64_t val_s = ws.read_r_raw(s1);
             uint8_t ty_s = ws.read_r_type(s1);
             if (vs) ws.write_r(dst, ty_s, val_s); else ws.write_r_null(dst);
             if (vd) ws.write_r(s1, ty_d, val_d); else ws.write_r_null(s1);
@@ -645,7 +667,7 @@ void exec_spill(impulse_vm_workspace_v11_t& ws, uint8_t subop, uint8_t s1, uint1
     switch (subop) {
         case 0:
             sp.kind = kSpillR;
-            sp.r_val = ws.r_bank()[s1];
+            sp.r_val = ws.read_r_raw(s1);
             sp.r_valid = ws.is_r_valid(s1);
             sp.r_type = ws.read_r_type(s1);
             ws.state.pc += 1u;
@@ -718,7 +740,7 @@ void exec_scalar_int_alu(impulse_vm_workspace_v11_t& ws,
                          uint8_t s1, uint8_t s2, uint8_t s3,
                          int32_t imm32_s) noexcept {
     bool a_valid = ws.is_r_valid(s1);
-    uint64_t a_u = ws.r_bank()[s1];
+    uint64_t a_u = ws.read_r_raw(s1);
     int64_t a_s = static_cast<int64_t>(a_u);
 
     if (subop == 10u) { // .not (unary)
@@ -735,7 +757,7 @@ void exec_scalar_int_alu(impulse_vm_workspace_v11_t& ws,
     }
 
     bool b_valid = (s3 == 1u) || ws.is_r_valid(s2);
-    int64_t b_s = (s3 == 1u) ? static_cast<int64_t>(imm32_s) : static_cast<int64_t>(ws.r_bank()[s2]);
+    int64_t b_s = (s3 == 1u) ? static_cast<int64_t>(imm32_s) : static_cast<int64_t>(ws.read_r_raw(s2));
     uint64_t b_u = static_cast<uint64_t>(b_s);
 
     if (!a_valid || !b_valid) {
@@ -810,15 +832,15 @@ void exec_scalar_fp_alu(impulse_vm_workspace_v11_t& ws,
                         uint8_t subop, uint8_t dst,
                         uint8_t s1, uint8_t s2, uint8_t s3) noexcept {
     bool a_raw_valid = ws.is_r_valid(s1);
-    double a = a_raw_valid ? bits_to_f64(ws.r_bank()[s1]) : std::numeric_limits<double>::quiet_NaN();
+    double a = a_raw_valid ? bits_to_f64(ws.read_r_raw(s1)) : std::numeric_limits<double>::quiet_NaN();
     bool a_valid = a_raw_valid && !std::isnan(a);
 
     bool b_raw_valid = ws.is_r_valid(s2);
-    double b = b_raw_valid ? bits_to_f64(ws.r_bank()[s2]) : std::numeric_limits<double>::quiet_NaN();
+    double b = b_raw_valid ? bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
     bool b_valid = b_raw_valid && !std::isnan(b);
 
     bool c_raw_valid = ws.is_r_valid(s3);
-    double c = c_raw_valid ? bits_to_f64(ws.r_bank()[s3]) : std::numeric_limits<double>::quiet_NaN();
+    double c = c_raw_valid ? bits_to_f64(ws.read_r_raw(s3)) : std::numeric_limits<double>::quiet_NaN();
     bool c_valid = c_raw_valid && !std::isnan(c);
 
     switch (subop) {
@@ -843,7 +865,7 @@ void exec_scalar_fp_alu(impulse_vm_workspace_v11_t& ws,
         case 12: write_f64_result(ws, dst, a_valid, round_half_away(a)); break;
         case 13: // i64_to_f64
             if (!a_raw_valid) write_f64_result(ws, dst, false, 0.0);
-            else write_f64_result(ws, dst, true, static_cast<double>(static_cast<int64_t>(ws.r_bank()[s1])));
+            else write_f64_result(ws, dst, true, static_cast<double>(static_cast<int64_t>(ws.read_r_raw(s1))));
             break;
         case 14: // f64_to_i64 saturating trunc
             if (!a_valid) {
@@ -883,10 +905,10 @@ void exec_scalar_fp_alu(impulse_vm_workspace_v11_t& ws,
 void exec_scalar_3vl(impulse_vm_workspace_v11_t& ws,
                      uint8_t subop, uint8_t dst, uint8_t s1, uint8_t s2) noexcept {
     bool a_valid = ws.is_r_valid(s1);
-    uint64_t a_u = ws.r_bank()[s1];
+    uint64_t a_u = ws.read_r_raw(s1);
     int64_t a_s  = static_cast<int64_t>(a_u);
     bool b_valid = ws.is_r_valid(s2);
-    uint64_t b_u = ws.r_bank()[s2];
+    uint64_t b_u = ws.read_r_raw(s2);
     int64_t b_s  = static_cast<int64_t>(b_u);
 
     if (subop == 15u) { // .coalesce
@@ -977,7 +999,7 @@ void exec_scalar_3vl(impulse_vm_workspace_v11_t& ws,
 void exec_call(impulse_vm_workspace_v11_t& ws,
                uint8_t subop, uint8_t s1, uint8_t s2, uint8_t s3,
                int32_t imm32_s) noexcept {
-    if (ws.state.call_depth >= kMaxCallDepth) {
+    if (ws.state.call_depth >= ws.max_call_depth || ws.state.call_depth >= kMaxCallDepth) {
         ws.status = IMPULSE_VM_V11_ERR_STACK_OVERFLOW;
         return;
     }
@@ -992,7 +1014,9 @@ void exec_call(impulse_vm_workspace_v11_t& ws,
     frame.f_stride  = fs;
     frame.v_stride  = vs;
 
-    std::memcpy(frame.saved_r_val, ws.r_bank(), static_cast<size_t>(rs) * sizeof(uint64_t));
+    for (uint8_t i = 0; i < rs; ++i) {
+        frame.saved_r_val[i] = ws.read_r_raw(i);
+    }
     frame.saved_r_valid = ws.state.r_valid_mask;
     frame.saved_r_type  = ws.state.r_type_word;
     frame.saved_f_valid = ws.f_valid_mask;
@@ -1011,34 +1035,42 @@ void exec_call(impulse_vm_workspace_v11_t& ws,
     }
 
     // Shift caller [stride..15] -> callee [0..15-stride], reset [16-stride..15]
-    for (uint8_t i = 0; i < 16u; ++i) {
-        if (static_cast<uint32_t>(i) + rs < 16u) {
-            uint8_t src = static_cast<uint8_t>(i + rs);
-            if (ws.is_r_valid(src)) {
-                ws.write_r(i, ws.read_r_type(src), ws.r_bank()[src]);
+    if (rs > 0u) {
+        for (uint8_t i = 0; i < 16u; ++i) {
+            if (static_cast<uint32_t>(i) + rs < 16u) {
+                uint8_t src = static_cast<uint8_t>(i + rs);
+                if (ws.is_r_valid(src)) {
+                    ws.write_r(i, ws.read_r_type(src), ws.read_r_raw(src));
+                } else {
+                    ws.write_r_null(i);
+                }
             } else {
                 ws.write_r_null(i);
             }
-        } else {
-            ws.write_r_null(i);
         }
-
-        if (static_cast<uint32_t>(i) + fs < 16u) {
-            uint8_t src = static_cast<uint8_t>(i + fs);
-            if (ws.is_f_init(src)) {
-                if (!ws.f_regs[i].copy_from(ws.arena, ws.f_regs[src])) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-                    return;
+    }
+    if (fs > 0u) {
+        for (uint8_t i = 0; i < 16u; ++i) {
+            if (static_cast<uint32_t>(i) + fs < 16u) {
+                uint8_t src = static_cast<uint8_t>(i + fs);
+                if (ws.is_f_init(src)) {
+                    if (!ws.f_regs[i].copy_from(ws.arena, ws.f_regs[src])) {
+                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                        return;
+                    }
+                    ws.set_f_init(i, true);
+                } else {
+                    ws.set_f_init(i, false);
                 }
-                ws.set_f_init(i, true);
             } else {
                 ws.set_f_init(i, false);
             }
-        } else {
-            ws.set_f_init(i, false);
         }
-
-        ws.v_regs[i] = (static_cast<uint32_t>(i) + vs < 16u) ? ws.v_regs[i + vs] : nullptr;
+    }
+    if (vs > 0u) {
+        for (uint8_t i = 0; i < 16u; ++i) {
+            ws.v_regs[i] = (static_cast<uint32_t>(i) + vs < 16u) ? ws.v_regs[i + vs] : nullptr;
+        }
     }
 
     ws.state.call_depth = static_cast<uint16_t>(d + 1u);
@@ -1068,48 +1100,60 @@ void exec_ret(impulse_vm_workspace_v11_t& ws) noexcept {
     uint64_t saved_rtw = frame.saved_r_type;
     uint16_t saved_fvm = frame.saved_f_valid;
 
-    for (int ii = 15; ii >= 0; --ii) {
-        uint8_t i = static_cast<uint8_t>(ii);
-        if (i >= rs) {
-            uint8_t src = static_cast<uint8_t>(i - rs);
-            if (ws.is_r_valid(src)) {
-                ws.write_r(i, ws.read_r_type(src), ws.r_bank()[src]);
+    if (rs > 0u) {
+        for (int ii = 15; ii >= 0; --ii) {
+            uint8_t i = static_cast<uint8_t>(ii);
+            if (i >= rs) {
+                uint8_t src = static_cast<uint8_t>(i - rs);
+                if (ws.is_r_valid(src)) {
+                    ws.write_r(i, ws.read_r_type(src), ws.read_r_raw(src));
+                } else {
+                    ws.write_r_null(i);
+                }
             } else {
-                ws.write_r_null(i);
-            }
-        } else {
-            if (((saved_rvm >> i) & 1u) != 0u) {
-                uint8_t ty = static_cast<uint8_t>((saved_rtw >> (i * 4u)) & 0xFULL);
-                ws.write_r(i, ty, frame.saved_r_val[i]);
-            } else {
-                ws.write_r_null(i);
+                if (((saved_rvm >> i) & 1u) != 0u) {
+                    uint8_t ty = static_cast<uint8_t>((saved_rtw >> (i * 4u)) & 0xFULL);
+                    ws.write_r(i, ty, frame.saved_r_val[i]);
+                } else {
+                    ws.write_r_null(i);
+                }
             }
         }
+    }
 
-        if (i >= fs) {
-            uint8_t src = static_cast<uint8_t>(i - fs);
-            if (ws.is_f_init(src)) {
-                if (!ws.f_regs[i].copy_from(ws.arena, ws.f_regs[src])) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-                    return;
+    if (fs > 0u) {
+        for (int ii = 15; ii >= 0; --ii) {
+            uint8_t i = static_cast<uint8_t>(ii);
+            if (i >= fs) {
+                uint8_t src = static_cast<uint8_t>(i - fs);
+                if (ws.is_f_init(src)) {
+                    if (!ws.f_regs[i].copy_from(ws.arena, ws.f_regs[src])) {
+                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                        return;
+                    }
+                    ws.set_f_init(i, true);
+                } else {
+                    ws.set_f_init(i, false);
                 }
-                ws.set_f_init(i, true);
             } else {
-                ws.set_f_init(i, false);
-            }
-        } else {
-            if (((saved_fvm >> i) & 1u) != 0u) {
-                if (!ws.f_regs[i].copy_from(ws.arena, frame.saved_f[i])) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-                    return;
+                if (((saved_fvm >> i) & 1u) != 0u) {
+                    if (!ws.f_regs[i].copy_from(ws.arena, frame.saved_f[i])) {
+                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                        return;
+                    }
+                    ws.set_f_init(i, true);
+                } else {
+                    ws.set_f_init(i, false);
                 }
-                ws.set_f_init(i, true);
-            } else {
-                ws.set_f_init(i, false);
             }
         }
+    }
 
-        ws.v_regs[i] = (i >= vs) ? ws.v_regs[i - vs] : frame.saved_v[i];
+    if (vs > 0u) {
+        for (int ii = 15; ii >= 0; --ii) {
+            uint8_t i = static_cast<uint8_t>(ii);
+            ws.v_regs[i] = (i >= vs) ? ws.v_regs[i - vs] : frame.saved_v[i];
+        }
     }
 
     ws.state.pc = frame.return_pc;
@@ -1126,7 +1170,7 @@ void exec_set_max_dop(impulse_vm_workspace_v11_t& ws, uint8_t subop, uint8_t s1,
         if (!ws.is_r_valid(s1)) {
             ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         } else {
-            int64_t d64 = static_cast<int64_t>(ws.r_bank()[s1]);
+            int64_t d64 = static_cast<int64_t>(ws.read_r_raw(s1));
             uint16_t d = 1u;
             if (d64 <= 0) d = 1u;
             else if (d64 >= static_cast<int64_t>(ws.host_max_threads)) d = ws.host_max_threads;
@@ -1176,7 +1220,7 @@ int step_pillar1(impulse_vm_workspace_v11_t& ws,
             } else if (subop == 1u) {
                 if (ws.is_r_valid(s1)) {
                     ws.has_user_throw_payload = true;
-                    ws.user_throw_payload = ws.r_bank()[s1];
+                    ws.user_throw_payload = ws.read_r_raw(s1);
                 } else {
                     ws.has_user_throw_payload = false;
                     ws.user_throw_payload = 0ULL;
@@ -1187,7 +1231,7 @@ int step_pillar1(impulse_vm_workspace_v11_t& ws,
         case Opcode::OP_ASSERT: {
             bool ok = false;
             switch (subop) {
-                case 0: ok = ws.is_r_valid(s1) && ws.r_bank()[s1] != 0ULL; break;
+                case 0: ok = ws.is_r_valid(s1) && ws.read_r_raw(s1) != 0ULL; break;
                 case 1: ok = !is_frontier_empty(ws, s1); break;
                 case 2: ok = is_frontier_empty(ws, s1); break;
                 case 3: ok = ws.flag_zf(); break;
@@ -1243,8 +1287,8 @@ int step_pillar1(impulse_vm_workspace_v11_t& ws,
                 case 3: take = !ws.flag_st(); break;
                 case 4: take = ws.flag_nf(); break;
                 case 5: take = !ws.flag_nf(); break;
-                case 6: take = ws.is_r_valid(s1) && ws.r_bank()[s1] != 0ULL; break;
-                case 7: take = !ws.is_r_valid(s1) || ws.r_bank()[s1] == 0ULL; break;
+                case 6: take = ws.is_r_valid(s1) && ws.read_r_raw(s1) != 0ULL; break;
+                case 7: take = !ws.is_r_valid(s1) || ws.read_r_raw(s1) == 0ULL; break;
                 case 8: take = is_frontier_empty(ws, s1); break;
                 case 9: take = !is_frontier_empty(ws, s1); break;
                 default: take = false; break;
@@ -1258,7 +1302,7 @@ int step_pillar1(impulse_vm_workspace_v11_t& ws,
             if (!ws.is_r_valid(dst)) {
                 ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
             } else {
-                uint64_t next_u = ws.r_bank()[dst] - 1ULL;
+                uint64_t next_u = ws.read_r_raw(dst) - 1ULL;
                 int64_t next_s = static_cast<int64_t>(next_u);
                 uint8_t ty = ws.read_r_type(dst);
                 ws.write_r(dst, ty, next_u);

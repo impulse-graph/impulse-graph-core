@@ -584,32 +584,59 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
     size_t impb_len
 ) {
     using namespace impulse::vm::v11;
-    if (!impb_bytes || impb_len < sizeof(impulse_impb_header_v11_t)) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
-    }
-    impulse_impb_header_v11_t hdr{};
-    std::memcpy(&hdr, impb_bytes, sizeof(hdr));
-    if (hdr.magic != kImpbMagic || hdr.isa_version != kImpbVersion ||
-        (hdr.header_flags & 0xFEu) != 0u || hdr.max_call_depth > kMaxCallDepth ||
-        hdr.reserved != 0u || hdr.code_word_count == 0u) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
-    }
-    size_t code_bytes = static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t);
-    size_t payload_bytes = code_bytes + static_cast<size_t>(hdr.const_pool_bytes);
-    if (sizeof(hdr) + payload_bytes > impb_len) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
-    }
-    if (hdr.entry_pc >= hdr.code_word_count) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
-    }
-    const auto* payload_ptr = static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr);
-    if (hdr.program_xxh3_64 != 0ULL) {
-        uint64_t actual = V11Xxh3::hash64(payload_ptr, payload_bytes);
-        if (actual != hdr.program_xxh3_64) {
+    try {
+        if (!impb_bytes || impb_len < sizeof(impulse_impb_header_v11_t)) {
             return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
         }
+        impulse_impb_header_v11_t hdr{};
+        std::memcpy(&hdr, impb_bytes, sizeof(hdr));
+        if (hdr.magic != kImpbMagic || hdr.isa_version != kImpbVersion ||
+            (hdr.header_flags & 0xFEu) != 0u || hdr.max_call_depth > kMaxCallDepth ||
+            hdr.reserved != 0u || hdr.code_word_count == 0u) {
+            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+        }
+        size_t code_bytes = static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t);
+        size_t payload_bytes = code_bytes + static_cast<size_t>(hdr.const_pool_bytes);
+        if (payload_bytes < code_bytes || sizeof(hdr) + payload_bytes > impb_len) {
+            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+        }
+        if (hdr.entry_pc >= hdr.code_word_count) {
+            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+        }
+        const auto* payload_ptr = static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr);
+        if (hdr.program_xxh3_64 != 0ULL) {
+            uint64_t actual = V11Xxh3::hash64(payload_ptr, payload_bytes);
+            if (actual != hdr.program_xxh3_64) {
+                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+            }
+        }
+        std::vector<uint64_t> words(hdr.code_word_count);
+        std::memcpy(words.data(), payload_ptr, code_bytes);
+        impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words.data(), words.size());
+        if (vr.status != IMPULSE_VM_V11_OK) {
+            return vr;
+        }
+        // Reject entry_pc landing on 0xFF OP_EXTENSION_PAYLOAD or inside a morsel interior
+        if (IMP_V11_OPCODE(words[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
+            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+        }
+        for (size_t pc = 0; pc < words.size(); ) {
+            uint64_t w = words[pc];
+            uint8_t op = IMP_V11_OPCODE(w);
+            bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+            if (op == static_cast<uint8_t>(Opcode::OP_WALK_MORSEL) ||
+                op == static_cast<uint8_t>(Opcode::OP_FILTER_MORSEL)) {
+                size_t end_pc = pc + IMP_V11_IMM16_HI(w);
+                if (hdr.entry_pc > pc && hdr.entry_pc <= end_pc) {
+                    return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
+                }
+                pc = end_pc + 1u;
+            } else {
+                pc += ext ? 2u : 1u;
+            }
+        }
+        return {IMPULSE_VM_V11_OK, 0u};
+    } catch (...) {
+        return {IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u};
     }
-    std::vector<uint64_t> words(hdr.code_word_count);
-    std::memcpy(words.data(), payload_ptr, code_bytes);
-    return impulse_vm_validate_words_v11(words.data(), words.size());
 }

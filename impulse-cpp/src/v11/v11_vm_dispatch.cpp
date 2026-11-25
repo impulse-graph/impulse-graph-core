@@ -11,31 +11,25 @@
 
 namespace impulse::vm::v11 {
 
-impulse_vm_status_v11_t execute_words_internal(
+static impulse_vm_status_v11_t run_words_unlocked(
     const uint64_t* words,
     size_t word_count,
     const V11SnapshotView* snap,
     impulse_vm_workspace_v11_t& ws,
-    uint64_t max_steps
+    uint64_t max_steps,
+    uint32_t entry_pc,
+    bool already_validated
 ) noexcept {
-    // Non-reentrancy CAS guard (Hyperscan rule, VM_ARCHITECTURE_v0_11.md §5.1)
-    uint32_t expected = 0u;
-    if (!ws.in_use.compare_exchange_strong(expected, 1u, std::memory_order_acquire)) {
-        return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
-    }
-    struct InUseGuard {
-        std::atomic<uint32_t>& flag;
-        ~InUseGuard() noexcept { flag.store(0u, std::memory_order_release); }
-    } guard{ws.in_use};
-
-    impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words, word_count);
-    if (vr.status != IMPULSE_VM_V11_OK) {
-        ws.state.pc = vr.bad_pc;
-        ws.status = vr.status;
-        return ws.status;
+    if (!already_validated) {
+        impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words, word_count);
+        if (vr.status != IMPULSE_VM_V11_OK) {
+            ws.state.pc = vr.bad_pc;
+            ws.status = vr.status;
+            return ws.status;
+        }
     }
 
-    ws.state.pc = 0u;
+    ws.state.pc = entry_pc;
     ws.status = IMPULSE_VM_V11_OK;
     ws.gas_remaining = max_steps;
     uint64_t steps = 0ULL;
@@ -76,6 +70,28 @@ impulse_vm_status_v11_t execute_words_internal(
     return ws.status;
 }
 
+impulse_vm_status_v11_t execute_words_internal(
+    const uint64_t* words,
+    size_t word_count,
+    const V11SnapshotView* snap,
+    impulse_vm_workspace_v11_t& ws,
+    uint64_t max_steps,
+    uint32_t entry_pc,
+    bool already_validated
+) noexcept {
+    // Non-reentrancy CAS guard (Hyperscan rule, VM_ARCHITECTURE_v0_11.md §5.1)
+    uint32_t expected = 0u;
+    if (!ws.in_use.compare_exchange_strong(expected, 1u, std::memory_order_acquire)) {
+        return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    }
+    struct InUseGuard {
+        std::atomic<uint32_t>& flag;
+        ~InUseGuard() noexcept { flag.store(0u, std::memory_order_release); }
+    } guard{ws.in_use};
+
+    return run_words_unlocked(words, word_count, snap, ws, max_steps, entry_pc, already_validated);
+}
+
 } // namespace impulse::vm::v11
 
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_workspace_init(
@@ -101,6 +117,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_workspace_init(
     ws->in_use.store(0u, std::memory_order_relaxed);
     ws->frontier_epoch = 1ULL;
     ws->host_max_threads = 16u;
+    ws->max_call_depth = static_cast<uint8_t>(kMaxCallDepth);
     ws->geometry = kGeomP0;
     ws->const_pool_count = 0u;
     ws->param_count = 0u;
@@ -139,6 +156,16 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     }
     (void)result_cap;
 
+    // Acquire non-reentrancy CAS guard BEFORE mutating any workspace state!
+    uint32_t expected = 0u;
+    if (!scratch_ws->in_use.compare_exchange_strong(expected, 1u, std::memory_order_acquire)) {
+        return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    }
+    struct InUseGuard {
+        std::atomic<uint32_t>& flag;
+        ~InUseGuard() noexcept { flag.store(0u, std::memory_order_release); }
+    } guard{scratch_ws->in_use};
+
     impulse_vm_validation_v11_t vr = impulse_vm_validate_v11(impb_bytes, impb_len);
     if (vr.status != IMPULSE_VM_V11_OK) {
         scratch_ws->state.pc = vr.bad_pc;
@@ -149,7 +176,19 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     impulse_impb_header_v11_t hdr{};
     std::memcpy(&hdr, impb_bytes, sizeof(hdr));
 
+    if (hdr.required_domains > 0u) {
+        if (!snapshot) {
+            scratch_ws->status = IMPULSE_VM_V11_ERR_NULL_SNAPSHOT;
+            return IMPULSE_VM_V11_ERR_NULL_SNAPSHOT;
+        }
+        if (snapshot->domains.size() < hdr.required_domains) {
+            scratch_ws->status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH;
+            return IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH;
+        }
+    }
+
     scratch_ws->reset_execution_state();
+    scratch_ws->max_call_depth = hdr.max_call_depth;
     if (params && params->geometry_override) {
         scratch_ws->geometry = *params->geometry_override;
     } else {
@@ -185,7 +224,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
         view_ptr = &view;
     }
 
-    return execute_words_internal(words, hdr.code_word_count, view_ptr, *scratch_ws, gas);
+    return run_words_unlocked(words, hdr.code_word_count, view_ptr, *scratch_ws, gas, hdr.entry_pc, true);
 }
 
 extern "C" IMPULSE_API const impulse_vm_state_v11_t* impulse_vm_v11_get_state(

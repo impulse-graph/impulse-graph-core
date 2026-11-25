@@ -62,11 +62,11 @@ struct ByteBuf {
 
 uint32_t count_dirty_pages(const uint32_t* sorted_nodes, uint32_t count, uint32_t page_shift) noexcept {
     if (count == 0) return 0u;
-    uint32_t shift = (page_shift < 32u) ? page_shift : 31u;
+    if (page_shift >= 64u) return 1u;
     uint32_t pages = 1u;
-    uint32_t prev = sorted_nodes[0] >> shift;
+    uint64_t prev = static_cast<uint64_t>(sorted_nodes[0]) >> page_shift;
     for (uint32_t i = 1; i < count; ++i) {
-        uint32_t p = sorted_nodes[i] >> shift;
+        uint64_t p = static_cast<uint64_t>(sorted_nodes[i]) >> page_shift;
         if (p != prev) {
             ++pages;
             prev = p;
@@ -204,7 +204,6 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
     bp.add_u64_le(r_type_word);
 
     // 2. Scalar Bank R0..R15
-    const uint64_t* r_regs = ws->r_bank();
     for (uint8_t i = 0; i < 16; ++i) {
         if (((valid_mask >> i) & 1u) == 0u) {
             bl.add_u8(0u);
@@ -213,13 +212,14 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
             bl.add_u8(1u);
             bp.add_u8(1u);
             uint8_t ty = ws->read_r_type(i);
+            uint64_t rv = ws->read_r_raw(i);
             if (ty == static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE)) {
-                V11StrSlice s = ws->resolve_scalar_str(r_regs[i]);
+                V11StrSlice s = ws->resolve_scalar_str(rv);
                 bl.add_string(s.valid ? s.ptr : nullptr, s.valid ? s.len : 0u);
                 bp.add_string(s.valid ? s.ptr : nullptr, s.valid ? s.len : 0u);
             } else {
-                bl.add_u64_le(r_regs[i]);
-                bp.add_u64_le(r_regs[i]);
+                bl.add_u64_le(rv);
+                bp.add_u64_le(rv);
             }
         }
     }
