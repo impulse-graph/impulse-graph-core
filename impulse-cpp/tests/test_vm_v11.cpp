@@ -290,10 +290,60 @@ static void test_swe_sweep_p1_regressions() {
     CHECK(ws->f_regs[1].cached_card == 2);
 }
 
+static void test_swe_sweep_p2_regressions() {
+    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    // P2 Finding #1: OP_SET_CARDINALITY.single_lane OOB in switch-dispatch must NOT fall through
+    ws->reset_execution_state();
+    uint64_t ml_nodes[1] = {0ULL};
+    uint64_t ml_masks[1] = {1ULL};
+    CHECK(ws->f_regs[0].init_multi_lane(ws->arena, 0u, 8ULL, 8u, 2u, ml_nodes, ml_masks, 1u, kGeomP0));
+    ws->set_f_init(0, true);
+    ws->write_r(1, static_cast<uint8_t>(ScalarType::SCALAR_U64), 999ULL);
+    uint64_t card_oob[2] = {
+        enc(0x24, 0, 4, 1, 0, 0, 0, 8u), // SET_CARDINALITY.single_lane R1, F0, lane=8 (OOB for width=8)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(card_oob, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS);
+    CHECK(ws->state.pc == 0u);
+    CHECK(ws->read_r_raw(1) == 999ULL);
+
+    // P2 Finding #2: OP_SET_CONVERT.f2v_ids must memoize cached_card on F[s1]
+    ws->reset_execution_state();
+    uint32_t ids4[4] = {0u, 1u, 2u, 3u};
+    CHECK(ws->f_regs[0].init_from_sorted_ids(ws->arena, 0u, 100ULL, ids4, 4u, kGeomP1, false));
+    CHECK(ws->f_regs[0].cached_card == -1);
+    ws->set_f_init(0, true);
+    uint64_t f2v_prog[2] = {
+        enc(0x26, 0, 0, 0, 0, 0, 0, 0), // SET_CONVERT.f2v_ids V0, F0
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(f2v_prog, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(ws->f_regs[0].cached_card == 4);
+
+    // P2 Finding #3: OP_STABLE_CHECK.frontier_eq with kTierAllSpan and mismatched domain_card
+    ws->reset_execution_state();
+    ws->f_regs[0].init_all_span(0u, 5ULL); // {0,1,2,3,4}
+    ws->set_f_init(0, true);
+    uint32_t ids5[5] = {0u, 1u, 2u, 3u, 9u};
+    CHECK(ws->f_regs[1].init_from_sorted_ids(ws->arena, 0u, 10ULL, ids5, 5u, kGeomP0, true));
+    ws->set_f_init(1, true);
+    uint64_t st_prog[2] = {
+        enc(0x27, 0, 0, 0, 0, 1, 0, 0), // STABLE_CHECK.frontier_eq F0, F1
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(st_prog, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(!ws->flag_st());
+    CHECK(!ws->flag_zf());
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
     test_swe_sweep_p1_regressions();
+    test_swe_sweep_p2_regressions();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
