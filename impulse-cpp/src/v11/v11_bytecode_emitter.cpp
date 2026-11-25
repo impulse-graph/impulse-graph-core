@@ -311,6 +311,7 @@ V11CompiledProgram V11BytecodeEmitter::emit(
     bool frontier_initialized = false;
     bool active_is_vector = false;
     bool active_is_scalar = false;
+    bool active_is_multilane = false;
     uint16_t max_dom_seen = start_domain_id;
 
     auto ensure_seed_frontier = [&](uint16_t dom_id) {
@@ -434,6 +435,72 @@ V11CompiledProgram V11BytecodeEmitter::emit(
             }
             active_is_vector = false;
             active_is_scalar = false;
+        } else if (step->kind() == NodeKind::SET_OP) {
+            auto sop = std::static_pointer_cast<ScmSetOp>(step);
+            auto emit_branch = [&](const AstPtr& branch, uint8_t in_f, uint8_t out_f) -> uint16_t {
+                if (!branch) return cur_dom;
+                if (branch->kind() == NodeKind::WALK) {
+                    auto w = std::static_pointer_cast<ScmWalk>(branch);
+                    int rid = resolve_rel_id(snapshot, w->relation_name, w->physical_rel_id);
+                    result.relation_id_map[w->relation_name] = static_cast<uint32_t>(rid);
+                    uint16_t sdom = (w->direction == WalkDirection::REVERSE_CSC)
+                        ? resolve_rel_tgt_dom(snapshot, rid, cur_dom)
+                        : resolve_rel_src_dom(snapshot, rid, cur_dom);
+                    uint16_t tdom = (w->direction == WalkDirection::REVERSE_CSC)
+                        ? resolve_rel_src_dom(snapshot, rid, cur_dom)
+                        : resolve_rel_tgt_dom(snapshot, rid, cur_dom);
+                    ensure_seed_frontier(sdom);
+                    uint8_t wsub = (w->direction == WalkDirection::REVERSE_CSC) ? subop::kWALK_REV : subop::kWALK_FWD;
+                    b.emit_u16(Opcode::OP_WALK, wsub, 0, out_f, in_f, 0, 0, static_cast<uint16_t>(rid), 0u);
+                    max_dom_seen = std::max(max_dom_seen, tdom);
+                    return tdom;
+                }
+                if (branch->kind() == NodeKind::PROGRAM) {
+                    auto sp = std::static_pointer_cast<ScmProgram>(branch);
+                    uint8_t cur_b = in_f;
+                    uint16_t bdom = cur_dom;
+                    for (const auto& sub : sp->steps) {
+                        if (sub->kind() == NodeKind::WALK) {
+                            auto w = std::static_pointer_cast<ScmWalk>(sub);
+                            int rid = resolve_rel_id(snapshot, w->relation_name, w->physical_rel_id);
+                            uint16_t sdom = (w->direction == WalkDirection::REVERSE_CSC)
+                                ? resolve_rel_tgt_dom(snapshot, rid, bdom)
+                                : resolve_rel_src_dom(snapshot, rid, bdom);
+                            bdom = (w->direction == WalkDirection::REVERSE_CSC)
+                                ? resolve_rel_src_dom(snapshot, rid, bdom)
+                                : resolve_rel_tgt_dom(snapshot, rid, bdom);
+                            ensure_seed_frontier(sdom);
+                            uint8_t wsub = (w->direction == WalkDirection::REVERSE_CSC) ? subop::kWALK_REV : subop::kWALK_FWD;
+                            uint8_t nxt = (cur_b == out_f) ? static_cast<uint8_t>(out_f + 4u) : out_f;
+                            b.emit_u16(Opcode::OP_WALK, wsub, 0, nxt, cur_b, 0, 0, static_cast<uint16_t>(rid), 0u);
+                            cur_b = nxt;
+                        }
+                    }
+                    if (cur_b != out_f) {
+                        b.emit(Opcode::OP_MOV, subop::kMOV_F, 0, out_f, cur_b, 0, 0, 0);
+                    }
+                    return bdom;
+                }
+                return cur_dom;
+            };
+            uint8_t ssub = subop::kSET_OP_UNION;
+            if (sop->op == ScmSetOp::INTERSECT) ssub = subop::kSET_OP_INTERSECT;
+            else if (sop->op == ScmSetOp::DIFFERENCE) ssub = subop::kSET_OP_DIFF;
+
+            if (sop->lhs) {
+                uint16_t out_dom = emit_branch(sop->lhs, src_f, 2u);
+                emit_branch(sop->rhs, src_f, 3u);
+                b.emit(Opcode::OP_SET_OP, ssub, 0, dst_f, 2u, 3u, 0, 0);
+                cur_dom = out_dom;
+            } else {
+                ensure_seed_frontier(cur_dom);
+                emit_branch(sop->rhs, src_f, 2u);
+                b.emit(Opcode::OP_SET_OP, ssub, 0, dst_f, src_f, 2u, 0, 0);
+            }
+            cur_f = dst_f;
+            active_is_vector = false;
+            active_is_scalar = false;
+            active_is_multilane = false;
         } else if (step->kind() == NodeKind::REDUCE) {
             auto red = std::static_pointer_cast<ScmReduce>(step);
             if (!active_is_vector) {
@@ -464,6 +531,7 @@ V11CompiledProgram V11BytecodeEmitter::emit(
             cur_f = dst_f;
             active_is_vector = false;
             active_is_scalar = false;
+            active_is_multilane = true;
         } else if (step->kind() == NodeKind::LANE_WALK) {
             auto n = std::static_pointer_cast<ScmLaneWalk>(step);
             int rel_id = resolve_rel_id(snapshot, n->relation_name, n->physical_rel_id);
@@ -473,14 +541,17 @@ V11CompiledProgram V11BytecodeEmitter::emit(
                 : (n->fixed_point ? subop::kLANE_WALK_FWD_FIXPOINT_STAR : subop::kLANE_WALK_FWD);
             b.emit_u16(Opcode::OP_LANE_WALK, lwsub, 0, dst_f, src_f, 0, 0, static_cast<uint16_t>(rel_id), 0u);
             cur_f = dst_f;
+            active_is_multilane = true;
         } else if (step->kind() == NodeKind::LANE_FILTER_QUORUM) {
             auto n = std::static_pointer_cast<ScmLaneFilterQuorum>(step);
             b.emit_u16(Opcode::OP_LANE_FILTER_QUORUM, subop::kLANE_FILTER_QUORUM_AT_LEAST, 0,
                        dst_f, src_f, 0, 0, static_cast<uint16_t>(n->min_quorum), 0u);
             cur_f = dst_f;
+            active_is_multilane = false;
         } else if (step->kind() == NodeKind::LANE_REDUCE_AND) {
             b.emit(Opcode::OP_LANE_REDUCE_AND, subop::kLANE_REDUCE_AND_REDUCE_AND, 0, dst_f, src_f, 0, 0, 0);
             cur_f = dst_f;
+            active_is_multilane = false;
         } else if (step->kind() == NodeKind::LANE_REDUCE_ATTR) {
             auto n = std::static_pointer_cast<ScmLaneReduceAttr>(step);
             uint8_t rsub = static_cast<uint8_t>(n->reduce_op & 0x03u);
@@ -489,16 +560,28 @@ V11CompiledProgram V11BytecodeEmitter::emit(
             b.emit(Opcode::OP_LANE_REDUCE_ATTR, rsub, 0, cur_v, src_f, 1u, 0, 0);
             active_is_vector = true;
             active_is_scalar = false;
+            active_is_multilane = false;
         } else if (step->kind() == NodeKind::COLLECT) {
             auto collect = std::static_pointer_cast<ScmCollect>(step);
+            if (active_is_multilane) {
+                b.emit_u16(Opcode::OP_LANE_FILTER_QUORUM, subop::kLANE_FILTER_QUORUM_AT_LEAST, 0,
+                           dst_f, cur_f, 0, 0, 1u, 0u);
+                cur_f = dst_f;
+                active_is_multilane = false;
+            }
             if (active_is_scalar) {
                 b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, cur_r, 0, 0, 0u, 0u);
             } else if (active_is_vector) {
                 b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_VEC, 0, 0, cur_v, 0, 0, 0u, 0u);
             } else {
                 ensure_seed_frontier(cur_dom);
-                if (collect->output_type == ScmCollect::OutputType::VECTOR ||
-                    collect->output_type == ScmCollect::OutputType::LIST) {
+                if (collect->output_type == ScmCollect::Mode::COUNT ||
+                    collect->output_type == ScmCollect::Mode::SCALAR) {
+                    b.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, cur_r, cur_f, 0, 0, 0);
+                    b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, cur_r, 0, 0, 0u, 0u);
+                } else if (collect->output_type == ScmCollect::Mode::VECTOR ||
+                           collect->output_type == ScmCollect::Mode::LIST ||
+                           collect->output_type == ScmCollect::Mode::ARRAY) {
                     b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_FRONTIER_IDS, 0, 0, cur_f, 0, 0, 0u, 0u);
                 } else {
                     b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_FRONTIER_BITSET, 0, 0, cur_f, 0, 0, 0u, 0u);

@@ -423,6 +423,9 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(bench_v11_e2e tests/bench_v11_e2e.cpp)
     target_link_libraries(bench_v11_e2e PRIVATE impulse_graph_static)
+
+    add_executable(test_e2e_csv_pipeline tests/test_e2e_csv_pipeline.cpp)
+    target_link_libraries(test_e2e_csv_pipeline PRIVATE impulse_graph_static)
 endif()
 
 # --- Fuzz Targets --------------------------------------------------------

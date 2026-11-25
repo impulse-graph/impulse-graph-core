@@ -17,6 +17,8 @@
  *   - Suite 4: Complex CEL Filter & State Projection Expressions over `User`, `Order`, and `Sensor`.
  */
 
+#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "impulse_vm_v11.h"
 #include "impulse_graph.h"
 #include "impulse_format_v0_9.h"
 #include "impulse_format_v0_10.h"
@@ -753,6 +755,79 @@ void run_suite_2_query_corpus(const fs::path& suite_dir, const impulse_snapshot_
 
         execute_and_verify(comp_on, true);
         execute_and_verify(comp_off, false);
+
+        // --- Stage D: ImpulseVM v0.11.0 E2E Execution (All 21 Active Queries, Opt ON & Opt OFF) ---
+        if (q.id != "impk_06_multilane_set_cover") {
+            static bool v11_prep_done = false;
+            if (!v11_prep_done) {
+                impulse_vm_v11_prepare_snapshot(snap);
+                v11_prep_done = true;
+            }
+            alignas(128) static uint8_t v11_ws_raw[4 * 1024 * 1024];
+            static impulse_vm_workspace_v11_t* v11_ws = nullptr;
+            if (!v11_ws) {
+                E2E_CHECK(impulse_workspace_init(v11_ws_raw, sizeof(v11_ws_raw), &v11_ws) == IMPULSE_VM_V11_OK,
+                          "impulse_workspace_init failed in Stage D");
+            }
+            auto verify_v11 = [&](const AstPtr& ast_in, bool is_opt_on) {
+                auto v11_prog = impulse::compiler::v11::V11BytecodeEmitter::emit(
+                    ast_in, snap, static_cast<uint16_t>(q.seed_domain_id));
+                bool is_ml = (q.id == "cypher_06_multilane_user_follows_quorum" ||
+                              q.id == "implog_04_multiseed_lanes" ||
+                              q.id == "impk_05_multilane_spmm_quorum" ||
+                              q.id == "impscm_04_multilane_quorum_pipeline");
+                uint64_t single_seed[1] = {static_cast<uint64_t>(q.seed_node_dense_id)};
+                int64_t ml_seeds[3] = {0, 1, 2};
+                impulse_vm_param_binding_v11_t bind{};
+                bind.param_id = 0u;
+                if (is_ml) {
+                    bind.kind = IMPULSE_VM_V11_PARAM_VEC_U64;
+                    bind.count = 3u;
+                    bind.data_ptr = ml_seeds;
+                } else {
+                    bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+                    bind.domain_id = static_cast<uint16_t>(q.seed_domain_id);
+                    bind.count = 1u;
+                    bind.data_ptr = single_seed;
+                }
+                impulse_vm_params_v11_t v11_params{};
+                v11_params.gas_limit = 1000000ULL;
+                v11_params.bindings = &bind;
+                v11_params.binding_count = 1u;
+
+                impulse_vm_status_v11_t st11 = impulse_vm_execute_v11(
+                    v11_prog.impb_bytes.data(), v11_prog.impb_bytes.size(),
+                    snap, &v11_params, v11_ws, nullptr, 0, nullptr);
+                E2E_CHECK(st11 == IMPULSE_VM_V11_OK,
+                          "v0.11 execute failed on " + q.id + (is_opt_on ? " (Opt ON)" : " (Opt OFF)") +
+                          " status=" + std::to_string(st11));
+                if (st11 != IMPULSE_VM_V11_OK) return;
+
+                impulse_vm_output_view_v11_t ov{};
+                E2E_CHECK(impulse_vm_v11_get_output(v11_ws, 0, &ov) == 1,
+                          "v0.11 missing OP_COLLECT output on " + q.id);
+                if (q.id == "cypher_05_user_follows_undirected_count") {
+                    E2E_CHECK(ov.length == 1u && ov.i64_data &&
+                              static_cast<size_t>(ov.i64_data[0]) == q.expected_cardinality,
+                              "v0.11 scalar count mismatch on " + q.id);
+                } else {
+                    std::vector<uint32_t> v11_ids;
+                    if (ov.elem_tag == 6u && ov.bool_data_bits) { // BOOL_3VL bitset
+                        for (uint32_t u = 0; u < ov.length; ++u) {
+                            if ((ov.bool_data_bits[u >> 6] >> (u & 63u)) & 1ULL) v11_ids.push_back(u);
+                        }
+                    } else if (ov.i64_data) {
+                        for (uint32_t u = 0; u < ov.length; ++u) v11_ids.push_back(static_cast<uint32_t>(ov.i64_data[u]));
+                    }
+                    E2E_CHECK(v11_ids == q.expected_dense_ids,
+                              "v0.11 dense IDs mismatch on " + q.id + (is_opt_on ? " (Opt ON)" : " (Opt OFF)") +
+                              ": expected " + format_u32_vec(q.expected_dense_ids) +
+                              ", got " + format_u32_vec(v11_ids));
+                }
+            };
+            verify_v11(comp_on.optimized_ast ? comp_on.optimized_ast : prog, true);
+            verify_v11(comp_off.optimized_ast ? comp_off.optimized_ast : prog, false);
+        }
 
         bool query_passed = (g_failed_assertions == failures_before);
         std::cout << (query_passed ? "  [PASS] " : "  [FAIL] ")
