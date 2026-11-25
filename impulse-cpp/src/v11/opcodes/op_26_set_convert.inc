@@ -12,6 +12,7 @@ V11_OP_CASE(SET_CONVERT) {
             const uint32_t* ids = nullptr;
             uint32_t n = 0u;
             if (!ws.f_regs[s1].materialize_1bit(ws.arena, &ids, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            ws.f_regs[s1].cached_card = static_cast<int64_t>(n);
             auto* vec = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
             if (!vec) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             new (vec) V11Vector();

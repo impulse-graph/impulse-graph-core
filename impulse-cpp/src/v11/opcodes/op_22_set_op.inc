@@ -5,6 +5,7 @@ V11_OP_CASE(SET_OP) {
     const uint8_t s1 = IMP_V11_S1(w);
     const uint8_t s2 = IMP_V11_S2(w);
 
+    if (subop > 3u) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE; V11_DISPATCH(); }
     if (!ws.is_f_init(s1) || !ws.is_f_init(s2)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
     const V11Frontier& fa = ws.f_regs[s1];
     const V11Frontier& fb = ws.f_regs[s2];

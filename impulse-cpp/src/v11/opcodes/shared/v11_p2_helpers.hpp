@@ -5,6 +5,7 @@
 #pragma once
 
 #include "v11_p1_helpers.hpp"
+#include <bit>
 
 namespace impulse::vm::v11 {
 
@@ -41,6 +42,7 @@ inline bool p2_add_sorted_unique(V11Arena& arena,
         *out_len = base_len;
         return true;
     }
+    if (base_len == UINT32_MAX) return false;
     uint32_t ins = static_cast<uint32_t>(it - base);
     uint32_t* out = arena.alloc_array<uint32_t>(static_cast<size_t>(base_len) + 1u, 8);
     if (!out) return false;
@@ -96,11 +98,7 @@ inline uint32_t p2_dedupe_sorted_inplace(uint32_t* buf, uint32_t len) noexcept {
 }
 
 inline uint64_t p2_popcount64(uint64_t x) noexcept {
-#if defined(_MSC_VER)
-    return static_cast<uint64_t>(__popcnt64(x));
-#else
-    return static_cast<uint64_t>(__builtin_popcountll(x));
-#endif
+    return static_cast<uint64_t>(std::popcount(x));
 }
 
 inline bool p2_is_numeric_vec(const V11Vector* v) noexcept {

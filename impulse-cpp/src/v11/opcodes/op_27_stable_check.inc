@@ -14,12 +14,19 @@ V11_OP_CASE(STABLE_CHECK) {
         if (fa.multi_lane != fb.multi_lane) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
         bool eq = false;
         if (!fa.multi_lane) {
-            if (fa.tier == kTierAllSpan && fb.tier == kTierAllSpan) eq = (fa.domain_card == fb.domain_card);
-            else if (fa.tier == kTierAllSpan) eq = (static_cast<uint64_t>(fb.node_count) == fa.domain_card);
-            else if (fb.tier == kTierAllSpan) eq = (static_cast<uint64_t>(fa.node_count) == fb.domain_card);
-            else eq = (fa.node_count == fb.node_count) &&
-                      (fa.node_count == 0u ||
-                       std::memcmp(fa.nodes, fb.nodes, static_cast<size_t>(fa.node_count) * sizeof(uint32_t)) == 0);
+            if (fa.tier == kTierAllSpan && fb.tier == kTierAllSpan) {
+                eq = (fa.domain_card == fb.domain_card);
+            } else if (fa.tier == kTierAllSpan) {
+                eq = (static_cast<uint64_t>(fb.node_count) == fa.domain_card) &&
+                     (fb.node_count == 0u || static_cast<uint64_t>(fb.nodes[fb.node_count - 1u]) < fa.domain_card);
+            } else if (fb.tier == kTierAllSpan) {
+                eq = (static_cast<uint64_t>(fa.node_count) == fb.domain_card) &&
+                     (fa.node_count == 0u || static_cast<uint64_t>(fa.nodes[fa.node_count - 1u]) < fb.domain_card);
+            } else {
+                eq = (fa.node_count == fb.node_count) &&
+                     (fa.node_count == 0u ||
+                      std::memcmp(fa.nodes, fb.nodes, static_cast<size_t>(fa.node_count) * sizeof(uint32_t)) == 0);
+            }
         } else {
             if (fa.alloc_width != fb.alloc_width) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
             eq = (fa.ml_count == fb.ml_count) &&
