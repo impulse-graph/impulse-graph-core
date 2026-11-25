@@ -15,8 +15,10 @@ V11_OP_CASE(VEC_REDUCE) {
     switch (subop) {
         case subop::kVEC_REDUCE_COUNT_VALID: {
             uint64_t cnt = 0ULL;
-            for (uint32_t i = 0; i < n; ++i) {
-                if (p4_lane_active(mask, i) && v->is_valid_at(i)) cnt++;
+            if (v->elem_tag != kVecTagLaneState) {
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (p4_lane_active(mask, i) && v->is_valid_at(i)) cnt++;
+                }
             }
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), cnt);
             ws.set_zf(cnt == 0ULL);

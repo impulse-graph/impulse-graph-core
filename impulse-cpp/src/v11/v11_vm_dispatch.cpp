@@ -287,6 +287,249 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_workspace_init(
     return IMPULSE_VM_V11_OK;
 }
 
+using namespace impulse::vm::v11;
+
+namespace {
+
+V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
+                                   size_t file_size,
+                                   const impulse_attribute_descriptor_t& desc,
+                                   uint64_t row_count,
+                                   V11Arena& arena) noexcept {
+    if (row_count > static_cast<uint64_t>(UINT32_MAX)) return nullptr;
+    const uint32_t n = static_cast<uint32_t>(row_count);
+    const uint8_t base_type = desc.type_code & 0x7Fu;
+    const bool is_nullable = (desc.type_code & 0x80u) != 0u;
+    if (desc.data_offset > file_size || desc.data_bytes > file_size - desc.data_offset) {
+        return nullptr;
+    }
+    const uint8_t* ptr = raw + desc.data_offset;
+    size_t payload_bytes = static_cast<size_t>(desc.data_bytes);
+    const size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
+    uint64_t* valid_bits = arena.alloc_array<uint64_t>(vwords, 8);
+    auto* vec = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+    if (!valid_bits || !vec) return nullptr;
+    if (is_nullable && n > 0u) {
+        size_t bm_bytes = (static_cast<size_t>(n) + 7u) >> 3;
+        size_t padded_bm = (bm_bytes + 127u) & ~static_cast<size_t>(127u);
+        if (payload_bytes < padded_bm) return nullptr;
+        std::memset(valid_bits, 0, vwords * sizeof(uint64_t));
+        std::memcpy(valid_bits, ptr, bm_bytes);
+        ptr += padded_bm;
+        payload_bytes -= padded_bm;
+    } else {
+        std::memset(valid_bits, 0xFF, vwords * sizeof(uint64_t));
+    }
+    new (vec) V11Vector();
+    vec->length = n;
+    vec->valid_bits = valid_bits;
+
+    const uint32_t dim = (desc.dimension == 0u) ? 1u : desc.dimension;
+    if (base_type == 9u && dim > 1u) {
+        // Float32 embedding column -> V11Vector TAG_EMB (double** emb_rows)
+        size_t total = static_cast<size_t>(n) * static_cast<size_t>(dim);
+        if (payload_bytes < total * sizeof(float)) return nullptr;
+        double* flat = (total > 0u) ? arena.alloc_array<double>(total, 8) : nullptr;
+        double** rows = (n > 0u) ? arena.alloc_array<double*>(n, 8) : nullptr;
+        if ((total > 0u && !flat) || (n > 0u && !rows)) return nullptr;
+        for (uint32_t i = 0; i < n; ++i) {
+            if (((valid_bits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL) {
+                rows[i] = nullptr;
+            } else {
+                rows[i] = flat + static_cast<size_t>(i) * dim;
+                for (uint32_t d = 0; d < dim; ++d) {
+                    float f = 0.0f;
+                    std::memcpy(&f, ptr + (static_cast<size_t>(i) * dim + d) * sizeof(float), sizeof(float));
+                    rows[i][d] = static_cast<double>(f);
+                }
+            }
+        }
+        vec->elem_tag = kVecTagEmb;
+        vec->emb_dim = dim;
+        vec->emb_rows = rows;
+        return vec;
+    }
+    if (base_type >= 1u && base_type <= 4u) {
+        int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
+        if (n > 0u && !out) return nullptr;
+        for (uint32_t i = 0; i < n; ++i) {
+            int64_t v = 0;
+            if (base_type == 1u && i < payload_bytes) { int8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
+            else if (base_type == 2u && (i + 1u) * 2u <= payload_bytes) { int16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
+            else if (base_type == 3u && (i + 1u) * 4u <= payload_bytes) { int32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
+            else if (base_type == 4u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            out[i] = v;
+        }
+        vec->elem_tag = kVecTagI64;
+        vec->i64_data = out;
+        return vec;
+    }
+    if (base_type >= 5u && base_type <= 8u) {
+        int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
+        if (n > 0u && !out) return nullptr;
+        for (uint32_t i = 0; i < n; ++i) {
+            uint64_t v = 0;
+            if (base_type == 5u && i < payload_bytes) { uint8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
+            else if (base_type == 6u && (i + 1u) * 2u <= payload_bytes) { uint16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
+            else if (base_type == 7u && (i + 1u) * 4u <= payload_bytes) { uint32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
+            else if (base_type == 8u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            out[i] = static_cast<int64_t>(v);
+        }
+        vec->elem_tag = kVecTagU64;
+        vec->i64_data = out;
+        return vec;
+    }
+    if (base_type == 9u || base_type == 10u) {
+        double* out = (n > 0u) ? arena.alloc_array<double>(n, 8) : nullptr;
+        if (n > 0u && !out) return nullptr;
+        for (uint32_t i = 0; i < n; ++i) {
+            double v = 0.0;
+            if (base_type == 9u && (i + 1u) * 4u <= payload_bytes) { float x; std::memcpy(&x, ptr + i * 4u, 4); v = static_cast<double>(x); }
+            else if (base_type == 10u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            out[i] = v;
+        }
+        vec->elem_tag = kVecTagF64;
+        vec->f64_data = out;
+        return vec;
+    }
+    return nullptr;
+}
+
+bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
+                                   V11Arena& arena,
+                                   V11SnapshotView& view) noexcept {
+    const uint8_t* raw = static_cast<const uint8_t*>(snapshot->mmap_ptr);
+    const size_t fsz = snapshot->file_size;
+
+    const size_t nd = snapshot->domains.size();
+    uint64_t* dom_cards = (nd > 0) ? arena.alloc_array<uint64_t>(nd, 8) : nullptr;
+    if (nd > 0 && !dom_cards) return false;
+    for (size_t i = 0; i < nd; ++i) {
+        dom_cards[i] = snapshot->domains[i].node_count;
+    }
+    view.domain_cards = dom_cards;
+    view.domain_count = static_cast<uint32_t>(nd);
+    view.raw_snapshot = snapshot;
+
+    // Relations (CSR topology + edge attributes)
+    const size_t nr = snapshot->relations.size();
+    if (nr > 0 && raw != nullptr) {
+        V11RelView* rels = arena.alloc_array<V11RelView>(nr, alignof(V11RelView));
+        if (!rels) return false;
+        for (size_t r = 0; r < nr; ++r) {
+            new (&rels[r]) V11RelView();
+            const auto& rd = snapshot->relations[r];
+            rels[r].rel_id = rd.relation_id;
+            rels[r].src_dom = rd.src_domain_id;
+            rels[r].tgt_dom = rd.tgt_domain_id;
+            rels[r].has_csr = (rd.csr_row_off_bytes > 0u);
+            rels[r].has_csc = (rd.csc_row_off_bytes > 0u);
+
+            if (rels[r].has_csr &&
+                rd.csr_row_off_offset <= fsz && rd.csr_row_off_bytes <= fsz - rd.csr_row_off_offset &&
+                rd.csr_col_idx_offset <= fsz && rd.csr_col_idx_bytes <= fsz - rd.csr_col_idx_offset) {
+                const uint32_t n_rows = static_cast<uint32_t>(rd.node_count) + 1u;
+                const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
+                uint32_t* roff = arena.alloc_array<uint32_t>(n_rows, 8);
+                uint64_t* ctgt = (n_edges > 0u) ? arena.alloc_array<uint64_t>(n_edges, 8) : nullptr;
+                if (!roff || (n_edges > 0u && !ctgt)) return false;
+
+                const uint8_t* ro_src = raw + rd.csr_row_off_offset;
+                for (uint32_t i = 0; i < n_rows; ++i) {
+                    if (rd.edge_index_width == 8u && (i + 1u) * 8u <= rd.csr_row_off_bytes) {
+                        uint64_t v = 0; std::memcpy(&v, ro_src + static_cast<size_t>(i) * 8u, 8);
+                        roff[i] = static_cast<uint32_t>(v);
+                    } else if ((i + 1u) * 4u <= rd.csr_row_off_bytes) {
+                        uint32_t v = 0; std::memcpy(&v, ro_src + static_cast<size_t>(i) * 4u, 4);
+                        roff[i] = v;
+                    } else {
+                        roff[i] = 0u;
+                    }
+                }
+                const uint8_t* ci_src = raw + rd.csr_col_idx_offset;
+                for (uint32_t e = 0; e < n_edges; ++e) {
+                    if (rd.node_id_width == 2u && (e + 1u) * 2u <= rd.csr_col_idx_bytes) {
+                        uint16_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 2u, 2);
+                        ctgt[e] = v;
+                    } else if (rd.node_id_width == 8u && (e + 1u) * 8u <= rd.csr_col_idx_bytes) {
+                        uint64_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 8u, 8);
+                        ctgt[e] = v;
+                    } else if ((e + 1u) * 4u <= rd.csr_col_idx_bytes) {
+                        uint32_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 4u, 4);
+                        ctgt[e] = v;
+                    } else {
+                        ctgt[e] = 0ULL;
+                    }
+                }
+                rels[r].row_offsets = roff;
+                rels[r].row_off_len = n_rows;
+                rels[r].col_targets = ctgt;
+                rels[r].col_tgt_len = n_edges;
+            }
+
+            if (r < snapshot->relation_attributes.size() && !snapshot->relation_attributes[r].empty()) {
+                const auto& attrs = snapshot->relation_attributes[r];
+                uint32_t* ids = arena.alloc_array<uint32_t>(attrs.size(), 8);
+                V11Vector** vecs = arena.alloc_array<V11Vector*>(attrs.size(), 8);
+                if (!ids || !vecs) return false;
+                uint32_t cnt = 0u;
+                for (size_t a = 0; a < attrs.size(); ++a) {
+                    V11Vector* v = decode_imps_attr_to_vec(raw, fsz, attrs[a], rd.edge_count, arena);
+                    if (v) {
+                        ids[cnt] = static_cast<uint32_t>(a);
+                        vecs[cnt] = v;
+                        ++cnt;
+                    }
+                }
+                rels[r].edge_attr_ids = ids;
+                rels[r].edge_attrs = vecs;
+                rels[r].edge_attr_count = cnt;
+            }
+        }
+        view.relations = rels;
+        view.relation_count = static_cast<uint32_t>(nr);
+    }
+
+    // Domain node attributes
+    size_t total_na = 0;
+    for (size_t d = 0; d < snapshot->domain_attributes.size(); ++d) {
+        total_na += snapshot->domain_attributes[d].size();
+    }
+    if (total_na > 0 && raw != nullptr) {
+        V11DomAttrEntry* entries = arena.alloc_array<V11DomAttrEntry>(total_na, alignof(V11DomAttrEntry));
+        if (!entries) return false;
+        uint32_t cnt = 0u;
+        for (size_t d = 0; d < snapshot->domain_attributes.size() && d < nd; ++d) {
+            const auto& attrs = snapshot->domain_attributes[d];
+            for (size_t a = 0; a < attrs.size(); ++a) {
+                V11Vector* v = decode_imps_attr_to_vec(raw, fsz, attrs[a], snapshot->domains[d].node_count, arena);
+                if (v) {
+                    entries[cnt++] = {static_cast<uint16_t>(d), static_cast<uint16_t>(a), v};
+                }
+            }
+        }
+        view.node_attrs = entries;
+        view.node_attr_count = cnt;
+    }
+
+    // Secondary indexes
+    if (!snapshot->indexes.empty()) {
+        V11IndexEntry* idx = arena.alloc_array<V11IndexEntry>(snapshot->indexes.size(), alignof(V11IndexEntry));
+        if (!idx) return false;
+        uint32_t cnt = 0u;
+        for (const auto& ie : snapshot->indexes) {
+            if (ie.relation_id == 0xFFFFu) {
+                idx[cnt++] = {ie.domain_id, ie.attribute_index, V11StrSlice{}};
+            }
+        }
+        view.indexes = idx;
+        view.index_count = cnt;
+    }
+    return true;
+}
+
+} // namespace
+
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     const void* impb_bytes,
     size_t impb_len,
@@ -361,18 +604,10 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     V11SnapshotView view{};
     const V11SnapshotView* view_ptr = nullptr;
     if (snapshot != nullptr) {
-        size_t nd = snapshot->domains.size();
-        uint64_t* dom_cards = (nd > 0) ? scratch_ws->arena.alloc_array<uint64_t>(nd, 8) : nullptr;
-        if (nd > 0 && !dom_cards) {
+        if (!build_snapshot_view_from_imps(snapshot, scratch_ws->arena, view)) {
             scratch_ws->status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
             return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
         }
-        for (size_t i = 0; i < nd; ++i) {
-            dom_cards[i] = snapshot->domains[i].node_count;
-        }
-        view.domain_cards = dom_cards;
-        view.domain_count = static_cast<uint32_t>(nd);
-        view.raw_snapshot = snapshot;
         view_ptr = &view;
     }
 

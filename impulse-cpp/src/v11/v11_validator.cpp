@@ -374,7 +374,15 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11
     std::vector<uint8_t> m_has_join;
     std::vector<std::array<bool, 8>> m_join_written;
     std::array<bool, 8> m_written_v{};
-    std::vector<uint8_t> in_morsel_interior(word_count, 0);
+    uint8_t stack_mi[2048];
+    std::vector<uint8_t> heap_mi;
+    uint8_t* in_morsel_interior = stack_mi;
+    if (word_count <= 2048u) {
+        std::memset(stack_mi, 0, word_count);
+    } else {
+        heap_mi.assign(word_count, 0);
+        in_morsel_interior = heap_mi.data();
+    }
 
     pc = 0;
     while (pc < word_count) {
@@ -610,18 +618,24 @@ extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
                 return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
             }
         }
-        std::vector<uint64_t> words(hdr.code_word_count);
-        std::memcpy(words.data(), payload_ptr, code_bytes);
-        impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words.data(), words.size());
+        uint64_t stack_words[2048];
+        std::vector<uint64_t> heap_words;
+        uint64_t* words_ptr = stack_words;
+        if (hdr.code_word_count > 2048u) {
+            heap_words.resize(hdr.code_word_count);
+            words_ptr = heap_words.data();
+        }
+        std::memcpy(words_ptr, payload_ptr, code_bytes);
+        impulse_vm_validation_v11_t vr = impulse_vm_validate_words_v11(words_ptr, hdr.code_word_count);
         if (vr.status != IMPULSE_VM_V11_OK) {
             return vr;
         }
         // Reject entry_pc landing on 0xFF OP_EXTENSION_PAYLOAD or inside a morsel interior
-        if (IMP_V11_OPCODE(words[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
+        if (IMP_V11_OPCODE(words_ptr[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
             return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc};
         }
-        for (size_t pc = 0; pc < words.size(); ) {
-            uint64_t w = words[pc];
+        for (size_t pc = 0; pc < hdr.code_word_count; ) {
+            uint64_t w = words_ptr[pc];
             uint8_t op = IMP_V11_OPCODE(w);
             bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
             if (op == static_cast<uint8_t>(Opcode::OP_WALK_MORSEL) ||

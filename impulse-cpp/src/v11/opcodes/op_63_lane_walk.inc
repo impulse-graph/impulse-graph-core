@@ -33,6 +33,50 @@ V11_OP_CASE(LANE_WALK) {
         }
     }
 
+    if (subop == 0u && (flags & (FLAG_MASKED_S3 | FLAG_ACCUM)) == 0u) {
+        const uint64_t out_card = (out_dom < snap->domain_count) ? snap->domain_cards[out_dom] : 0ULL;
+        if (out_card <= 1000000ULL) {
+            const uint32_t oc = static_cast<uint32_t>(out_card);
+            uint64_t* dense = (oc > 0u) ? ws.arena.alloc_array<uint64_t>(oc, 64) : nullptr;
+            if (oc > 0u && !dense) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (oc > 0u) std::memset(dense, 0, static_cast<size_t>(oc) * sizeof(uint64_t));
+            const uint32_t* __restrict roff = rel->row_offsets;
+            const uint64_t* __restrict ctgt = rel->col_targets;
+            const uint32_t roff_len = rel->row_off_len;
+            const uint32_t ctgt_len = rel->col_tgt_len;
+            for (uint32_t i = 0; i < f_src->ml_count; ++i) {
+                uint64_t m = f_src->ml_masks[i];
+                if (m == 0ULL) continue;
+                uint64_t u64 = f_src->ml_nodes[i];
+                if (u64 + 1ULL >= roff_len) continue;
+                uint32_t s = roff[u64];
+                uint32_t e_end = roff[u64 + 1u];
+                if (e_end > ctgt_len) e_end = ctgt_len;
+                for (uint32_t e = s; e < e_end; ++e) {
+                    uint64_t v = ctgt[e];
+                    if (v < oc) dense[v] |= m;
+                }
+            }
+            uint32_t cnt = 0u;
+            for (uint32_t v = 0; v < oc; ++v) if (dense[v] != 0ULL) ++cnt;
+            uint64_t* out_nodes = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+            uint64_t* out_masks = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+            if (cnt > 0u && (!out_nodes || !out_masks)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            uint32_t k = 0u;
+            for (uint32_t v = 0; v < oc; ++v) {
+                uint64_t m = dense[v];
+                if (m != 0ULL) { out_nodes[k] = v; out_masks[k] = m; ++k; }
+            }
+            if (!ws.f_regs[dst].init_multi_lane(ws.arena, out_dom, out_card, f_src->alloc_width, f_src->active_lane_count, out_nodes, out_masks, cnt, ws.geometry)) {
+                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
+            }
+            ws.set_f_init(dst, true);
+            ws.set_zf(cnt == 0u);
+            ws.state.pc += 1u;
+            V11_DISPATCH();
+        }
+    }
+
     V11MlMap m_excl{};
     if ((flags & FLAG_MASKED_S3) != 0u) {
         const V11Frontier* fe = p5_get_fml(ws, s3);

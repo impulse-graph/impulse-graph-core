@@ -198,6 +198,14 @@ inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_v11_t& ws,
                                         uint8_t dst,
                                         const V11Vector& col,
                                         uint32_t idx) noexcept {
+    if (col.elem_tag != kVecTagI64 &&
+        col.elem_tag != kVecTagU64 &&
+        col.elem_tag != kVecTagF64 &&
+        col.elem_tag != kVecTagBool3vl &&
+        col.elem_tag != kVecTagStr) {
+        ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+        return;
+    }
     if (!col.is_valid_at(idx)) {
         ws.write_r_null(dst);
         ws.set_zf(true);
