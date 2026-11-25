@@ -475,47 +475,37 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
             rels[r].tgt_dom = rd.tgt_domain_id;
             rels[r].has_csr = (rd.csr_row_off_bytes > 0u);
             rels[r].has_csc = (rd.csc_row_off_bytes > 0u);
+            rels[r].node_id_width = (rd.node_id_width == 2u || rd.node_id_width == 8u) ? rd.node_id_width : 4u;
+            rels[r].edge_idx_width = (rd.edge_index_width == 8u) ? 8u : 4u;
 
-            if (rels[r].has_csr &&
-                rd.csr_row_off_offset <= fsz && rd.csr_row_off_bytes <= fsz - rd.csr_row_off_offset &&
-                rd.csr_col_idx_offset <= fsz && rd.csr_col_idx_bytes <= fsz - rd.csr_col_idx_offset) {
+            if (rels[r].has_csr) {
                 const uint32_t n_rows = static_cast<uint32_t>(rd.node_count) + 1u;
                 const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
-                uint32_t* roff = arena.alloc_array<uint32_t>(n_rows, 8);
-                uint64_t* ctgt = (n_edges > 0u) ? arena.alloc_array<uint64_t>(n_edges, 8) : nullptr;
-                if (!roff || (n_edges > 0u && !ctgt)) return false;
-
-                const uint8_t* ro_src = raw + rd.csr_row_off_offset;
-                for (uint32_t i = 0; i < n_rows; ++i) {
-                    if (rd.edge_index_width == 8u && (i + 1u) * 8u <= rd.csr_row_off_bytes) {
-                        uint64_t v = 0; std::memcpy(&v, ro_src + static_cast<size_t>(i) * 8u, 8);
-                        roff[i] = static_cast<uint32_t>(v);
-                    } else if ((i + 1u) * 4u <= rd.csr_row_off_bytes) {
-                        uint32_t v = 0; std::memcpy(&v, ro_src + static_cast<size_t>(i) * 4u, 4);
-                        roff[i] = v;
-                    } else {
-                        roff[i] = 0u;
-                    }
+                const size_t need_ro = static_cast<size_t>(n_rows) * rels[r].edge_idx_width;
+                const size_t need_ct = static_cast<size_t>(n_edges) * rels[r].node_id_width;
+                if (rd.csr_row_off_offset > fsz || rd.csr_row_off_bytes > fsz - rd.csr_row_off_offset ||
+                    rd.csr_row_off_bytes < need_ro ||
+                    rd.csr_col_idx_offset > fsz || rd.csr_col_idx_bytes > fsz - rd.csr_col_idx_offset ||
+                    rd.csr_col_idx_bytes < need_ct) {
+                    return false;
                 }
-                const uint8_t* ci_src = raw + rd.csr_col_idx_offset;
-                for (uint32_t e = 0; e < n_edges; ++e) {
-                    if (rd.node_id_width == 2u && (e + 1u) * 2u <= rd.csr_col_idx_bytes) {
-                        uint16_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 2u, 2);
-                        ctgt[e] = v;
-                    } else if (rd.node_id_width == 8u && (e + 1u) * 8u <= rd.csr_col_idx_bytes) {
-                        uint64_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 8u, 8);
-                        ctgt[e] = v;
-                    } else if ((e + 1u) * 4u <= rd.csr_col_idx_bytes) {
-                        uint32_t v = 0; std::memcpy(&v, ci_src + static_cast<size_t>(e) * 4u, 4);
-                        ctgt[e] = v;
-                    } else {
-                        ctgt[e] = 0ULL;
-                    }
-                }
-                rels[r].row_offsets = roff;
+                rels[r].csr_row_off_raw = raw + rd.csr_row_off_offset;
+                rels[r].csr_col_idx_raw = (n_edges > 0u) ? (raw + rd.csr_col_idx_offset) : nullptr;
                 rels[r].row_off_len = n_rows;
-                rels[r].col_targets = ctgt;
                 rels[r].col_tgt_len = n_edges;
+            }
+            if (rels[r].has_csc) {
+                const uint32_t csc_rows = static_cast<uint32_t>(rd.csc_row_off_bytes / rels[r].edge_idx_width);
+                const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
+                const size_t need_ct = static_cast<size_t>(n_edges) * rels[r].node_id_width;
+                if (rd.csc_row_off_offset > fsz || rd.csc_row_off_bytes > fsz - rd.csc_row_off_offset ||
+                    rd.csc_col_idx_offset > fsz || rd.csc_col_idx_bytes > fsz - rd.csc_col_idx_offset ||
+                    rd.csc_col_idx_bytes < need_ct) {
+                    return false;
+                }
+                rels[r].csc_row_off_raw = raw + rd.csc_row_off_offset;
+                rels[r].csc_col_idx_raw = (n_edges > 0u) ? (raw + rd.csc_col_idx_offset) : nullptr;
+                rels[r].csc_row_off_len = csc_rows;
             }
 
             if (r < snapshot->relation_attributes.size() && !snapshot->relation_attributes[r].empty()) {

@@ -50,8 +50,8 @@ V11_OP_CASE(WALK_FILTERED) {
             for (uint32_t i = 0; i < src_len; ++i) {
                 uint32_t u = src_ids[i];
                 if (u + 1u < rel->row_off_len) {
-                    for (uint32_t e = rel->row_offsets[u]; e < rel->row_offsets[u + 1u]; ++e) {
-                        uint32_t v = static_cast<uint32_t>(rel->col_targets[e]);
+                    for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+                        uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                         if (!p3_sorted_contains(s_excl, s_excl_len, v) &&
                             p3_eval_edge_pred(*col, e, cmp_op, rhs_valid, rhs_bits, rhs_ty)) {
                             if (!out_acc.push(ws.arena, v)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }

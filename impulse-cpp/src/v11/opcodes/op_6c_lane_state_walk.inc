@@ -75,8 +75,8 @@ V11_OP_CASE(LANE_STATE_WALK) {
     if (!is_rev) {
         for (uint32_t u = 0; u < ls->length; ++u) {
             if (rel->row_off_len == 0u || u >= rel->row_off_len - 1u) continue;
-            for (uint32_t e = rel->row_offsets[u]; e < rel->row_offsets[u + 1u]; ++e) {
-                uint32_t v = static_cast<uint32_t>(rel->col_targets[e]);
+            for (uint32_t e = rel->csr_row_off(u); e < rel->csr_row_off(u + 1u); ++e) {
+                uint32_t v = static_cast<uint32_t>(rel->csr_col_tgt(e));
                 p5_relax_lane_edge(u, v, e, k, semi, mask, scalar_w, scalar_w_valid, scalar_w_val, weight_col,
                                    ls->ls_vals, ls->ls_valid, ov->ls_vals, ov->ls_valid,
                                    ov->ls_witness, ov->ls_witness_valid, n_out, hits);

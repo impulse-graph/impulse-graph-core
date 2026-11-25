@@ -157,7 +157,7 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
             uint64_t u64 = cur.nodes[i];
             if (rel.row_off_len > 0u && u64 < rel.row_off_len - 1u) {
                 uint32_t u = static_cast<uint32_t>(u64);
-                cap += (rel.row_offsets[u + 1u] - rel.row_offsets[u]);
+                cap += (rel.csr_row_off(u + 1u) - rel.csr_row_off(u));
             }
         }
     }
@@ -182,8 +182,8 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
             uint64_t mask = cur.masks[i];
             if (rel.row_off_len > 0u && u64 < rel.row_off_len - 1u) {
                 uint32_t u = static_cast<uint32_t>(u64);
-                for (uint32_t e = rel.row_offsets[u]; e < rel.row_offsets[u + 1u]; ++e) {
-                    uint64_t v = rel.col_targets[e];
+                for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
+                    uint64_t v = rel.csr_col_tgt(e);
                     uint64_t ev = !edge_mask ? ~0ULL
                         : ((e < edge_mask->length && edge_mask->is_valid_at(e)) ? static_cast<uint64_t>(edge_mask->i64_data[e]) : 0ULL);
                     uint64_t pass = mask & ev & ~excl.get(v);
