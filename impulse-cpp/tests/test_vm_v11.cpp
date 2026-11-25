@@ -9,6 +9,7 @@
  *   4. Zero-allocation hot-path execution (0 heap allocations during execute).
  *   5. Pillar 1 scalar/control/window/spill invariants.
  */
+#include "impulse_graph.h"
 #include "impulse_vm_v11.h"
 #include "v11/v11_internal.hpp"
 #include "v11/v11_xxh3.hpp"
@@ -539,6 +540,205 @@ static void test_swe_sweep_p5_regressions() {
     CHECK(ws->f_regs[0].active_lane_count == 64u);
 }
 
+static void test_real_imps_bridge_e2e() {
+    const char* path = std::getenv("IMPULSE_TEST_IMPS_PATH");
+    if (!path || path[0] == '\0') {
+        path = "/Users/jesse/impulse/.worktrees/v11-m3/impulse-graph-core/datasets/v11_bridge_test.imps";
+    }
+    impulse_status_t st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(path, &st);
+    if (!snap || st != IMPULSE_OK) {
+        std::printf("test_real_imps_bridge_e2e: SKIP (snapshot not found at %s)\n", path);
+        return;
+    }
+
+    // Real .imps (generated via impulse-cli): 1 domain (64 nodes), 1 relation (246 edges, CSR+CSC, 2 edge attrs: weight:f32, ts:i64)
+    // Program:
+    //  0: HAS_TOPOLOGY.has_csr      R0, rel=0           -> 1
+    //  1: HAS_TOPOLOGY.has_csc      R1, rel=0           -> 1
+    //  2: HAS_TOPOLOGY.domain_card  R2, dom=0           -> 64
+    //  3: HAS_TOPOLOGY.rel_edges    R3, rel=0           -> 246
+    //  4: INIT_DOMAIN_SPAN.all_span F0, dom=0
+    //  5: DEGREE.sum_fwd_r          R4, F0, rel=0       -> 246
+    //  6: LOAD_CONST.u32            R5, 0
+    //  7: SET_SINGLETON             F1, R5, dom=0
+    //  8: WALK.fwd_fixpoint_star    F2, F1, rel=0
+    //  9: SET_CARDINALITY.card_1bit R6, F2              -> >= 1
+    // 10: LOAD_COLUMN.edge_attr     V0, rel=0, attr=0   (weight:f32 -> F64 vec len 246)
+    // 11: VEC_POINT.vec_len         R7, V0              -> 246
+    // 12: VEC_INIT.const_f64        V1, dom=0 (via all_span -> SPMV) -> use LOAD_CONST.f32 R8=1.0 + SPMV.fwd_plus_times.scalar
+    // 12: LOAD_CONST.f32            R8, 1.0f (0x3F800000)
+    // 13: SPMV.fwd_plus_times.s     V2, F0, R8, rel=0, attr=0 (uses real edge attr 0)
+    // 14: VEC_REDUCE.count_valid    R9, V2              -> 64
+    // 15: HALT.ok
+    std::vector<uint64_t> words = {
+        enc(0x3A, 0, 0, 0, 0, 0, 0, 0),            // HAS_TOPOLOGY.has_csr R0, rel=0
+        enc(0x3A, 0, 1, 1, 0, 0, 0, 0),            // HAS_TOPOLOGY.has_csc R1, rel=0
+        enc(0x3A, 0, 8, 2, 0, 0, 0, 0),            // HAS_TOPOLOGY.domain_card R2, dom=0
+        enc(0x3A, 0, 9, 3, 0, 0, 0, 0),            // HAS_TOPOLOGY.rel_edges R3, rel=0
+        enc(0x21, 0, 0, 0, 0, 0, 0, 0),            // INIT_DOMAIN_SPAN.all_span F0, dom=0
+        enc(0x33, 0, 0, 4, 0, 0, 0, 0),            // DEGREE.sum_fwd_r R4, F0, rel=0
+        enc(0x05, 0, 1, 5, 0, 0, 0, 63),           // LOAD_CONST.u32 R5, 63
+        enc(0x20, 0, 2, 1, 5, 0, 0, 0),            // FSEED.reg F1, R5, dom=0
+        enc(0x30, 0, 4, 2, 1, 0, 0, 0),            // WALK.fwd_fixpoint_star F2, F1, rel=0
+        enc(0x24, 0, 0, 6, 2, 0, 0, 0),            // SET_CARDINALITY.card_1bit R6, F2
+        enc(0x40, 0, 1, 0, 0, 0, 0, (0u << 16) | 0u), // LOAD_COLUMN.edge_attr V0, rel=0, attr=0
+        enc(0x51, 0, 3, 7, 0, 0, 0, 0),            // VEC_POINT.vec_len R7, V0
+        enc(0x05, 0, 2, 8, 0, 0, 0, 0x3F800000u),  // LOAD_CONST.f32 R8, 1.0f
+        enc(0x34, FLAG_SCALAR_RHS, 0, 2, 0, 8, 0, (0u << 16) | 0u), // SPMV.fwd_plus_times.s V2, F0, R8, rel=0, attr=0
+        enc(0x52, 0, 3, 9, 2, 0, 0, 0),            // VEC_REDUCE.count_valid R9, V2
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),            // HALT.ok
+    };
+    auto impb = build_impb(words);
+    // Set required_domains = 1 in header and recompute nothing (header_xxh3 covers code words only)
+    impulse_impb_header_v11_t hdr{};
+    std::memcpy(&hdr, impb.data(), sizeof(hdr));
+    hdr.required_domains = 1u;
+    std::memcpy(impb.data(), &hdr, sizeof(hdr));
+
+    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    // Zero-malloc gate across the entire real .imps bridge + execution
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+        impb.data(), impb.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    CHECK(ws->read_r_raw(0) == 1ULL);   // has_csr
+    CHECK(ws->read_r_raw(1) == 1ULL);   // has_csc
+    CHECK(ws->read_r_raw(2) == 64ULL);  // domain_card
+    CHECK(ws->read_r_raw(3) == 246ULL); // rel_edges
+    CHECK(ws->read_r_raw(4) == 246ULL); // sum_fwd_r
+    CHECK(ws->read_r_raw(6) >= 1ULL && ws->read_r_raw(6) <= 64ULL); // reachable from node 0
+    CHECK(ws->read_r_raw(7) == 246ULL); // edge_attr len
+    CHECK(ws->read_r_raw(9) == 64ULL);  // spmv output count_valid
+
+    impulse_snapshot_close(snap);
+    std::printf("test_real_imps_bridge_e2e: PASS (0 allocs, dom=64, edges=246, reach=%llu)\n",
+                static_cast<unsigned long long>(ws->read_r_raw(6)));
+}
+
+static void test_full_pillars_zero_malloc_and_tight_arena_oom() {
+    // Construct a compact 8-node graph with CSR + node_attr + edge_attr covering Pillars 1..5
+    uint64_t dom_cards[1] = {8ULL};
+    uint32_t roff[9] = {0, 2, 4, 6, 8, 9, 10, 11, 12};
+    uint64_t ctgt[12] = {1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 0};
+    double eweights[12] = {1.0, 2.0, 1.5, 0.5, 1.0, 2.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    uint64_t evalid[1] = {0xFFFULL};
+    V11Vector evec{};
+    evec.elem_tag = kVecTagF64;
+    evec.length = 12u;
+    evec.f64_data = eweights;
+    evec.valid_bits = evalid;
+    uint32_t eids[1] = {0u};
+    V11Vector* eptrs[1] = {&evec};
+
+    V11RelView rel{};
+    rel.rel_id = 0u; rel.src_dom = 0u; rel.tgt_dom = 0u;
+    rel.row_offsets = roff; rel.row_off_len = 9u;
+    rel.col_targets = ctgt; rel.col_tgt_len = 12u;
+    rel.has_csr = true; rel.has_csc = true;
+    rel.edge_attr_ids = eids; rel.edge_attrs = eptrs; rel.edge_attr_count = 1u;
+
+    double nattrs[8] = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0};
+    uint64_t nvalid[1] = {0xFFULL};
+    V11Vector nvec{};
+    nvec.elem_tag = kVecTagF64;
+    nvec.length = 8u;
+    nvec.f64_data = nattrs;
+    nvec.valid_bits = nvalid;
+    V11DomAttrEntry na[1] = {{0u, 0u, &nvec}};
+
+    V11SnapshotView snap{};
+    snap.domain_cards = dom_cards; snap.domain_count = 1u;
+    snap.relations = &rel; snap.relation_count = 1u;
+    snap.node_attrs = na; snap.node_attr_count = 1u;
+
+    // Full Pillars 1..5 program:
+    // P1: LOAD_CONST, SPILL, RELOAD
+    // P2: INIT_DOMAIN_SPAN, SET_SINGLETON, SET_OP, SET_CARDINALITY
+    // P3: WALK.fwd, SPMV.fwd_plus_times, GRAPH_KERNEL.cc_afforest, WALK_MORSEL/MORSEL_COMMIT/MORSEL_END
+    // P4: LOAD_COLUMN.node_attr, VEC_MATH_ARITH.add, TOP_K.desc_ids, VEC_REDUCE.sum
+    // P5: LANE_STATE_INIT.zero_f32, LANE_STATE_WALK.fwd_min_plus, LANE_STATE_REDUCE.min
+    uint64_t prog[] = {
+        enc(0x05, 0, 1, 0, 0, 0, 0, 0),                            // 0: LOAD_CONST.u32 R0, 0
+        enc(0x0A, 0, 0, 0, 0, 0, 0, 0),                            // 1: SPILL.r R0, slot=0
+        enc(0x0B, 0, 0, 1, 0, 0, 0, 0),                            // 2: RELOAD.r R1, slot=0
+        enc(0x21, 0, 0, 0, 0, 0, 0, 0),                            // 3: INIT_DOMAIN_SPAN.all_span F0, dom=0
+        enc(0x20, 0, 2, 1, 1, 0, 0, 0),                            // 4: FSEED.reg F1, R1, dom=0
+        enc(0x30, 0, 0, 2, 1, 0, 0, 0),                            // 5: WALK.fwd F2, F1, rel=0
+        enc(0x22, 0, 0, 2, 1, 2, 0, 0),                            // 6: SET_OP.union F2, F1, F2
+        enc(0x24, 0, 0, 2, 2, 0, 0, 0),                            // 7: SET_CARDINALITY.card_1bit R2, F2
+        enc(0x40, 0, 0, 0, 0, 0, 0, 0),                            // 8: LOAD_COLUMN.node_attr V0, dom=0, attr=0
+        enc(0x34, 0, 0, 1, 0, 0, 0, (0u << 16) | 0u),              // 9: SPMV.fwd_plus_times V1, F0, V0, rel=0, attr=0
+        enc(0x3B, 0, 0, 2, 0, 0, 0, 0),                            // 10: GRAPH_KERNEL.cc_afforest V2, F0, rel=0
+        enc(0x35, 0, 0, 0, 1, 0, 0, (2u << 16) | 0u),              // 11: WALK_MORSEL.fwd F1, rel=0, end_delta=2
+        enc(0x37, 0, 0, 3, 9, 0, 0, 0),                            // 12: MORSEL_COMMIT.frontier F3, V9 (v_tgt)
+        enc(0x38, 0, 0, 0, 0, 0, 0, (2u << 16)),                   // 13: MORSEL_END back_delta=2
+        enc(0x48, 0, 0, 3, 0, 1, 0, 0),                            // 14: VEC_MATH_ARITH.add V3, V0, V1
+        enc(0x53, 0, 0, 4, 3, 0, 0, 3),                            // 15: TOP_K.desc_ids V4, V3, k=3
+        enc(0x52, 0, 0, 3, 3, 0, 0, 0),                            // 16: VEC_REDUCE.sum R3, V3
+        enc(0x6B, 0, 0, 5, 0, 0, 0, (4u << 16) | 0u),              // 17: LANE_STATE_INIT.zero_f32 V5, dom=0, k=4
+        enc(0x6C, 0, 0, 6, 5, 0, 0, (0u << 16) | 0u),              // 18: LANE_STATE_WALK.fwd_min_plus V6, V5, rel=0, attr=0
+        enc(0x6E, 0, 0, 7, 6, 0, 0, 0),                            // 19: LANE_STATE_REDUCE.min V7, V6
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),                            // 20: HALT.ok
+    };
+    constexpr size_t kProgLen = sizeof(prog) / sizeof(prog[0]);
+
+    // 1. Baseline run with generous buffer under strict zero-malloc gate
+    alignas(128) uint8_t big_buf[256 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(big_buf, sizeof(big_buf), &ws) == IMPULSE_VM_V11_OK);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_status_v11_t base_rc = execute_words_internal(prog, kProgLen, &snap, *ws, 10000, 0u, true);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+
+    CHECK(base_rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    impulse_vm_ictx_v2_t base_hash = impulse_vm_v11_compute_ictx_v2(ws);
+    size_t peak_arena = ws->arena.pos;
+    size_t hdr_aligned = (sizeof(impulse_vm_workspace_v11_t) + 127u) & ~static_cast<size_t>(127u);
+
+    // 2. Tight-arena OOM fault-injection sweep: step scratch_bytes by +128B from header+128 up to header+peak+2048
+    size_t oom_count = 0, ok_count = 0;
+    for (size_t sz = hdr_aligned + 128u; sz <= hdr_aligned + peak_arena + 2048u; sz += 128u) {
+        CHECK(sz <= sizeof(big_buf));
+        impulse_vm_workspace_v11_t* tws = nullptr;
+        impulse_vm_status_v11_t init_rc = impulse_workspace_init(big_buf, sz, &tws);
+        if (init_rc == IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW) {
+            ++oom_count;
+            continue;
+        }
+        CHECK(init_rc == IMPULSE_VM_V11_OK);
+
+        g_alloc_count.store(0, std::memory_order_relaxed);
+        g_track_allocs.store(true, std::memory_order_relaxed);
+        impulse_vm_status_v11_t rc = execute_words_internal(prog, kProgLen, &snap, *tws, 10000, 0u, true);
+        g_track_allocs.store(false, std::memory_order_relaxed);
+
+        CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+        if (rc == IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW) {
+            ++oom_count;
+        } else {
+            CHECK(rc == IMPULSE_VM_V11_OK);
+            impulse_vm_ictx_v2_t h = impulse_vm_v11_compute_ictx_v2(tws);
+            CHECK(h.logical_hash == base_hash.logical_hash);
+            ++ok_count;
+        }
+    }
+    CHECK(oom_count > 0u);
+    CHECK(ok_count > 0u);
+    std::printf("test_full_pillars_zero_malloc_and_tight_arena_oom: PASS (0 allocs, peak_arena=%zuB, oom_steps=%zu, ok_steps=%zu)\n",
+                peak_arena, oom_count, ok_count);
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -547,6 +747,8 @@ int main() {
     test_swe_sweep_p3_regressions();
     test_swe_sweep_p4_regressions();
     test_swe_sweep_p5_regressions();
+    test_real_imps_bridge_e2e();
+    test_full_pillars_zero_malloc_and_tight_arena_oom();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }

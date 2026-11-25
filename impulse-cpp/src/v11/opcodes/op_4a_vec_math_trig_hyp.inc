@@ -63,7 +63,12 @@ V11_OP_CASE(VEC_MATH_TRIG_HYP) {
                     res = std::copysign(r, a);
                     break;
                 }
-                case 12: res = (a < 1.0) ? std::numeric_limits<double>::quiet_NaN() : std::log(a + std::sqrt(a * a - 1.0)); break;
+                case 12: { // acosh (overflow-safe for large a, matching Java/OCaml)
+                    if (a < 1.0) res = std::numeric_limits<double>::quiet_NaN();
+                    else if (a > 1e8) res = std::log(a) + kP4Ln2;
+                    else res = std::log(a + std::sqrt(a * a - 1.0));
+                    break;
+                }
                 case 13: { // atanh (numerically stable log1p form matching Java/OCaml)
                     double ax = std::fabs(a);
                     if (ax < 1.0) {

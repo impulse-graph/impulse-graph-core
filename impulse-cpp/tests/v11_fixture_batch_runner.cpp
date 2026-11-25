@@ -919,7 +919,7 @@ int main() {
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
-    constexpr size_t kScratchSize = 16u * 1024u * 1024u; // 16 MB 128B-aligned caller buffer
+    constexpr size_t kScratchSize = 64u * 1024u * 1024u; // 64 MB 128B-aligned caller buffer
     void* scratch_buf = nullptr;
 #if defined(_WIN32)
     scratch_buf = _aligned_malloc(kScratchSize, 128);
