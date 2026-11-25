@@ -6,6 +6,20 @@ V11_OP_CASE(SET_COMPLEMENT) {
     const V11Frontier& fa = ws.f_regs[s1];
     uint16_t dom_id = fa.domain_id;
     uint64_t n = fa.domain_card;
+    if (fa.tier == kTierAllSpan) {
+        ws.f_regs[dst].reset_empty(dom_id, n);
+        ws.set_f_init(dst, true);
+        ws.set_zf(true);
+        ws.state.pc += 1u;
+        V11_DISPATCH();
+    }
+    if (fa.tier == kTierEmpty) {
+        ws.f_regs[dst].init_all_span(dom_id, n);
+        ws.set_f_init(dst, true);
+        ws.set_zf(n == 0ULL);
+        ws.state.pc += 1u;
+        V11_DISPATCH();
+    }
     if (n > UINT32_MAX) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
     const uint32_t* sa = nullptr;
     uint32_t sa_len = 0u;

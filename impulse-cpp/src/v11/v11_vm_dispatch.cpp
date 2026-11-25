@@ -89,7 +89,7 @@ static impulse_vm_status_v11_t run_words_unlocked(
     V11_DISPATCH();
 #else
   #define V11_OP_CASE(NAME) case static_cast<uint8_t>(Opcode::OP_##NAME):
-  #define V11_DISPATCH() break
+  #define V11_DISPATCH() continue
 
     while (ws.status == IMPULSE_VM_V11_OK) {
         if (steps >= max_steps) {

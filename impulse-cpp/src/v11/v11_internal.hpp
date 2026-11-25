@@ -281,14 +281,17 @@ struct V11Frontier {
                               uint32_t count,
                               const impulse_vm_geometry_v11_t& geom,
                               bool know_card) noexcept {
+        uint32_t* dst = nullptr;
+        if (count > 0u) {
+            dst = arena.alloc_array<uint32_t>(count, 8);
+            if (!dst) return false;
+            std::memcpy(dst, sorted_ids, static_cast<size_t>(count) * sizeof(uint32_t));
+        }
         reset_empty(dom_id, dom_card);
-        if (count == 0) {
+        if (count == 0u) {
             cached_card = 0;
             return true;
         }
-        uint32_t* dst = arena.alloc_array<uint32_t>(count, 8);
-        if (!dst) return false;
-        std::memcpy(dst, sorted_ids, static_cast<size_t>(count) * sizeof(uint32_t));
         nodes = dst;
         node_count = count;
         tier = compute_tier(geom, dom_card, count, false);
@@ -306,20 +309,22 @@ struct V11Frontier {
                          const uint64_t* sorted_masks,
                          uint32_t count,
                          const impulse_vm_geometry_v11_t& geom) noexcept {
+        uint64_t* dn = nullptr;
+        uint64_t* dm = nullptr;
+        if (count > 0u) {
+            dn = arena.alloc_array<uint64_t>(count, 8);
+            dm = arena.alloc_array<uint64_t>(count, 8);
+            if (!dn || !dm) return false;
+            std::memcpy(dn, sorted_nodes, static_cast<size_t>(count) * sizeof(uint64_t));
+            std::memcpy(dm, sorted_masks, static_cast<size_t>(count) * sizeof(uint64_t));
+        }
         reset_empty(dom_id, dom_card);
         multi_lane = true;
         alloc_width = width;
         active_lane_count = active_lanes;
         ml_count = count;
-        if (count > 0) {
-            uint64_t* dn = arena.alloc_array<uint64_t>(count, 8);
-            uint64_t* dm = arena.alloc_array<uint64_t>(count, 8);
-            if (!dn || !dm) return false;
-            std::memcpy(dn, sorted_nodes, static_cast<size_t>(count) * sizeof(uint64_t));
-            std::memcpy(dm, sorted_masks, static_cast<size_t>(count) * sizeof(uint64_t));
-            ml_nodes = dn;
-            ml_masks = dm;
-        }
+        ml_nodes = dn;
+        ml_masks = dm;
         tier = compute_tier(geom, dom_card, count, false);
         cached_card = static_cast<int64_t>(count);
         return true;

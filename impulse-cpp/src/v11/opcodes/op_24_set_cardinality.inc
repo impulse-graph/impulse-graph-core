@@ -16,35 +16,26 @@ V11_OP_CASE(SET_CARDINALITY) {
     } else if (subop >= 1u && subop <= 4u) {
         if (!fa.multi_lane) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
         uint64_t c = 0ULL;
-        switch (subop) {
-            case 1:
-                for (uint32_t i = 0; i < fa.ml_count; ++i) c += p2_popcount64(fa.ml_masks[i]);
-                break;
-            case 2:
-                c = static_cast<uint64_t>(fa.ml_count);
-                break;
-            case 3:
-                if (fa.active_lane_count > 0u) {
-                    uint64_t req = (fa.active_lane_count >= 64u) ? ~0ULL : ((1ULL << fa.active_lane_count) - 1ULL);
-                    for (uint32_t i = 0; i < fa.ml_count; ++i) {
-                        if ((fa.ml_masks[i] & req) == req) ++c;
-                    }
+        if (subop == 1u) {
+            for (uint32_t i = 0; i < fa.ml_count; ++i) c += p2_popcount64(fa.ml_masks[i]);
+        } else if (subop == 2u) {
+            c = static_cast<uint64_t>(fa.ml_count);
+        } else if (subop == 3u) {
+            if (fa.active_lane_count > 0u) {
+                uint64_t req = (fa.active_lane_count >= 64u) ? ~0ULL : ((1ULL << fa.active_lane_count) - 1ULL);
+                for (uint32_t i = 0; i < fa.ml_count; ++i) {
+                    if ((fa.ml_masks[i] & req) == req) ++c;
                 }
-                break;
-            case 4:
-                if (imm_lo >= fa.alloc_width || imm_lo >= 64u) {
-                    ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
-                    V11_DISPATCH();
-                } else {
-                    uint64_t bit = 1ULL << imm_lo;
-                    for (uint32_t i = 0; i < fa.ml_count; ++i) {
-                        if ((fa.ml_masks[i] & bit) != 0ULL) ++c;
-                    }
-                }
-                break;
-            default:
-                ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            }
+        } else { // subop == 4u
+            if (imm_lo >= fa.alloc_width || imm_lo >= 64u) {
+                ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
                 V11_DISPATCH();
+            }
+            uint64_t bit = 1ULL << imm_lo;
+            for (uint32_t i = 0; i < fa.ml_count; ++i) {
+                if ((fa.ml_masks[i] & bit) != 0ULL) ++c;
+            }
         }
         ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), c);
         p1_set_scalar_flags(ws, true, c);
