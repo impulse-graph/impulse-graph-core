@@ -562,7 +562,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
         ~InUseGuard() noexcept { flag.store(0u, std::memory_order_release); }
     } guard{scratch_ws->in_use};
 
-    impulse_vm_validation_v11_t vr = impulse_vm_validate_v11(impb_bytes, impb_len);
+    impulse_vm_validation_v11_t vr = validate_impb_in_arena(impb_bytes, impb_len, &scratch_ws->arena);
     if (vr.status != IMPULSE_VM_V11_OK) {
         scratch_ws->state.pc = vr.bad_pc;
         scratch_ws->status = vr.status;

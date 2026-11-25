@@ -739,6 +739,38 @@ static void test_full_pillars_zero_malloc_and_tight_arena_oom() {
                 peak_arena, oom_count, ok_count);
 }
 
+static void test_validator_zero_malloc_large_and_branchy() {
+    // 2500-word program (>2048 stack threshold) with a branchy morsel + SAMPLE_NEIGHBORS.vec_wr CFG cycle check
+    std::vector<uint64_t> words;
+    words.reserve(2510);
+    words.push_back(enc(0x21, 0, 0, 0, 0, 0, 0, 0));              // INIT_DOMAIN_SPAN.all_span F0, dom=0
+    words.push_back(enc(0x35, 0, 0, 0, 0, 0, 0, (4u << 16) | 0u)); // WALK_MORSEL.fwd F0, rel=0, end_delta=4
+    words.push_back(enc(0x0F, 0, 0, 0, 0, 0, 0, 2));              // JMP +2 (forward jump inside morsel -> exercises m_has_join/m_join_written)
+    words.push_back(enc(0x37, 0, 0, 1, 9, 0, 0, 0));              // MORSEL_COMMIT.frontier F1, V9
+    words.push_back(enc(0x37, 0, 0, 1, 9, 0, 0, 0));              // join target
+    words.push_back(enc(0x38, 0, 0, 0, 0, 0, 0, (4u << 16)));     // MORSEL_END back_delta=4
+    // Pad with NOPs past 2048 words
+    while (words.size() < 2498) {
+        words.push_back(enc(0x01, 0, 0, 0, 0, 0, 0, 0));          // NOP
+    }
+    words.push_back(enc(0x00, 0, 0, 0, 0, 0, 0, 0));              // HALT.ok
+
+    auto impb = build_impb(words);
+    alignas(128) uint8_t raw[1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_validation_v11_t vr = validate_impb_in_arena(impb.data(), impb.size(), &ws->arena);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+
+    CHECK(vr.status == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    CHECK(ws->arena.pos == 0u); // arena rewound cleanly after validation
+    std::printf("test_validator_zero_malloc_large_and_branchy: PASS (0 allocs, words=%zu)\n", words.size());
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -749,6 +781,7 @@ int main() {
     test_swe_sweep_p5_regressions();
     test_real_imps_bridge_e2e();
     test_full_pillars_zero_malloc_and_tight_arena_oom();
+    test_validator_zero_malloc_large_and_branchy();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
