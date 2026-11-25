@@ -9,6 +9,7 @@
 
 #include "impulse_vm_v11.h"
 #include "v11/impulse_vm_v11_isa.hpp"
+#include "v11/impulse_v11_opcode_macros.h"
 
 #include <algorithm>
 #include <atomic>
@@ -220,6 +221,57 @@ struct V11Frontier {
         ml_nodes = nullptr;
         ml_masks = nullptr;
         ml_count = 0;
+    }
+
+    inline void init_all_span(uint16_t dom_id, uint64_t dom_card) noexcept {
+        reset_empty(dom_id, dom_card);
+        tier = (dom_card > 0ULL) ? kTierAllSpan : kTierEmpty;
+        cached_card = static_cast<int64_t>(dom_card);
+    }
+
+    inline uint64_t cardinality() noexcept {
+        if (multi_lane) {
+            cached_card = static_cast<int64_t>(ml_count);
+            return static_cast<uint64_t>(ml_count);
+        }
+        if (tier == kTierEmpty) {
+            cached_card = 0;
+            return 0ULL;
+        }
+        if (tier == kTierAllSpan) {
+            cached_card = static_cast<int64_t>(domain_card);
+            return domain_card;
+        }
+        cached_card = static_cast<int64_t>(node_count);
+        return static_cast<uint64_t>(node_count);
+    }
+
+    inline bool contains_1bit(uint32_t u) const noexcept {
+        if (tier == kTierEmpty) return false;
+        if (tier == kTierAllSpan) return static_cast<uint64_t>(u) < domain_card;
+        if (node_count == 0u || nodes == nullptr) return false;
+        return std::binary_search(nodes, nodes + node_count, u);
+    }
+
+    bool materialize_1bit(V11Arena& arena, const uint32_t** out_ptr, uint32_t* out_len) const noexcept {
+        if (tier == kTierEmpty) {
+            *out_ptr = nullptr;
+            *out_len = 0u;
+            return true;
+        }
+        if (tier == kTierAllSpan) {
+            if (domain_card > UINT32_MAX) return false;
+            uint32_t n = static_cast<uint32_t>(domain_card);
+            uint32_t* buf = (n > 0u) ? arena.alloc_array<uint32_t>(n, 8) : nullptr;
+            if (n > 0u && !buf) return false;
+            for (uint32_t i = 0; i < n; ++i) buf[i] = i;
+            *out_ptr = buf;
+            *out_len = n;
+            return true;
+        }
+        *out_ptr = nodes;
+        *out_len = node_count;
+        return true;
     }
 
     bool init_from_sorted_ids(V11Arena& arena,
@@ -618,21 +670,6 @@ struct impulse_vm_workspace_v11 {
 };
 
 namespace impulse::vm::v11 {
-
-// Step return codes for pillar evaluators
-inline constexpr int kStepUnhandled = 0;
-inline constexpr int kStepStepped   = 1;
-inline constexpr int kStepHalted    = 2;
-
-int step_pillar1(impulse_vm_workspace_v11_t& ws,
-                 const V11SnapshotView* snap,
-                 const uint64_t* program,
-                 size_t program_len,
-                 uint64_t word) noexcept;
-
-int step_pillar2(impulse_vm_workspace_v11_t& ws,
-                 const V11SnapshotView* snap,
-                 uint64_t word) noexcept;
 
 impulse_vm_status_v11_t execute_words_internal(
     const uint64_t* words,

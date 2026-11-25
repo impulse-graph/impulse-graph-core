@@ -109,8 +109,6 @@ add_library(impulse_graph SHARED
     src/v11/v11_ictx_v2.cpp
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
-    src/v11/v11_ops_p1.cpp
-    src/v11/v11_ops_p2.cpp
     src/v11/v11_vm_dispatch.cpp
 )
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
@@ -140,8 +138,6 @@ add_library(impulse_graph_static STATIC
     src/v11/v11_ictx_v2.cpp
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
-    src/v11/v11_ops_p1.cpp
-    src/v11/v11_ops_p2.cpp
     src/v11/v11_vm_dispatch.cpp
 )
 target_include_directories(impulse_graph_static PUBLIC

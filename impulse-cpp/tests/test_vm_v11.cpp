@@ -140,13 +140,7 @@ static void test_workspace_guards_and_zero_malloc() {
     uint64_t r_before = g_alloc_count.load(std::memory_order_relaxed);
     for (int iter = 0; iter < 10; ++iter) {
         ws->reset_execution_state();
-        ws->state.pc = 0;
-        ws->status = IMPULSE_VM_V11_OK;
-        for (size_t s = 0; s < words.size(); ++s) {
-            int r = step_pillar1(*ws, nullptr, words.data(), words.size(), words[ws->state.pc]);
-            if (r == kStepHalted) break;
-        }
-        CHECK(ws->status == IMPULSE_VM_V11_OK);
+        CHECK(execute_words_internal(words.data(), words.size(), nullptr, *ws, 1000, 0u, true) == IMPULSE_VM_V11_OK);
         CHECK(ws->read_r_raw(2) == 42ULL);
     }
     uint64_t r_after = g_alloc_count.load(std::memory_order_relaxed);
@@ -258,9 +252,11 @@ static void test_swe_sweep_p1_regressions() {
     uint64_t eps_bits = 0;
     std::memcpy(&eps_bits, &eps, 8);
     ws->write_r(2, static_cast<uint8_t>(ScalarType::SCALAR_F64), eps_bits);
-    uint64_t stable_w = enc(0x27, 0, 1, 3, 0, 1, 2, 0); // STABLE_CHECK.vec_l1 R3, V0, V1, R2
-    CHECK(step_pillar2(*ws, nullptr, stable_w) == kStepStepped);
-    CHECK(ws->status == IMPULSE_VM_V11_OK);
+    uint64_t stable_prog[2] = {
+        enc(0x27, 0, 1, 3, 0, 1, 2, 0), // STABLE_CHECK.vec_l1 R3, V0, V1, R2
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0), // HALT
+    };
+    CHECK(execute_words_internal(stable_prog, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
     double diff = 0.0;
     std::memcpy(&diff, &ws->state.r_regs[3], 8);
     CHECK(diff == 1.0); // |-1.0 - 0.0| == 1.0, NOT 1.84467e19!
@@ -279,9 +275,11 @@ static void test_swe_sweep_p1_regressions() {
     uint64_t f_ids[1] = {1ULL};
     ws->const_pool[0] = {ConstPoolKind::Frontier, 0u, nullptr, f_ids, 1u, {}};
     ws->const_pool_count = 1u;
-    uint64_t lcp_w = enc(0x06, FLAG_ACCUM, 1, 0, 0, 0, 0, 0); // LOAD_CONST_POOL.frontier.accum F0, pool=0, dom=0
-    CHECK(step_pillar1(*ws, &snap, &lcp_w, 1, lcp_w) == kStepStepped);
-    CHECK(ws->status == IMPULSE_VM_V11_OK);
+    uint64_t lcp_prog[2] = {
+        enc(0x06, FLAG_ACCUM, 1, 0, 0, 0, 0, 0), // LOAD_CONST_POOL.frontier.accum F0, pool=0, dom=0
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),          // HALT
+    };
+    CHECK(execute_words_internal(lcp_prog, 2, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
     CHECK(ws->f_regs[0].tier == kTier0Inline);
     CHECK(ws->f_regs[0].node_count == 4u);
 
