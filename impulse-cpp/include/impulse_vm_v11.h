@@ -196,6 +196,34 @@ IMPULSE_API const impulse_vm_state_v11_t* impulse_vm_v11_get_state(
     const impulse_vm_workspace_v11_t* ws
 );
 
+/**
+ * 8. Optional per-opcode profiling statistics (active only when compiled with
+ *    -DIMPULSE_V11_OPCODE_PROFILE=1; zero overhead & zero workspace size when off).
+ *    - calls:    exact invocation count for all opcodes 0x00..0x7F.
+ *    - total_ns / min_ns / max_ns: populated for bulk opcodes (op >= 0x20, Pillars 2-5,
+ *      including morsel-body ops); 0 for Pillar 1 scalar ops (op < 0x20) to avoid
+ *      timer-read distortion on sub-10ns instructions.
+ */
+typedef struct {
+    uint64_t calls;
+    uint64_t total_ns;
+    uint64_t min_ns;
+    uint64_t max_ns;
+} impulse_vm_v11_opcode_stat_t;
+
+IMPULSE_API void impulse_vm_v11_reset_opcode_stats(
+    impulse_vm_workspace_v11_t* ws
+);
+
+/**
+ * Copies 128 opcode stat entries into out_128.
+ * Returns 1 if IMPULSE_V11_OPCODE_PROFILE is enabled, 0 otherwise.
+ */
+IMPULSE_API int impulse_vm_v11_get_opcode_stats(
+    const impulse_vm_workspace_v11_t* ws,
+    impulse_vm_v11_opcode_stat_t* out_128
+);
+
 #ifdef __cplusplus
 }
 #endif

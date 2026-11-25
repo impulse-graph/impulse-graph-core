@@ -686,6 +686,10 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 return active_mask == nullptr || active_mask->contains_1bit(i);
             };
 
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+            uint64_t m_prof_t0 = (op >= 0x20u && op < 128u) ? v11_profile_now_ns() : 0ULL;
+            if (op < 0x20u) ws.op_stats[op].calls += 1ULL;
+#endif
             switch (static_cast<Opcode>(op)) {
                 case Opcode::OP_NOP:
                     ws.state.pc += 1u;
@@ -1138,6 +1142,11 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
                     break;
             }
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+            if (op >= 0x20u && op < 128u) {
+                v11_profile_record(ws, op, v11_profile_now_ns() - m_prof_t0);
+            }
+#endif
         }
         if (can_rewind_chunks) {
             ws.arena.pos = chunk_mark;

@@ -61,6 +61,29 @@ static impulse_vm_status_v11_t run_words_unlocked(
     ws.gas_remaining = max_steps;
     uint64_t steps = 0ULL;
     uint64_t w = 0ULL;
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+    uint8_t prof_op = 0xFFu;
+    uint64_t prof_t0 = 0ULL;
+  #define V11_PROF_FINISH() do { \
+      if (prof_op != 0xFFu) { \
+          v11_profile_record(ws, prof_op, v11_profile_now_ns() - prof_t0); \
+          prof_op = 0xFFu; \
+      } \
+  } while (0)
+  #define V11_PROF_BEGIN(OP) do { \
+      uint8_t _pop = (OP); \
+      if (_pop >= 0x20u && _pop < 128u) { \
+          prof_op = _pop; \
+          prof_t0 = v11_profile_now_ns(); \
+      } else { \
+          if (_pop < 128u) ws.op_stats[_pop].calls += 1ULL; \
+          prof_op = 0xFFu; \
+      } \
+  } while (0)
+#else
+  #define V11_PROF_FINISH() ((void)0)
+  #define V11_PROF_BEGIN(OP) ((void)0)
+#endif
 
 #if V11_HAS_COMPUTED_GOTO
     static const void* dispatch_table[256];
@@ -80,13 +103,16 @@ static impulse_vm_status_v11_t run_words_unlocked(
 
   #define V11_OP_CASE(NAME) op_##NAME:
   #define V11_DISPATCH() do { \
+      V11_PROF_FINISH(); \
       if (ws.status != IMPULSE_VM_V11_OK) return ws.status; \
       if (steps >= max_steps) { ws.status = IMPULSE_VM_V11_ERR_GAS_EXHAUSTED; return ws.status; } \
       if (static_cast<size_t>(ws.state.pc) >= word_count) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; return ws.status; } \
       ++steps; \
       if (ws.gas_remaining > 0ULL) --ws.gas_remaining; \
       w = words[ws.state.pc]; \
-      goto *dispatch_table[IMP_V11_OPCODE(w)]; \
+      uint8_t _dop = IMP_V11_OPCODE(w); \
+      V11_PROF_BEGIN(_dop); \
+      goto *dispatch_table[_dop]; \
   } while (0)
 
     V11_DISPATCH();
@@ -96,6 +122,7 @@ static impulse_vm_status_v11_t run_words_unlocked(
 
     while (ws.status == IMPULSE_VM_V11_OK) {
       v11_switch_next:
+        V11_PROF_FINISH();
         if (ws.status != IMPULSE_VM_V11_OK) {
             return ws.status;
         }
@@ -110,7 +137,9 @@ static impulse_vm_status_v11_t run_words_unlocked(
         ++steps;
         if (ws.gas_remaining > 0ULL) --ws.gas_remaining;
         w = words[ws.state.pc];
-        switch (IMP_V11_OPCODE(w)) {
+        uint8_t _dop = IMP_V11_OPCODE(w);
+        V11_PROF_BEGIN(_dop);
+        switch (_dop) {
 #endif
 
     // --- Pillar 1: Control, Scalar ALU, 3VL, Windows & Spills (0x00..0x14) ---
@@ -618,4 +647,29 @@ extern "C" IMPULSE_API const impulse_vm_state_v11_t* impulse_vm_v11_get_state(
     const impulse_vm_workspace_v11_t* ws
 ) {
     return ws ? &ws->state : nullptr;
+}
+
+extern "C" IMPULSE_API void impulse_vm_v11_reset_opcode_stats(
+    impulse_vm_workspace_v11_t* ws
+) {
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+    if (ws) ws->reset_opcode_stats();
+#else
+    (void)ws;
+#endif
+}
+
+extern "C" IMPULSE_API int impulse_vm_v11_get_opcode_stats(
+    const impulse_vm_workspace_v11_t* ws,
+    impulse_vm_v11_opcode_stat_t* out_128
+) {
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+    if (!ws || !out_128) return 0;
+    std::memcpy(out_128, ws->op_stats, sizeof(ws->op_stats));
+    return 1;
+#else
+    (void)ws;
+    (void)out_128;
+    return 0;
+#endif
 }

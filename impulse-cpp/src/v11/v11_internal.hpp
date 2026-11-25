@@ -18,6 +18,9 @@
 #include <cstring>
 #include <limits>
 #include <string_view>
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+  #include <time.h>
+#endif
 
 namespace impulse::vm::v11 {
 
@@ -687,9 +690,43 @@ struct impulse_vm_workspace_v11 {
         frontier_epoch++;
         arena.reset_to_mark();
     }
+
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+    impulse_vm_v11_opcode_stat_t op_stats[128]{};
+
+    inline void reset_opcode_stats() noexcept {
+        for (int i = 0; i < 128; ++i) {
+            op_stats[i].calls = 0ULL;
+            op_stats[i].total_ns = 0ULL;
+            op_stats[i].min_ns = UINT64_MAX;
+            op_stats[i].max_ns = 0ULL;
+        }
+    }
+#endif
 };
 
 namespace impulse::vm::v11 {
+
+#ifdef IMPULSE_V11_OPCODE_PROFILE
+inline uint64_t v11_profile_now_ns() noexcept {
+    struct timespec ts{};
+#if defined(__APPLE__) && defined(CLOCK_UPTIME_RAW)
+    clock_gettime(CLOCK_UPTIME_RAW, &ts);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+}
+
+inline void v11_profile_record(impulse_vm_workspace_v11_t& ws, uint8_t op, uint64_t dt_ns) noexcept {
+    if (op >= 128u) return;
+    auto& s = ws.op_stats[op];
+    s.calls += 1ULL;
+    s.total_ns += dt_ns;
+    if (dt_ns < s.min_ns) s.min_ns = dt_ns;
+    if (dt_ns > s.max_ns) s.max_ns = dt_ns;
+}
+#endif
 
 impulse_vm_validation_v11_t validate_words_in_arena(
     const uint64_t* words,
