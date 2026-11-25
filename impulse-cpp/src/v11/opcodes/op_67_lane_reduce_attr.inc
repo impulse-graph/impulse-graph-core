@@ -15,9 +15,10 @@ V11_OP_CASE(LANE_REDUCE_ATTR) {
         auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
         if ((ac > 0u && !counts) || !valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
         if (ac > 0u) std::memset(counts, 0, static_cast<size_t>(ac) * sizeof(int64_t));
+        uint32_t bit_lim = (ac < 64u) ? ac : 64u;
         for (uint32_t i = 0; i < fa->ml_count; ++i) {
             uint64_t lm = fa->ml_masks[i];
-            for (uint32_t l = 0; l < ac; ++l) {
+            for (uint32_t l = 0; l < bit_lim; ++l) {
                 if ((lm & (1ULL << l)) != 0ULL) counts[l]++;
             }
         }
@@ -49,7 +50,8 @@ V11_OP_CASE(LANE_REDUCE_ATTR) {
         if (!attr->is_valid_at(u)) continue;
         double v = p4_vec_to_f64(*attr, u);
         uint64_t lm = fa->ml_masks[i];
-        for (uint32_t l = 0; l < ac; ++l) {
+        uint32_t bit_lim = (ac < 64u) ? ac : 64u;
+        for (uint32_t l = 0; l < bit_lim; ++l) {
             if ((lm & (1ULL << l)) == 0ULL) continue;
             bool has = ((valid[l >> 6] >> (l & 63u)) & 1ULL) != 0ULL;
             if (subop == 0u) acc[l] = has ? (acc[l] + v) : v;
