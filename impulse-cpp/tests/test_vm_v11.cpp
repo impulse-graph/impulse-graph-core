@@ -439,12 +439,79 @@ static void test_swe_sweep_p3_regressions() {
     CHECK(ws->flag_zf());
 }
 
+static void test_swe_sweep_p4_regressions() {
+    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    // P4 Finding #2: OP_VEC_3VL_OP invalid subop 12..15 must return ERR_INVALID_OPCODE
+    ws->reset_execution_state();
+    uint64_t bvalid[1] = {1ULL};
+    uint64_t bdata[1] = {1ULL};
+    V11Vector vb{};
+    vb.elem_tag = kVecTagBool3vl;
+    vb.length = 1u;
+    vb.valid_bits = bvalid;
+    vb.bool_data_bits = bdata;
+    ws->v_regs[0] = &vb;
+    uint64_t bad_3vl[2] = {
+        enc(0x46, 0, 12, 1, 0, 0, 0, 0), // VEC_3VL_OP subop=12 (invalid)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(bad_3vl, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_INVALID_OPCODE);
+
+    // P4 Finding #7: OP_VEC_INT_BITWISE invalid subop 14..15 must return ERR_INVALID_OPCODE
+    ws->reset_execution_state();
+    int64_t ivals[1] = {7};
+    V11Vector vi{};
+    vi.elem_tag = kVecTagI64;
+    vi.length = 1u;
+    vi.i64_data = ivals;
+    vi.valid_bits = bvalid;
+    ws->v_regs[0] = &vi;
+    uint64_t bad_bw[2] = {
+        enc(0x4C, 0, 14, 1, 0, 0, 0, 0), // VEC_INT_BITWISE subop=14 (invalid)
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(bad_bw, 2, nullptr, *ws, 100, 0u, true) == IMPULSE_VM_V11_ERR_INVALID_OPCODE);
+
+    // P4 Finding #9: OP_NODE_FILTER .ne on F64 column with valid-bit-set NaN must drop NaN (ZF=true)
+    ws->reset_execution_state();
+    double fvals[1] = {std::numeric_limits<double>::quiet_NaN()};
+    V11Vector vf{};
+    vf.elem_tag = kVecTagF64;
+    vf.length = 1u;
+    vf.f64_data = fvals;
+    vf.valid_bits = bvalid;
+    uint64_t dom_cards[1] = {1ULL};
+    V11DomAttrEntry na[1] = {{0u, 0u, &vf}};
+    V11SnapshotView snap{};
+    snap.domain_cards = dom_cards;
+    snap.domain_count = 1u;
+    snap.node_attrs = na;
+    snap.node_attr_count = 1u;
+    uint32_t id0[1] = {0u};
+    CHECK(ws->f_regs[0].init_from_sorted_ids(ws->arena, 0u, 1ULL, id0, 1u, kGeomP0, true));
+    ws->set_f_init(0, true);
+    double rhs = 1.0;
+    uint64_t rhs_bits = 0;
+    std::memcpy(&rhs_bits, &rhs, 8);
+    ws->write_r(2, static_cast<uint8_t>(ScalarType::SCALAR_F64), rhs_bits);
+    uint64_t nf_nan[2] = {
+        enc(0x44, FLAG_SCALAR_RHS, 1, 1, 0, 2, 0, 0), // NODE_FILTER.ne.s F1, F0, R2, dom=0, attr=0
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),
+    };
+    CHECK(execute_words_internal(nf_nan, 2, &snap, *ws, 100, 0u, true) == IMPULSE_VM_V11_OK);
+    CHECK(ws->flag_zf());
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
     test_swe_sweep_p1_regressions();
     test_swe_sweep_p2_regressions();
     test_swe_sweep_p3_regressions();
+    test_swe_sweep_p4_regressions();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }
