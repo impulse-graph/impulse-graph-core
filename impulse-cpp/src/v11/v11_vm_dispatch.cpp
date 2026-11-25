@@ -90,9 +90,13 @@ static impulse_vm_status_v11_t run_words_unlocked(
     V11_DISPATCH();
 #else
   #define V11_OP_CASE(NAME) case static_cast<uint8_t>(Opcode::OP_##NAME):
-  #define V11_DISPATCH() continue
+  #define V11_DISPATCH() goto v11_switch_next
 
     while (ws.status == IMPULSE_VM_V11_OK) {
+      v11_switch_next:
+        if (ws.status != IMPULSE_VM_V11_OK) {
+            return ws.status;
+        }
         if (steps >= max_steps) {
             ws.status = IMPULSE_VM_V11_ERR_GAS_EXHAUSTED;
             return ws.status;

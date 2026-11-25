@@ -121,23 +121,25 @@ IMPULSE_V11_NOINLINE inline bool p3_build_rev_adj(V11Arena& arena,
     return true;
 }
 
-inline uint32_t* p3_compute_in_degs(V11Arena& arena,
-                                    const V11SnapshotView& snap,
-                                    const V11RelView& rel,
-                                    uint32_t* out_n_tgt) noexcept {
+inline bool p3_compute_in_degs(V11Arena& arena,
+                               const V11SnapshotView& snap,
+                               const V11RelView& rel,
+                               uint32_t** out_deg,
+                               uint32_t* out_n_tgt) noexcept {
     uint64_t n_tgt64 = (rel.tgt_dom < snap.domain_count) ? snap.domain_cards[rel.tgt_dom] : 0ULL;
-    if (n_tgt64 > UINT32_MAX) return nullptr;
+    if (n_tgt64 > UINT32_MAX) return false;
     uint32_t n_tgt = static_cast<uint32_t>(n_tgt64);
     *out_n_tgt = n_tgt;
-    if (n_tgt == 0u) return nullptr;
+    if (n_tgt == 0u) { *out_deg = nullptr; return true; }
     uint32_t* deg = arena.alloc_array<uint32_t>(n_tgt, 8);
-    if (!deg) return nullptr;
+    if (!deg) return false;
     std::memset(deg, 0, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
     for (uint32_t e = 0; e < rel.col_tgt_len; ++e) {
         uint64_t v = rel.col_targets[e];
         if (v < n_tgt64) deg[static_cast<uint32_t>(v)]++;
     }
-    return deg;
+    *out_deg = deg;
+    return true;
 }
 
 inline bool p3_sorted_contains(const uint32_t* arr, uint32_t len, uint32_t x) noexcept {
@@ -230,6 +232,11 @@ inline bool p3_union_sorted(V11Arena& arena,
 inline bool p3_eval_edge_pred(const V11Vector& col, uint32_t e, uint8_t cmp_op,
                               bool rhs_valid, uint64_t rhs_bits, uint8_t rhs_ty) noexcept {
     if (e >= col.length) return false;
+    if (col.elem_tag == kVecTagLaneState) {
+        if (cmp_op == 6u) return false;
+        if (cmp_op == 7u) return true;
+        return false;
+    }
     if (cmp_op == 6u) return col.is_valid_at(e);
     if (cmp_op == 7u) return !col.is_valid_at(e);
     if (!rhs_valid || !col.is_valid_at(e)) return false;
@@ -344,6 +351,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     impulse_vm_workspace_v11_t& ws,
     const V11SnapshotView& view,
     const uint64_t* program,
+    size_t word_count,
     uint32_t hdr_pc,
     uint32_t end_pc,
     uint16_t default_dom,
@@ -353,14 +361,20 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     uint64_t& steps,
     uint64_t max_steps
 ) noexcept {
+    if (end_pc <= hdr_pc || static_cast<size_t>(end_pc) >= word_count) {
+        ws.status = IMPULSE_VM_V11_ERR_VALIDATION_FAILED;
+        return;
+    }
     V11MorselAccF  acc_f[8]{};
     V11MorselAccMl acc_ml[8]{};
     double*   acc_vf64[8]{};
     uint8_t*  acc_vf64_valid[8]{};
     uint32_t  acc_vf64_len[8]{};
+    bool      has_vf64[8]{};
     int64_t*  acc_vu64[8]{};
     uint8_t*  acc_vu64_valid[8]{};
     uint32_t  acc_vu64_len[8]{};
+    bool      has_vu64[8]{};
     uint64_t  acc_rcnt[8]{};
 
     int32_t committed_f_dom[8];
@@ -368,14 +382,69 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     bool    committed_vf64[8]{};
     bool    committed_vu64[8]{};
     bool    committed_rcnt[8]{};
+    bool    need_f_accum[8]{};
+    bool    need_ml_accum[8]{};
+    bool    need_vf64_accum[8]{};
+    bool    need_vf64_zero[8]{};
+    bool    need_vu64_accum[8]{};
+    bool    need_rcnt_accum[8]{};
     for (int d = 0; d < 8; ++d) {
         committed_f_dom[d]  = -1;
         committed_ml_dom[d] = -1;
     }
 
-    // Snapshot pre-existing outer registers 0..7
+    // Pre-scan OP_MORSEL_COMMIT instructions first (validates c_dst < 8 and determines which sinks need snapshotting)
+    for (uint32_t p = hdr_pc + 1u; p < end_pc; ++p) {
+        uint64_t cw = program[p];
+        if (IMP_V11_OPCODE(cw) == static_cast<uint8_t>(Opcode::OP_MORSEL_COMMIT)) {
+            uint8_t c_sub   = IMP_V11_SUBOP(cw);
+            uint8_t c_flags = IMP_V11_FLAGS(cw);
+            uint8_t c_dst   = IMP_V11_DST(cw);
+            if (c_dst >= 8u) {
+                ws.status = IMPULSE_VM_V11_ERR_VALIDATION_FAILED;
+                return;
+            }
+            uint16_t c_lo   = IMP_V11_IMM16_LO(cw);
+            bool c_accum    = (c_flags & FLAG_ACCUM) != 0u;
+            uint16_t dom    = (c_lo == 0xFFFFu) ? default_dom : c_lo;
+            switch (c_sub) {
+                case 0:
+                    committed_f_dom[c_dst] = static_cast<int32_t>(dom);
+                    need_f_accum[c_dst] = c_accum;
+                    break;
+                case 1:
+                    committed_ml_dom[c_dst] = static_cast<int32_t>(dom);
+                    need_ml_accum[c_dst] = c_accum;
+                    break;
+                case 2:
+                    committed_vf64[c_dst] = true;
+                    need_vf64_accum[c_dst] = c_accum;
+                    need_vf64_zero[c_dst] = !c_accum;
+                    break;
+                case 3:
+                case 4:
+                    committed_vf64[c_dst] = true;
+                    need_vf64_accum[c_dst] = c_accum;
+                    need_vf64_zero[c_dst] = false;
+                    break;
+                case 5:
+                case 6:
+                case 7:
+                    committed_vu64[c_dst] = true;
+                    need_vu64_accum[c_dst] = c_accum;
+                    break;
+                case 8:
+                    committed_rcnt[c_dst] = true;
+                    need_rcnt_accum[c_dst] = c_accum;
+                    break;
+                default: break;
+            }
+        }
+    }
+
+    // Snapshot only the pre-existing outer registers 0..7 that are targeted by commit sinks
     for (uint8_t d = 0; d < 8; ++d) {
-        if (ws.is_f_init(d) && !ws.f_regs[d].multi_lane) {
+        if (committed_f_dom[d] >= 0 && need_f_accum[d] && ws.is_f_init(d) && !ws.f_regs[d].multi_lane) {
             const uint32_t* ids = nullptr;
             uint32_t n = 0u;
             if (!ws.f_regs[d].materialize_1bit(ws.arena, &ids, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
@@ -383,7 +452,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 if (!acc_f[d].push(ws.arena, ids[i])) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
             }
         }
-        if (ws.is_f_init(d) && ws.f_regs[d].multi_lane) {
+        if (committed_ml_dom[d] >= 0 && need_ml_accum[d] && ws.is_f_init(d) && ws.f_regs[d].multi_lane) {
             for (uint32_t k = 0; k < ws.f_regs[d].ml_count; ++k) {
                 if (!acc_ml[d].or_entry(ws.arena, ws.f_regs[d].ml_nodes[k], ws.f_regs[d].ml_masks[k])) {
                     ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
@@ -391,77 +460,42 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             }
         }
         const V11Vector* vd = ws.v_regs[d];
-        if (vd && vd->elem_tag == kVecTagF64) {
+        if (committed_vf64[d] && vd && vd->elem_tag == kVecTagF64) {
+            has_vf64[d] = true;
             acc_vf64_len[d] = vd->length;
             if (vd->length > 0u) {
                 acc_vf64[d] = ws.arena.alloc_array<double>(vd->length, 8);
                 acc_vf64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
                 if (!acc_vf64[d] || !acc_vf64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
-                std::memcpy(acc_vf64[d], vd->f64_data, static_cast<size_t>(vd->length) * sizeof(double));
-                for (uint32_t i = 0; i < vd->length; ++i) acc_vf64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
+                if (need_vf64_accum[d]) {
+                    std::memcpy(acc_vf64[d], vd->f64_data, static_cast<size_t>(vd->length) * sizeof(double));
+                    for (uint32_t i = 0; i < vd->length; ++i) acc_vf64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
+                } else if (need_vf64_zero[d]) {
+                    std::memset(acc_vf64[d], 0, static_cast<size_t>(vd->length) * sizeof(double));
+                    std::memset(acc_vf64_valid[d], 1, vd->length);
+                } else {
+                    std::memset(acc_vf64[d], 0, static_cast<size_t>(vd->length) * sizeof(double));
+                    std::memset(acc_vf64_valid[d], 0, vd->length);
+                }
             }
         }
-        if (vd && (vd->elem_tag == kVecTagU64 || vd->elem_tag == kVecTagI64)) {
+        if (committed_vu64[d] && vd && (vd->elem_tag == kVecTagU64 || vd->elem_tag == kVecTagI64)) {
+            has_vu64[d] = true;
             acc_vu64_len[d] = vd->length;
             if (vd->length > 0u) {
                 acc_vu64[d] = ws.arena.alloc_array<int64_t>(vd->length, 8);
                 acc_vu64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
                 if (!acc_vu64[d] || !acc_vu64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
-                std::memcpy(acc_vu64[d], vd->i64_data, static_cast<size_t>(vd->length) * sizeof(int64_t));
-                for (uint32_t i = 0; i < vd->length; ++i) acc_vu64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
+                if (need_vu64_accum[d]) {
+                    std::memcpy(acc_vu64[d], vd->i64_data, static_cast<size_t>(vd->length) * sizeof(int64_t));
+                    for (uint32_t i = 0; i < vd->length; ++i) acc_vu64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
+                } else {
+                    std::memset(acc_vu64[d], 0, static_cast<size_t>(vd->length) * sizeof(int64_t));
+                    std::memset(acc_vu64_valid[d], 0, vd->length);
+                }
             }
         }
-        acc_rcnt[d] = ws.is_r_valid(d) ? ws.read_r_raw(d) : 0ULL;
-    }
-
-    // Pre-scan OP_MORSEL_COMMIT instructions to initialize sinks
-    for (uint32_t p = hdr_pc + 1u; p < end_pc; ++p) {
-        uint64_t cw = program[p];
-        if (IMP_V11_OPCODE(cw) == static_cast<uint8_t>(Opcode::OP_MORSEL_COMMIT)) {
-            uint8_t c_sub   = IMP_V11_SUBOP(cw);
-            uint8_t c_flags = IMP_V11_FLAGS(cw);
-            uint8_t c_dst   = IMP_V11_DST(cw);
-            uint16_t c_lo   = IMP_V11_IMM16_LO(cw);
-            bool c_accum    = (c_flags & FLAG_ACCUM) != 0u;
-            uint16_t dom    = (c_lo == 0xFFFFu) ? default_dom : c_lo;
-            switch (c_sub) {
-                case 0:
-                    committed_f_dom[c_dst] = static_cast<int32_t>(dom);
-                    if (!c_accum) acc_f[c_dst].len = 0u;
-                    break;
-                case 1:
-                    committed_ml_dom[c_dst] = static_cast<int32_t>(dom);
-                    if (!c_accum) acc_ml[c_dst].len = 0u;
-                    break;
-                case 2:
-                    committed_vf64[c_dst] = true;
-                    if (!c_accum && acc_vf64_len[c_dst] > 0u) {
-                        std::memset(acc_vf64[c_dst], 0, static_cast<size_t>(acc_vf64_len[c_dst]) * sizeof(double));
-                        std::memset(acc_vf64_valid[c_dst], 1, acc_vf64_len[c_dst]);
-                    }
-                    break;
-                case 3:
-                case 4:
-                    committed_vf64[c_dst] = true;
-                    if (!c_accum && acc_vf64_len[c_dst] > 0u) {
-                        std::memset(acc_vf64_valid[c_dst], 0, acc_vf64_len[c_dst]);
-                    }
-                    break;
-                case 5:
-                case 6:
-                case 7:
-                    committed_vu64[c_dst] = true;
-                    if (!c_accum && acc_vu64_len[c_dst] > 0u) {
-                        std::memset(acc_vu64_valid[c_dst], 0, acc_vu64_len[c_dst]);
-                    }
-                    break;
-                case 8:
-                    committed_rcnt[c_dst] = true;
-                    if (!c_accum) acc_rcnt[c_dst] = 0ULL;
-                    break;
-                default: break;
-            }
-        }
+        acc_rcnt[d] = (committed_rcnt[d] && need_rcnt_accum[d] && ws.is_r_valid(d)) ? ws.read_r_raw(d) : 0ULL;
     }
 
     uint32_t m_max = (ws.geometry.morsel_max > 0u) ? ws.geometry.morsel_max : 1u;
@@ -558,18 +592,29 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     ws.v_regs[dst] = morsel_spills[imm_lo];
                     ws.state.pc += 1u;
                     break;
-                case Opcode::OP_JMP:
-                    ws.state.pc = static_cast<uint32_t>(static_cast<int64_t>(ws.state.pc) + imm32_s);
+                case Opcode::OP_JMP: {
+                    int64_t tgt = static_cast<int64_t>(ws.state.pc) + imm32_s;
+                    if (tgt <= static_cast<int64_t>(hdr_pc) || tgt > static_cast<int64_t>(end_pc)) {
+                        ws.status = IMPULSE_VM_V11_ERR_VALIDATION_FAILED; break;
+                    }
+                    ws.state.pc = static_cast<uint32_t>(tgt);
                     break;
+                }
                 case Opcode::OP_JCC: {
                     bool take = false;
                     if (subop == 6u) take = ws.is_r_valid(s1) && ws.read_r_raw(s1) != 0ULL;
                     else if (subop == 7u) take = !ws.is_r_valid(s1) || ws.read_r_raw(s1) == 0ULL;
                     else if (subop == 8u) take = !ws.is_f_init(s1) || ws.f_regs[s1].is_empty();
                     else if (subop == 9u) take = ws.is_f_init(s1) && !ws.f_regs[s1].is_empty();
-                    ws.state.pc = take
-                        ? static_cast<uint32_t>(static_cast<int64_t>(ws.state.pc) + imm32_s)
-                        : (ws.state.pc + 1u);
+                    if (take) {
+                        int64_t tgt = static_cast<int64_t>(ws.state.pc) + imm32_s;
+                        if (tgt <= static_cast<int64_t>(hdr_pc) || tgt > static_cast<int64_t>(end_pc)) {
+                            ws.status = IMPULSE_VM_V11_ERR_VALIDATION_FAILED; break;
+                        }
+                        ws.state.pc = static_cast<uint32_t>(tgt);
+                    } else {
+                        ws.state.pc += 1u;
+                    }
                     break;
                 }
                 case Opcode::OP_MOV:
@@ -608,7 +653,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     uint32_t cnt = 0u;
                     for (uint32_t i = 0; i < len; ++i) {
                         bool a = fa->contains_1bit(i), b = fb->contains_1bit(i);
-                        bool r = (subop == 0u) ? (a || b) : (subop == 1u) ? (a && b) : (subop == 2u) ? (a && !b) : (a != b);
+                        bool r = (subop == 0u) ? (a || b) : (subop == 1u) ? (a && b) : (subop == 2u) ? (a && !b) : (subop == 3u) ? (a != b) : false;
                         if (r) out[cnt++] = i;
                     }
                     if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, 0xFFFFu, len, out, cnt, kGeomP0, true)) {
@@ -897,7 +942,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         }
                         case 2: case 3: case 4: { // .scatter_add / min / max
                             const V11Vector* ids = ws.v_regs[s1];
-                            if (!ids || ids->elem_tag != kVecTagU64 || acc_vf64[dst] == nullptr) {
+                            if (!ids || ids->elem_tag != kVecTagU64 || !has_vf64[dst]) {
                                 ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break;
                             }
                             const V11Vector* vals = scalar ? nullptr : ws.v_regs[s2];
@@ -910,6 +955,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                                     : (vals && vals->elem_tag == kVecTagF64 && i < vals->length && vals->is_valid_at(i));
                                 if (!has_v) continue;
                                 double v = scalar ? r_val : vals->f64_data[i];
+                                if (std::isnan(v)) continue;
                                 uint64_t tgt64 = static_cast<uint64_t>(ids->i64_data[i]);
                                 if (tgt64 >= acc_vf64_len[dst]) {
                                     ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break;
@@ -933,7 +979,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         }
                         case 5: case 6: case 7: { // .scatter_min_src / argmin / argmax
                             const V11Vector* ids = ws.v_regs[s1];
-                            if (!ids || ids->elem_tag != kVecTagU64 || acc_vu64[dst] == nullptr) {
+                            if (!ids || ids->elem_tag != kVecTagU64 || !has_vu64[dst]) {
                                 ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break;
                             }
                             const V11Vector* vals = scalar ? nullptr : ws.v_regs[s2];
@@ -993,6 +1039,11 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 return;
             }
         }
+        // Stage all commit allocations before mutating outer registers 0..7 (atomic on arena OOM)
+        V11Frontier staged_f[8]{};
+        bool        staged_f_set[8]{};
+        V11Vector*  staged_v[8]{};
+        bool        staged_v_set[8]{};
         bool any_non_empty = false;
         for (uint8_t d = 0; d < 8; ++d) {
             if (committed_f_dom[d] >= 0) {
@@ -1000,17 +1051,16 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 uint64_t dcard = view.domain_cards[dom];
                 uint32_t uniq = p2_dedupe_sorted_inplace(acc_f[d].data, acc_f[d].len);
                 if (uniq > 0u) any_non_empty = true;
-                if (!ws.f_regs[d].init_from_sorted_ids(ws.arena, dom, dcard, acc_f[d].data, uniq, ws.geometry, false)) {
+                if (!staged_f[d].init_from_sorted_ids(ws.arena, dom, dcard, acc_f[d].data, uniq, ws.geometry, false)) {
                     ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
                 }
-                ws.set_f_init(d, true);
+                staged_f_set[d] = true;
             }
             if (committed_ml_dom[d] >= 0) {
                 uint16_t dom = static_cast<uint16_t>(committed_ml_dom[d]);
                 uint64_t dcard = view.domain_cards[dom];
                 uint32_t cnt = acc_ml[d].len;
                 if (cnt > 0u) any_non_empty = true;
-                // Sort multi-lane entries ascending by node id
                 uint32_t* perm = (cnt > 0u) ? ws.arena.alloc_array<uint32_t>(cnt, 8) : nullptr;
                 uint64_t* ns   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
                 uint64_t* ms   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
@@ -1018,12 +1068,12 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 for (uint32_t i = 0; i < cnt; ++i) perm[i] = i;
                 std::sort(perm, perm + cnt, [&](uint32_t a, uint32_t b) { return acc_ml[d].nodes[a] < acc_ml[d].nodes[b]; });
                 for (uint32_t i = 0; i < cnt; ++i) { ns[i] = acc_ml[d].nodes[perm[i]]; ms[i] = acc_ml[d].masks[perm[i]]; }
-                if (!ws.f_regs[d].init_multi_lane(ws.arena, dom, dcard, 64u, 64u, ns, ms, cnt, ws.geometry)) {
+                if (!staged_f[d].init_multi_lane(ws.arena, dom, dcard, 64u, 64u, ns, ms, cnt, ws.geometry)) {
                     ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
                 }
-                ws.set_f_init(d, true);
+                staged_f_set[d] = true;
             }
-            if (committed_vf64[d] && acc_vf64[d] != nullptr) {
+            if (committed_vf64[d] && has_vf64[d]) {
                 uint32_t n = acc_vf64_len[d];
                 size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
                 uint64_t* vbits = ws.arena.alloc_array<uint64_t>(vwords, 8);
@@ -1038,9 +1088,10 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 }
                 new (ov) V11Vector();
                 ov->elem_tag = kVecTagF64; ov->length = n; ov->f64_data = acc_vf64[d]; ov->valid_bits = vbits;
-                ws.v_regs[d] = ov;
+                staged_v[d] = ov;
+                staged_v_set[d] = true;
             }
-            if (committed_vu64[d] && acc_vu64[d] != nullptr) {
+            if (committed_vu64[d] && has_vu64[d]) {
                 uint32_t n = acc_vu64_len[d];
                 size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
                 uint64_t* vbits = ws.arena.alloc_array<uint64_t>(vwords, 8);
@@ -1055,12 +1106,17 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 }
                 new (ov) V11Vector();
                 ov->elem_tag = kVecTagU64; ov->length = n; ov->i64_data = acc_vu64[d]; ov->valid_bits = vbits;
-                ws.v_regs[d] = ov;
+                staged_v[d] = ov;
+                staged_v_set[d] = true;
             }
-            if (committed_rcnt[d]) {
-                if (acc_rcnt[d] != 0ULL) any_non_empty = true;
-                ws.write_r(d, static_cast<uint8_t>(ScalarType::SCALAR_U64), acc_rcnt[d]);
+            if (committed_rcnt[d] && acc_rcnt[d] != 0ULL) {
+                any_non_empty = true;
             }
+        }
+        for (uint8_t d = 0; d < 8; ++d) {
+            if (staged_f_set[d]) { ws.f_regs[d] = staged_f[d]; ws.set_f_init(d, true); }
+            if (staged_v_set[d]) { ws.v_regs[d] = staged_v[d]; }
+            if (committed_rcnt[d]) { ws.write_r(d, static_cast<uint8_t>(ScalarType::SCALAR_U64), acc_rcnt[d]); }
         }
         ws.set_zf(!any_non_empty);
         ws.state.pc = end_pc + 1u;

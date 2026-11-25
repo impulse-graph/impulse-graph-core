@@ -32,8 +32,8 @@ V11_OP_CASE(DEGREE) {
             if (!f_tgt) break;
             if (f_tgt->domain_id != rel->tgt_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
             uint32_t n_tgt = 0u;
-            uint32_t* in_d = p3_compute_in_degs(ws.arena, *snap, *rel, &n_tgt);
-            if (n_tgt > 0u && !in_d) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            uint32_t* in_d = nullptr;
+            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n_tgt)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             const uint32_t* ids = nullptr; uint32_t n = 0u;
             if (!f_tgt->materialize_1bit(ws.arena, &ids, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             uint64_t sum = 0ULL;
@@ -81,8 +81,8 @@ V11_OP_CASE(DEGREE) {
                 if (fm->domain_id != rel->tgt_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
             }
             uint32_t n = 0u;
-            uint32_t* in_d = p3_compute_in_degs(ws.arena, *snap, *rel, &n);
-            if (n > 0u && !in_d) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            uint32_t* in_d = nullptr;
+            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
             int64_t* vals = (n > 0u) ? ws.arena.alloc_array<int64_t>(n, 8) : nullptr;
             uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
@@ -119,8 +119,8 @@ V11_OP_CASE(DEGREE) {
             uint64_t dcard = (rel->tgt_dom < snap->domain_count) ? snap->domain_cards[rel->tgt_dom] : 0ULL;
             if (v64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
             uint32_t n_tgt = 0u;
-            uint32_t* in_d = p3_compute_in_degs(ws.arena, *snap, *rel, &n_tgt);
-            if (n_tgt > 0u && !in_d) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            uint32_t* in_d = nullptr;
+            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n_tgt)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             uint64_t deg = (v64 < n_tgt) ? static_cast<uint64_t>(in_d[static_cast<uint32_t>(v64)]) : 0ULL;
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), deg);
             p1_set_scalar_flags(ws, true, deg);

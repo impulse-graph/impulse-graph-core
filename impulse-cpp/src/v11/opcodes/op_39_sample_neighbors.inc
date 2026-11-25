@@ -34,22 +34,25 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
         uint32_t* out_buf = (cap > 0u) ? ws.arena.alloc_array<uint32_t>(cap, 8) : nullptr;
         if (cap > 0u && !out_buf) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
 
-        // Reusable open-addressing hash table for Floyd's O(k) without-replacement selection
+        // Lazy-allocate Floyd open-addressing hash table only if some node has deg > k
         size_t ht_cap = 1u;
         while (ht_cap < static_cast<size_t>(k) * 2u) ht_cap <<= 1;
-        uint32_t* ht = ws.arena.alloc_array<uint32_t>(ht_cap, 8);
-        if (!ht) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+        uint32_t* ht = nullptr;
         const size_t ht_mask = ht_cap - 1u;
 
         uint32_t cnt = 0u;
         for (uint32_t i = 0; i < src_len; ++i) {
             uint32_t u = src_ids[i];
-            if (u + 1u >= rel->row_off_len) continue;
+            if (rel->row_off_len == 0u || u >= rel->row_off_len - 1u) continue;
             uint32_t lo = rel->row_offsets[u], hi = rel->row_offsets[u + 1u];
             uint32_t deg = hi - lo;
             if (deg <= k) {
                 for (uint32_t e = lo; e < hi; ++e) out_buf[cnt++] = static_cast<uint32_t>(rel->col_targets[e]);
             } else {
+                if (!ht) {
+                    ht = ws.arena.alloc_array<uint32_t>(ht_cap, 8);
+                    if (!ht) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                }
                 std::memset(ht, 0xFF, ht_cap * sizeof(uint32_t));
                 for (uint32_t t = deg - k; t < deg; ++t) {
                     uint64_t r = p3_splitmix_sample(seed, static_cast<uint64_t>(u), static_cast<uint64_t>(t));
@@ -100,14 +103,15 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
         std::memset(vbits, 0, vwords * sizeof(uint64_t));
 
         bool any_valid = false;
-        uint64_t dcard = snap->domain_cards[rel->src_dom];
+        uint64_t dcard = (rel->src_dom < snap->domain_count) ? snap->domain_cards[rel->src_dom] : 0ULL;
         for (uint32_t i = 0; i < n; ++i) {
             if (!seeds->is_valid_at(i)) continue;
             int64_t u_s = seeds->i64_data[i];
             uint64_t u64 = static_cast<uint64_t>(u_s);
             if (u_s < 0 || u64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
             uint32_t u = static_cast<uint32_t>(u64);
-            uint32_t lo = rel->row_offsets[u], hi = rel->row_offsets[u + 1u];
+            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u] : 0u;
+            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u + 1u] : 0u;
             uint32_t deg = hi - lo;
             if (deg > 0u) {
                 for (uint32_t j = 0; j < k; ++j) {
@@ -143,14 +147,15 @@ V11_OP_CASE(SAMPLE_NEIGHBORS) {
         std::memset(vbits, 0, vwords * sizeof(uint64_t));
 
         bool any_valid = false;
-        uint64_t dcard = snap->domain_cards[rel->src_dom];
+        uint64_t dcard = (rel->src_dom < snap->domain_count) ? snap->domain_cards[rel->src_dom] : 0ULL;
         for (uint32_t i = 0; i < n; ++i) {
             if (!walkers->is_valid_at(i)) continue;
             int64_t u_s = walkers->i64_data[i];
             uint64_t u64 = static_cast<uint64_t>(u_s);
             if (u_s < 0 || u64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
             uint32_t u = static_cast<uint32_t>(u64);
-            uint32_t lo = rel->row_offsets[u], hi = rel->row_offsets[u + 1u];
+            uint32_t lo = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u] : 0u;
+            uint32_t hi = (rel->row_off_len > 0u && u < rel->row_off_len - 1u) ? rel->row_offsets[u + 1u] : 0u;
             uint32_t deg = hi - lo;
             if (deg == 0u) {
                 if (stay) {
