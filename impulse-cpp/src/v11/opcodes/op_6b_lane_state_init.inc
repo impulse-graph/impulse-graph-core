@@ -34,15 +34,14 @@ V11_OP_CASE(LANE_STATE_INIT) {
         double seed_val = (((flags & FLAG_SCALAR_RHS) != 0u) && seed_valid) ? p4_read_scalar_f64(ws, s2) : 0.0;
         V11Vector* ov = p5_alloc_lane_state(ws.arena, dom, n, kk, subop == 5u);
         if (!ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        uint16_t lim = (kk < 64u) ? kk : 64u;
         for (uint32_t i = 0; i < fa->ml_count; ++i) {
             uint64_t u64 = fa->ml_nodes[i];
             if (u64 >= n) continue;
             uint32_t u = static_cast<uint32_t>(u64);
             uint64_t lm = fa->ml_masks[i];
             size_t base = static_cast<size_t>(u) * kk;
-            for (uint16_t l = 0; l < lim; ++l) {
-                if ((lm & (1ULL << l)) != 0ULL) {
+            for (uint16_t l = 0; l < kk; ++l) {
+                if ((lm & (1ULL << (l & 63u))) != 0ULL) {
                     if (seed_valid) {
                         ov->ls_vals[base + l] = seed_val;
                         ov->ls_valid[base + l] = 1u;

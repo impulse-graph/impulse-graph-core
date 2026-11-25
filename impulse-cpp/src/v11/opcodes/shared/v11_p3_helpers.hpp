@@ -391,6 +391,11 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     for (int d = 0; d < 8; ++d) {
         committed_f_dom[d]  = -1;
         committed_ml_dom[d] = -1;
+        need_f_accum[d]     = true;
+        need_ml_accum[d]    = true;
+        need_vf64_accum[d]  = true;
+        need_vu64_accum[d]  = true;
+        need_rcnt_accum[d]  = true;
     }
 
     // Pre-scan OP_MORSEL_COMMIT instructions first (validates c_dst < 8 and determines which sinks need snapshotting)
@@ -410,32 +415,30 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             switch (c_sub) {
                 case 0:
                     committed_f_dom[c_dst] = static_cast<int32_t>(dom);
-                    need_f_accum[c_dst] = c_accum;
+                    if (!c_accum) need_f_accum[c_dst] = false;
                     break;
                 case 1:
                     committed_ml_dom[c_dst] = static_cast<int32_t>(dom);
-                    need_ml_accum[c_dst] = c_accum;
+                    if (!c_accum) need_ml_accum[c_dst] = false;
                     break;
                 case 2:
                     committed_vf64[c_dst] = true;
-                    need_vf64_accum[c_dst] = c_accum;
-                    need_vf64_zero[c_dst] = !c_accum;
+                    if (!c_accum) { need_vf64_accum[c_dst] = false; need_vf64_zero[c_dst] = true; }
                     break;
                 case 3:
                 case 4:
                     committed_vf64[c_dst] = true;
-                    need_vf64_accum[c_dst] = c_accum;
-                    need_vf64_zero[c_dst] = false;
+                    if (!c_accum) { need_vf64_accum[c_dst] = false; need_vf64_zero[c_dst] = false; }
                     break;
                 case 5:
                 case 6:
                 case 7:
                     committed_vu64[c_dst] = true;
-                    need_vu64_accum[c_dst] = c_accum;
+                    if (!c_accum) need_vu64_accum[c_dst] = false;
                     break;
                 case 8:
                     committed_rcnt[c_dst] = true;
-                    need_rcnt_accum[c_dst] = c_accum;
+                    if (!c_accum) need_rcnt_accum[c_dst] = false;
                     break;
                 default: break;
             }

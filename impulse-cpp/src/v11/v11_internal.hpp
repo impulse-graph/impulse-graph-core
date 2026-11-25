@@ -525,7 +525,9 @@ struct impulse_vm_workspace_v11 {
     impulse::vm::v11::V11ParamEntry     params[impulse::vm::v11::kMaxParams];
     uint32_t                            param_count;
     impulse::vm::v11::V11StrSlice       str_table[impulse::vm::v11::kMaxScalarStrings];
+    impulse::vm::v11::V11StrSlice*      str_table_ptr;
     uint32_t                            str_count;
+    uint32_t                            str_cap;
     impulse::vm::v11::V11OutputSlot     outputs[impulse::vm::v11::kMaxOutputs];
     uint32_t                            output_count;
 
@@ -608,8 +610,18 @@ struct impulse_vm_workspace_v11 {
     }
 
     inline uint64_t intern_scalar_str(const char* ptr, uint32_t len) noexcept {
-        if (str_count >= impulse::vm::v11::kMaxScalarStrings) {
-            return 0ULL;
+        if (!str_table_ptr || str_cap == 0u) {
+            str_table_ptr = str_table;
+            str_cap = impulse::vm::v11::kMaxScalarStrings;
+        }
+        if (str_count >= str_cap) {
+            uint32_t next_cap = str_cap * 2u;
+            if (next_cap <= str_cap) return 0ULL;
+            auto* grown = arena.alloc_array<impulse::vm::v11::V11StrSlice>(next_cap, 8);
+            if (!grown) return 0ULL;
+            std::memcpy(grown, str_table_ptr, static_cast<size_t>(str_count) * sizeof(impulse::vm::v11::V11StrSlice));
+            str_table_ptr = grown;
+            str_cap = next_cap;
         }
         char* copy = nullptr;
         if (len > 0) {
@@ -618,15 +630,15 @@ struct impulse_vm_workspace_v11 {
             std::memcpy(copy, ptr, len);
         }
         uint32_t idx = str_count++;
-        str_table[idx] = {copy, len, 1u};
+        str_table_ptr[idx] = {copy, len, 1u};
         return static_cast<uint64_t>(idx + 1u);
     }
 
     inline impulse::vm::v11::V11StrSlice resolve_scalar_str(uint64_t handle) const noexcept {
-        if (handle == 0ULL || handle > str_count) {
+        if (handle == 0ULL || handle > str_count || !str_table_ptr) {
             return {nullptr, 0u, 0u};
         }
-        return str_table[handle - 1u];
+        return str_table_ptr[handle - 1u];
     }
 
     inline const impulse::vm::v11::V11ConstPoolEntry* find_const_pool(uint32_t id) const noexcept {
@@ -669,6 +681,9 @@ struct impulse_vm_workspace_v11 {
             spill_slots[i].kind = impulse::vm::v11::kSpillEmpty;
         }
         output_count = 0u;
+        str_table_ptr = str_table;
+        str_count = 0u;
+        str_cap = impulse::vm::v11::kMaxScalarStrings;
         frontier_epoch++;
         arena.reset_to_mark();
     }
