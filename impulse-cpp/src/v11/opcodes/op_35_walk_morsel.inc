@@ -78,6 +78,6 @@ V11_OP_CASE(WALK_MORSEL) {
         }
     }
 
-    p3_run_morsel_block(ws, *snap, words, hdr_pc, end_pc, out_dom, false, items, item_cnt, steps, max_steps);
+    p3_run_morsel_block(ws, *snap, words, word_count, hdr_pc, end_pc, out_dom, false, items, item_cnt, steps, max_steps);
     V11_DISPATCH();
 }

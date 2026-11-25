@@ -13,7 +13,7 @@ V11_OP_CASE(GRAPH_KERNEL) {
     if (subop > 4u) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE; V11_DISPATCH(); }
 
     const uint16_t dom = rel->src_dom;
-    const uint64_t n64 = snap->domain_cards[dom];
+    const uint64_t n64 = (dom < snap->domain_count) ? snap->domain_cards[dom] : 0ULL;
     if (n64 > UINT32_MAX) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
     const uint32_t n = static_cast<uint32_t>(n64);
 
@@ -44,6 +44,7 @@ V11_OP_CASE(GRAPH_KERNEL) {
             }
         }
     }
+    if (total_raw > UINT32_MAX) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
     for (uint32_t u = 0; u < n; ++u) raw_deg[u + 1u] += raw_deg[u];
 
     uint32_t* adj_nbrs = (total_raw > 0ULL) ? ws.arena.alloc_array<uint32_t>(static_cast<size_t>(total_raw), 8) : nullptr;

@@ -18,6 +18,6 @@ V11_OP_CASE(FILTER_MORSEL) {
         items[i] = {src_ids[i], 0ULL, 0ULL, 1ULL};
     }
 
-    p3_run_morsel_block(ws, *snap, words, hdr_pc, end_pc, f_src->domain_id, true, items, src_len, steps, max_steps);
+    p3_run_morsel_block(ws, *snap, words, word_count, hdr_pc, end_pc, f_src->domain_id, true, items, src_len, steps, max_steps);
     V11_DISPATCH();
 }
