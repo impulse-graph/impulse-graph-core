@@ -125,11 +125,49 @@ typedef struct impulse_vm_validation_v11 {
     uint32_t bad_pc;
 } impulse_vm_validation_v11_t;
 
+/** Public C-ABI query parameter kind (mirrors internal ParamKind / ScalarType). */
+#define IMPULSE_VM_V11_PARAM_SCALAR_NULL  0u
+#define IMPULSE_VM_V11_PARAM_SCALAR_I64   1u
+#define IMPULSE_VM_V11_PARAM_SCALAR_U64   2u
+#define IMPULSE_VM_V11_PARAM_SCALAR_F64   3u
+#define IMPULSE_VM_V11_PARAM_SCALAR_BOOL  4u
+#define IMPULSE_VM_V11_PARAM_SCALAR_STR   5u
+#define IMPULSE_VM_V11_PARAM_FRONTIER_IDS 6u
+#define IMPULSE_VM_V11_PARAM_VEC_I64      7u
+#define IMPULSE_VM_V11_PARAM_VEC_U64      8u
+#define IMPULSE_VM_V11_PARAM_VEC_F64      9u
+
+/** Host-bound query parameter entry passed via impulse_vm_params_v11_t. */
+typedef struct impulse_vm_param_binding_v11 {
+    uint32_t    param_id;       /* Matches imm16_lo in OP_LOAD_PARAM */
+    uint32_t    kind;           /* IMPULSE_VM_V11_PARAM_* */
+    uint16_t    domain_id;      /* Target domain for FRONTIER_IDS */
+    uint16_t    reserved;       /* MBZ */
+    uint32_t    count;          /* Element count (FRONTIER_IDS/VEC_*) or byte len (STR) */
+    uint64_t    scalar_bits;    /* Raw 64-bit scalar value (i64/u64/f64 bits/bool 0|1) */
+    const void* data_ptr;       /* Pointer to uint64_t[] / int64_t[] / double[] / char* */
+    const uint64_t* valid_bits; /* Optional validity bitmap for VEC_* (NULL => all valid) */
+} impulse_vm_param_binding_v11_t;
+
 /** Optional query execution parameters & fuel override. */
 typedef struct impulse_vm_params_v11 {
     uint64_t gas_limit;         /* 0 => default (100000 for fixtures, UINT64_MAX for C-ABI) */
     const impulse_vm_geometry_v11_t* geometry_override; /* NULL => P0_DEFAULT */
+    const impulse_vm_param_binding_v11_t* bindings;     /* NULL => no host-bound params */
+    uint32_t binding_count;
 } impulse_vm_params_v11_t;
+
+/** Read-only view over a terminal OP_COLLECT output slot in workspace memory. */
+typedef struct impulse_vm_output_view_v11 {
+    uint16_t        slot;
+    uint8_t         elem_tag;       /* 0=I64, 1=U64, 4=F64, 6=BOOL_3VL, 7=STR, 8=EMB, 9=LANE_STATE */
+    uint8_t         reserved;
+    uint32_t        length;
+    const int64_t*  i64_data;       /* Valid for I64 / U64 */
+    const double*   f64_data;       /* Valid for F64 */
+    const uint64_t* valid_bits;     /* NULL => all valid */
+    const uint64_t* bool_data_bits; /* Valid for BOOL_3VL */
+} impulse_vm_output_view_v11_t;
 
 /**
  * 1. Placement-initialize a caller-owned 128-byte-aligned scratch buffer once per worker thread.
@@ -169,6 +207,14 @@ IMPULSE_API impulse_vm_status_v11_t impulse_vm_plan_memory(
 );
 
 /**
+ * 4b. Pre-build a reusable v0.11 snapshot view on an open .imps snapshot once
+ *     before hot query loops (eliminates per-query CSR/attribute view building).
+ */
+IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
+    const impulse_snapshot_t* snapshot
+);
+
+/**
  * 5. Zero-allocation hot-path execution over a .impb v0.11 container.
  */
 IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
@@ -194,6 +240,28 @@ IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
  */
 IMPULSE_API const impulse_vm_state_v11_t* impulse_vm_v11_get_state(
     const impulse_vm_workspace_v11_t* ws
+);
+
+/**
+ * 7b. Inspect terminal OP_COLLECT outputs stored in the workspace after execution.
+ */
+IMPULSE_API uint32_t impulse_vm_v11_get_output_count(
+    const impulse_vm_workspace_v11_t* ws
+);
+
+IMPULSE_API int impulse_vm_v11_get_output(
+    const impulse_vm_workspace_v11_t* ws,
+    uint32_t index,
+    impulse_vm_output_view_v11_t* out
+);
+
+IMPULSE_API int impulse_vm_v11_get_output_str(
+    const impulse_vm_workspace_v11_t* ws,
+    uint32_t index,
+    uint32_t elem_idx,
+    const char** out_ptr,
+    uint32_t* out_len,
+    int* out_valid
 );
 
 /**
@@ -223,6 +291,25 @@ IMPULSE_API int impulse_vm_v11_get_opcode_stats(
     const impulse_vm_workspace_v11_t* ws,
     impulse_vm_v11_opcode_stat_t* out_128
 );
+
+/**
+ * 9. Compile an ImpScheme v0.11 SSA (.impscm) source string against a bound snapshot
+ *    into a validated .impb v0.11 container.
+ *    opt_level: 0 = opt-OFF, 1 = opt-ON.
+ *    Returns 0 on success, non-zero on static validation/parse error (message written to err_buf).
+ *    Caller frees *out_impb via impulse_vm_v11_free_bytes().
+ */
+IMPULSE_API int impulse_compile_impscm_v11(
+    const char* impscm_src,
+    const impulse_snapshot_t* snapshot,
+    int opt_level,
+    uint8_t** out_impb,
+    size_t* out_len,
+    char* err_buf,
+    size_t err_cap
+);
+
+IMPULSE_API void impulse_vm_v11_free_bytes(uint8_t* ptr);
 
 #ifdef __cplusplus
 }

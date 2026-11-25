@@ -1027,6 +1027,118 @@ static void test_mcdc_validator_planner_and_cabi() {
     std::printf("test_mcdc_validator_planner_and_cabi: PASS\n");
 }
 
+#include "v11/impulse_v11_bytecode_emitter.hpp"
+#undef OP_HALT
+
+static void test_v11_emitter_const_pool_params_and_collect_e2e() {
+    using namespace impulse::compiler;
+    using namespace impulse::compiler::v11;
+
+    // 1. Build a 5-node chain snapshot (0->1->2->3->4) on disk via impulse_writer
+    const std::string path = "/tmp/test_v11_emitter_e2e.imps";
+    impulse_writer_t* w = impulse_writer_create(path.c_str(), 0);
+    CHECK(w != nullptr);
+    CHECK(impulse_writer_add_domain(w, 0, 0, "Node") == IMPULSE_OK);
+    uint32_t roff[6] = {0, 1, 2, 3, 4, 4};
+    uint32_t cidx[4] = {1, 2, 3, 4};
+    CHECK(impulse_writer_add_relation(w, 0, 0, 1, 5, 4, 0, roff, sizeof(roff), cidx, sizeof(cidx)) == IMPULSE_OK);
+    CHECK(impulse_writer_finalize(w) == IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    impulse_status_t open_st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(path.c_str(), &open_st);
+    CHECK(snap != nullptr && open_st == IMPULSE_OK);
+
+    // 2. Compile 2-hop walk + collect list via V11BytecodeEmitter
+    auto w1 = std::make_shared<ScmWalk>();
+    w1->relation_name = "NEXT"; w1->direction = WalkDirection::FORWARD_CSR; w1->physical_rel_id = 0;
+    auto w2 = std::make_shared<ScmWalk>();
+    w2->relation_name = "NEXT"; w2->direction = WalkDirection::FORWARD_CSR; w2->physical_rel_id = 0;
+    auto c_list = std::make_shared<ScmCollect>();
+    c_list->output_type = ScmCollect::OutputType::LIST;
+    auto two_hop = std::make_shared<ScmProgram>(std::vector<AstPtr>{w1, w2, c_list});
+    auto compiled = V11BytecodeEmitter::emit(two_hop, snap, 0);
+    CHECK(!compiled.impb_bytes.empty());
+
+    alignas(128) uint8_t raw[1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
+
+    uint64_t seed_ids[1] = {0ULL};
+    impulse_vm_param_binding_v11_t bind{};
+    bind.param_id = 0u;
+    bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+    bind.domain_id = 0u;
+    bind.count = 1u;
+    bind.data_ptr = seed_ids;
+
+    impulse_vm_params_v11_t params{};
+    params.gas_limit = 100000ULL;
+    params.bindings = &bind;
+    params.binding_count = 1u;
+
+    alignas(64) uint8_t result_buf[4096];
+    size_t result_bytes = 0;
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+        compiled.impb_bytes.data(), compiled.impb_bytes.size(),
+        snap, &params, ws, result_buf, sizeof(result_buf), &result_bytes);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    CHECK(result_bytes > 0u);
+    CHECK(impulse_vm_v11_get_output_count(ws) == 1u);
+    impulse_vm_output_view_v11_t ov{};
+    CHECK(impulse_vm_v11_get_output(ws, 0, &ov) == 1);
+    CHECK(ov.length == 1u);
+    CHECK(ov.i64_data != nullptr && ov.i64_data[0] == 2);
+
+    // 3. Compile Fixpoint Kleene* + COUNT reduction -> scalar 4 from seed {1}
+    auto fix_node = std::make_shared<ScmFixpoint>("NEXT", WalkDirection::FORWARD_CSR, 100);
+    fix_node->physical_rel_id = 0;
+    auto c_bs = std::make_shared<ScmCollect>();
+    c_bs->output_type = ScmCollect::OutputType::BITSET;
+    auto fix_prog = std::make_shared<ScmProgram>(std::vector<AstPtr>{
+        fix_node,
+        std::make_shared<ScmReduce>(ScmReduce::Op::COUNT),
+        c_bs,
+    });
+    auto compiled_fix = V11BytecodeEmitter::emit(fix_prog, snap, 0);
+    seed_ids[0] = 1ULL;
+    rc = impulse_vm_execute_v11(
+        compiled_fix.impb_bytes.data(), compiled_fix.impb_bytes.size(),
+        snap, &params, ws, nullptr, 0, nullptr);
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(impulse_vm_v11_get_output_count(ws) == 1u);
+    CHECK(impulse_vm_v11_get_output(ws, 0, &ov) == 1);
+    CHECK(ov.length == 1u && ov.i64_data[0] == 4);
+
+    // 4. Test .impb const_pool roundtrip (Frontier) with 0 allocs
+    V11ProgramBuilder pb;
+    uint32_t f_cp = pb.add_const_pool_frontier({1ULL, 3ULL});
+    pb.emit_u16(impulse::vm::v11::Opcode::OP_LOAD_CONST_POOL, impulse::vm::v11::subop::kLOAD_CONST_POOL_FRONTIER,
+                0, 0, 0, 0, 0, static_cast<uint16_t>(f_cp), 0u);
+    pb.emit_u16(impulse::vm::v11::Opcode::OP_COLLECT, impulse::vm::v11::subop::kCOLLECT_FRONTIER_IDS,
+                0, 0, 0, 0, 0, 0u, 0u);
+    pb.emit(impulse::vm::v11::Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    auto cp_impb = pb.build_impb(0, 0, 1);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    rc = impulse_vm_execute_v11(cp_impb.data(), cp_impb.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    CHECK(impulse_vm_v11_get_output(ws, 0, &ov) == 1);
+    CHECK(ov.length == 2u && ov.i64_data[0] == 1 && ov.i64_data[1] == 3);
+
+    impulse_snapshot_close(snap);
+    std::printf("test_v11_emitter_const_pool_params_and_collect_e2e: PASS (0 allocs)\n");
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -1039,6 +1151,7 @@ int main() {
     test_full_pillars_zero_malloc_and_tight_arena_oom();
     test_validator_zero_malloc_large_and_branchy();
     test_mcdc_validator_planner_and_cabi();
+    test_v11_emitter_const_pool_params_and_collect_e2e();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }

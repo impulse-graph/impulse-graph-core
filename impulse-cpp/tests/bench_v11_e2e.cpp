@@ -1,0 +1,130 @@
+/**
+ * @file bench_v11_e2e.cpp
+ * @brief Empirical C++20 v0.11 E2E benchmark (2-hop, fixpoint BFS/ReBAC, CC) on real .imps snapshots.
+ */
+#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "impulse_vm_v11.h"
+#include "impulse_graph.h"
+
+#undef OP_HALT
+#undef OP_SET_CARDINALITY
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+static double run_timed(
+    const std::vector<uint8_t>& impb,
+    const impulse_snapshot_t* snap,
+    const impulse_vm_params_v11_t* params,
+    impulse_vm_workspace_v11_t* ws,
+    int warmup,
+    int iters,
+    int64_t* out_val
+) {
+    for (int i = 0; i < warmup; ++i) {
+        impulse_vm_status_v11_t st = impulse_vm_execute_v11(
+            impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
+        if (st != IMPULSE_VM_V11_OK) {
+            const auto* stf = impulse_vm_v11_get_state(ws);
+            std::fprintf(stderr, "VM error during warmup: %u at pc=%u\n", st, stf ? stf->pc : 9999u);
+            std::exit(2);
+        }
+    }
+    std::vector<double> us;
+    us.reserve(static_cast<size_t>(iters));
+    for (int i = 0; i < iters; ++i) {
+        auto t0 = std::chrono::steady_clock::now();
+        impulse_vm_status_v11_t st = impulse_vm_execute_v11(
+            impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
+        auto t1 = std::chrono::steady_clock::now();
+        if (st != IMPULSE_VM_V11_OK) {
+            std::fprintf(stderr, "VM error during iter %d: %u\n", i, st);
+            std::exit(2);
+        }
+        us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+    }
+    impulse_vm_output_view_v11_t ov{};
+    if (impulse_vm_v11_get_output(ws, 0, &ov) == 1 && ov.length > 0 && ov.i64_data) {
+        *out_val = ov.i64_data[0];
+    }
+    std::sort(us.begin(), us.end());
+    return us[us.size() / 2];
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::fprintf(stderr, "Usage: %s <snapshot.imps> [seed_node=0] [warmup=20] [iters=100]\n", argv[0]);
+        return 1;
+    }
+    const char* path = argv[1];
+    uint64_t seed = (argc > 2) ? std::strtoull(argv[2], nullptr, 10) : 0ULL;
+    int warmup = (argc > 3) ? std::atoi(argv[3]) : 20;
+    int iters = (argc > 4) ? std::atoi(argv[4]) : 100;
+
+    impulse_status_t open_st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(path, &open_st);
+    if (!snap || open_st != IMPULSE_OK) {
+        std::fprintf(stderr, "Failed to open snapshot %s (status=%d)\n", path, open_st);
+        return 1;
+    }
+    if (impulse_vm_v11_prepare_snapshot(snap) != IMPULSE_VM_V11_OK) {
+        std::fprintf(stderr, "Failed to prepare v11 snapshot view\n");
+        return 1;
+    }
+
+    // Allocate 64MB 128-byte aligned caller workspace (reused across all iterations)
+    const size_t ws_bytes = 64u * 1024u * 1024u;
+    void* raw = nullptr;
+    if (posix_memalign(&raw, 128, ws_bytes) != 0 || !raw) return 1;
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_V11_OK) return 1;
+
+    using namespace impulse::compiler::v11;
+    using namespace impulse::vm::v11;
+
+    // 1. 2-Hop Walk + Cardinality
+    V11ProgramBuilder b2;
+    b2.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
+    b2.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
+    b2.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 0, 1, 0, 0, 0, 0);
+    b2.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, 0, 0, 0, 0, 0);
+    b2.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, 0, 0, 0, 0, 0);
+    b2.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    auto impb_2hop = b2.build_impb(0, 0, 1);
+
+    // 2. Fixpoint Kleene* Reachability (BFS / ReBAC) + Cardinality
+    V11ProgramBuilder bf;
+    bf.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
+    bf.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD_FIXPOINT_STAR, 0, 1, 0, 0, 0, 0, 0);
+    bf.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, 0, 1, 0, 0, 0);
+    bf.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, 0, 0, 0, 0, 0);
+    bf.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    auto impb_bfs = bf.build_impb(0, 0, 1);
+
+    impulse_vm_param_binding_v11_t bind{};
+    bind.param_id = 0u;
+    bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+    bind.domain_id = 0u;
+    bind.count = 1u;
+    bind.data_ptr = &seed;
+    impulse_vm_params_v11_t params{};
+    params.gas_limit = 0ULL;
+    params.bindings = &bind;
+    params.binding_count = 1u;
+
+    int64_t card_2hop = -1, card_bfs = -1;
+    double us_2hop = run_timed(impb_2hop, snap, &params, ws, warmup, iters, &card_2hop);
+    double us_bfs  = run_timed(impb_bfs,  snap, &params, ws, warmup, iters, &card_bfs);
+
+    std::printf("{\"engine\":\"cpp-v11\",\"snapshot\":\"%s\",\"2hop_us\":%.2f,\"2hop_card\":%lld,\"bfs_us\":%.2f,\"bfs_card\":%lld}\n",
+                path, us_2hop, static_cast<long long>(card_2hop), us_bfs, static_cast<long long>(card_bfs));
+
+    impulse_snapshot_close(snap);
+    std::free(raw);
+    return 0;
+}
