@@ -106,6 +106,30 @@ int main(int argc, char** argv) {
     bf.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
     auto impb_bfs = bf.build_impb(0, 0, 1);
 
+    // 3. Morsel 2-Hop (WALK 1-hop + WALK_MORSEL.fwd + MORSEL_COMMIT.yield_frontier + CARD)
+    V11ProgramBuilder bm;
+    bm.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
+    bm.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
+    bm.emit_u16(Opcode::OP_WALK_MORSEL, subop::kWALK_MORSEL_FWD, 0, 0, 1, 0, 0, 0, 2);
+    bm.emit_u16(Opcode::OP_MORSEL_COMMIT, subop::kMORSEL_COMMIT_YIELD_FRONTIER, 0, 2, 9, 0, 0, 0, 0);
+    bm.emit_u16(Opcode::OP_MORSEL_END, 0, 0, 0, 0, 0, 0, 0, 2);
+    bm.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, 0, 2, 0, 0, 0);
+    bm.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, 0, 0, 0, 0, 0);
+    bm.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    auto impb_morsel_2hop = bm.build_impb(0, 0, 1);
+
+    // 4. Morsel Edge Count (WALK 1-hop + WALK_MORSEL.fwd + MORSEL_COMMIT.count_add_r)
+    V11ProgramBuilder bmc;
+    bmc.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
+    bmc.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
+    bmc.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, 0, 0, 0, 0, 0);
+    bmc.emit_u16(Opcode::OP_WALK_MORSEL, subop::kWALK_MORSEL_FWD, 0, 0, 1, 0, 0, 0, 2);
+    bmc.emit_u16(Opcode::OP_MORSEL_COMMIT, subop::kMORSEL_COMMIT_COUNT_ADD_R, 0, 0, 0, 0, 0, 0, 0);
+    bmc.emit_u16(Opcode::OP_MORSEL_END, 0, 0, 0, 0, 0, 0, 0, 2);
+    bmc.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, 0, 0, 0, 0, 0);
+    bmc.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    auto impb_morsel_cnt = bmc.build_impb(0, 0, 1);
+
     impulse_vm_param_binding_v11_t bind{};
     bind.param_id = 0u;
     bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
@@ -117,12 +141,15 @@ int main(int argc, char** argv) {
     params.bindings = &bind;
     params.binding_count = 1u;
 
-    int64_t card_2hop = -1, card_bfs = -1;
+    int64_t card_2hop = -1, card_bfs = -1, card_m2 = -1, cnt_mc = -1;
     double us_2hop = run_timed(impb_2hop, snap, &params, ws, warmup, iters, &card_2hop);
     double us_bfs  = run_timed(impb_bfs,  snap, &params, ws, warmup, iters, &card_bfs);
+    double us_m2   = run_timed(impb_morsel_2hop, snap, &params, ws, warmup, iters, &card_m2);
+    double us_mc   = run_timed(impb_morsel_cnt,  snap, &params, ws, warmup, iters, &cnt_mc);
 
-    std::printf("{\"engine\":\"cpp-v11\",\"snapshot\":\"%s\",\"2hop_us\":%.2f,\"2hop_card\":%lld,\"bfs_us\":%.2f,\"bfs_card\":%lld}\n",
-                path, us_2hop, static_cast<long long>(card_2hop), us_bfs, static_cast<long long>(card_bfs));
+    std::printf("{\"engine\":\"cpp-v11\",\"snapshot\":\"%s\",\"2hop_us\":%.2f,\"2hop_card\":%lld,\"bfs_us\":%.2f,\"bfs_card\":%lld,\"morsel_2hop_us\":%.2f,\"morsel_2hop_card\":%lld,\"morsel_cnt_us\":%.2f,\"morsel_cnt\":%lld}\n",
+                path, us_2hop, static_cast<long long>(card_2hop), us_bfs, static_cast<long long>(card_bfs),
+                us_m2, static_cast<long long>(card_m2), us_mc, static_cast<long long>(cnt_mc));
 
     impulse_snapshot_close(snap);
     std::free(raw);
