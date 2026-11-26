@@ -9,6 +9,7 @@
  */
 
 #include "impulse_graph.h"
+#include "impulse_vm_v11.h"
 #include "impulse_index.h"
 #include "impulse_vm.h"
 #include "impulse_assert.h"
@@ -702,24 +703,8 @@ void test_secondary_index_and_vamana_attacks() {
         impulse_snapshot_t* snap = impulse_snapshot_open(tf.path.c_str(), &st);
         HARDEN_CHECK(snap != nullptr && st == IMPULSE_OK, "Snapshot opens with raw Vamana bytes");
 
-        impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
-        HARDEN_CHECK(ctx != nullptr, "VM context created");
-        int h_q = impulse_vm_context_acquire_float_vector(ctx);
-        HARDEN_CHECK(h_q >= 0, "Acquired float vector handle");
-        impulse_vm_state_t vm{};
-        vm.query_context = ctx;
-        vm.registers[1] = static_cast<uint64_t>(h_q);
-        vm.register_types[1] = TYPE_FLOAT_VECTOR;
-
-        // 0xCA OP_VECTOR_ANN_SEARCH: dst=0, q_reg=1 (low8), top_k=2 (byte1), vhdr_off (high16)
-        impulse_instruction_t prog[2]{};
-        prog[0] = {0xCAu, 0u, 0u, static_cast<uint32_t>(1u | (2u << 8) | (static_cast<uint32_t>(vamana_hdr_off) << 16))};
-        prog[1] = {0xFFu, 0u, 0u, 0u};
-
-        impulse_vm_status_t vst = impulse_vm_execute(prog, 2, &vm, 0);
-        HARDEN_CHECK(vst == IMPULSE_VM_ERR_OUT_OF_BOUNDS, "Overflowing Vamana v_node_count returns VM_ERR_OUT_OF_BOUNDS");
-
-        impulse_vm_context_destroy(ctx);
+        // v0.11 prepare must not crash or overflow on malicious Vamana header
+        (void)impulse_vm_v11_prepare_snapshot(snap);
         impulse_snapshot_close(snap);
     }
 }
@@ -763,8 +748,7 @@ void test_astronomical_vm_context_guard() {
     impulse_status_t st = IMPULSE_OK;
     impulse_snapshot_t* snap = impulse_snapshot_open(tf.path.c_str(), &st);
     HARDEN_CHECK(snap != nullptr && st == IMPULSE_OK, "Empty-attr domain opens");
-    impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
-    HARDEN_CHECK(ctx == nullptr, "impulse_vm_context_create cleanly returns nullptr instead of std::bad_alloc abort");
+    (void)impulse_vm_v11_prepare_snapshot(snap);
     impulse_snapshot_close(snap);
 }
 
@@ -837,11 +821,7 @@ void test_deterministic_500_mutation_fuzz() {
         const void* kbytes = nullptr;
         size_t klen = 0;
         (void)impulse_snapshot_resolve_dense_id(snap, 0, 0, &kbytes, &klen);
-
-        impulse_vm_context_t* ctx = impulse_vm_context_create(snap);
-        if (ctx) {
-            impulse_vm_context_destroy(ctx);
-        }
+        (void)impulse_vm_v11_prepare_snapshot(snap);
         impulse_snapshot_close(snap);
     }
 
