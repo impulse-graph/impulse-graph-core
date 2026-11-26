@@ -23,6 +23,12 @@ namespace impulse::vm::v11::simd {
 void f64_arith_vec(uint8_t subop, const double* a, const double* b, double* out, uint32_t n) noexcept;
 void f64_arith_scalar(uint8_t subop, const double* a, double b_sc, double* out, uint32_t n) noexcept;
 void f64_arith_unary(uint8_t subop, const double* a, double* out, uint32_t n) noexcept;
+void f64_arith_vec_valid(uint8_t subop, const double* a, const double* b, const uint64_t* a_valid,
+                         const uint64_t* b_valid, double* out, uint64_t* out_valid, uint32_t n) noexcept;
+void f64_arith_scalar_valid(uint8_t subop, const double* a, double b_sc, const uint64_t* a_valid,
+                            double* out, uint64_t* out_valid, uint32_t n) noexcept;
+void f64_arith_unary_valid(uint8_t subop, const double* a, const uint64_t* a_valid,
+                           double* out, uint64_t* out_valid, uint32_t n) noexcept;
 void f64_pack_valid_words(const double* out, const uint64_t* a_valid, const uint64_t* b_valid,
                           bool has_b, bool b_scalar_ok, uint64_t* out_valid, uint32_t n) noexcept;
 void f64_cmp_words(uint8_t subop, const double* a, const double* b, bool scalar, double b_sc, bool b_sc_ok,
