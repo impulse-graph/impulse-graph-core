@@ -112,6 +112,7 @@ add_library(impulse_graph SHARED
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
     src/v11/v11_vm_dispatch.cpp
+    src/v11/v11_simd_hwy.cpp
 )
 target_compile_definitions(impulse_graph PRIVATE IMPULSE_BUILDING_DLL)
 target_include_directories(impulse_graph PUBLIC
@@ -143,6 +144,7 @@ add_library(impulse_graph_static STATIC
     src/v11/v11_validator.cpp
     src/v11/v11_memory_planner.cpp
     src/v11/v11_vm_dispatch.cpp
+    src/v11/v11_simd_hwy.cpp
 )
 target_include_directories(impulse_graph_static PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
