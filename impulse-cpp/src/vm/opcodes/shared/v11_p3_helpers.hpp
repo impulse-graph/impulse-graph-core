@@ -1130,18 +1130,37 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         case 0: { // .yield_frontier
                             const V11Vector* ids = ws.v_regs[s1];
                             if (!ids || ids->elem_tag != kVecTagU64) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break; }
-                            uint64_t* fbits = acc_f_bits[dst];
+                            uint64_t* __restrict fbits = acc_f_bits[dst];
                             uint32_t fcap = acc_f_bit_cap[dst];
-                            for (uint32_t k = 0; k < cm_len; ++k) {
-                                uint32_t i = cm_ids[k];
-                                if (i < ids->length && ids->is_valid_at(i)) {
-                                    uint32_t id = static_cast<uint32_t>(ids->i64_data[i]);
-                                    if (fbits && id < fcap) {
-                                        fbits[id >> 6] |= (1ULL << (id & 63u));
+                            if (!masked && fbits && ids->valid_bits == nullptr && ids->length >= len) {
+                                const int64_t* __restrict id_arr = ids->i64_data;
+                                for (uint32_t i = 0; i < len; ++i) {
+                                    uint32_t id = static_cast<uint32_t>(id_arr[i]);
+                                    if (id < fcap) {
+                                        uint64_t bit = 1ULL << (id & 63u);
+                                        uint32_t wi = id >> 6;
+                                        if ((fbits[wi] & bit) == 0ULL) fbits[wi] |= bit;
                                     } else {
                                         can_rewind_chunks = false;
                                         if (!acc_f[dst].push(ws.arena, id)) {
                                             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (uint32_t k = 0; k < cm_len; ++k) {
+                                    uint32_t i = cm_ids[k];
+                                    if (i < ids->length && ids->is_valid_at(i)) {
+                                        uint32_t id = static_cast<uint32_t>(ids->i64_data[i]);
+                                        if (fbits && id < fcap) {
+                                            uint64_t bit = 1ULL << (id & 63u);
+                                            uint32_t wi = id >> 6;
+                                            if ((fbits[wi] & bit) == 0ULL) fbits[wi] |= bit;
+                                        } else {
+                                            can_rewind_chunks = false;
+                                            if (!acc_f[dst].push(ws.arena, id)) {
+                                                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
+                                            }
                                         }
                                     }
                                 }
