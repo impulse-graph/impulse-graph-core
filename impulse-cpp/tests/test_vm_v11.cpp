@@ -1139,6 +1139,130 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     std::printf("test_v11_emitter_const_pool_params_and_collect_e2e: PASS (0 allocs)\n");
 }
 
+static void test_v11_imps_coo_roundtrip_and_hardening() {
+    const char* out_path = "/tmp/v11_coo_cpp_roundtrip.imps";
+    impulse_writer_t* w = impulse_writer_create(out_path, IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED);
+    CHECK(w != nullptr);
+    CHECK(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "User") == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_node_count(w, 0, 6) == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_dense_id_width(w, 0, 2) == IMPULSE_OK); // uint16_t
+    CHECK(impulse_writer_add_domain(w, 1, IMPULSE_KEY_TYPE_INT32, "Item") == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_node_count(w, 1, 10) == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_dense_id_width(w, 1, 4) == IMPULSE_OK); // uint32_t
+
+    // Relation 0: COO-only unsorted, uint16 src, uint32 tgt, explicit uint32 edge IDs, f64 weights
+    const uint16_t coo_src0[5] = {2, 0, 1, 0, 2};
+    const uint32_t coo_tgt0[5] = {7, 3, 7, 5, 3};
+    const uint32_t coo_eid0[5] = {4, 1, 0, 3, 2};
+    const double   weights0[5] = {1.5, 2.5, 3.0, 4.0, 10.0};
+    CHECK(impulse_writer_add_relation_v11(
+        w, 0, 1, 0, 4, 4, 6, 5, 0,
+        nullptr, 0, nullptr, 0,
+        nullptr, 0, nullptr, 0,
+        coo_src0, sizeof(coo_src0),
+        coo_tgt0, sizeof(coo_tgt0),
+        coo_eid0, sizeof(coo_eid0),
+        IMPULSE_COO_ORDER_UNSORTED) == IMPULSE_OK);
+    CHECK(impulse_writer_add_attribute(w, 0, "weight", 10, 1, weights0, sizeof(weights0), nullptr, 0) == IMPULSE_OK);
+
+    // Relation 1: CSR + COO SRC_TGT, identity edge IDs (coo_edge_id = nullptr)
+    const uint32_t csr_ro1[7]  = {0, 2, 3, 5, 5, 5, 5};
+    const uint32_t csr_ct1[5]  = {3, 5, 7, 3, 7};
+    const uint16_t coo_src1[5] = {0, 0, 1, 2, 2};
+    const uint32_t coo_tgt1[5] = {3, 5, 7, 3, 7};
+    CHECK(impulse_writer_add_relation_v11(
+        w, 0, 1, 0, 4, 4, 6, 5, 0,
+        csr_ro1, sizeof(csr_ro1), csr_ct1, sizeof(csr_ct1),
+        nullptr, 0, nullptr, 0,
+        coo_src1, sizeof(coo_src1),
+        coo_tgt1, sizeof(coo_tgt1),
+        nullptr, 0,
+        IMPULSE_COO_ORDER_SRC_TGT) == IMPULSE_OK);
+
+    CHECK(impulse_writer_finalize(w) == IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    impulse_status_t st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(out_path, &st);
+    CHECK(snap != nullptr && st == IMPULSE_OK);
+    CHECK(impulse_snapshot_version(snap) == 11);
+    impulse_domain_catalog_entry_t d0{}, d1{};
+    CHECK(impulse_snapshot_get_domain_entry(snap, 0, &d0, nullptr) == IMPULSE_OK && d0.dense_id_width == 2);
+    CHECK(impulse_snapshot_get_domain_entry(snap, 1, &d1, nullptr) == IMPULSE_OK && d1.dense_id_width == 4);
+    impulse_relation_directory_entry_t r0{}, r1{};
+    CHECK(impulse_snapshot_get_relation_entry(snap, 0, &r0) == IMPULSE_OK);
+    CHECK(r0.csr_row_off_bytes == 0 && r0.coo_src_bytes == sizeof(coo_src0) && r0.coo_tgt_bytes == sizeof(coo_tgt0));
+    CHECK(r0.coo_edge_id_bytes == sizeof(coo_eid0) && r0.coo_order == IMPULSE_COO_ORDER_UNSORTED);
+    CHECK(impulse_snapshot_get_relation_entry(snap, 1, &r1) == IMPULSE_OK);
+    CHECK(r1.csr_row_off_bytes == sizeof(csr_ro1) && r1.coo_edge_id_bytes == 0 && r1.coo_order == IMPULSE_COO_ORDER_SRC_TGT);
+
+    CHECK(impulse_vm_v11_prepare_snapshot(snap) == IMPULSE_VM_V11_OK);
+
+    alignas(128) uint8_t scratch[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(scratch, sizeof(scratch), &ws) == IMPULSE_VM_V11_OK);
+
+    // Program: OP_WALK_MORSEL.coo_fwd(rel=0) + GATHER_EDGE_ATTR + MORSEL_COMMIT.scatter_add + VEC_REDUCE.sum
+    std::vector<uint64_t> prog = {
+        enc(0x21, 0, 0, 0, 0, 0, 0, 0),            // F0 = all(dom 0)
+        enc(0x50, 0, 12, 1, 0, 0, 0, 1),           // V1 = VEC_INIT.dom_f64(dom 1, 0.0)
+        enc(0x35, 0, 2, 0, 0, 0, 0, (3u << 16)),   // WALK_MORSEL.coo_fwd(F0, rel=0, bodyLen=3)
+        enc(0x42, 0, 0, 11, 10, 0, 0, 0),          // V11 = GATHER_EDGE_ATTR(V10, rel=0, attr=0)
+        enc(0x37, 0, 2, 1, 9, 11, 0, 1),           // MORSEL_COMMIT.scatter_add(V1[dom 1], V9, V11)
+        enc(0x38, 0, 0, 0, 0, 0, 0, (3u << 16)),   // MORSEL_END
+        enc(0x52, 0, 0, 0, 1, 0, 0, 0),            // R0 = VEC_REDUCE.sum(V1) == 21.0
+        enc(0x30, 0, 8, 2, 0, 0, 0, 0),            // F2 = WALK.coo_fwd(F0, rel=0) -> {3,5,7}
+        enc(0x24, 0, 0, 1, 2, 0, 0, 0),            // R1 = card(F2) == 3
+        enc(0x30, 0, 9, 3, 2, 0, 0, 0),            // F3 = WALK.coo_rev(F2, rel=0) -> {0,1,2}
+        enc(0x24, 0, 0, 2, 3, 0, 0, 0),            // R2 = card(F3) == 3
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),            // HALT
+    };
+    auto impb = build_impb(prog);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(impb.data(), impb.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    const auto* st_v11 = impulse_vm_v11_get_state(ws);
+    double sum_val = 0.0;
+    std::memcpy(&sum_val, &st_v11->r_regs[0], sizeof(double));
+    CHECK(std::abs(sum_val - 21.0) < 1e-9);
+    CHECK(st_v11->r_regs[1] == 3ULL);
+    CHECK(st_v11->r_regs[2] == 3ULL);
+    impulse_snapshot_close(snap);
+
+    // Negative hardening: bad dense_id_width = 3, bad coo_order = 5
+    {
+        impulse_writer_t* badw = impulse_writer_create("/tmp/v11_coo_bad_arg.imps", 0);
+        CHECK(impulse_writer_add_domain(badw, 0, IMPULSE_KEY_TYPE_INT32, "U") == IMPULSE_OK);
+        CHECK(impulse_writer_set_domain_dense_id_width(badw, 0, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
+        CHECK(impulse_writer_add_relation_v11(
+            badw, 0, 0, 0, 4, 4, 2, 1, 0,
+            nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+            coo_src0, 4, coo_tgt0, 4, nullptr, 0, 5) == IMPULSE_ERR_INVALID_ARGUMENT);
+        impulse_writer_destroy(badw);
+    }
+    // Negative hardening: non-virtual relation with edge_count > 0 and no CSR/CSC/COO -> rejected on open
+    {
+        const char* empty_rel_path = "/tmp/v11_coo_no_layout.imps";
+        impulse_writer_t* ew = impulse_writer_create(empty_rel_path, 0);
+        CHECK(impulse_writer_add_domain(ew, 0, IMPULSE_KEY_TYPE_INT32, "U") == IMPULSE_OK);
+        CHECK(impulse_writer_set_domain_node_count(ew, 0, 4) == IMPULSE_OK);
+        CHECK(impulse_writer_add_relation_v11(
+            ew, 0, 0, 0, 4, 4, 4, 2, 0,
+            nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+            nullptr, 0, nullptr, 0, nullptr, 0, 0) == IMPULSE_OK);
+        CHECK(impulse_writer_finalize(ew) == IMPULSE_OK);
+        impulse_writer_destroy(ew);
+        impulse_status_t est = IMPULSE_OK;
+        CHECK(impulse_snapshot_open(empty_rel_path, &est) == nullptr && est == IMPULSE_ERR_INVALID_ARGUMENT);
+        std::remove(empty_rel_path);
+    }
+    std::printf("test_v11_imps_coo_roundtrip_and_hardening: PASS (0 allocs)\n");
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -1152,6 +1276,7 @@ int main() {
     test_validator_zero_malloc_large_and_branchy();
     test_mcdc_validator_planner_and_cabi();
     test_v11_emitter_const_pool_params_and_collect_e2e();
+    test_v11_imps_coo_roundtrip_and_hardening();
     std::printf("test_vm_v11: ALL PASSED\n");
     return 0;
 }

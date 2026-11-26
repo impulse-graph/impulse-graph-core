@@ -555,7 +555,7 @@ void test_virtual_super_relation_cycles() {
         align_vec(dir, 128);
 
         for (int r = 0; r < 2; ++r) {
-            impulse_relation_directory_entry_t rel{};
+            impulse_relation_directory_entry_v0_10_t rel{};
             rel.relation_id = static_cast<uint16_t>(r);
             rel.src_domain_id = 0;
             rel.tgt_domain_id = 0;

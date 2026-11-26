@@ -9,6 +9,7 @@
 #ifndef IMPULSE_GRAPH_H
 #define IMPULSE_GRAPH_H
 
+#include "impulse_format_v0_11.h"
 #include "impulse_format_v0_10.h"
 #include "impulse_format_v0_9.h"
 
@@ -23,8 +24,8 @@ extern "C" {
 /** Little-Endian Magic Constant: 'I' 'M' 'P' 'S' (0x494D5053) */
 #define IMPULSE_MAGIC 0x494D5053
 #define IMPULSE_VERSION_MAJOR 0
-#define IMPULSE_VERSION_MINOR 10
-#define IMPULSE_VERSION_PACKED 10
+#define IMPULSE_VERSION_MINOR 11
+#define IMPULSE_VERSION_PACKED 11
 #define IMPULSE_DEFAULT_DATA_OFFSET 4096
 
 /** @brief Domain Catalog Key Type Definitions */
@@ -78,12 +79,12 @@ typedef enum impulse_status {
 /** @brief Stream Writer Callback Signature */
 typedef int32_t (*impulse_write_fn)(const void* data, size_t bytes, void* user_data);
 
-typedef impulse_snapshot_header_v0_10_t impulse_snapshot_header_t;
-typedef impulse_footer_trailer_v0_10_t impulse_footer_trailer_t;
-typedef impulse_domain_catalog_entry_v0_10_t impulse_domain_catalog_entry_t;
-typedef impulse_relation_directory_entry_v0_10_t impulse_relation_directory_entry_t;
-typedef impulse_attribute_descriptor_v0_10_t impulse_attribute_descriptor_t;
-typedef impulse_index_directory_entry_v0_10_t impulse_index_directory_entry_t;
+typedef impulse_snapshot_header_v0_11_t impulse_snapshot_header_t;
+typedef impulse_footer_trailer_v0_11_t impulse_footer_trailer_t;
+typedef impulse_domain_catalog_entry_v0_11_t impulse_domain_catalog_entry_t;
+typedef impulse_relation_directory_entry_v0_11_t impulse_relation_directory_entry_t;
+typedef impulse_attribute_descriptor_v0_11_t impulse_attribute_descriptor_t;
+typedef impulse_index_directory_entry_v0_11_t impulse_index_directory_entry_t;
 
 #if defined(_WIN32) || defined(__CYGWIN__)
   #if defined(IMPULSE_BUILDING_DLL)
@@ -222,6 +223,7 @@ IMPULSE_API impulse_writer_t* impulse_writer_create(const char* output_file_path
 IMPULSE_API impulse_writer_t* impulse_writer_create_stream(impulse_write_fn write_cb, void* user_data, uint64_t global_features);
 IMPULSE_API impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t domain_id, uint8_t key_type, const char* name);
 IMPULSE_API impulse_status_t impulse_writer_set_domain_node_count(impulse_writer_t* writer, uint16_t domain_index, uint64_t node_count);
+IMPULSE_API impulse_status_t impulse_writer_set_domain_dense_id_width(impulse_writer_t* writer, uint16_t domain_index, uint8_t dense_id_width);
 IMPULSE_API impulse_status_t impulse_writer_set_domain_key_attr(impulse_writer_t* writer, uint16_t domain_index, uint16_t key_attr_index);
 IMPULSE_API impulse_status_t impulse_writer_add_domain_attribute(
     impulse_writer_t* writer,
@@ -242,6 +244,25 @@ IMPULSE_API impulse_status_t impulse_writer_add_relation(
     uint64_t section_features,
     const void* row_offsets_data, uint64_t row_offsets_bytes,
     const void* col_indices_data, uint64_t col_indices_bytes
+);
+IMPULSE_API impulse_status_t impulse_writer_add_relation_v11(
+    impulse_writer_t* writer,
+    uint16_t src_domain_id,
+    uint16_t tgt_domain_id,
+    uint8_t encoding_id,
+    uint8_t node_id_width,
+    uint8_t edge_index_width,
+    uint64_t node_count,
+    uint64_t edge_count,
+    uint64_t section_features,
+    const void* csr_row_offsets_data, uint64_t csr_row_offsets_bytes,
+    const void* csr_col_indices_data, uint64_t csr_col_indices_bytes,
+    const void* csc_row_offsets_data, uint64_t csc_row_offsets_bytes,
+    const void* csc_col_indices_data, uint64_t csc_col_indices_bytes,
+    const void* coo_src_data, uint64_t coo_src_bytes,
+    const void* coo_tgt_data, uint64_t coo_tgt_bytes,
+    const void* coo_edge_id_data, uint64_t coo_edge_id_bytes,
+    uint8_t coo_order
 );
 IMPULSE_API impulse_status_t impulse_writer_add_attribute(
     impulse_writer_t* writer,

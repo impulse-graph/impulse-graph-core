@@ -150,6 +150,14 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                 "node_id_width": r.node_id_width,
                 "section_features": r.section_features,
                 "has_csc": r.has_csc(),
+                "has_coo": r.has_coo(),
+                "coo_order": r.coo_order,
+                "coo_src_offset": r.coo_src_offset,
+                "coo_src_bytes": r.coo_src_bytes,
+                "coo_tgt_offset": r.coo_tgt_offset,
+                "coo_tgt_bytes": r.coo_tgt_bytes,
+                "coo_edge_id_offset": r.coo_edge_id_offset,
+                "coo_edge_id_bytes": r.coo_edge_id_bytes,
                 "is_virtual": r.is_virtual(),
                 "virtual_component_ids": r.virtual_component_ids,
                 "name": r_name,
@@ -248,6 +256,7 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
         let index_count = header.index_count;
 
         let ver_str_json = match header.version() {
+            11 => "0.11.0 (0x000B)".to_string(),
             10 => "0.10.0 (0x000A)".to_string(),
             9 => "0.9.0 (0x0009)".to_string(),
             v => format!("0.{}.0 (0x{:04X})", v, v),
@@ -280,6 +289,7 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     println!("File Size:         {} bytes", metadata.len());
     println!("Magic:             0x{:08X} (IMPS)", header.magic());
     let version_str = match header.version() {
+        11 => "0.11.0 (0x000B)".to_string(),
         10 => "0.10.0 (0x000A)".to_string(),
         9 => "0.9.0 (0x0009)".to_string(),
         v => format!("0.{}.0 (0x{:04X})", v, v),

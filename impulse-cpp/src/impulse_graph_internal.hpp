@@ -245,6 +245,12 @@ struct impulse_writer_relation {
     uint64_t section_features;
     std::vector<uint8_t> row_offsets;
     std::vector<uint8_t> col_indices;
+    std::vector<uint8_t> csc_row_offsets;
+    std::vector<uint8_t> csc_col_indices;
+    std::vector<uint8_t> coo_src;
+    std::vector<uint8_t> coo_tgt;
+    std::vector<uint8_t> coo_edge_ids;
+    uint8_t coo_order = 0;
     std::vector<impulse_writer_attr> attributes;
 };
 
