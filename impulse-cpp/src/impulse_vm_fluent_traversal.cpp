@@ -3,6 +3,8 @@
  * @brief High-level domain-bound single-lane Traversal, DomainView, and SnapshotView implementation.
  */
 
+#include "impulse_vm_v11.h"
+#include "v11/impulse_v11_bytecode_emitter.hpp"
 #include "impulse_vm_fluent_internal.hpp"
 
 namespace impulse::vm {
@@ -406,6 +408,202 @@ CompiledQuery Traversal::compile() const {
 
 std::vector<uint64_t> Traversal::collect() const {
     if (!snapshot_) return {};
+    // Fast single-shot v0.11 VM execution for frontier traversal pipelines
+    {
+        using namespace impulse::vm::v11;
+        using namespace impulse::compiler::v11;
+        bool v11_eligible = true;
+        for (const auto& s : steps_) {
+            switch (s.kind) {
+                case Step::Kind::OUT:
+                case Step::Kind::OUT_MULTI:
+                case Step::Kind::IN:
+                case Step::Kind::IN_MULTI:
+                case Step::Kind::BOTH:
+                case Step::Kind::BOTH_MULTI:
+                case Step::Kind::OUT_2HOP:
+                case Step::Kind::REPEAT:
+                case Step::Kind::REPEAT_UNTIL_STABLE:
+                case Step::Kind::SET_UNION:
+                case Step::Kind::SET_INTERSECT:
+                case Step::Kind::SET_DIFFERENCE:
+                    break;
+                default:
+                    v11_eligible = false;
+                    break;
+            }
+            if (!v11_eligible) break;
+        }
+        if (v11_eligible) {
+            V11ProgramBuilder b;
+            uint8_t cur_f = 0;
+            uint16_t cur_dom = initial_domain_id_;
+            uint32_t init_n = get_domain_node_count(snapshot_, initial_domain_id_);
+            if (all_nodes_) {
+                b.emit_u16(Opcode::OP_INIT_DOMAIN_SPAN, subop::kINIT_DOMAIN_SPAN_ALL_SPAN, 0, cur_f, 0, 0, 0, cur_dom, 0);
+            } else {
+                std::vector<uint64_t> valid_seeds;
+                valid_seeds.reserve(seeds_.size());
+                for (uint64_t u : seeds_) {
+                    if (u < init_n) valid_seeds.push_back(u);
+                }
+                if (valid_seeds.empty()) {
+                    b.emit_u16(Opcode::OP_FSEED, subop::kFSEED_EMPTY, 0, cur_f, 0, 0, 0, cur_dom, 0);
+                } else {
+                    uint32_t cp = b.add_const_pool_frontier(valid_seeds);
+                    b.emit_u16(Opcode::OP_LOAD_CONST_POOL, subop::kLOAD_CONST_POOL_FRONTIER, 0, cur_f, 0, 0, 0,
+                               static_cast<uint16_t>(cp), cur_dom);
+                }
+            }
+            for (const auto& step : steps_) {
+                uint8_t src_f = cur_f;
+                uint8_t dst_f = static_cast<uint8_t>(1 - cur_f);
+                switch (step.kind) {
+                    case Step::Kind::OUT: {
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, dst_f, src_f, 0, 0, rid, 0);
+                        cur_f = dst_f;
+                        cur_dom = advance_domain_id(snapshot_, cur_dom, rid, false);
+                        break;
+                    }
+                    case Step::Kind::IN: {
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_REV, 0, dst_f, src_f, 0, 0, rid, 0);
+                        cur_f = dst_f;
+                        cur_dom = advance_domain_id(snapshot_, cur_dom, rid, true);
+                        break;
+                    }
+                    case Step::Kind::BOTH: {
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_BOTH, 0, dst_f, src_f, 0, 0, rid, 0);
+                        cur_f = dst_f;
+                        break;
+                    }
+                    case Step::Kind::OUT_MULTI:
+                    case Step::Kind::IN_MULTI:
+                    case Step::Kind::BOTH_MULTI: {
+                        if (step.rel_names.empty()) break;
+                        uint8_t wsub = (step.kind == Step::Kind::IN_MULTI)
+                            ? subop::kWALK_REV
+                            : ((step.kind == Step::Kind::BOTH_MULTI) ? subop::kWALK_BOTH : subop::kWALK_FWD);
+                        uint16_t next_dom = cur_dom;
+                        for (size_t i = 0; i < step.rel_names.size(); ++i) {
+                            uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.rel_names[i]);
+                            uint8_t fl = (i == 0) ? 0 : FLAG_ACCUM;
+                            b.emit_u16(Opcode::OP_WALK, wsub, fl, dst_f, src_f, 0, 0, rid, 0);
+                            if (i == 0 && step.kind != Step::Kind::BOTH_MULTI) {
+                                next_dom = advance_domain_id(snapshot_, cur_dom, rid, step.kind == Step::Kind::IN_MULTI);
+                            }
+                        }
+                        cur_f = dst_f;
+                        cur_dom = next_dom;
+                        break;
+                    }
+                    case Step::Kind::OUT_2HOP: {
+                        uint16_t r1 = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        uint16_t mid_dom = advance_domain_id(snapshot_, cur_dom, r1, false);
+                        uint16_t r2 = resolve_relation_id_by_name(snapshot_, mid_dom, step.str2);
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, dst_f, src_f, 0, 0, r1, 0);
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, src_f, dst_f, 0, 0, r2, 0);
+                        cur_f = src_f;
+                        cur_dom = advance_domain_id(snapshot_, mid_dom, r2, false);
+                        break;
+                    }
+                    case Step::Kind::REPEAT: {
+                        if (step.u32_arg1 == 0) break;
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        b.emit_load_const_i64(2, static_cast<int64_t>(step.u32_arg1));
+                        size_t loop_pc = b.pc();
+                        b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, dst_f, src_f, 0, 0, rid, 0);
+                        b.emit(static_cast<Opcode>(0x08 /* OP_MOV */), subop::kMOV_F, 0, src_f, dst_f, 0, 0, 0);
+                        int32_t rel_off = static_cast<int32_t>(loop_pc) - static_cast<int32_t>(b.pc());
+                        b.emit(static_cast<Opcode>(0x11 /* OP_LOOP_DECR */), subop::kLOOP_DECR_DECR, 0, 2, 0, 0, 0, static_cast<uint32_t>(rel_off));
+                        break;
+                    }
+                    case Step::Kind::REPEAT_UNTIL_STABLE: {
+                        uint16_t rid = resolve_relation_id_by_name(snapshot_, cur_dom, step.str1);
+                        if (step.u32_arg1 == 0) {
+                            b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD_FIXPOINT_STAR, 0, dst_f, src_f, 0, 0, rid, 0);
+                            cur_f = dst_f;
+                        } else {
+                            uint8_t prev_f = 2;
+                            b.emit_load_const_i64(2, static_cast<int64_t>(step.u32_arg1));
+                            size_t loop_pc = b.pc();
+                            b.emit(static_cast<Opcode>(0x08 /* OP_MOV */), subop::kMOV_F, 0, prev_f, src_f, 0, 0, 0);
+                            b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, dst_f, src_f, 0, 0, rid, 0);
+                            b.emit(Opcode::OP_SET_OP, subop::kSET_OP_UNION, 0, src_f, dst_f, prev_f, 0, 0);
+                            b.emit(static_cast<Opcode>(0x27 /* OP_STABLE_CHECK */), subop::kSTABLE_CHECK_FRONTIER_EQ, 0, 0, src_f, prev_f, 0, 0);
+                            size_t jst_pc = b.emit(Opcode::OP_JCC, subop::kJCC_JST, 0, 0, 0, 0, 0, 0);
+                            int32_t rel_off = static_cast<int32_t>(loop_pc) - static_cast<int32_t>(b.pc());
+                            b.emit(static_cast<Opcode>(0x11 /* OP_LOOP_DECR */), subop::kLOOP_DECR_DECR, 0, 2, 0, 0, 0, static_cast<uint32_t>(rel_off));
+                            b.patch_imm32(jst_pc, static_cast<uint32_t>(static_cast<int32_t>(b.pc()) - static_cast<int32_t>(jst_pc)));
+                        }
+                        break;
+                    }
+                    case Step::Kind::SET_UNION:
+                    case Step::Kind::SET_INTERSECT:
+                    case Step::Kind::SET_DIFFERENCE: {
+                        uint8_t rhs_f = 2;
+                        uint32_t dom_n = get_domain_node_count(snapshot_, cur_dom);
+                        std::vector<uint64_t> rhs_ids;
+                        for (uint64_t u : step.other_nodes) {
+                            if (u < dom_n) rhs_ids.push_back(u);
+                        }
+                        if (rhs_ids.empty()) {
+                            b.emit_u16(Opcode::OP_FSEED, subop::kFSEED_EMPTY, 0, rhs_f, 0, 0, 0, cur_dom, 0);
+                        } else {
+                            uint32_t cp = b.add_const_pool_frontier(rhs_ids);
+                            b.emit_u16(Opcode::OP_LOAD_CONST_POOL, subop::kLOAD_CONST_POOL_FRONTIER, 0, rhs_f, 0, 0, 0,
+                                       static_cast<uint16_t>(cp), cur_dom);
+                        }
+                        uint8_t ssub = (step.kind == Step::Kind::SET_INTERSECT)
+                            ? subop::kSET_OP_INTERSECT
+                            : ((step.kind == Step::Kind::SET_DIFFERENCE) ? subop::kSET_OP_DIFF : subop::kSET_OP_UNION);
+                        b.emit(Opcode::OP_SET_OP, ssub, 0, dst_f, src_f, rhs_f, 0, 0);
+                        cur_f = dst_f;
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+            b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_FRONTIER_IDS, 0, 0, cur_f, 0, 0, 0, 0);
+            b.emit(static_cast<Opcode>(0x00 /* OP_HALT */), subop::kHALT_OK, 0, 0, 0, 0, 0, 0);
+
+            uint16_t req_doms = impulse_snapshot_domain_count(snapshot_);
+            if (req_doms <= cur_dom) req_doms = static_cast<uint16_t>(cur_dom + 1);
+            std::vector<uint8_t> impb = b.build_impb(0, 0, req_doms);
+            impulse_vm_memory_plan_t plan{};
+            if (impulse_vm_validate_v11(impb.data(), impb.size()).status == IMPULSE_VM_V11_OK &&
+                impulse_vm_plan_memory(impb.data(), impb.size(), snapshot_, 1, &plan) == IMPULSE_VM_V11_OK) {
+                static thread_local std::vector<uint8_t> tls_scratch;
+                static thread_local std::vector<uint8_t> tls_result;
+                size_t need_scratch = std::max<size_t>(plan.guaranteed_scratch_bytes, 4096) + 256;
+                size_t need_result = std::max<size_t>(plan.max_result_bytes, 4096) + 256;
+                if (tls_scratch.size() < need_scratch) tls_scratch.resize(need_scratch);
+                if (tls_result.size() < need_result) tls_result.resize(need_result);
+                uintptr_t addr = reinterpret_cast<uintptr_t>(tls_scratch.data());
+                uintptr_t aligned = (addr + 127u) & ~static_cast<uintptr_t>(127u);
+                size_t pad = static_cast<size_t>(aligned - addr);
+                impulse_vm_workspace_v11_t* ws = nullptr;
+                impulse_vm_params_v11_t params{};
+                params.gas_limit = UINT64_MAX;
+                size_t out_bytes = 0;
+                if (impulse_workspace_init(reinterpret_cast<void*>(aligned), tls_scratch.size() - pad, &ws) == IMPULSE_VM_V11_OK &&
+                    impulse_vm_execute_v11(impb.data(), impb.size(), snapshot_, &params, ws, tls_result.data(), tls_result.size(), &out_bytes) == IMPULSE_VM_V11_OK) {
+                    std::vector<uint64_t> out_nodes;
+                    impulse_vm_output_view_v11_t ov{};
+                    if (impulse_vm_v11_get_output_count(ws) > 0 && impulse_vm_v11_get_output(ws, 0, &ov) == 1 && ov.i64_data) {
+                        out_nodes.reserve(ov.length);
+                        for (uint32_t i = 0; i < ov.length; ++i) {
+                            out_nodes.push_back(static_cast<uint64_t>(ov.i64_data[i]));
+                        }
+                    }
+                    return out_nodes;
+                }
+            }
+        }
+    }
     uint32_t init_n = get_domain_node_count(snapshot_, initial_domain_id_);
 
     impulse_vm_context_t* ctx = impulse_vm_context_create(snapshot_);

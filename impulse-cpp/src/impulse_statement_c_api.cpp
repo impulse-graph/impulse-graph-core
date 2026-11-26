@@ -3,6 +3,8 @@
  * @brief C-ABI Query Compiler entrypoints and SQLite-style Prepared Statement API (impulse_stmt_t).
  */
 
+#include "impulse_vm_v11.h"
+#include "v11/impulse_v11_bytecode_emitter.hpp"
 #include "impulse_vm_fluent_internal.hpp"
 #include "impulse_graph_internal.hpp"
 
@@ -298,6 +300,9 @@ struct impulse_stmt {
     impulse_language_t lang{IMPULSE_LANG_CYPHER};
     CompiledImpulseProgram compiled_program;
     GraphCatalog catalog;
+    impulse::compiler::v11::V11CompiledProgram v11_program;
+    impulse_vm_memory_plan_t v11_plan{};
+    bool use_v11{false};
 
     // Sizing metadata
     size_t words_per_bitset{0};
@@ -375,18 +380,44 @@ impulse_status_t impulse_stmt_prepare(
         if (stmt->max_nodes == 0) stmt->max_nodes = 1024;
         stmt->words_per_bitset = (stmt->max_nodes + 63) / 64;
 
-        // Scratch area: 4 bitsets + context frame alignment
-        stmt->scratch_bytes_needed = ((stmt->words_per_bitset * sizeof(uint64_t) * 4) + 127) & ~127ULL;
-        if (stmt->scratch_bytes_needed < 4096) stmt->scratch_bytes_needed = 4096;
-
-        // Return area: large enough for BitSet words or dense per-node lane masks / vectors + align
         size_t min_ret_bytes = std::max<size_t>(
             stmt->words_per_bitset * sizeof(uint64_t),
             stmt->max_nodes * sizeof(uint64_t)
         );
-        stmt->return_bytes_needed = (min_ret_bytes + 127) & ~127ULL;
-        stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
-        stmt->exec_ctx = impulse_vm_context_create(snapshot);
+
+        // Route real-snapshot prepared statements through ImpulseVM v0.11 2-buffer lifecycle
+        if (snapshot != nullptr) {
+            try {
+                stmt->v11_program = impulse::compiler::v11::V11BytecodeEmitter::emit(ast, snapshot, 0);
+                if (!stmt->v11_program.impb_bytes.empty()) {
+                    (void)impulse_vm_v11_prepare_snapshot(snapshot);
+                    if (impulse_vm_plan_memory(
+                            stmt->v11_program.impb_bytes.data(),
+                            stmt->v11_program.impb_bytes.size(),
+                            snapshot,
+                            1,
+                            &stmt->v11_plan) == IMPULSE_VM_V11_OK) {
+                        stmt->use_v11 = true;
+                        size_t planned_scratch = std::max<size_t>(stmt->v11_plan.guaranteed_scratch_bytes, 4096);
+                        stmt->scratch_bytes_needed = ((planned_scratch + 127) & ~127ULL) + 128;
+                        size_t planned_ret = std::max<size_t>(stmt->v11_plan.max_result_bytes, min_ret_bytes);
+                        stmt->return_bytes_needed = (planned_ret + 127) & ~127ULL;
+                        stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
+                    }
+                }
+            } catch (...) {
+                stmt->use_v11 = false;
+            }
+        }
+
+        if (!stmt->use_v11) {
+            // Scratch area: 4 bitsets + context frame alignment
+            stmt->scratch_bytes_needed = ((stmt->words_per_bitset * sizeof(uint64_t) * 4) + 127) & ~127ULL;
+            if (stmt->scratch_bytes_needed < 4096) stmt->scratch_bytes_needed = 4096;
+            stmt->return_bytes_needed = (min_ret_bytes + 127) & ~127ULL;
+            stmt->total_buffer_needed = stmt->scratch_bytes_needed + stmt->return_bytes_needed + 1024;
+            stmt->exec_ctx = impulse_vm_context_create(snapshot);
+        }
         stmt->columns.reserve(8);
 
         *out_stmt = stmt.release();
@@ -499,6 +530,126 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         uint8_t* raw_buf = static_cast<uint8_t*>(buffer);
         size_t scratch_size = stmt->scratch_bytes_needed;
         uint8_t* return_area = raw_buf + scratch_size;
+        size_t avail_return_bytes = (buffer_size > scratch_size) ? (buffer_size - scratch_size) : 0;
+
+        if (stmt->use_v11) {
+            uintptr_t raw_addr = reinterpret_cast<uintptr_t>(raw_buf);
+            uintptr_t aligned_addr = (raw_addr + 127u) & ~static_cast<uintptr_t>(127u);
+            size_t pad = static_cast<size_t>(aligned_addr - raw_addr);
+            if (pad >= scratch_size) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            impulse_vm_workspace_v11_t* ws = nullptr;
+            if (impulse_workspace_init(reinterpret_cast<void*>(aligned_addr), scratch_size - pad, &ws) != IMPULSE_VM_V11_OK) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+
+            impulse_vm_param_binding_v11_t binding{};
+            uint64_t single_seed = stmt->has_seed_node ? stmt->bound_seed_node : 0ULL;
+            if (!stmt->nodes_params.empty()) {
+                const auto& vec = stmt->nodes_params.begin()->second;
+                binding.param_id = 0;
+                binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+                binding.domain_id = stmt->v11_program.start_domain_id;
+                binding.count = static_cast<uint32_t>(vec.size());
+                binding.data_ptr = vec.data();
+            } else {
+                binding.param_id = 0;
+                binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+                binding.domain_id = stmt->v11_program.start_domain_id;
+                binding.count = 1;
+                binding.data_ptr = &single_seed;
+            }
+
+            impulse_vm_params_v11_t v11_params{};
+            v11_params.gas_limit = UINT64_MAX;
+            v11_params.bindings = &binding;
+            v11_params.binding_count = 1;
+
+            size_t out_res_bytes = 0;
+            impulse_vm_status_v11_t v11_rc = impulse_vm_execute_v11(
+                stmt->v11_program.impb_bytes.data(),
+                stmt->v11_program.impb_bytes.size(),
+                stmt->snapshot,
+                &v11_params,
+                ws,
+                return_area,
+                avail_return_bytes,
+                &out_res_bytes
+            );
+            if (v11_rc != IMPULSE_VM_V11_OK) {
+                return IMPULSE_ERR_IO_FAILURE;
+            }
+
+            stmt->columns.clear();
+            impulse_column_desc_t col{};
+            std::strncpy(col.name, "result", sizeof(col.name) - 1);
+            col.is_nullable = false;
+            col.byte_offset_in_buf = scratch_size;
+            col.null_bitmap = nullptr;
+
+            impulse_vm_output_view_v11_t ov{};
+            if (impulse_vm_v11_get_output_count(ws) > 0 && impulse_vm_v11_get_output(ws, 0, &ov) == 1) {
+                if (ov.elem_tag == 6 /* BOOL_3VL */) {
+                    size_t n_words = (ov.length + 63u) / 64u;
+                    if (n_words == 0) n_words = 1;
+                    size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+                    size_t n_copy = std::min(n_words, cap_u64);
+                    uint64_t* out_words = reinterpret_cast<uint64_t*>(return_area);
+                    if (ov.bool_data_bits && n_copy > 0) {
+                        std::memcpy(out_words, ov.bool_data_bits, n_copy * sizeof(uint64_t));
+                    } else if (n_copy > 0) {
+                        std::memset(out_words, 0, n_copy * sizeof(uint64_t));
+                    }
+                    col.type_code = 0x08;
+                    col.element_size = sizeof(uint64_t);
+                    col.dimension = 1;
+                    col.data_ptr = out_words;
+                    stmt->columns.push_back(col);
+                    stmt->row_count = n_copy;
+                    stmt->total_bytes_written = n_copy * sizeof(uint64_t);
+                } else if (ov.elem_tag == 4 /* F64 */) {
+                    size_t cap_f64 = avail_return_bytes / sizeof(double);
+                    size_t n_copy = std::min<size_t>(ov.length, cap_f64);
+                    double* out_f64 = reinterpret_cast<double*>(return_area);
+                    if (ov.f64_data && n_copy > 0) {
+                        std::memcpy(out_f64, ov.f64_data, n_copy * sizeof(double));
+                    }
+                    col.type_code = (ov.length == 1) ? static_cast<uint8_t>(TYPE_FLOAT64) : static_cast<uint8_t>(TYPE_DOUBLE_VECTOR);
+                    col.element_size = sizeof(double);
+                    col.dimension = 1;
+                    col.data_ptr = out_f64;
+                    stmt->columns.push_back(col);
+                    stmt->row_count = n_copy;
+                    stmt->total_bytes_written = n_copy * sizeof(double);
+                } else /* I64 / U64 */ {
+                    size_t cap_u64 = avail_return_bytes / sizeof(uint64_t);
+                    size_t n_copy = std::min<size_t>(ov.length, cap_u64);
+                    int64_t* out_i64 = reinterpret_cast<int64_t*>(return_area);
+                    if (ov.i64_data && n_copy > 0) {
+                        std::memcpy(out_i64, ov.i64_data, n_copy * sizeof(int64_t));
+                    }
+                    col.type_code = (ov.length == 1) ? static_cast<uint8_t>(TYPE_INT64) : static_cast<uint8_t>(TYPE_NODE_VECTOR);
+                    col.element_size = sizeof(int64_t);
+                    col.dimension = 1;
+                    col.data_ptr = out_i64;
+                    stmt->columns.push_back(col);
+                    stmt->row_count = n_copy;
+                    stmt->total_bytes_written = n_copy * sizeof(int64_t);
+                }
+            } else {
+                uint64_t* out_words = reinterpret_cast<uint64_t*>(return_area);
+                if (avail_return_bytes >= sizeof(uint64_t)) out_words[0] = 0ULL;
+                col.type_code = 0x08;
+                col.element_size = sizeof(uint64_t);
+                col.dimension = 1;
+                col.data_ptr = out_words;
+                stmt->columns.push_back(col);
+                stmt->row_count = (avail_return_bytes >= sizeof(uint64_t)) ? 1 : 0;
+                stmt->total_bytes_written = stmt->row_count * sizeof(uint64_t);
+            }
+            return IMPULSE_OK;
+        }
 
         impulse_vm_state_t vm_state{};
         std::memset(&vm_state, 0, sizeof(vm_state));
@@ -550,7 +701,6 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
             return IMPULSE_ERR_IO_FAILURE;
         }
 
-        size_t avail_return_bytes = (buffer_size > scratch_size) ? (buffer_size - scratch_size) : 0;
         uint16_t res_reg = stmt->compiled_program.result_register;
         if (res_reg >= 64) res_reg = 0;
         // Fallback: if res_reg is TYPE_NULL, check last non-HALT instruction's dst_reg
