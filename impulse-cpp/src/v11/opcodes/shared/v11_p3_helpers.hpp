@@ -846,6 +846,18 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
                         }
+                    } else if (col->elem_tag == kVecTagStr) {
+                        ov->str_data = ws.arena.alloc_array<V11StrSlice>(len, alignof(V11StrSlice));
+                        if (!ov->str_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+                        std::memset(ov->str_data, 0, static_cast<size_t>(len) * sizeof(V11StrSlice));
+                        for (uint32_t i = 0; i < len; ++i) {
+                            if (!lane_active(i) || !idx_vec->is_valid_at(i)) continue;
+                            uint32_t id = static_cast<uint32_t>(idx_vec->i64_data[i]);
+                            if (col->is_valid_at(id)) {
+                                ov->str_data[i] = col->str_data[id];
+                                vbits[i >> 6] |= (1ULL << (i & 63u));
+                            }
+                        }
                     } else {
                         ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
                         break;
@@ -953,6 +965,10 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 }
                 case Opcode::OP_VEC_CMP: {
                     const V11Vector* lhs = ws.v_regs[s1];
+                    if (lhs && (lhs->elem_tag == kVecTagI64 || lhs->elem_tag == kVecTagU64)) {
+                        v11_exec_morsel_p4_op(ws, &view, bw);
+                        break;
+                    }
                     if (!lhs || lhs->elem_tag != kVecTagF64) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break; }
                     size_t vwords = (static_cast<size_t>(len) + 63u) >> 6;
                     if (vwords == 0u) vwords = 1u;
@@ -1138,6 +1154,17 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     }
                     break;
                 }
+                case Opcode::OP_GATHER_VEC:
+                case Opcode::OP_VEC_3VL_OP:
+                case Opcode::OP_VEC_STR_PRED:
+                case Opcode::OP_VEC_MATH_EXP_LOG:
+                case Opcode::OP_VEC_MATH_TRIG_HYP:
+                case Opcode::OP_VEC_MATH_ACT:
+                case Opcode::OP_VEC_INT_BITWISE:
+                case Opcode::OP_VEC_TERNARY:
+                case Opcode::OP_VEC_BLEND:
+                    v11_exec_morsel_p4_op(ws, &view, bw);
+                    break;
                 default:
                     ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
                     break;

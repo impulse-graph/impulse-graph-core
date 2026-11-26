@@ -247,6 +247,34 @@ static impulse_vm_status_v11_t run_words_unlocked(
 #undef V11_DISPATCH
 }
 
+bool v11_exec_morsel_p4_op(
+    impulse_vm_workspace_v11_t& ws,
+    const V11SnapshotView* snap,
+    uint64_t w
+) noexcept {
+    (void)snap;
+    const uint8_t _dop = IMP_V11_OPCODE(w);
+#define V11_OP_CASE(NAME) case static_cast<uint8_t>(Opcode::OP_##NAME):
+#define V11_DISPATCH() return true
+    switch (_dop) {
+        #include "opcodes/op_43_gather_vec.inc"
+        #include "opcodes/op_45_vec_cmp.inc"
+        #include "opcodes/op_46_vec_3vl_op.inc"
+        #include "opcodes/op_47_vec_str_pred.inc"
+        #include "opcodes/op_49_vec_math_exp_log.inc"
+        #include "opcodes/op_4a_vec_math_trig_hyp.inc"
+        #include "opcodes/op_4b_vec_math_act.inc"
+        #include "opcodes/op_4c_vec_int_bitwise.inc"
+        #include "opcodes/op_4d_vec_ternary.inc"
+        #include "opcodes/op_4e_vec_blend.inc"
+        default:
+            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            return false;
+    }
+#undef V11_OP_CASE
+#undef V11_DISPATCH
+}
+
 impulse_vm_status_v11_t execute_words_internal(
     const uint64_t* words,
     size_t word_count,
