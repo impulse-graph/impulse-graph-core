@@ -16,16 +16,12 @@ V11_OP_CASE(WALK) {
     bool endo = (rel->src_dom == rel->tgt_dom);
     uint16_t in_dom  = (subop == 1u || subop == 9u) ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = (subop == 1u || subop == 9u) ? rel->src_dom : rel->tgt_dom;
-    if ((subop >= 2u && subop <= 7u && !endo) || f_src->domain_id != in_dom) {
-        ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH;
-        V11_DISPATCH();
-    }
     if ((subop == 8u || subop == 9u) && !rel->has_coo) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if ((subop == 0u || subop == 2u || subop == 3u || subop == 4u || subop == 7u) && !rel->has_csr) {
-        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    if ((subop >= 2u && subop <= 7u && !endo) || f_src->domain_id != in_dom) {
+        ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH;
         V11_DISPATCH();
     }
     if (subop == 7u && imm_hi < 1u) {
