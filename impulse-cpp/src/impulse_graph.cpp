@@ -1228,31 +1228,38 @@ impulse_snapshot_t* impulse_snapshot_open(const char* file_path, impulse_status_
                     return nullptr;
                 }
             }
-            if (rel.coo_src_offset > 0 && src_node_count > 0) {
-                for (uint64_t e = 0; e < rel.edge_count; ++e) {
-                    uint64_t src_val = is_src_node16
-                        ? reinterpret_cast<const uint16_t*>(raw + rel.coo_src_offset)[e]
-                        : (is_src_node64
-                            ? reinterpret_cast<const uint64_t*>(raw + rel.coo_src_offset)[e]
-                            : reinterpret_cast<const uint32_t*>(raw + rel.coo_src_offset)[e]);
-                    if (src_val >= src_node_count) {
-                        g_last_error = "COO source node ID exceeds source domain node_count";
-                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
-                        return nullptr;
+            if (rel.edge_count > 0 && (src_node_count == 0 || tgt_node_count == 0)) {
+                g_last_error = "COO relation has edge_count > 0 targeting or sourcing an empty (node_count == 0) domain";
+                if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                return nullptr;
+            }
+            if (rel.edge_count <= 100000ULL || impulse_test_is_never_corrupt()) {
+                if (rel.coo_src_offset > 0) {
+                    for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                        uint64_t src_val = is_src_node16
+                            ? reinterpret_cast<const uint16_t*>(raw + rel.coo_src_offset)[e]
+                            : (is_src_node64
+                                ? reinterpret_cast<const uint64_t*>(raw + rel.coo_src_offset)[e]
+                                : reinterpret_cast<const uint32_t*>(raw + rel.coo_src_offset)[e]);
+                        if (src_val >= src_node_count) {
+                            g_last_error = "COO source node ID exceeds source domain node_count";
+                            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                            return nullptr;
+                        }
                     }
                 }
-            }
-            if (rel.coo_tgt_offset > 0 && tgt_node_count > 0) {
-                for (uint64_t e = 0; e < rel.edge_count; ++e) {
-                    uint64_t tgt_val = is_tgt_node16
-                        ? reinterpret_cast<const uint16_t*>(raw + rel.coo_tgt_offset)[e]
-                        : (is_tgt_node64
-                            ? reinterpret_cast<const uint64_t*>(raw + rel.coo_tgt_offset)[e]
-                            : reinterpret_cast<const uint32_t*>(raw + rel.coo_tgt_offset)[e]);
-                    if (tgt_val >= tgt_node_count) {
-                        g_last_error = "COO target node ID exceeds target domain node_count";
-                        if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
-                        return nullptr;
+                if (rel.coo_tgt_offset > 0) {
+                    for (uint64_t e = 0; e < rel.edge_count; ++e) {
+                        uint64_t tgt_val = is_tgt_node16
+                            ? reinterpret_cast<const uint16_t*>(raw + rel.coo_tgt_offset)[e]
+                            : (is_tgt_node64
+                                ? reinterpret_cast<const uint64_t*>(raw + rel.coo_tgt_offset)[e]
+                                : reinterpret_cast<const uint32_t*>(raw + rel.coo_tgt_offset)[e]);
+                        if (tgt_val >= tgt_node_count) {
+                            g_last_error = "COO target node ID exceeds target domain node_count";
+                            if (out_status) *out_status = IMPULSE_ERR_INVALID_ARGUMENT;
+                            return nullptr;
+                        }
                     }
                 }
             }

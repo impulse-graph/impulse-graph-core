@@ -291,27 +291,63 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         return IMPULSE_ERR_BUFFER_OVERFLOW;
     }
 
-    impulse_vm_param_binding_v11_t binding{};
+    std::vector<impulse_vm_param_binding_v11_t> bindings;
     uint64_t single_seed = stmt->has_seed_node ? stmt->bound_seed_node : 0ULL;
-    if (!stmt->nodes_params.empty()) {
-        const auto& vec = stmt->nodes_params.begin()->second;
-        binding.param_id = 0;
-        binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
-        binding.domain_id = stmt->v11_program.start_domain_id;
-        binding.count = static_cast<uint32_t>(vec.size());
-        binding.data_ptr = vec.data();
-    } else {
-        binding.param_id = 0;
-        binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
-        binding.domain_id = stmt->v11_program.start_domain_id;
-        binding.count = 1;
-        binding.data_ptr = &single_seed;
+    {
+        impulse_vm_param_binding_v11_t seed_b{};
+        seed_b.param_id = 0;
+        seed_b.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+        seed_b.domain_id = stmt->v11_program.start_domain_id;
+        if (!stmt->nodes_params.empty()) {
+            const auto& vec = stmt->nodes_params.begin()->second;
+            if (vec.size() > UINT32_MAX) {
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
+            seed_b.count = static_cast<uint32_t>(vec.size());
+            seed_b.data_ptr = vec.data();
+        } else {
+            seed_b.count = 1;
+            seed_b.data_ptr = &single_seed;
+        }
+        bindings.push_back(seed_b);
+    }
+    uint32_t next_pid = 1;
+    for (const auto& kv : stmt->int_params) {
+        impulse_vm_param_binding_v11_t pb{};
+        pb.param_id = next_pid++;
+        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_I64;
+        pb.scalar_bits = static_cast<uint64_t>(kv.second);
+        bindings.push_back(pb);
+    }
+    for (const auto& kv : stmt->uint_params) {
+        impulse_vm_param_binding_v11_t pb{};
+        pb.param_id = next_pid++;
+        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_U64;
+        pb.scalar_bits = kv.second;
+        bindings.push_back(pb);
+    }
+    for (const auto& kv : stmt->float_params) {
+        impulse_vm_param_binding_v11_t pb{};
+        pb.param_id = next_pid++;
+        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_F64;
+        uint64_t fbits = 0;
+        std::memcpy(&fbits, &kv.second, sizeof(double));
+        pb.scalar_bits = fbits;
+        bindings.push_back(pb);
+    }
+    for (const auto& kv : stmt->str_params) {
+        impulse_vm_param_binding_v11_t pb{};
+        pb.param_id = next_pid++;
+        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_STR;
+        pb.data_ptr = kv.second.c_str();
+        pb.count = static_cast<uint32_t>(kv.second.size());
+        bindings.push_back(pb);
     }
 
     impulse_vm_params_v11_t v11_params{};
     v11_params.gas_limit = UINT64_MAX;
-    v11_params.bindings = &binding;
-    v11_params.binding_count = 1;
+    v11_params.bindings = bindings.data();
+    v11_params.binding_count = static_cast<uint32_t>(bindings.size());
 
     size_t out_res_bytes = 0;
     impulse_vm_status_v11_t v11_rc = impulse_vm_execute_v11(
@@ -325,7 +361,16 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         &out_res_bytes
     );
     if (v11_rc != IMPULSE_VM_V11_OK) {
-        return IMPULSE_ERR_IO_FAILURE;
+        switch (v11_rc) {
+            case IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW: return IMPULSE_ERR_BUFFER_OVERFLOW;
+            case IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS:
+            case IMPULSE_VM_V11_ERR_INVALID_OPERAND:
+            case IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH:
+            case IMPULSE_VM_V11_ERR_TYPE_MISMATCH:
+            case IMPULSE_VM_V11_ERR_VALIDATION_FAILED:
+            case IMPULSE_VM_V11_ERR_NULL_SNAPSHOT: return IMPULSE_ERR_INVALID_ARGUMENT;
+            default: return IMPULSE_ERR_IO_FAILURE;
+        }
     }
 
     stmt->columns.clear();

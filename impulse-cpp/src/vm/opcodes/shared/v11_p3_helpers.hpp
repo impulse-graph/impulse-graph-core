@@ -232,7 +232,7 @@ inline bool p3_union_sorted(V11Arena& arena,
 
 inline bool p3_eval_edge_pred(const V11Vector& col, uint32_t e, uint8_t cmp_op,
                               bool rhs_valid, uint64_t rhs_bits, uint8_t rhs_ty) noexcept {
-    if (e >= col.length) return false;
+    if (e >= col.length) return (cmp_op == 7u);
     if (col.elem_tag == kVecTagLaneState) {
         if (cmp_op == 6u) return false;
         if (cmp_op == 7u) return true;

@@ -24,6 +24,10 @@ V11_OP_CASE(WALK) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
+    if ((subop == 0u || subop == 2u || subop == 3u || subop == 4u || subop == 7u) && !rel->has_csr) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
     if (subop == 7u && imm_hi < 1u) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
@@ -123,7 +127,7 @@ V11_OP_CASE(WALK) {
         for (size_t wi = 0; wi < out_words; ++wi) {
             uint64_t word = out_bits[wi];
             while (word) {
-                uint32_t b = static_cast<uint32_t>(__builtin_ctzll(word));
+                uint32_t b = static_cast<uint32_t>(std::countr_zero(word));
                 out_ids[pos++] = static_cast<uint32_t>((wi << 6) + b);
                 word &= word - 1ULL;
             }
@@ -162,7 +166,8 @@ V11_OP_CASE(WALK) {
                 }
             }
             const uint32_t row_off_len = rel->row_off_len;
-            const bool fast32_mmap = (rel->csr_row_off_raw != nullptr && rel->edge_idx_width == 4u && rel->node_id_width == 4u);
+            const uint8_t tgt_w = (rel->tgt_node_width != 0u) ? rel->tgt_node_width : rel->node_id_width;
+            const bool fast32_mmap = (rel->csr_row_off_raw != nullptr && rel->edge_idx_width == 4u && tgt_w == 4u);
             const uint32_t* __restrict ro32 = fast32_mmap ? reinterpret_cast<const uint32_t*>(rel->csr_row_off_raw) : nullptr;
             const uint32_t* __restrict ct32 = fast32_mmap ? reinterpret_cast<const uint32_t*>(rel->csr_col_idx_raw) : nullptr;
             bool st_flag = ws.flag_st();
@@ -172,7 +177,7 @@ V11_OP_CASE(WALK) {
                 if (fast32_mmap && !excl_bits) {
                     for (uint32_t i = 0; i < s_src_len; ++i) {
                         uint32_t u = s_src[i];
-                        if (u + 1u >= row_off_len) continue;
+                        if (row_off_len == 0u || u >= row_off_len - 1u) continue;
                         uint32_t e0 = ro32[u], e1 = ro32[u + 1u];
                         for (uint32_t e = e0; e < e1; ++e) {
                             uint32_t v = ct32[e];
@@ -381,7 +386,7 @@ V11_OP_CASE(WALK) {
                     uint64_t word = vis_bits[wi];
                     uint32_t base = static_cast<uint32_t>(wi << 6);
                     while (word != 0ULL) {
-                        uint32_t b = static_cast<uint32_t>(__builtin_ctzll(word));
+                        uint32_t b = static_cast<uint32_t>(std::countr_zero(word));
                         final_s[k++] = base + b;
                         word &= (word - 1ULL);
                     }

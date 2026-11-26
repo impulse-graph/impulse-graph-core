@@ -18,8 +18,11 @@
 #include "impulse_graph_internal.hpp"
 
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <mutex>
 #include <new>
 
 #if !defined(IMPULSE_DISABLE_COMPUTED_GOTO) && (defined(__GNUC__) || defined(__clang__))
@@ -407,14 +410,16 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
         return vec;
     }
     if (base_type >= 1u && base_type <= 4u) {
+        const size_t elem_sz = (base_type == 1u) ? 1u : (base_type == 2u ? 2u : (base_type == 3u ? 4u : 8u));
+        if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
         int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
         if (n > 0u && !out) return nullptr;
-        for (uint32_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
             int64_t v = 0;
-            if (base_type == 1u && i < payload_bytes) { int8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
-            else if (base_type == 2u && (i + 1u) * 2u <= payload_bytes) { int16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
-            else if (base_type == 3u && (i + 1u) * 4u <= payload_bytes) { int32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
-            else if (base_type == 4u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            if (base_type == 1u) { int8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
+            else if (base_type == 2u) { int16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
+            else if (base_type == 3u) { int32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
+            else { std::memcpy(&v, ptr + i * 8u, 8); }
             out[i] = v;
         }
         vec->elem_tag = kVecTagI64;
@@ -422,14 +427,16 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
         return vec;
     }
     if (base_type >= 5u && base_type <= 8u) {
+        const size_t elem_sz = (base_type == 5u) ? 1u : (base_type == 6u ? 2u : (base_type == 7u ? 4u : 8u));
+        if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
         int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
         if (n > 0u && !out) return nullptr;
-        for (uint32_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
             uint64_t v = 0;
-            if (base_type == 5u && i < payload_bytes) { uint8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
-            else if (base_type == 6u && (i + 1u) * 2u <= payload_bytes) { uint16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
-            else if (base_type == 7u && (i + 1u) * 4u <= payload_bytes) { uint32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
-            else if (base_type == 8u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            if (base_type == 5u) { uint8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
+            else if (base_type == 6u) { uint16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
+            else if (base_type == 7u) { uint32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
+            else { std::memcpy(&v, ptr + i * 8u, 8); }
             out[i] = static_cast<int64_t>(v);
         }
         vec->elem_tag = kVecTagU64;
@@ -437,12 +444,14 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
         return vec;
     }
     if (base_type == 9u || base_type == 10u) {
+        const size_t elem_sz = (base_type == 9u) ? 4u : 8u;
+        if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
         double* out = (n > 0u) ? arena.alloc_array<double>(n, 8) : nullptr;
         if (n > 0u && !out) return nullptr;
-        for (uint32_t i = 0; i < n; ++i) {
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
             double v = 0.0;
-            if (base_type == 9u && (i + 1u) * 4u <= payload_bytes) { float x; std::memcpy(&x, ptr + i * 4u, 4); v = static_cast<double>(x); }
-            else if (base_type == 10u && (i + 1u) * 8u <= payload_bytes) { std::memcpy(&v, ptr + i * 8u, 8); }
+            if (base_type == 9u) { float x; std::memcpy(&x, ptr + i * 4u, 4); v = static_cast<double>(x); }
+            else { std::memcpy(&v, ptr + i * 8u, 8); }
             out[i] = v;
         }
         vec->elem_tag = kVecTagF64;
@@ -468,22 +477,30 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
         if (rd.tgt_domain_id + 1u > nd) nd = rd.tgt_domain_id + 1u;
     }
     uint64_t* dom_cards = (nd > 0) ? arena.alloc_array<uint64_t>(nd, 8) : nullptr;
-    if (nd > 0 && !dom_cards) return false;
-    if (nd > 0) std::memset(dom_cards, 0, nd * sizeof(uint64_t));
+    uint8_t* dom_widths = (nd > 0) ? arena.alloc_array<uint8_t>(nd, 8) : nullptr;
+    if (nd > 0 && (!dom_cards || !dom_widths)) return false;
+    if (nd > 0) {
+        std::memset(dom_cards, 0, nd * sizeof(uint64_t));
+        std::memset(dom_widths, 0, nd * sizeof(uint8_t));
+    }
     for (size_t i = 0; i < snapshot->domains.size(); ++i) {
         uint16_t did = snapshot->domains[i].domain_id;
         dom_cards[did] = snapshot->domains[i].node_count;
+        dom_widths[did] = snapshot->domains[i].dense_id_width;
     }
-    for (size_t r = 0; r < snapshot->relations.size(); ++r) {
-        const auto& rd = snapshot->relations[r];
-        if (dom_cards[rd.src_domain_id] < rd.node_count) {
-            dom_cards[rd.src_domain_id] = rd.node_count;
-        }
-        if (dom_cards[rd.tgt_domain_id] == 0u) {
-            dom_cards[rd.tgt_domain_id] = rd.node_count;
-        }
-        if (dom_cards[0] == 0u && rd.node_count > 0u) {
-            dom_cards[0] = rd.node_count;
+    const bool legacy_v9_or_no_doms = snapshot->domains.empty() || snapshot->header.version < 10u;
+    if (legacy_v9_or_no_doms) {
+        for (size_t r = 0; r < snapshot->relations.size(); ++r) {
+            const auto& rd = snapshot->relations[r];
+            if (dom_cards[rd.src_domain_id] < rd.node_count) {
+                dom_cards[rd.src_domain_id] = rd.node_count;
+            }
+            if (dom_cards[rd.tgt_domain_id] == 0u) {
+                dom_cards[rd.tgt_domain_id] = rd.node_count;
+            }
+            if (dom_cards[0] == 0u && rd.node_count > 0u) {
+                dom_cards[0] = rd.node_count;
+            }
         }
     }
     view.domain_cards = dom_cards;
@@ -507,8 +524,8 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
                               (((rd.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0ULL) && rd.edge_count == 0u);
             rels[r].node_id_width = (rd.node_id_width == 2u || rd.node_id_width == 8u) ? rd.node_id_width : 4u;
             rels[r].edge_idx_width = (rd.edge_index_width == 8u) ? 8u : 4u;
-            uint8_t src_dw = (rd.src_domain_id < snapshot->domains.size()) ? snapshot->domains[rd.src_domain_id].dense_id_width : 0u;
-            uint8_t tgt_dw = (rd.tgt_domain_id < snapshot->domains.size()) ? snapshot->domains[rd.tgt_domain_id].dense_id_width : 0u;
+            uint8_t src_dw = (rd.src_domain_id < nd) ? dom_widths[rd.src_domain_id] : 0u;
+            uint8_t tgt_dw = (rd.tgt_domain_id < nd) ? dom_widths[rd.tgt_domain_id] : 0u;
             uint8_t src_w = (src_dw == 2u || src_dw == 4u || src_dw == 8u) ? src_dw : rels[r].node_id_width;
             uint8_t tgt_w = (tgt_dw == 2u || tgt_dw == 4u || tgt_dw == 8u) ? tgt_dw : rels[r].node_id_width;
             rels[r].src_node_width = src_w;
@@ -517,6 +534,9 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
             rels[r].coo_tgt_width = tgt_w;
             rels[r].coo_order = rd.coo_order;
 
+            if (rd.node_count >= UINT32_MAX || rd.edge_count > UINT32_MAX) {
+                return false;
+            }
             if (rels[r].has_csr) {
                 const uint32_t n_rows = static_cast<uint32_t>(rd.node_count) + 1u;
                 const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
@@ -599,12 +619,14 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
         V11DomAttrEntry* entries = arena.alloc_array<V11DomAttrEntry>(total_na, alignof(V11DomAttrEntry));
         if (!entries) return false;
         uint32_t cnt = 0u;
-        for (size_t d = 0; d < snapshot->domain_attributes.size() && d < nd; ++d) {
+        for (size_t d = 0; d < snapshot->domain_attributes.size() && d < snapshot->domains.size(); ++d) {
             const auto& attrs = snapshot->domain_attributes[d];
+            const uint16_t did = snapshot->domains[d].domain_id;
+            const uint64_t n_nodes = snapshot->domains[d].node_count;
             for (size_t a = 0; a < attrs.size(); ++a) {
-                V11Vector* v = decode_imps_attr_to_vec(raw, fsz, attrs[a], snapshot->domains[d].node_count, arena);
+                V11Vector* v = decode_imps_attr_to_vec(raw, fsz, attrs[a], n_nodes, arena);
                 if (v) {
-                    entries[cnt++] = {static_cast<uint16_t>(d), static_cast<uint16_t>(a), v};
+                    entries[cnt++] = {did, static_cast<uint16_t>(a), v};
                 }
             }
         }
@@ -935,7 +957,13 @@ struct V11CachedSnapshotView {
     size_t cap = 0;
     V11Arena arena{};
     V11SnapshotView view{};
-    ~V11CachedSnapshotView() { std::free(buf); }
+    ~V11CachedSnapshotView() {
+#ifdef _WIN32
+        _aligned_free(buf);
+#else
+        std::free(buf);
+#endif
+    }
 };
 
 void destroy_cached_snapshot_view(void* p) {
@@ -949,14 +977,25 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
 ) {
     using namespace impulse::vm;
     if (!snapshot) return IMPULSE_VM_V11_ERR_NULL_SNAPSHOT;
-    if (snapshot->v11_cached_view != nullptr) return IMPULSE_VM_V11_OK;
+    if (snapshot->v11_cached_view.load(std::memory_order_acquire) != nullptr) return IMPULSE_VM_V11_OK;
 
-    // Estimate backing bytes for view (file_size * 3 + 1MB headroom)
+    std::lock_guard<std::mutex> lock(snapshot->v11_view_mutex);
+    if (snapshot->v11_cached_view.load(std::memory_order_acquire) != nullptr) return IMPULSE_VM_V11_OK;
+
+    // Estimate backing bytes for view (checked against size_t overflow)
+    if (snapshot->file_size > ((std::numeric_limits<size_t>::max)() - 1024u * 1024u) / 3u) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
     size_t cap = snapshot->file_size * 3u + 1024u * 1024u;
     void* raw = nullptr;
+#ifdef _WIN32
+    raw = _aligned_malloc(cap, 128);
+    if (!raw) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+#else
     if (posix_memalign(&raw, 128, cap) != 0 || !raw) {
         return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
     }
+#endif
     auto* cached = new V11CachedSnapshotView();
     cached->buf = static_cast<uint8_t*>(raw);
     cached->cap = cap;
@@ -968,8 +1007,8 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
         delete cached;
         return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
     }
-    snapshot->v11_cached_view = cached;
     snapshot->v11_cached_view_dtor = &destroy_cached_snapshot_view;
+    snapshot->v11_cached_view.store(cached, std::memory_order_release);
     return IMPULSE_VM_V11_OK;
 }
 
@@ -1064,8 +1103,9 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     V11SnapshotView view{};
     const V11SnapshotView* view_ptr = nullptr;
     if (snapshot != nullptr) {
-        if (snapshot->v11_cached_view != nullptr) {
-            view_ptr = &static_cast<const V11CachedSnapshotView*>(snapshot->v11_cached_view)->view;
+        const void* cached_ptr = snapshot->v11_cached_view.load(std::memory_order_acquire);
+        if (cached_ptr != nullptr) {
+            view_ptr = &static_cast<const V11CachedSnapshotView*>(cached_ptr)->view;
         } else {
             if (!build_snapshot_view_from_imps(snapshot, scratch_ws->arena, view)) {
                 scratch_ws->status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
