@@ -14,7 +14,7 @@
 #include <cstring>
 #include <limits>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline constexpr double kP4Sqrt2 = 1.41421356237309504880168872420969807857;
 inline constexpr double kP4Ln2   = 0.69314718055994530941723212145817656808;
@@ -467,4 +467,4 @@ inline uint64_t p4_bswap64(uint64_t x) noexcept {
 #endif
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

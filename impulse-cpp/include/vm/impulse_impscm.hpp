@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "impulse_graph.h"
-#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "vm/impulse_bytecode_emitter.hpp"
 
 namespace impulse::compiler::v11 {
 

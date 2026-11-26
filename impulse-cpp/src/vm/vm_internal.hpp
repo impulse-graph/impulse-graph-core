@@ -1,5 +1,5 @@
 /**
- * @file v11_internal.hpp
+ * @file vm_internal.hpp
  * @brief Internal C++20 runtime data structures for ImpulseVM v0.11.0.
  *
  * All execution-time allocations are carved strictly from the caller-owned
@@ -8,8 +8,8 @@
 #pragma once
 
 #include "impulse_vm_v11.h"
-#include "v11/impulse_vm_v11_isa.hpp"
-#include "v11/impulse_v11_opcode_macros.h"
+#include "vm/impulse_vm_isa.hpp"
+#include "vm/impulse_opcode_macros.h"
 
 #include <algorithm>
 #include <atomic>
@@ -22,7 +22,7 @@
   #include <time.h>
 #endif
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline constexpr uint64_t kWorkspaceMagic   = 0x494D505753303131ULL; // "IMPWS011"
 inline constexpr uint32_t kMorselMax        = 2048u;
@@ -617,7 +617,7 @@ bool v11_exec_morsel_p4_op(
     const V11SnapshotView* snap,
     uint64_t w) noexcept;
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm
 
 /** Concrete definition of caller-owned workspace header (placement-initialized in scratch_buf). */
 struct impulse_vm_workspace_v11 {
@@ -638,28 +638,28 @@ struct impulse_vm_workspace_v11 {
     impulse_vm_geometry_v11_t geometry;
 
     // Frontier & Vector register backing tables
-    impulse::vm::v11::V11Frontier f_regs[16];
+    impulse::vm::V11Frontier f_regs[16];
     uint16_t                      f_valid_mask;
-    impulse::vm::v11::V11Vector*  v_regs[16];
+    impulse::vm::V11Vector*  v_regs[16];
 
     // 16-deep sliding register window call stack & 256 spill slots
-    impulse::vm::v11::V11CallFrame call_frames[impulse::vm::v11::kMaxCallDepth];
-    impulse::vm::v11::V11SpillSlot spill_slots[impulse::vm::v11::kTotalSpillSlots];
+    impulse::vm::V11CallFrame call_frames[impulse::vm::kMaxCallDepth];
+    impulse::vm::V11SpillSlot spill_slots[impulse::vm::kTotalSpillSlots];
 
     // Bindings (const pool, params, interned scalar strings, terminal outputs)
-    impulse::vm::v11::V11ConstPoolEntry const_pool[impulse::vm::v11::kMaxConstPool];
+    impulse::vm::V11ConstPoolEntry const_pool[impulse::vm::kMaxConstPool];
     uint32_t                            const_pool_count;
-    impulse::vm::v11::V11ParamEntry     params[impulse::vm::v11::kMaxParams];
+    impulse::vm::V11ParamEntry     params[impulse::vm::kMaxParams];
     uint32_t                            param_count;
-    impulse::vm::v11::V11StrSlice       str_table[impulse::vm::v11::kMaxScalarStrings];
-    impulse::vm::v11::V11StrSlice*      str_table_ptr;
+    impulse::vm::V11StrSlice       str_table[impulse::vm::kMaxScalarStrings];
+    impulse::vm::V11StrSlice*      str_table_ptr;
     uint32_t                            str_count;
     uint32_t                            str_cap;
-    impulse::vm::v11::V11OutputSlot     outputs[impulse::vm::v11::kMaxOutputs];
+    impulse::vm::V11OutputSlot     outputs[impulse::vm::kMaxOutputs];
     uint32_t                            output_count;
 
     // Caller-owned bump arena (starts right after this struct, 128B aligned)
-    impulse::vm::v11::V11Arena arena;
+    impulse::vm::V11Arena arena;
 
     // UB-free accessors for R0..R15 across the 3 cache-line sub-arrays
     inline uint64_t read_r_raw(uint8_t reg) const noexcept {
@@ -711,21 +711,21 @@ struct impulse_vm_workspace_v11 {
         return w;
     }
 
-    inline bool flag_zf() const noexcept { return (state.vm_flags & impulse::vm::v11::VM_FLAG_ZF) != 0u; }
-    inline bool flag_st() const noexcept { return (state.vm_flags & impulse::vm::v11::VM_FLAG_ST) != 0u; }
-    inline bool flag_nf() const noexcept { return (state.vm_flags & impulse::vm::v11::VM_FLAG_NF) != 0u; }
+    inline bool flag_zf() const noexcept { return (state.vm_flags & impulse::vm::VM_FLAG_ZF) != 0u; }
+    inline bool flag_st() const noexcept { return (state.vm_flags & impulse::vm::VM_FLAG_ST) != 0u; }
+    inline bool flag_nf() const noexcept { return (state.vm_flags & impulse::vm::VM_FLAG_NF) != 0u; }
 
     inline void set_zf(bool v) noexcept {
-        if (v) state.vm_flags |= impulse::vm::v11::VM_FLAG_ZF;
-        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::v11::VM_FLAG_ZF);
+        if (v) state.vm_flags |= impulse::vm::VM_FLAG_ZF;
+        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::VM_FLAG_ZF);
     }
     inline void set_st(bool v) noexcept {
-        if (v) state.vm_flags |= impulse::vm::v11::VM_FLAG_ST;
-        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::v11::VM_FLAG_ST);
+        if (v) state.vm_flags |= impulse::vm::VM_FLAG_ST;
+        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::VM_FLAG_ST);
     }
     inline void set_nf(bool v) noexcept {
-        if (v) state.vm_flags |= impulse::vm::v11::VM_FLAG_NF;
-        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::v11::VM_FLAG_NF);
+        if (v) state.vm_flags |= impulse::vm::VM_FLAG_NF;
+        else   state.vm_flags &= static_cast<uint16_t>(~impulse::vm::VM_FLAG_NF);
     }
 
     inline bool is_f_init(uint8_t reg) const noexcept {
@@ -739,14 +739,14 @@ struct impulse_vm_workspace_v11 {
     inline uint64_t intern_scalar_str(const char* ptr, uint32_t len) noexcept {
         if (!str_table_ptr || str_cap == 0u) {
             str_table_ptr = str_table;
-            str_cap = impulse::vm::v11::kMaxScalarStrings;
+            str_cap = impulse::vm::kMaxScalarStrings;
         }
         if (str_count >= str_cap) {
             uint32_t next_cap = str_cap * 2u;
             if (next_cap <= str_cap) return 0ULL;
-            auto* grown = arena.alloc_array<impulse::vm::v11::V11StrSlice>(next_cap, 8);
+            auto* grown = arena.alloc_array<impulse::vm::V11StrSlice>(next_cap, 8);
             if (!grown) return 0ULL;
-            std::memcpy(grown, str_table_ptr, static_cast<size_t>(str_count) * sizeof(impulse::vm::v11::V11StrSlice));
+            std::memcpy(grown, str_table_ptr, static_cast<size_t>(str_count) * sizeof(impulse::vm::V11StrSlice));
             str_table_ptr = grown;
             str_cap = next_cap;
         }
@@ -761,21 +761,21 @@ struct impulse_vm_workspace_v11 {
         return static_cast<uint64_t>(idx + 1u);
     }
 
-    inline impulse::vm::v11::V11StrSlice resolve_scalar_str(uint64_t handle) const noexcept {
+    inline impulse::vm::V11StrSlice resolve_scalar_str(uint64_t handle) const noexcept {
         if (handle == 0ULL || handle > str_count || !str_table_ptr) {
             return {nullptr, 0u, 0u};
         }
         return str_table_ptr[handle - 1u];
     }
 
-    inline const impulse::vm::v11::V11ConstPoolEntry* find_const_pool(uint32_t id) const noexcept {
+    inline const impulse::vm::V11ConstPoolEntry* find_const_pool(uint32_t id) const noexcept {
         for (uint32_t i = 0; i < const_pool_count; ++i) {
             if (const_pool[i].id == id) return &const_pool[i];
         }
         return nullptr;
     }
 
-    inline const impulse::vm::v11::V11ParamEntry* find_param(uint32_t id) const noexcept {
+    inline const impulse::vm::V11ParamEntry* find_param(uint32_t id) const noexcept {
         for (uint32_t i = 0; i < param_count; ++i) {
             if (params[i].id == id) return &params[i];
         }
@@ -804,13 +804,13 @@ struct impulse_vm_workspace_v11 {
             f_regs[i].reset_empty(0u, 0u);
             v_regs[i] = nullptr;
         }
-        for (uint32_t i = 0; i < impulse::vm::v11::kSpillPerFrame; ++i) {
-            spill_slots[i].kind = impulse::vm::v11::kSpillEmpty;
+        for (uint32_t i = 0; i < impulse::vm::kSpillPerFrame; ++i) {
+            spill_slots[i].kind = impulse::vm::kSpillEmpty;
         }
         output_count = 0u;
         str_table_ptr = str_table;
         str_count = 0u;
-        str_cap = impulse::vm::v11::kMaxScalarStrings;
+        str_cap = impulse::vm::kMaxScalarStrings;
         frontier_epoch++;
         arena.reset_to_mark();
     }
@@ -829,7 +829,7 @@ struct impulse_vm_workspace_v11 {
 #endif
 };
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 #ifdef IMPULSE_V11_OPCODE_PROFILE
 inline uint64_t v11_profile_now_ns() noexcept {
@@ -876,4 +876,4 @@ bool v11_exec_morsel_p4_op(
     const V11SnapshotView* snap,
     uint64_t w) noexcept;
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

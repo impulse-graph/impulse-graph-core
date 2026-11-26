@@ -5,7 +5,7 @@
  */
 
 #include "impulse_vm_v11.h"
-#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "vm/impulse_bytecode_emitter.hpp"
 #include "impulse_graph_internal.hpp"
 #include "impulse_cel.h"
 #include "impulse_cypher.hpp"
@@ -76,7 +76,7 @@ struct impulse_stmt {
     const impulse_snapshot_t* snapshot{nullptr};
     std::string query_text;
     impulse_language_t lang{IMPULSE_LANG_CYPHER};
-    impulse::compiler::v11::V11CompiledProgram v11_program;
+    impulse::compiler::v11::ImpulseCompiledProgram v11_program;
     impulse_vm_memory_plan_t v11_plan{};
 
     size_t words_per_bitset{0};
@@ -118,8 +118,8 @@ impulse_status_t impulse_compile_to_impas(
     }
     try {
         auto ast = parse_script_to_ast(script, lang);
-        auto compiled = impulse::compiler::v11::V11BytecodeEmitter::emit(ast, snapshot, 0);
-        std::string impas = impulse::compiler::v11::V11BytecodeEmitter::disassemble(compiled.code_words);
+        auto compiled = impulse::compiler::v11::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
+        std::string impas = impulse::compiler::v11::ImpulseBytecodeEmitter::disassemble(compiled.code_words);
         if (impas.size() + 1 > out_capacity) {
             return IMPULSE_ERR_BUFFER_OVERFLOW;
         }
@@ -152,7 +152,7 @@ impulse_status_t impulse_stmt_prepare(
         stmt->lang = detect_language(stmt->query_text);
 
         auto ast = parse_script_to_ast(query_text, stmt->lang);
-        stmt->v11_program = impulse::compiler::v11::V11BytecodeEmitter::emit(ast, snapshot, 0);
+        stmt->v11_program = impulse::compiler::v11::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
         if (stmt->v11_program.impb_bytes.empty()) {
             return IMPULSE_ERR_INVALID_ARGUMENT;
         }

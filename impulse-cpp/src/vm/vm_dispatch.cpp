@@ -9,7 +9,7 @@
   #pragma STDC FP_CONTRACT OFF
 #endif
 
-#include "v11_internal.hpp"
+#include "vm_internal.hpp"
 #include "opcodes/shared/v11_p1_helpers.hpp"
 #include "opcodes/shared/v11_p2_helpers.hpp"
 #include "opcodes/shared/v11_p3_helpers.hpp"
@@ -36,7 +36,7 @@
   #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 static impulse_vm_status_v11_t run_words_unlocked(
     const uint64_t* words,
@@ -296,7 +296,7 @@ impulse_vm_status_v11_t execute_words_internal(
     return run_words_unlocked(words, word_count, snap, ws, max_steps, entry_pc, already_validated);
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm
 
 #if defined(__clang__)
   #pragma clang diagnostic pop
@@ -309,7 +309,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_workspace_init(
     size_t scratch_bytes,
     impulse_vm_workspace_v11_t** out_ws
 ) {
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
     if (!scratch_buf || !out_ws) {
         return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
     }
@@ -344,7 +344,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_workspace_init(
     return IMPULSE_VM_V11_OK;
 }
 
-using namespace impulse::vm::v11;
+using namespace impulse::vm;
 
 namespace {
 
@@ -947,7 +947,7 @@ void destroy_cached_snapshot_view(void* p) {
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
     const impulse_snapshot_t* snapshot
 ) {
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
     if (!snapshot) return IMPULSE_VM_V11_ERR_NULL_SNAPSHOT;
     if (snapshot->v11_cached_view != nullptr) return IMPULSE_VM_V11_OK;
 
@@ -983,7 +983,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     size_t result_cap,
     size_t* out_result_bytes
 ) {
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
     if (!impb_bytes || !scratch_ws || scratch_ws->magic != kWorkspaceMagic) {
         return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
     }
@@ -1127,7 +1127,7 @@ extern "C" IMPULSE_API int impulse_vm_v11_get_output_str(
 ) {
     if (!ws || index >= ws->output_count) return 0;
     const auto* v = ws->outputs[index].vec;
-    if (!v || v->elem_tag != impulse::vm::v11::kVecTagStr || !v->str_data || elem_idx >= v->length) return 0;
+    if (!v || v->elem_tag != impulse::vm::kVecTagStr || !v->str_data || elem_idx >= v->length) return 0;
     const auto& s = v->str_data[elem_idx];
     if (out_ptr) *out_ptr = s.ptr;
     if (out_len) *out_len = s.len;

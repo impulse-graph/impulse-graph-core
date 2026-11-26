@@ -16,9 +16,9 @@ static inline uint32_t imp_v11_ctz64(uint64_t x) noexcept {
 }
 #endif
 
-namespace impulse::vm::v11::simd {
+namespace impulse::vm::simd {
 
-// Google Highway HWY_DYNAMIC_DISPATCH kernels (implemented in src/v11/v11_simd_hwy.cpp).
+// Google Highway HWY_DYNAMIC_DISPATCH kernels (implemented in src/vm/vm_simd_hwy.cpp).
 // Automatically dispatches NEON/SVE on ARM64 and SSE4/AVX2/AVX-512 on x86-64 across Clang, GCC, and MSVC.
 void f64_arith_vec(uint8_t subop, const double* a, const double* b, double* out, uint32_t n) noexcept;
 void f64_arith_scalar(uint8_t subop, const double* a, double b_sc, double* out, uint32_t n) noexcept;
@@ -58,4 +58,4 @@ static inline uint32_t b2f_extract_words(const uint64_t* valid,
     return cnt;
 }
 
-} // namespace impulse::vm::v11::simd
+} // namespace impulse::vm::simd

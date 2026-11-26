@@ -4,7 +4,7 @@
  */
 #pragma once
 
-#include "../../v11_internal.hpp"
+#include "../../vm_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 #include <cstring>
 #include <limits>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline bool p1_is_frontier_empty(const impulse_vm_workspace_v11_t& ws, uint8_t reg) noexcept {
     return !ws.is_f_init(reg) || ws.f_regs[reg].is_empty();
@@ -218,4 +218,4 @@ IMPULSE_V11_NOINLINE inline void p1_load_frontier_ids(impulse_vm_workspace_v11_t
     }
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

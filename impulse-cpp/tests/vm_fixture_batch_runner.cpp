@@ -1,5 +1,5 @@
 /**
- * @file v11_fixture_batch_runner.cpp
+ * @file vm_fixture_batch_runner.cpp
  * @brief Persistent stdin/stdout JSONL Fixture Batch Runner for ImpulseVM v0.11.0 (C++20).
  *
  * Implements the exact line protocol of `impulse-ocaml --v11-fixture-batch` and
@@ -7,7 +7,7 @@
  *   Input:  `<profile>\t<max_steps|->\t<fixture_json>\n`
  *   Output: `<result_json>\n`
  */
-#include "v11/v11_internal.hpp"
+#include "vm/vm_internal.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -26,7 +26,7 @@
 #include <utility>
 #include <vector>
 
-using namespace impulse::vm::v11;
+using namespace impulse::vm;
 
 namespace {
 

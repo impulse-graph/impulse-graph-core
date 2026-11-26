@@ -6,7 +6,7 @@
  * Coarse kernels are marked IMPULSE_V11_NOINLINE to keep the main dispatch loop L1i-resident.
  */
 #pragma once
-#include "v11_simd_kernels.hpp"
+#include "vm_simd_kernels.hpp"
 
 #include "v11_p2_helpers.hpp"
 
@@ -16,7 +16,7 @@
 #include <cstring>
 #include <limits>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline const V11RelView* p3_get_rel(const V11SnapshotView* snap,
                                     impulse_vm_workspace_v11_t& ws,
@@ -1475,4 +1475,4 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     }
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

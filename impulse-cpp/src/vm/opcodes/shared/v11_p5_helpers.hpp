@@ -14,7 +14,7 @@
 #include <cstring>
 #include <limits>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline uint8_t p5_choose_width(uint32_t k) noexcept {
     if (k <= 8u)  return 8u;
@@ -353,4 +353,4 @@ inline void p5_relax_lane_edge(
     }
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

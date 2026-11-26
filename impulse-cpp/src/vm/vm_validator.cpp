@@ -5,15 +5,15 @@
  * Mirrors V11_isa.decode_word / V11_validate.validate_program (impulse-ocaml) and
  * V11Validator.java (impulse-graph-java).
  */
-#include "v11_internal.hpp"
-#include "v11_xxh3.hpp"
+#include "vm_internal.hpp"
+#include "vm_xxh3.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 namespace {
 
 bool is_mask_s3_only(uint8_t code) noexcept {
@@ -736,18 +736,18 @@ impulse_vm_validation_v11_t validate_impb_in_arena(
     }
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm
 
 extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11(
     const uint64_t* words,
     size_t word_count
 ) {
-    return impulse::vm::v11::validate_words_in_arena(words, word_count, nullptr);
+    return impulse::vm::validate_words_in_arena(words, word_count, nullptr);
 }
 
 extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
     const void* impb_bytes,
     size_t impb_len
 ) {
-    return impulse::vm::v11::validate_impb_in_arena(impb_bytes, impb_len, nullptr);
+    return impulse::vm::validate_impb_in_arena(impb_bytes, impb_len, nullptr);
 }

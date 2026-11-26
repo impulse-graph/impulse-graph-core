@@ -1,4 +1,4 @@
-#include "v11/opcodes/shared/v11_simd_kernels.hpp"
+#include "vm/opcodes/shared/vm_simd_kernels.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -6,12 +6,12 @@
 #include <limits>
 
 #undef HWY_TARGET_INCLUDE
-#define HWY_TARGET_INCLUDE "v11/v11_simd_hwy.cpp"
+#define HWY_TARGET_INCLUDE "vm/vm_simd_hwy.cpp"
 #include "hwy/foreach_target.h"
 #include "hwy/highway.h"
 
 HWY_BEFORE_NAMESPACE();
-namespace impulse::vm::v11::simd {
+namespace impulse::vm::simd {
 namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
@@ -602,11 +602,11 @@ double F64SimMetric(uint8_t metric,
 }
 
 } // namespace HWY_NAMESPACE
-} // namespace impulse::vm::v11::simd
+} // namespace impulse::vm::simd
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
-namespace impulse::vm::v11::simd {
+namespace impulse::vm::simd {
 
 HWY_EXPORT(F64ArithVec);
 HWY_EXPORT(F64ArithScalar);
@@ -665,5 +665,5 @@ double f64_sim_metric(uint8_t metric, const double* a, const double* b, uint32_t
     return HWY_DYNAMIC_DISPATCH(F64SimMetric)(metric, a, b, d_len);
 }
 
-} // namespace impulse::vm::v11::simd
+} // namespace impulse::vm::simd
 #endif

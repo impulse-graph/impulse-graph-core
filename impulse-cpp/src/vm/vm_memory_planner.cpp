@@ -2,7 +2,7 @@
  * @file v11_memory_planner.cpp
  * @brief Static AOT memory planner (impulse_vm_plan_memory) for ImpulseVM v0.11.0.
  */
-#include "v11_internal.hpp"
+#include "vm_internal.hpp"
 #include "impulse_graph_internal.hpp"
 
 #include <algorithm>
@@ -17,7 +17,7 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_plan_memory(
     uint16_t max_dop,
     impulse_vm_memory_plan_t* out_plan
 ) {
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
     if (!impb_bytes || !out_plan || impb_len < sizeof(impulse_impb_header_v11_t)) {
         return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
     }

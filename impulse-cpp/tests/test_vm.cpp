@@ -1,5 +1,5 @@
 /**
- * @file test_vm_v11.cpp
+ * @file test_vm.cpp
  * @brief Native C++20 unit & invariant tests for ImpulseVM v0.11.0 (M3).
  *
  * Verifies:
@@ -11,8 +11,8 @@
  */
 #include "impulse_graph.h"
 #include "impulse_vm_v11.h"
-#include "v11/v11_internal.hpp"
-#include "v11/v11_xxh3.hpp"
+#include "vm/vm_internal.hpp"
+#include "vm/vm_xxh3.hpp"
 
 #include <atomic>
 #include <cstdio>
@@ -28,7 +28,7 @@
     } \
 } while (0)
 
-using namespace impulse::vm::v11;
+using namespace impulse::vm;
 
 static std::atomic<size_t> g_alloc_count{0};
 static std::atomic<bool>   g_track_allocs{false};
@@ -1027,7 +1027,7 @@ static void test_mcdc_validator_planner_and_cabi() {
     std::printf("test_mcdc_validator_planner_and_cabi: PASS\n");
 }
 
-#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "vm/impulse_bytecode_emitter.hpp"
 #undef OP_HALT
 
 static void test_v11_emitter_const_pool_params_and_collect_e2e() {
@@ -1049,7 +1049,7 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     impulse_snapshot_t* snap = impulse_snapshot_open(path.c_str(), &open_st);
     CHECK(snap != nullptr && open_st == IMPULSE_OK);
 
-    // 2. Compile 2-hop walk + collect list via V11BytecodeEmitter
+    // 2. Compile 2-hop walk + collect list via ImpulseBytecodeEmitter
     auto w1 = std::make_shared<ScmWalk>();
     w1->relation_name = "NEXT"; w1->direction = WalkDirection::FORWARD_CSR; w1->physical_rel_id = 0;
     auto w2 = std::make_shared<ScmWalk>();
@@ -1057,7 +1057,7 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     auto c_list = std::make_shared<ScmCollect>();
     c_list->output_type = ScmCollect::OutputType::LIST;
     auto two_hop = std::make_shared<ScmProgram>(std::vector<AstPtr>{w1, w2, c_list});
-    auto compiled = V11BytecodeEmitter::emit(two_hop, snap, 0);
+    auto compiled = ImpulseBytecodeEmitter::emit(two_hop, snap, 0);
     CHECK(!compiled.impb_bytes.empty());
 
     alignas(128) uint8_t raw[1024 * 1024];
@@ -1106,7 +1106,7 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
         std::make_shared<ScmReduce>(ScmReduce::Op::COUNT),
         c_bs,
     });
-    auto compiled_fix = V11BytecodeEmitter::emit(fix_prog, snap, 0);
+    auto compiled_fix = ImpulseBytecodeEmitter::emit(fix_prog, snap, 0);
     seed_ids[0] = 1ULL;
     rc = impulse_vm_execute_v11(
         compiled_fix.impb_bytes.data(), compiled_fix.impb_bytes.size(),
@@ -1119,11 +1119,11 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     // 4. Test .impb const_pool roundtrip (Frontier) with 0 allocs
     V11ProgramBuilder pb;
     uint32_t f_cp = pb.add_const_pool_frontier({1ULL, 3ULL});
-    pb.emit_u16(impulse::vm::v11::Opcode::OP_LOAD_CONST_POOL, impulse::vm::v11::subop::kLOAD_CONST_POOL_FRONTIER,
+    pb.emit_u16(impulse::vm::Opcode::OP_LOAD_CONST_POOL, impulse::vm::subop::kLOAD_CONST_POOL_FRONTIER,
                 0, 0, 0, 0, 0, static_cast<uint16_t>(f_cp), 0u);
-    pb.emit_u16(impulse::vm::v11::Opcode::OP_COLLECT, impulse::vm::v11::subop::kCOLLECT_FRONTIER_IDS,
+    pb.emit_u16(impulse::vm::Opcode::OP_COLLECT, impulse::vm::subop::kCOLLECT_FRONTIER_IDS,
                 0, 0, 0, 0, 0, 0u, 0u);
-    pb.emit(impulse::vm::v11::Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
+    pb.emit(impulse::vm::Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
     auto cp_impb = pb.build_impb(0, 0, 1);
 
     g_alloc_count.store(0, std::memory_order_relaxed);
@@ -1277,6 +1277,6 @@ int main() {
     test_mcdc_validator_planner_and_cabi();
     test_v11_emitter_const_pool_params_and_collect_e2e();
     test_v11_imps_coo_roundtrip_and_hardening();
-    std::printf("test_vm_v11: ALL PASSED\n");
+    std::printf("test_vm: ALL PASSED\n");
     return 0;
 }
