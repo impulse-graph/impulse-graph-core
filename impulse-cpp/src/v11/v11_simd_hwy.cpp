@@ -213,6 +213,233 @@ void F64PackValidWords(const double* HWY_RESTRICT out,
     }
 }
 
+void F64ArithVecValid(uint8_t subop,
+                      const double* HWY_RESTRICT a,
+                      const double* HWY_RESTRICT b,
+                      const uint64_t* a_valid,
+                      const uint64_t* b_valid,
+                      double* HWY_RESTRICT out,
+                      uint64_t* HWY_RESTRICT out_valid,
+                      uint32_t n) {
+    const hn::ScalableTag<double> d;
+    const size_t N = hn::Lanes(d);
+    const double qnan = std::numeric_limits<double>::quiet_NaN();
+    const auto vzero = hn::Zero(d);
+    const auto vnan  = hn::Set(d, qnan);
+    const uint32_t vwords = (n + 63u) >> 6;
+    for (uint32_t w = 0u; w < vwords; ++w) {
+        uint64_t in_m = (a_valid ? a_valid[w] : ~0ULL) & (b_valid ? b_valid[w] : ~0ULL);
+        uint32_t base = w << 6;
+        uint32_t rem = n - base;
+        uint32_t cnt = (rem < 64u) ? rem : 64u;
+        if (cnt < 64u) in_m &= ((1ULL << cnt) - 1ULL);
+        if (in_m == 0ULL) { out_valid[w] = 0ULL; continue; }
+        if (cnt == 64u && (64u % N == 0u)) {
+            auto all_ok = hn::FirstN(d, N);
+            switch (subop) {
+                case 0u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Add(hn::LoadU(d, a + base + j), hn::LoadU(d, b + base + j));
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 1u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Sub(hn::LoadU(d, a + base + j), hn::LoadU(d, b + base + j));
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 2u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Mul(hn::LoadU(d, a + base + j), hn::LoadU(d, b + base + j));
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 3u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto va = hn::LoadU(d, a + base + j);
+                        auto vb = hn::LoadU(d, b + base + j);
+                        auto r = hn::IfThenElse(hn::Eq(vb, vzero), vnan, hn::Div(va, vb));
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                default: break;
+            }
+            if (hn::AllTrue(d, all_ok)) {
+                out_valid[w] = in_m;
+            } else {
+                uint64_t non_nan = 0ULL;
+                uint8_t mbuf[8] = {};
+                const uint64_t lmask = (N == 8) ? 0xFFULL : ((1ULL << N) - 1ULL);
+                for (size_t j = 0; j < 64u; j += N) {
+                    auto v = hn::LoadU(d, out + base + j);
+                    hn::StoreMaskBits(d, hn::Eq(v, v), mbuf);
+                    non_nan |= ((static_cast<uint64_t>(mbuf[0]) & lmask) << j);
+                }
+                out_valid[w] = in_m & non_nan;
+            }
+        } else {
+            uint64_t non_nan = 0ULL;
+            for (uint32_t j = 0u; j < cnt; ++j) {
+                double x = a[base + j], y = b[base + j];
+                double r = (subop == 0u) ? (x + y) : (subop == 1u) ? (x - y) : (subop == 2u) ? (x * y) : ((y == 0.0) ? qnan : (x / y));
+                out[base + j] = r;
+                if (r == r) non_nan |= (1ULL << j);
+            }
+            out_valid[w] = in_m & non_nan;
+        }
+    }
+}
+
+void F64ArithScalarValid(uint8_t subop,
+                         const double* HWY_RESTRICT a,
+                         double b_sc,
+                         const uint64_t* a_valid,
+                         double* HWY_RESTRICT out,
+                         uint64_t* HWY_RESTRICT out_valid,
+                         uint32_t n) {
+    const hn::ScalableTag<double> d;
+    const size_t N = hn::Lanes(d);
+    const auto vb = hn::Set(d, b_sc);
+    const uint32_t vwords = (n + 63u) >> 6;
+    if (subop == 3u && b_sc == 0.0) {
+        std::memset(out_valid, 0, static_cast<size_t>(vwords) * sizeof(uint64_t));
+        return;
+    }
+    for (uint32_t w = 0u; w < vwords; ++w) {
+        uint64_t in_m = a_valid ? a_valid[w] : ~0ULL;
+        uint32_t base = w << 6;
+        uint32_t rem = n - base;
+        uint32_t cnt = (rem < 64u) ? rem : 64u;
+        if (cnt < 64u) in_m &= ((1ULL << cnt) - 1ULL);
+        if (in_m == 0ULL) { out_valid[w] = 0ULL; continue; }
+        if (cnt == 64u && (64u % N == 0u)) {
+            auto all_ok = hn::FirstN(d, N);
+            switch (subop) {
+                case 0u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Add(hn::LoadU(d, a + base + j), vb);
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 1u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Sub(hn::LoadU(d, a + base + j), vb);
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 2u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Mul(hn::LoadU(d, a + base + j), vb);
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                case 3u:
+                    for (size_t j = 0; j < 64u; j += N) {
+                        auto r = hn::Div(hn::LoadU(d, a + base + j), vb);
+                        hn::StoreU(r, d, out + base + j);
+                        all_ok = hn::And(all_ok, hn::Eq(r, r));
+                    }
+                    break;
+                default: break;
+            }
+            if (hn::AllTrue(d, all_ok)) {
+                out_valid[w] = in_m;
+            } else {
+                uint64_t non_nan = 0ULL;
+                uint8_t mbuf[8] = {};
+                const uint64_t lmask = (N == 8) ? 0xFFULL : ((1ULL << N) - 1ULL);
+                for (size_t j = 0; j < 64u; j += N) {
+                    auto v = hn::LoadU(d, out + base + j);
+                    hn::StoreMaskBits(d, hn::Eq(v, v), mbuf);
+                    non_nan |= ((static_cast<uint64_t>(mbuf[0]) & lmask) << j);
+                }
+                out_valid[w] = in_m & non_nan;
+            }
+        } else {
+            uint64_t non_nan = 0ULL;
+            for (uint32_t j = 0u; j < cnt; ++j) {
+                double x = a[base + j];
+                double r = (subop == 0u) ? (x + b_sc) : (subop == 1u) ? (x - b_sc) : (subop == 2u) ? (x * b_sc) : (x / b_sc);
+                out[base + j] = r;
+                if (r == r) non_nan |= (1ULL << j);
+            }
+            out_valid[w] = in_m & non_nan;
+        }
+    }
+}
+
+void F64ArithUnaryValid(uint8_t subop,
+                        const double* HWY_RESTRICT a,
+                        const uint64_t* a_valid,
+                        double* HWY_RESTRICT out,
+                        uint64_t* HWY_RESTRICT out_valid,
+                        uint32_t n) {
+    const hn::ScalableTag<double> d;
+    const size_t N = hn::Lanes(d);
+    const uint32_t vwords = (n + 63u) >> 6;
+    for (uint32_t w = 0u; w < vwords; ++w) {
+        uint64_t in_m = a_valid ? a_valid[w] : ~0ULL;
+        uint32_t base = w << 6;
+        uint32_t rem = n - base;
+        uint32_t cnt = (rem < 64u) ? rem : 64u;
+        if (cnt < 64u) in_m &= ((1ULL << cnt) - 1ULL);
+        if (in_m == 0ULL) { out_valid[w] = 0ULL; continue; }
+        if (cnt == 64u && (64u % N == 0u)) {
+            auto all_ok = hn::FirstN(d, N);
+            switch (subop) {
+                case 8u:
+                    for (size_t j = 0; j < 64u; j += N) { auto r = hn::Neg(hn::LoadU(d, a + base + j)); hn::StoreU(r, d, out + base + j); all_ok = hn::And(all_ok, hn::Eq(r, r)); }
+                    break;
+                case 9u:
+                    for (size_t j = 0; j < 64u; j += N) { auto r = hn::Abs(hn::LoadU(d, a + base + j)); hn::StoreU(r, d, out + base + j); all_ok = hn::And(all_ok, hn::Eq(r, r)); }
+                    break;
+                case 10u:
+                    for (size_t j = 0; j < 64u; j += N) { auto r = hn::Sqrt(hn::LoadU(d, a + base + j)); hn::StoreU(r, d, out + base + j); all_ok = hn::And(all_ok, hn::Eq(r, r)); }
+                    break;
+                case 12u:
+                    for (size_t j = 0; j < 64u; j += N) { auto r = hn::Floor(hn::LoadU(d, a + base + j)); hn::StoreU(r, d, out + base + j); all_ok = hn::And(all_ok, hn::Eq(r, r)); }
+                    break;
+                case 13u:
+                    for (size_t j = 0; j < 64u; j += N) { auto r = hn::Ceil(hn::LoadU(d, a + base + j)); hn::StoreU(r, d, out + base + j); all_ok = hn::And(all_ok, hn::Eq(r, r)); }
+                    break;
+                default: break;
+            }
+            if (hn::AllTrue(d, all_ok)) {
+                out_valid[w] = in_m;
+            } else {
+                uint64_t non_nan = 0ULL;
+                uint8_t mbuf[8] = {};
+                const uint64_t lmask = (N == 8) ? 0xFFULL : ((1ULL << N) - 1ULL);
+                for (size_t j = 0; j < 64u; j += N) {
+                    auto v = hn::LoadU(d, out + base + j);
+                    hn::StoreMaskBits(d, hn::Eq(v, v), mbuf);
+                    non_nan |= ((static_cast<uint64_t>(mbuf[0]) & lmask) << j);
+                }
+                out_valid[w] = in_m & non_nan;
+            }
+        } else {
+            uint64_t non_nan = 0ULL;
+            for (uint32_t j = 0u; j < cnt; ++j) {
+                double x = a[base + j];
+                double r = (subop == 8u) ? (-x) : (subop == 9u) ? std::fabs(x)
+                         : (subop == 10u) ? ((x < 0.0) ? std::numeric_limits<double>::quiet_NaN() : std::sqrt(x))
+                         : (subop == 12u) ? std::floor(x) : std::ceil(x);
+                out[base + j] = r;
+                if (r == r) non_nan |= (1ULL << j);
+            }
+            out_valid[w] = in_m & non_nan;
+        }
+    }
+}
+
 void F64CmpWords(uint8_t subop,
                  const double* HWY_RESTRICT a,
                  const double* HWY_RESTRICT b,
@@ -384,10 +611,28 @@ namespace impulse::vm::v11::simd {
 HWY_EXPORT(F64ArithVec);
 HWY_EXPORT(F64ArithScalar);
 HWY_EXPORT(F64ArithUnary);
+HWY_EXPORT(F64ArithVecValid);
+HWY_EXPORT(F64ArithScalarValid);
+HWY_EXPORT(F64ArithUnaryValid);
 HWY_EXPORT(F64PackValidWords);
 HWY_EXPORT(F64CmpWords);
 HWY_EXPORT(BitsetOpWords);
 HWY_EXPORT(F64SimMetric);
+
+void f64_arith_vec_valid(uint8_t subop, const double* a, const double* b, const uint64_t* a_valid,
+                         const uint64_t* b_valid, double* out, uint64_t* out_valid, uint32_t n) noexcept {
+    HWY_DYNAMIC_DISPATCH(F64ArithVecValid)(subop, a, b, a_valid, b_valid, out, out_valid, n);
+}
+
+void f64_arith_scalar_valid(uint8_t subop, const double* a, double b_sc, const uint64_t* a_valid,
+                            double* out, uint64_t* out_valid, uint32_t n) noexcept {
+    HWY_DYNAMIC_DISPATCH(F64ArithScalarValid)(subop, a, b_sc, a_valid, out, out_valid, n);
+}
+
+void f64_arith_unary_valid(uint8_t subop, const double* a, const uint64_t* a_valid,
+                           double* out, uint64_t* out_valid, uint32_t n) noexcept {
+    HWY_DYNAMIC_DISPATCH(F64ArithUnaryValid)(subop, a, a_valid, out, out_valid, n);
+}
 
 void f64_arith_vec(uint8_t subop, const double* a, const double* b, double* out, uint32_t n) noexcept {
     HWY_DYNAMIC_DISPATCH(F64ArithVec)(subop, a, b, out, n);

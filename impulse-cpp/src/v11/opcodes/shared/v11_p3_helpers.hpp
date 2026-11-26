@@ -507,15 +507,18 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             acc_vf64_len[d] = vd->length;
             if (vd->length > 0u) {
                 acc_vf64[d] = ws.arena.alloc_array<double>(vd->length, 8);
-                acc_vf64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
-                if (!acc_vf64[d] || !acc_vf64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
+                if (!acc_vf64[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
                 if (need_vf64_accum[d]) {
+                    acc_vf64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
+                    if (!acc_vf64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
                     std::memcpy(acc_vf64[d], vd->f64_data, static_cast<size_t>(vd->length) * sizeof(double));
                     for (uint32_t i = 0; i < vd->length; ++i) acc_vf64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
                 } else if (need_vf64_zero[d]) {
                     std::memset(acc_vf64[d], 0, static_cast<size_t>(vd->length) * sizeof(double));
-                    std::memset(acc_vf64_valid[d], 1, vd->length);
+                    acc_vf64_valid[d] = nullptr; // Lazy: all valid until a NaN occurs
                 } else {
+                    acc_vf64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
+                    if (!acc_vf64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
                     std::memset(acc_vf64[d], 0, static_cast<size_t>(vd->length) * sizeof(double));
                     std::memset(acc_vf64_valid[d], 0, vd->length);
                 }
@@ -1007,18 +1010,15 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         (subop <= 3u || subop == 8u || subop == 9u || subop == 10u) &&
                         (subop >= 8u || scalar || (rv && rv->elem_tag == kVecTagF64 && rv->length >= len))) {
                         if (subop >= 8u) {
-                            simd::f64_arith_unary(subop, lhs->f64_data, out, len);
-                            simd::f64_pack_valid_words(out, lhs->valid_bits, nullptr, false, false, vbits, len);
+                            simd::f64_arith_unary_valid(subop, lhs->f64_data, lhs->valid_bits, out, vbits, len);
                         } else if (scalar) {
                             if (r_sc_ok) {
-                                simd::f64_arith_scalar(subop, lhs->f64_data, r_sc, out, len);
-                                simd::f64_pack_valid_words(out, lhs->valid_bits, nullptr, true, true, vbits, len);
+                                simd::f64_arith_scalar_valid(subop, lhs->f64_data, r_sc, lhs->valid_bits, out, vbits, len);
                             } else {
                                 std::memset(vbits, 0, vwords * sizeof(uint64_t));
                             }
                         } else {
-                            simd::f64_arith_vec(subop, lhs->f64_data, rv->f64_data, out, len);
-                            simd::f64_pack_valid_words(out, lhs->valid_bits, rv->valid_bits, true, true, vbits, len);
+                            simd::f64_arith_vec_valid(subop, lhs->f64_data, rv->f64_data, lhs->valid_bits, rv->valid_bits, out, vbits, len);
                         }
                     } else {
                         std::memset(vbits, 0, vwords * sizeof(uint64_t));
@@ -1181,6 +1181,57 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                             const V11Vector* vals = scalar ? nullptr : ws.v_regs[s2];
                             bool r_ok = scalar && ws.is_r_valid(s2);
                             double r_val = r_ok ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
+                            // Fast path: non-accum scatter_add with all-valid dense sink (1 L2 write per edge!)
+                            if (subop == 2u && !scalar && acc_vf64_valid[dst] == nullptr &&
+                                vals && vals->elem_tag == kVecTagF64 &&
+                                ids->valid_bits == nullptr && ids->length >= len && vals->length >= len) {
+                                double* __restrict dst_arr = acc_vf64[dst];
+                                const uint32_t dst_len = acc_vf64_len[dst];
+                                const int64_t* __restrict id_arr = ids->i64_data;
+                                const double* __restrict val_arr = vals->f64_data;
+                                const uint64_t* val_bits = vals->valid_bits;
+                                for (uint32_t k = 0; k < cm_len; ++k) {
+                                    uint32_t i = cm_ids[k];
+                                    if (val_bits && (((val_bits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL)) continue;
+                                    double v = val_arr[i];
+                                    if (__builtin_expect(!(v == v), 0)) continue;
+                                    uint64_t tgt64 = static_cast<uint64_t>(id_arr[i]);
+                                    if (__builtin_expect(tgt64 >= dst_len, 0)) {
+                                        ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break;
+                                    }
+                                    double sum = dst_arr[tgt64] + v;
+                                    if (__builtin_expect(sum == sum, 1)) {
+                                        dst_arr[tgt64] = sum;
+                                    } else {
+                                        can_rewind_chunks = false;
+                                        acc_vf64_valid[dst] = ws.arena.alloc_array<uint8_t>(dst_len, 8);
+                                        if (!acc_vf64_valid[dst]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+                                        std::memset(acc_vf64_valid[dst], 1, dst_len);
+                                        acc_vf64_valid[dst][tgt64] = 0u;
+                                        for (uint32_t k2 = k + 1u; k2 < cm_len; ++k2) {
+                                            uint32_t i2 = cm_ids[k2];
+                                            if (val_bits && (((val_bits[i2 >> 6] >> (i2 & 63u)) & 1ULL) == 0ULL)) continue;
+                                            double v2 = val_arr[i2];
+                                            if (std::isnan(v2)) continue;
+                                            uint64_t t2 = static_cast<uint64_t>(id_arr[i2]);
+                                            if (t2 >= dst_len) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
+                                            double prev2 = acc_vf64_valid[dst][t2] ? dst_arr[t2] : 0.0;
+                                            double s2v = prev2 + v2;
+                                            if (std::isnan(s2v)) acc_vf64_valid[dst][t2] = 0u;
+                                            else { dst_arr[t2] = s2v; acc_vf64_valid[dst][t2] = 1u; }
+                                        }
+                                        break;
+                                    }
+                                }
+                                if (ws.status == IMPULSE_VM_V11_OK) ws.state.pc += 1u;
+                                break;
+                            }
+                            if (acc_vf64_valid[dst] == nullptr && acc_vf64_len[dst] > 0u) {
+                                can_rewind_chunks = false;
+                                acc_vf64_valid[dst] = ws.arena.alloc_array<uint8_t>(acc_vf64_len[dst], 8);
+                                if (!acc_vf64_valid[dst]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+                                std::memset(acc_vf64_valid[dst], 1, acc_vf64_len[dst]);
+                            }
                             for (uint32_t k = 0; k < cm_len; ++k) {
                                 uint32_t i = cm_ids[k];
                                 if (i >= ids->length || !ids->is_valid_at(i)) continue;
@@ -1370,11 +1421,21 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 uint64_t* vbits = ws.arena.alloc_array<uint64_t>(vwords, 8);
                 auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
                 if (!vbits || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
-                std::memset(vbits, 0, vwords * sizeof(uint64_t));
-                for (uint32_t i = 0; i < n; ++i) {
-                    if (acc_vf64_valid[d][i]) {
-                        vbits[i >> 6] |= (1ULL << (i & 63u));
-                        if (acc_vf64[d][i] != 0.0) any_non_empty = true;
+                if (acc_vf64_valid[d] == nullptr) {
+                    std::memset(vbits, 0xFF, vwords * sizeof(uint64_t));
+                    if (n & 63u) vbits[vwords - 1u] = (1ULL << (n & 63u)) - 1ULL;
+                    if (!any_non_empty) {
+                        for (uint32_t i = 0; i < n; ++i) {
+                            if (acc_vf64[d][i] != 0.0) { any_non_empty = true; break; }
+                        }
+                    }
+                } else {
+                    std::memset(vbits, 0, vwords * sizeof(uint64_t));
+                    for (uint32_t i = 0; i < n; ++i) {
+                        if (acc_vf64_valid[d][i]) {
+                            vbits[i >> 6] |= (1ULL << (i & 63u));
+                            if (acc_vf64[d][i] != 0.0) any_non_empty = true;
+                        }
                     }
                 }
                 new (ov) V11Vector();
