@@ -1,8 +1,8 @@
 /**
- * @file bench_v11_e2e.cpp
+ * @file bench_vm_e2e.cpp
  * @brief Empirical C++20 v0.11 E2E benchmark (2-hop, fixpoint BFS/ReBAC, CC) on real .imps snapshots.
  */
-#include "v11/impulse_v11_bytecode_emitter.hpp"
+#include "vm/impulse_bytecode_emitter.hpp"
 #include "impulse_vm_v11.h"
 #include "impulse_graph.h"
 
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_V11_OK) return 1;
 
     using namespace impulse::compiler::v11;
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
 
     // 1. 2-Hop Walk + Cardinality
     V11ProgramBuilder b2;

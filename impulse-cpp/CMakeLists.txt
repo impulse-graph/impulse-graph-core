@@ -90,13 +90,13 @@ set(IMPULSE_CORE_SOURCES
     src/impulse_simd.cpp
     src/impulse_test_control.cpp
     src/impulse_statement_c_api.cpp
-    src/v11/v11_bytecode_emitter.cpp
-    src/v11/v11_impscm_compiler.cpp
-    src/v11/v11_ictx_v2.cpp
-    src/v11/v11_validator.cpp
-    src/v11/v11_memory_planner.cpp
-    src/v11/v11_vm_dispatch.cpp
-    src/v11/v11_simd_hwy.cpp
+    src/vm/vm_bytecode_emitter.cpp
+    src/vm/vm_impscm_compiler.cpp
+    src/vm/vm_ictx_v2.cpp
+    src/vm/vm_validator.cpp
+    src/vm/vm_memory_planner.cpp
+    src/vm/vm_dispatch.cpp
+    src/vm/vm_simd_hwy.cpp
 )
 
 # --- Shared Library (.dylib / .so / .dll) --------------------------------
@@ -152,8 +152,8 @@ install(FILES
     include/impulse_impk.hpp
     include/impulse_implog.hpp
     include/impulse_impscm.hpp
-    include/v11/impulse_v11_bytecode_emitter.hpp
-    include/v11/impulse_v11_impscm.hpp
+    include/vm/impulse_bytecode_emitter.hpp
+    include/vm/impulse_impscm.hpp
     include/impulse_sexpr.hpp
     DESTINATION include
 )
@@ -209,7 +209,7 @@ if(IMPULSE_BUILD_TESTS)
         test_impscm_mcdc_boundaries
         test_imps_malicious_hardening
         test_property_snapshot
-        test_vm_v11
+        test_vm
     )
     foreach(t ${IMPULSE_ACTIVE_TESTS})
         add_executable(${t} tests/${t}.cpp)
@@ -217,9 +217,9 @@ if(IMPULSE_BUILD_TESTS)
         add_test(NAME ${t} COMMAND ${t})
     endforeach()
 
-    add_executable(v11_fixture_batch_runner tests/v11_fixture_batch_runner.cpp)
-    target_link_libraries(v11_fixture_batch_runner PRIVATE impulse_graph_static)
+    add_executable(vm_fixture_batch_runner tests/vm_fixture_batch_runner.cpp)
+    target_link_libraries(vm_fixture_batch_runner PRIVATE impulse_graph_static)
 
-    add_executable(bench_v11_e2e tests/bench_v11_e2e.cpp)
-    target_link_libraries(bench_v11_e2e PRIVATE impulse_graph_static)
+    add_executable(bench_vm_e2e tests/bench_vm_e2e.cpp)
+    target_link_libraries(bench_vm_e2e PRIVATE impulse_graph_static)
 endif()

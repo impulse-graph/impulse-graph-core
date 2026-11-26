@@ -11,7 +11,7 @@
 #define IMPULSE_V11_OPCODE_MACROS_H
 
 #include "impulse_assert.h"
-#include "v11/impulse_vm_v11_isa.hpp"
+#include "vm/impulse_vm_isa.hpp"
 #include <cstdint>
 #include <cstddef>
 
@@ -27,11 +27,11 @@
 
 /** Compile-time check that an opcode .inc file's declared flags & subop mask match isa_v0_11.yaml. */
 #define V11_OP_CONTRACT_ASSERT(OPCODE_ENUM, EXPECTED_FLAGS, EXPECTED_SUBOP_MASK) \
-    static_assert(::impulse::vm::v11::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::v11::Opcode::OPCODE_ENUM)].defined, \
+    static_assert(::impulse::vm::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::Opcode::OPCODE_ENUM)].defined, \
                   #OPCODE_ENUM " must be defined in kOpcodeMeta"); \
-    static_assert(::impulse::vm::v11::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::v11::Opcode::OPCODE_ENUM)].allowed_flags == (EXPECTED_FLAGS), \
+    static_assert(::impulse::vm::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::Opcode::OPCODE_ENUM)].allowed_flags == (EXPECTED_FLAGS), \
                   #OPCODE_ENUM " allowed_flags drift vs isa_v0_11.yaml"); \
-    static_assert(::impulse::vm::v11::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::v11::Opcode::OPCODE_ENUM)].valid_subop_mask == (EXPECTED_SUBOP_MASK), \
+    static_assert(::impulse::vm::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::Opcode::OPCODE_ENUM)].valid_subop_mask == (EXPECTED_SUBOP_MASK), \
                   #OPCODE_ENUM " valid_subop_mask drift vs isa_v0_11.yaml")
 
 /** Portable 64-bit unsigned overflow-checked addition & multiplication. */

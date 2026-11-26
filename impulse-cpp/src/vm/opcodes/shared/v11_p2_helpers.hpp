@@ -7,7 +7,7 @@
 #include "v11_p1_helpers.hpp"
 #include <bit>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline bool p2_set_f1bit(impulse_vm_workspace_v11_t& ws,
                          uint8_t dst,
@@ -111,4 +111,4 @@ inline double p2_read_numeric_as_f64(const V11Vector& v, uint32_t idx) noexcept 
     return static_cast<double>(v.i64_data[idx]);
 }
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

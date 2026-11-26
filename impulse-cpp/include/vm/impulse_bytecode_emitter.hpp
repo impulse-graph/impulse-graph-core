@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "v11/impulse_vm_v11_isa.hpp"
+#include "vm/impulse_vm_isa.hpp"
 #include "impulse_vm_v11.h"
 #include "impulse_scm_ast.hpp"
 #include "impulse_graph.h"
@@ -75,7 +75,7 @@ public:
     size_t pc() const noexcept { return words_.size(); }
 
     size_t emit(
-        impulse::vm::v11::Opcode op,
+        impulse::vm::Opcode op,
         uint8_t subop = 0,
         uint8_t flags = 0,
         uint8_t dst = 0,
@@ -90,7 +90,7 @@ public:
     }
 
     size_t emit_u16(
-        impulse::vm::v11::Opcode op,
+        impulse::vm::Opcode op,
         uint8_t subop,
         uint8_t flags,
         uint8_t dst,
@@ -114,7 +114,7 @@ public:
     }
 
     void emit_load_const_i64(uint8_t dst, int64_t val) {
-        using namespace impulse::vm::v11;
+        using namespace impulse::vm;
         if (val >= INT32_MIN && val <= INT32_MAX) {
             emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, dst, 0, 0, 0,
                  static_cast<uint32_t>(static_cast<int32_t>(val)));
@@ -128,7 +128,7 @@ public:
     }
 
     void emit_load_const_u64(uint8_t dst, uint64_t val) {
-        using namespace impulse::vm::v11;
+        using namespace impulse::vm;
         if (val <= UINT32_MAX) {
             emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_U32, 0, dst, 0, 0, 0,
                  static_cast<uint32_t>(val));
@@ -141,7 +141,7 @@ public:
     }
 
     void emit_load_const_f64(uint8_t dst, double val) {
-        using namespace impulse::vm::v11;
+        using namespace impulse::vm;
         float f32 = static_cast<float>(val);
         if (static_cast<double>(f32) == val) {
             uint32_t fbits = 0;
@@ -214,8 +214,8 @@ private:
     std::vector<V11ConstPoolDef> const_pool_;
 };
 
-/** Output of V11BytecodeEmitter::emit(). */
-struct V11CompiledProgram {
+/** Output of ImpulseBytecodeEmitter::emit(). */
+struct ImpulseCompiledProgram {
     std::vector<uint8_t> impb_bytes;
     std::vector<uint64_t> code_words;
     std::unordered_map<std::string, uint32_t> relation_id_map;
@@ -226,9 +226,9 @@ struct V11CompiledProgram {
 };
 
 /** Retargeted ImpScheme ScmProgram -> ImpulseVM v0.11.0 bytecode emitter. */
-class V11BytecodeEmitter {
+class ImpulseBytecodeEmitter {
 public:
-    static V11CompiledProgram emit(
+    static ImpulseCompiledProgram emit(
         const std::shared_ptr<impulse::compiler::ImpScmNode>& ast,
         const impulse_snapshot_t* snapshot = nullptr,
         uint16_t start_domain_id = 0

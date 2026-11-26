@@ -1,10 +1,10 @@
-#include "v11/impulse_v11_bytecode_emitter.hpp"
-#include "v11_xxh3.hpp"
+#include "vm/impulse_bytecode_emitter.hpp"
+#include "vm_xxh3.hpp"
 #include "../impulse_graph_internal.hpp"
-#include "v11_internal.hpp"
+#include "vm_internal.hpp"
 
 // Undefine v0.10 macro opcodes pulled in by impulse_scm_ast.hpp -> impulse_vm.h
-// so impulse::vm::v11::Opcode::OP_* enum identifiers resolve cleanly.
+// so impulse::vm::Opcode::OP_* enum identifiers resolve cleanly.
 #undef OP_HALT
 #undef OP_NOP
 #undef OP_TRAP
@@ -34,7 +34,7 @@
 
 namespace impulse::compiler::v11 {
 
-using namespace impulse::vm::v11;
+using namespace impulse::vm;
 
 namespace {
 
@@ -291,17 +291,17 @@ std::vector<uint8_t> V11ProgramBuilder::build_impb(
     return out;
 }
 
-V11CompiledProgram V11BytecodeEmitter::emit(
+ImpulseCompiledProgram ImpulseBytecodeEmitter::emit(
     const std::shared_ptr<impulse::compiler::ImpScmNode>& ast,
     const impulse_snapshot_t* snapshot,
     uint16_t start_domain_id
 ) {
     if (!ast || ast->kind() != NodeKind::PROGRAM) {
-        throw std::invalid_argument("V11BytecodeEmitter expects a ScmProgram root");
+        throw std::invalid_argument("ImpulseBytecodeEmitter expects a ScmProgram root");
     }
 
     V11ProgramBuilder b;
-    V11CompiledProgram result;
+    ImpulseCompiledProgram result;
     result.start_domain_id = start_domain_id;
 
     uint8_t cur_f = 0;        // Ping-pong active frontier F0 <-> F1
@@ -640,14 +640,14 @@ V11CompiledProgram V11BytecodeEmitter::emit(
     // Static verification post-condition: emitted .impb MUST pass impulse_vm_validate_v11
     impulse_vm_validation_v11_t vr = impulse_vm_validate_v11(result.impb_bytes.data(), result.impb_bytes.size());
     if (vr.status != IMPULSE_VM_V11_OK) {
-        throw std::runtime_error("V11BytecodeEmitter produced invalid v0.11 bytecode at pc=" +
+        throw std::runtime_error("ImpulseBytecodeEmitter produced invalid v0.11 bytecode at pc=" +
                                  std::to_string(vr.bad_pc) + " status=" + std::to_string(vr.status));
     }
 
     return result;
 }
 
-std::string V11BytecodeEmitter::disassemble(const std::vector<uint64_t>& words) {
+std::string ImpulseBytecodeEmitter::disassemble(const std::vector<uint64_t>& words) {
     std::ostringstream ss;
     ss << ".version 0.11.0\n.instructions " << words.size() << "\n\n";
     for (size_t pc = 0; pc < words.size(); ++pc) {

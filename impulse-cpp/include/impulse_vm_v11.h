@@ -26,7 +26,7 @@ extern "C" {
 /** Forward-declared caller-owned workspace header (placement-initialized in scratch_buf). */
 typedef struct impulse_vm_workspace_v11 impulse_vm_workspace_v11_t;
 
-/** Normative status codes (matching impulse::vm::v11::Status in impulse_vm_v11_isa.hpp). */
+/** Normative status codes (matching impulse::vm::Status in impulse_vm_v11_isa.hpp). */
 typedef uint32_t impulse_vm_status_v11_t;
 
 #define IMPULSE_VM_V11_OK                     0u

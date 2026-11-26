@@ -1,6 +1,6 @@
-#include "v11/impulse_v11_impscm.hpp"
+#include "vm/impulse_impscm.hpp"
 #include "../impulse_graph_internal.hpp"
-#include "v11_internal.hpp"
+#include "vm_internal.hpp"
 
 #undef OP_HALT
 #undef OP_NOP
@@ -18,7 +18,7 @@
 
 namespace impulse::compiler::v11 {
 
-using namespace impulse::vm::v11;
+using namespace impulse::vm;
 
 namespace {
 

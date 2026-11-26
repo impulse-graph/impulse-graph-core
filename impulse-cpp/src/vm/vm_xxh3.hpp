@@ -1,5 +1,5 @@
 /**
- * @file v11_xxh3.hpp
+ * @file vm_xxh3.hpp
  * @brief Zero-dependency canonical XXH3-64 (v0.8.2) for ImpulseVM v0.11.0 ICTX v2.
  *
  * Bit-identical to V11_xxh3 (impulse-ocaml), V11Xxh3.java (impulse-graph-java),
@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 class V11Xxh3 {
 public:
@@ -315,4 +315,4 @@ private:
     }
 };
 
-} // namespace impulse::vm::v11
+} // namespace impulse::vm

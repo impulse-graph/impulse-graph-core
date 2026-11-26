@@ -1,5 +1,5 @@
 // DO NOT EDIT — Auto-generated from v0.11-refactor/isa_v0_11.yaml
-// by tools/gen_v11_tables.py (impOps v0.11.0, impb v11).
+// by tools/gen_isa_tables.py (impOps v0.11.0, impb v11).
 #pragma once
 
 #include <array>
@@ -108,7 +108,7 @@
 #define IMP_V11_IMM16_LO(w)  (static_cast<uint16_t>(IMP_V11_IMM32(w) & 0xFFFFu))
 #define IMP_V11_IMM16_HI(w)  (static_cast<uint16_t>((IMP_V11_IMM32(w) >> 16) & 0xFFFFu))
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 
 inline constexpr uint32_t kImpbMagic = 0x494D5042u;
 inline constexpr uint16_t kImpbVersion = 11u;
@@ -664,4 +664,4 @@ inline constexpr std::array<OpcodeMeta, 256> kOpcodeMeta = []() constexpr {
   return 0xFFULL | (static_cast<uint64_t>(imm32_hi) << 32);
 }
 
-}  // namespace impulse::vm::v11
+}  // namespace impulse::vm

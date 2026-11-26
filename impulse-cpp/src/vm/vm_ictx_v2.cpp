@@ -4,15 +4,15 @@
  *
  * Bit-identical to V11_ictx_v2 (impulse-ocaml) and V11ContextHash (impulse-graph-java).
  */
-#include "v11_internal.hpp"
-#include "v11_xxh3.hpp"
+#include "vm_internal.hpp"
+#include "vm_xxh3.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
-namespace impulse::vm::v11 {
+namespace impulse::vm {
 namespace {
 
 inline constexpr uint64_t kLogicalSeed  = 0x494D505630313130ULL; // "IMPV0110"
@@ -167,12 +167,12 @@ void serialize_vec(ByteBuf& b, const V11Vector& v) {
 }
 
 } // namespace
-} // namespace impulse::vm::v11
+} // namespace impulse::vm
 
 extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
     const impulse_vm_workspace_v11_t* ws
 ) {
-    using namespace impulse::vm::v11;
+    using namespace impulse::vm;
     if (!ws) {
         return {0ULL, 0ULL};
     }
