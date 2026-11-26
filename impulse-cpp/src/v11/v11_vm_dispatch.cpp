@@ -503,14 +503,25 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
             rels[r].tgt_dom = rd.tgt_domain_id;
             rels[r].has_csr = (rd.csr_row_off_bytes > 0u);
             rels[r].has_csc = (rd.csc_row_off_bytes > 0u);
+            rels[r].has_coo = (rd.coo_src_bytes > 0u && rd.coo_tgt_bytes > 0u) ||
+                              (((rd.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0ULL) && rd.edge_count == 0u);
             rels[r].node_id_width = (rd.node_id_width == 2u || rd.node_id_width == 8u) ? rd.node_id_width : 4u;
             rels[r].edge_idx_width = (rd.edge_index_width == 8u) ? 8u : 4u;
+            uint8_t src_dw = (rd.src_domain_id < snapshot->domains.size()) ? snapshot->domains[rd.src_domain_id].dense_id_width : 0u;
+            uint8_t tgt_dw = (rd.tgt_domain_id < snapshot->domains.size()) ? snapshot->domains[rd.tgt_domain_id].dense_id_width : 0u;
+            uint8_t src_w = (src_dw == 2u || src_dw == 4u || src_dw == 8u) ? src_dw : rels[r].node_id_width;
+            uint8_t tgt_w = (tgt_dw == 2u || tgt_dw == 4u || tgt_dw == 8u) ? tgt_dw : rels[r].node_id_width;
+            rels[r].src_node_width = src_w;
+            rels[r].tgt_node_width = tgt_w;
+            rels[r].coo_src_width = src_w;
+            rels[r].coo_tgt_width = tgt_w;
+            rels[r].coo_order = rd.coo_order;
 
             if (rels[r].has_csr) {
                 const uint32_t n_rows = static_cast<uint32_t>(rd.node_count) + 1u;
                 const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
                 const size_t need_ro = static_cast<size_t>(n_rows) * rels[r].edge_idx_width;
-                const size_t need_ct = static_cast<size_t>(n_edges) * rels[r].node_id_width;
+                const size_t need_ct = static_cast<size_t>(n_edges) * tgt_w;
                 if (rd.csr_row_off_offset > fsz || rd.csr_row_off_bytes > fsz - rd.csr_row_off_offset ||
                     rd.csr_row_off_bytes < need_ro ||
                     rd.csr_col_idx_offset > fsz || rd.csr_col_idx_bytes > fsz - rd.csr_col_idx_offset ||
@@ -525,7 +536,7 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
             if (rels[r].has_csc) {
                 const uint32_t csc_rows = static_cast<uint32_t>(rd.csc_row_off_bytes / rels[r].edge_idx_width);
                 const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
-                const size_t need_ct = static_cast<size_t>(n_edges) * rels[r].node_id_width;
+                const size_t need_ct = static_cast<size_t>(n_edges) * src_w;
                 if (rd.csc_row_off_offset > fsz || rd.csc_row_off_bytes > fsz - rd.csc_row_off_offset ||
                     rd.csc_col_idx_offset > fsz || rd.csc_col_idx_bytes > fsz - rd.csc_col_idx_offset ||
                     rd.csc_col_idx_bytes < need_ct) {
@@ -534,6 +545,26 @@ bool build_snapshot_view_from_imps(const impulse_snapshot_t* snapshot,
                 rels[r].csc_row_off_raw = raw + rd.csc_row_off_offset;
                 rels[r].csc_col_idx_raw = (n_edges > 0u) ? (raw + rd.csc_col_idx_offset) : nullptr;
                 rels[r].csc_row_off_len = csc_rows;
+            }
+            if (rels[r].has_coo) {
+                const uint32_t n_edges = static_cast<uint32_t>(rd.edge_count);
+                const size_t need_src = static_cast<size_t>(n_edges) * src_w;
+                const size_t need_tgt = static_cast<size_t>(n_edges) * tgt_w;
+                if (rd.coo_src_offset > fsz || rd.coo_src_bytes > fsz - rd.coo_src_offset || rd.coo_src_bytes < need_src ||
+                    rd.coo_tgt_offset > fsz || rd.coo_tgt_bytes > fsz - rd.coo_tgt_offset || rd.coo_tgt_bytes < need_tgt) {
+                    return false;
+                }
+                if (rd.coo_edge_id_offset > 0u || rd.coo_edge_id_bytes > 0u) {
+                    const size_t need_eid = static_cast<size_t>(n_edges) * rels[r].edge_idx_width;
+                    if (rd.coo_edge_id_offset > fsz || rd.coo_edge_id_bytes > fsz - rd.coo_edge_id_offset ||
+                        rd.coo_edge_id_bytes < need_eid) {
+                        return false;
+                    }
+                    rels[r].coo_edge_id_raw = (n_edges > 0u) ? (raw + rd.coo_edge_id_offset) : nullptr;
+                }
+                rels[r].coo_src_raw = (n_edges > 0u) ? (raw + rd.coo_src_offset) : nullptr;
+                rels[r].coo_tgt_raw = (n_edges > 0u) ? (raw + rd.coo_tgt_offset) : nullptr;
+                rels[r].coo_edge_count = n_edges;
             }
 
             if (r < snapshot->relation_attributes.size() && !snapshot->relation_attributes[r].empty()) {

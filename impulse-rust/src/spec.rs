@@ -14,6 +14,8 @@ pub const IMPULSE_MAGIC: u32 = 0x494D5053; // "IMPS" Little-Endian
 pub const IMPULSE_VERSION_MAJOR: u16 = 0;
 pub const IMPULSE_VERSION_MINOR: u16 = 10;
 pub const IMPULSE_VERSION_PACKED: u16 = 10; // v0.10.0 packed as 10 (0x000A)
+pub const IMPULSE_VERSION_V011: u16 = 11; // v0.11.0 packed as 11 (0x000B)
+pub const IMPULSE_VERSION_V010: u16 = 10; // v0.10.0 packed as 10 (0x000A)
 pub const IMPULSE_VERSION_V090: u16 = 9; // v0.9.0 packed as 9 (0x0009)
 pub const IMPULSE_DEFAULT_DATA_OFFSET: u32 = 4096;
 
@@ -188,6 +190,8 @@ pub const IMPULSE_SECTION_FEAT_INCLUDE_CSC: u64 = 1 << 0;
 pub const IMP_REL_FEATURE_CSC: u64 = IMPULSE_SECTION_FEAT_INCLUDE_CSC;
 pub const IMP_REL_FEATURE_WEIGHTED: u64 = 1 << 1;
 pub const IMP_REL_FEATURE_VIRTUAL: u64 = 1 << 2;
+pub const IMPULSE_SECTION_FEAT_HAS_COO: u64 = 1 << 8;
+pub const IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS: u64 = 1 << 9;
 
 pub const IMP_REL_CARDINALITY_SHIFT: u64 = 3;
 pub const IMP_REL_CARDINALITY_MASK: u64 = 3 << 3;
@@ -315,6 +319,9 @@ impl DomainCatalogEntryV09 {
     pub fn key_type(&self) -> u8 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.key_type)) }
     }
+    pub fn dense_id_width(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.reserved)) }
+    }
     pub fn name_offset(&self) -> u32 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
     }
@@ -344,6 +351,9 @@ impl DomainCatalogEntry {
     }
     pub fn key_type(&self) -> u8 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.key_type)) }
+    }
+    pub fn dense_id_width(&self) -> u8 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.reserved)) }
     }
     pub fn name_offset(&self) -> u32 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.name_offset)) }
@@ -556,6 +566,23 @@ impl RelationDirectoryEntry {
 }
 
 const_assert_eq!(std::mem::size_of::<RelationDirectoryEntry>(), 128);
+
+/// Spec v0.11.0 192-byte Relation Directory Entry (128B v0.10 prefix + 64B COO block).
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct RelationDirectoryEntryV011 {
+    pub base: RelationDirectoryEntry, // 0x00..0x7F (128B v0.10 prefix)
+    pub coo_src_offset: u64,          // 0x80..0x87
+    pub coo_src_bytes: u64,           // 0x88..0x8F
+    pub coo_tgt_offset: u64,          // 0x90..0x97
+    pub coo_tgt_bytes: u64,           // 0x98..0x9F
+    pub coo_edge_id_offset: u64,      // 0xA0..0xA7
+    pub coo_edge_id_bytes: u64,       // 0xA8..0xAF
+    pub coo_order: u8,                // 0xB0 (0=UNSORTED, 1=SRC, 2=SRC_TGT, 3=TGT, 4=TGT_SRC)
+    pub reserved3: [u8; 15],          // 0xB1..0xBF
+}
+
+const_assert_eq!(std::mem::size_of::<RelationDirectoryEntryV011>(), 192);
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]

@@ -426,6 +426,8 @@ struct V11RelView {
     uint32_t        coo_edge_count  = 0;
     uint8_t         node_id_width   = 4;
     uint8_t         edge_idx_width  = 4;
+    uint8_t         src_node_width  = 0;
+    uint8_t         tgt_node_width  = 0;
     uint8_t         coo_src_width   = 4;
     uint8_t         coo_tgt_width   = 4;
     uint8_t         coo_order       = 0;
@@ -462,12 +464,13 @@ struct V11RelView {
 
     inline uint64_t csr_col_tgt(uint32_t e) const noexcept {
         if (csr_col_idx_raw) {
-            if (node_id_width == 4u) {
+            const uint8_t w = (tgt_node_width != 0u) ? tgt_node_width : node_id_width;
+            if (w == 4u) {
                 uint32_t v = 0;
                 std::memcpy(&v, csr_col_idx_raw + static_cast<size_t>(e) * 4u, 4u);
                 return v;
             }
-            if (node_id_width == 2u) {
+            if (w == 2u) {
                 uint16_t v = 0;
                 std::memcpy(&v, csr_col_idx_raw + static_cast<size_t>(e) * 2u, 2u);
                 return v;
@@ -527,12 +530,13 @@ struct V11RelView {
     }
 
     inline uint64_t csc_col_src(uint32_t e) const noexcept {
-        if (node_id_width == 4u) {
+        const uint8_t w = (src_node_width != 0u) ? src_node_width : node_id_width;
+        if (w == 4u) {
             uint32_t x = 0;
             std::memcpy(&x, csc_col_idx_raw + static_cast<size_t>(e) * 4u, 4u);
             return x;
         }
-        if (node_id_width == 2u) {
+        if (w == 2u) {
             uint16_t x = 0;
             std::memcpy(&x, csc_col_idx_raw + static_cast<size_t>(e) * 2u, 2u);
             return x;

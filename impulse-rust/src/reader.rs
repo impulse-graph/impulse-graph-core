@@ -8,6 +8,7 @@ use std::path::Path;
 pub struct DomainInfo {
     pub domain_id: u16,
     pub key_type: KeyType,
+    pub dense_id_width: u8,
     pub name: String,
     pub node_count: u64,
     pub key_attr_index: u16,
@@ -34,6 +35,13 @@ pub struct RelationInfo {
     pub csc_row_off_bytes: u64,
     pub csc_col_idx_offset: u64,
     pub csc_col_idx_bytes: u64,
+    pub coo_src_offset: u64,
+    pub coo_src_bytes: u64,
+    pub coo_tgt_offset: u64,
+    pub coo_tgt_bytes: u64,
+    pub coo_edge_id_offset: u64,
+    pub coo_edge_id_bytes: u64,
+    pub coo_order: u8,
     pub attributes: Vec<AttributeInfo>,
     pub virtual_component_ids: Vec<u16>,
 }
@@ -43,6 +51,11 @@ impl RelationInfo {
         (self.section_features & crate::spec::IMPULSE_SECTION_FEAT_INCLUDE_CSC) != 0
             || self.csc_row_off_bytes > 0
             || self.csc_col_idx_bytes > 0
+    }
+
+    pub fn has_coo(&self) -> bool {
+        (self.section_features & crate::spec::IMPULSE_SECTION_FEAT_HAS_COO) != 0
+            || (self.coo_src_bytes > 0 && self.coo_tgt_bytes > 0)
     }
 
     pub fn is_virtual(&self) -> bool {
@@ -195,7 +208,9 @@ impl SnapshotReader {
         }
 
         let ver = header.version();
-        let is_modern = ver == IMPULSE_VERSION_PACKED || ver == IMPULSE_VERSION_V090;
+        let is_v11 = ver == IMPULSE_VERSION_V011;
+        let is_v10_plus = ver == IMPULSE_VERSION_V010 || is_v11;
+        let is_modern = is_v10_plus || ver == IMPULSE_VERSION_V090;
         if !is_modern && ver != 2 && ver != 0x0204 {
             crate::assert::check_well_formed(false, "Unsupported snapshot format version");
             return Err(ImpulseError::UnsupportedVersion);
@@ -282,9 +297,9 @@ impl SnapshotReader {
                 cur += 128 - rem;
             }
 
-            // Parse Domain Catalog Entries Array (32B + inline AttributeDescriptors in v0.10.0; 16B in v0.9.0)
+            // Parse Domain Catalog Entries Array (32B + inline AttributeDescriptors in v0.10/v0.11; 16B in v0.9.0)
             for _d_idx in 0..domain_count {
-                if ver == IMPULSE_VERSION_PACKED {
+                if is_v10_plus {
                     if cur + std::mem::size_of::<DomainCatalogEntry>() > slice.len() {
                         return Err(ImpulseError::BufferOverflow);
                     }
@@ -292,6 +307,19 @@ impl SnapshotReader {
                         std::ptr::read_unaligned(slice[cur..].as_ptr() as *const DomainCatalogEntry)
                     };
                     cur += std::mem::size_of::<DomainCatalogEntry>();
+                    let dense_id_width = if is_v11 {
+                        dom_entry.dense_id_width()
+                    } else {
+                        0
+                    };
+                    if is_v11
+                        && dense_id_width != 0
+                        && dense_id_width != 2
+                        && dense_id_width != 4
+                        && dense_id_width != 8
+                    {
+                        return Err(ImpulseError::UnsupportedSectionFeature);
+                    }
 
                     let key_type = KeyType::from_u8_for_version(dom_entry.key_type(), ver)
                         .ok_or(ImpulseError::InvalidArgument)?;
@@ -356,6 +384,7 @@ impl SnapshotReader {
                     domains.push(DomainInfo {
                         domain_id: dom_entry.domain_id(),
                         key_type,
+                        dense_id_width,
                         name,
                         node_count: dom_entry.node_count(),
                         key_attr_index,
@@ -379,6 +408,7 @@ impl SnapshotReader {
                     domains.push(DomainInfo {
                         domain_id: dom_entry.domain_id(),
                         key_type,
+                        dense_id_width: 0,
                         name,
                         node_count: dom_entry.node_count(),
                         key_attr_index: 0xFFFF,
@@ -392,15 +422,52 @@ impl SnapshotReader {
                 cur += 128 - rem;
             }
 
-            // Parse Relation Directory Table
+            // Parse Relation Directory Table (192B in v0.11, 128B in v0.9/v0.10)
             for _ in 0..relation_count {
-                if cur + std::mem::size_of::<RelationDirectoryEntry>() > slice.len() {
-                    return Err(ImpulseError::BufferOverflow);
-                }
-                let rel_entry = unsafe {
-                    std::ptr::read_unaligned(slice[cur..].as_ptr() as *const RelationDirectoryEntry)
+                let (
+                    rel_entry,
+                    coo_src_offset,
+                    coo_src_bytes,
+                    coo_tgt_offset,
+                    coo_tgt_bytes,
+                    coo_edge_id_offset,
+                    coo_edge_id_bytes,
+                    coo_order,
+                ) = if is_v11 {
+                    if cur + std::mem::size_of::<RelationDirectoryEntryV011>() > slice.len() {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+                    let v11 = unsafe {
+                        std::ptr::read_unaligned(
+                            slice[cur..].as_ptr() as *const RelationDirectoryEntryV011
+                        )
+                    };
+                    cur += std::mem::size_of::<RelationDirectoryEntryV011>();
+                    if v11.coo_order > 4 {
+                        return Err(ImpulseError::UnsupportedSectionFeature);
+                    }
+                    (
+                        v11.base,
+                        v11.coo_src_offset,
+                        v11.coo_src_bytes,
+                        v11.coo_tgt_offset,
+                        v11.coo_tgt_bytes,
+                        v11.coo_edge_id_offset,
+                        v11.coo_edge_id_bytes,
+                        v11.coo_order,
+                    )
+                } else {
+                    if cur + std::mem::size_of::<RelationDirectoryEntry>() > slice.len() {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+                    let v10 = unsafe {
+                        std::ptr::read_unaligned(
+                            slice[cur..].as_ptr() as *const RelationDirectoryEntry
+                        )
+                    };
+                    cur += std::mem::size_of::<RelationDirectoryEntry>();
+                    (v10, 0, 0, 0, 0, 0, 0, 0)
                 };
-                cur += std::mem::size_of::<RelationDirectoryEntry>();
 
                 let attr_count = rel_entry.attr_count as usize;
                 let mut attributes = Vec::with_capacity(attr_count);
@@ -476,6 +543,13 @@ impl SnapshotReader {
                     csc_row_off_bytes: rel_entry.csc_row_off_bytes,
                     csc_col_idx_offset: rel_entry.csc_col_idx_offset,
                     csc_col_idx_bytes: rel_entry.csc_col_idx_bytes,
+                    coo_src_offset,
+                    coo_src_bytes,
+                    coo_tgt_offset,
+                    coo_tgt_bytes,
+                    coo_edge_id_offset,
+                    coo_edge_id_bytes,
+                    coo_order,
                     attributes,
                     virtual_component_ids,
                 });
@@ -558,6 +632,7 @@ impl SnapshotReader {
                 domains.push(DomainInfo {
                     domain_id: dom_id,
                     key_type: key_t,
+                    dense_id_width: 0,
                     name,
                     node_count: 0,
                     key_attr_index: 0xFFFF,
@@ -612,6 +687,13 @@ impl SnapshotReader {
                     csc_row_off_bytes: 0,
                     csc_col_idx_offset: 0,
                     csc_col_idx_bytes: 0,
+                    coo_src_offset: 0,
+                    coo_src_bytes: 0,
+                    coo_tgt_offset: 0,
+                    coo_tgt_bytes: 0,
+                    coo_edge_id_offset: 0,
+                    coo_edge_id_bytes: 0,
+                    coo_order: 0,
                     attributes: Vec::new(),
                     virtual_component_ids: Vec::new(),
                 });

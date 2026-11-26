@@ -34,7 +34,7 @@ impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t do
         impulse_domain_catalog_entry_t dom{};
         dom.domain_id = domain_id;
         dom.key_type = key_type;
-        dom.reserved1 = 0;
+        dom.dense_id_width = 0;
         dom.name_offset = 0; // Set during finalize via string table
         dom.node_count = 0;
         dom.attr_count = 0;
@@ -50,6 +50,15 @@ impulse_status_t impulse_writer_add_domain(impulse_writer_t* writer, uint16_t do
 impulse_status_t impulse_writer_set_domain_node_count(impulse_writer_t* writer, uint16_t domain_index, uint64_t node_count) {
     if (!writer || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
     writer->domains[domain_index].node_count = node_count;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_writer_set_domain_dense_id_width(impulse_writer_t* writer, uint16_t domain_index, uint8_t dense_id_width) {
+    if (!writer || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (dense_id_width != 0 && dense_id_width != 2 && dense_id_width != 4 && dense_id_width != 8) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    writer->domains[domain_index].dense_id_width = dense_id_width;
     return IMPULSE_OK;
 }
 
@@ -126,6 +135,78 @@ impulse_status_t impulse_writer_add_relation(
         rel.col_indices.resize(col_indices_bytes);
         if (col_indices_bytes > 0 && col_indices_data != nullptr) {
             std::memcpy(rel.col_indices.data(), col_indices_data, col_indices_bytes);
+        }
+
+        writer->relations.push_back(std::move(rel));
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
+}
+
+impulse_status_t impulse_writer_add_relation_v11(
+    impulse_writer_t* writer,
+    uint16_t src_domain_id,
+    uint16_t tgt_domain_id,
+    uint8_t encoding_id,
+    uint8_t node_id_width,
+    uint8_t edge_index_width,
+    uint64_t node_count,
+    uint64_t edge_count,
+    uint64_t section_features,
+    const void* csr_row_offsets_data, uint64_t csr_row_offsets_bytes,
+    const void* csr_col_indices_data, uint64_t csr_col_indices_bytes,
+    const void* csc_row_offsets_data, uint64_t csc_row_offsets_bytes,
+    const void* csc_col_indices_data, uint64_t csc_col_indices_bytes,
+    const void* coo_src_data, uint64_t coo_src_bytes,
+    const void* coo_tgt_data, uint64_t coo_tgt_bytes,
+    const void* coo_edge_id_data, uint64_t coo_edge_id_bytes,
+    uint8_t coo_order
+) {
+    if (!writer) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (coo_order > IMPULSE_COO_ORDER_TGT_SRC) return IMPULSE_ERR_INVALID_ARGUMENT;
+    try {
+        impulse_writer_relation rel;
+        rel.relation_id = static_cast<uint16_t>(writer->relations.size());
+        rel.src_domain_id = src_domain_id;
+        rel.tgt_domain_id = tgt_domain_id;
+        rel.encoding_id = encoding_id;
+        rel.node_id_width = (node_id_width == 2 || node_id_width == 4 || node_id_width == 8) ? node_id_width : 4;
+        rel.edge_index_width = (edge_index_width == 8) ? 8 : 4;
+        rel.node_count = node_count;
+        rel.edge_count = edge_count;
+        rel.section_features = section_features;
+        rel.coo_order = coo_order;
+
+        if (csr_row_offsets_data && csr_row_offsets_bytes > 0) {
+            rel.row_offsets.resize(csr_row_offsets_bytes);
+            std::memcpy(rel.row_offsets.data(), csr_row_offsets_data, csr_row_offsets_bytes);
+        }
+        if (csr_col_indices_data && csr_col_indices_bytes > 0) {
+            rel.col_indices.resize(csr_col_indices_bytes);
+            std::memcpy(rel.col_indices.data(), csr_col_indices_data, csr_col_indices_bytes);
+        }
+        if (csc_row_offsets_data && csc_row_offsets_bytes > 0) {
+            rel.csc_row_offsets.resize(csc_row_offsets_bytes);
+            std::memcpy(rel.csc_row_offsets.data(), csc_row_offsets_data, csc_row_offsets_bytes);
+            rel.section_features |= IMP_REL_FEATURE_INCLUDE_CSC;
+        }
+        if (csc_col_indices_data && csc_col_indices_bytes > 0) {
+            rel.csc_col_indices.resize(csc_col_indices_bytes);
+            std::memcpy(rel.csc_col_indices.data(), csc_col_indices_data, csc_col_indices_bytes);
+        }
+        if (coo_src_data && coo_src_bytes > 0) {
+            rel.coo_src.resize(coo_src_bytes);
+            std::memcpy(rel.coo_src.data(), coo_src_data, coo_src_bytes);
+            rel.section_features |= IMPULSE_SECTION_FEAT_HAS_COO;
+        }
+        if (coo_tgt_data && coo_tgt_bytes > 0) {
+            rel.coo_tgt.resize(coo_tgt_bytes);
+            std::memcpy(rel.coo_tgt.data(), coo_tgt_data, coo_tgt_bytes);
+            rel.section_features |= IMPULSE_SECTION_FEAT_HAS_COO;
+        }
+        if (coo_edge_id_data && coo_edge_id_bytes > 0) {
+            rel.coo_edge_ids.resize(coo_edge_id_bytes);
+            std::memcpy(rel.coo_edge_ids.data(), coo_edge_id_data, coo_edge_id_bytes);
+            rel.section_features |= IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS;
         }
 
         writer->relations.push_back(std::move(rel));
@@ -371,15 +452,61 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
     for (auto& rel : writer->relations) {
         align4096(payload);
 
-        align128(payload);
-        uint64_t csr_row_off_offset = rel_blocks_base_offset + payload.size();
+        uint64_t csr_row_off_offset = 0;
         uint64_t csr_row_off_bytes = rel.row_offsets.size();
-        payload.insert(payload.end(), rel.row_offsets.begin(), rel.row_offsets.end());
+        if (csr_row_off_bytes > 0) {
+            align128(payload);
+            csr_row_off_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.row_offsets.begin(), rel.row_offsets.end());
+        }
 
-        align128(payload);
-        uint64_t csr_col_idx_offset = rel_blocks_base_offset + payload.size();
+        uint64_t csr_col_idx_offset = 0;
         uint64_t csr_col_idx_bytes = rel.col_indices.size();
-        payload.insert(payload.end(), rel.col_indices.begin(), rel.col_indices.end());
+        if (csr_col_idx_bytes > 0) {
+            align128(payload);
+            csr_col_idx_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.col_indices.begin(), rel.col_indices.end());
+        }
+
+        uint64_t csc_row_off_offset = 0;
+        uint64_t csc_row_off_bytes = rel.csc_row_offsets.size();
+        if (csc_row_off_bytes > 0) {
+            align128(payload);
+            csc_row_off_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.csc_row_offsets.begin(), rel.csc_row_offsets.end());
+        }
+
+        uint64_t csc_col_idx_offset = 0;
+        uint64_t csc_col_idx_bytes = rel.csc_col_indices.size();
+        if (csc_col_idx_bytes > 0) {
+            align128(payload);
+            csc_col_idx_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.csc_col_indices.begin(), rel.csc_col_indices.end());
+        }
+
+        uint64_t coo_src_offset = 0;
+        uint64_t coo_src_bytes = rel.coo_src.size();
+        if (coo_src_bytes > 0) {
+            align128(payload);
+            coo_src_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.coo_src.begin(), rel.coo_src.end());
+        }
+
+        uint64_t coo_tgt_offset = 0;
+        uint64_t coo_tgt_bytes = rel.coo_tgt.size();
+        if (coo_tgt_bytes > 0) {
+            align128(payload);
+            coo_tgt_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.coo_tgt.begin(), rel.coo_tgt.end());
+        }
+
+        uint64_t coo_edge_id_offset = 0;
+        uint64_t coo_edge_id_bytes = rel.coo_edge_ids.size();
+        if (coo_edge_id_bytes > 0) {
+            align128(payload);
+            coo_edge_id_offset = rel_blocks_base_offset + payload.size();
+            payload.insert(payload.end(), rel.coo_edge_ids.begin(), rel.coo_edge_ids.end());
+        }
 
         std::vector<TempAttr> temp_attrs;
         temp_attrs.reserve(rel.attributes.size());
@@ -404,7 +531,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             temp_attrs.push_back(ta);
         }
 
-        // Relation Directory Entry
+        // Relation Directory Entry (192B v0.11.0)
         impulse_relation_directory_entry_t entry{};
         entry.relation_id = rel.relation_id;
         entry.src_domain_id = rel.src_domain_id;
@@ -417,16 +544,26 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.edge_count = rel.edge_count;
         uint64_t sec_feats = rel.section_features;
         if (!rel.attributes.empty()) sec_feats |= 0x02ULL; // IMP_REL_FEATURE_WEIGHTED
+        if (csc_row_off_bytes > 0) sec_feats |= IMP_REL_FEATURE_INCLUDE_CSC;
+        if (coo_src_bytes > 0 || coo_tgt_bytes > 0) sec_feats |= IMPULSE_SECTION_FEAT_HAS_COO;
+        if (coo_edge_id_bytes > 0) sec_feats |= IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS;
         entry.section_features = sec_feats;
         entry.csr_row_off_offset = csr_row_off_offset;
         entry.csr_row_off_bytes = csr_row_off_bytes;
         entry.csr_col_idx_offset = csr_col_idx_offset;
         entry.csr_col_idx_bytes = csr_col_idx_bytes;
-        entry.csc_row_off_offset = 0;
-        entry.csc_row_off_bytes = 0;
-        entry.csc_col_idx_offset = 0;
-        entry.csc_col_idx_bytes = 0;
+        entry.csc_row_off_offset = csc_row_off_offset;
+        entry.csc_row_off_bytes = csc_row_off_bytes;
+        entry.csc_col_idx_offset = csc_col_idx_offset;
+        entry.csc_col_idx_bytes = csc_col_idx_bytes;
         entry.attr_count = static_cast<uint16_t>(rel.attributes.size());
+        entry.coo_src_offset = coo_src_offset;
+        entry.coo_src_bytes = coo_src_bytes;
+        entry.coo_tgt_offset = coo_tgt_offset;
+        entry.coo_tgt_bytes = coo_tgt_bytes;
+        entry.coo_edge_id_offset = coo_edge_id_offset;
+        entry.coo_edge_id_bytes = coo_edge_id_bytes;
+        entry.coo_order = rel.coo_order;
 
         dir_table.resize(dir_table.size() + sizeof(entry));
         std::memcpy(dir_table.data() + dir_table.size() - sizeof(entry), &entry, sizeof(entry));
