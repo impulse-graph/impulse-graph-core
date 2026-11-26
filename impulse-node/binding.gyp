@@ -7,13 +7,16 @@
         "../impulse-cpp/src/impulse_graph.cpp",
         "../impulse-cpp/src/impulse_snapshot_writer.cpp",
         "../impulse-cpp/src/impulse_index.cpp",
-        "../impulse-cpp/src/impulse_vm.cpp",
-        "../impulse-cpp/src/impulse_vm_context.cpp",
-        "../impulse-cpp/src/impulse_vm_fluent.cpp",
-        "../impulse-cpp/src/impulse_vm_fluent_traversal.cpp",
-        "../impulse-cpp/src/impulse_vm_fluent_multilane.cpp",
+        "../impulse-cpp/src/impulse_test_control.cpp",
         "../impulse-cpp/src/impulse_statement_c_api.cpp",
-        "../impulse-cpp/src/impulse_simd.cpp"
+        "../impulse-cpp/src/impulse_simd.cpp",
+        "../impulse-cpp/src/vm/vm_bytecode_emitter.cpp",
+        "../impulse-cpp/src/vm/vm_impscm_compiler.cpp",
+        "../impulse-cpp/src/vm/vm_ictx_v2.cpp",
+        "../impulse-cpp/src/vm/vm_validator.cpp",
+        "../impulse-cpp/src/vm/vm_memory_planner.cpp",
+        "../impulse-cpp/src/vm/vm_dispatch.cpp",
+        "../impulse-cpp/src/vm/vm_simd_hwy.cpp"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",

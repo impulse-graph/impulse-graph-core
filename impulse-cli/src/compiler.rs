@@ -16,7 +16,8 @@ pub enum LanguageTarget {
     Cel,
 }
 
-pub fn compile_script_to_impas(
+pub fn compile_script_to_impas_with_snapshot(
+    snapshot_path: Option<&std::path::Path>,
     source: &str,
     target: LanguageTarget,
 ) -> Result<String, Box<dyn Error>> {
@@ -32,9 +33,22 @@ pub fn compile_script_to_impas(
     let mut buffer = vec![0u8; 128 * 1024];
     let mut written = 0;
 
+    let mut snap_ptr = std::ptr::null_mut();
+    if let Some(p) = snapshot_path {
+        let c_path = CString::new(p.to_str().ok_or("Invalid snapshot path")?)?;
+        let mut status = 0i32;
+        snap_ptr =
+            unsafe { impulse_graph::ffi::impulse_snapshot_open(c_path.as_ptr(), &mut status) };
+        if snap_ptr.is_null() {
+            return Err(
+                format!("Failed to open snapshot for compilation: status {}", status).into(),
+            );
+        }
+    }
+
     let rc = unsafe {
         impulse_graph::ffi::impulse_compile_to_impas(
-            std::ptr::null(),
+            snap_ptr,
             c_source.as_ptr(),
             lang,
             buffer.as_mut_ptr() as *mut c_char,
@@ -43,12 +57,23 @@ pub fn compile_script_to_impas(
         )
     };
 
+    if !snap_ptr.is_null() {
+        unsafe { impulse_graph::ffi::impulse_snapshot_close(snap_ptr) };
+    }
+
     if rc == 0 && written > 0 {
         let s = unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) };
         Ok(s.to_string_lossy().into_owned())
     } else {
         Err(format!("Compilation failed with status code {}", rc).into())
     }
+}
+
+pub fn compile_script_to_impas(
+    source: &str,
+    target: LanguageTarget,
+) -> Result<String, Box<dyn Error>> {
+    compile_script_to_impas_with_snapshot(None, source, target)
 }
 
 pub fn compile_to_impas(source: &str) -> Result<String, Box<dyn Error>> {

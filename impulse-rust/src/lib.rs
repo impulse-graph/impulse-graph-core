@@ -6,6 +6,7 @@
 pub mod assert;
 pub mod ffi;
 pub mod hexio;
+pub mod isa_tables;
 pub mod mmap;
 pub mod reader;
 pub mod simd;
@@ -942,6 +943,31 @@ mod tests {
             Vec::<u64>::new()
         );
         assert_eq!(reader.get_neighbors(z_idx as u16, 3).unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn test_v011_coo_roundtrip_write_read() {
+        let mut writer = SnapshotWriter::new("__unused_v011_coo.imps");
+        writer.add_domain(0, KeyType::Int32, "User");
+        writer.set_domain_node_count(0, 4);
+        writer.set_domain_dense_id_width(0, 4);
+
+        // Rel 0: FOLLOWS with dedicated v0.11 COO arrays (SRC_MAJOR)
+        writer.add_relation(0, 0, 4, 3, vec![0, 2, 3, 3, 3], vec![1, 2, 3]);
+        writer.set_relation_name(0, "FOLLOWS");
+        writer.set_relation_coo_v11(0, 1); // SRC_MAJOR
+
+        let bytes = writer.finalize_to_bytes().unwrap();
+        let reader = SnapshotReader::from_bytes(bytes).unwrap();
+        assert_eq!(reader.header().version(), 11);
+        assert_eq!(reader.relations().len(), 1);
+        let rel = &reader.relations()[0];
+        assert!(rel.has_coo());
+        assert_eq!(rel.coo_order, 1);
+        assert!(rel.coo_src_offset > 0 && rel.coo_src_bytes > 0);
+        assert!(rel.coo_tgt_offset > 0 && rel.coo_tgt_bytes > 0);
+        assert_eq!(reader.get_neighbors(0, 0).unwrap(), vec![1, 2]);
+        assert_eq!(reader.get_neighbors(0, 1).unwrap(), vec![3]);
     }
 }
 

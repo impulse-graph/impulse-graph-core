@@ -56,19 +56,40 @@ public unsafe struct ImpulseRelationEntry
 }
 
 /// <summary>
-/// VM Execution State Frame (640 bytes, 64-byte aligned).
-/// Maps to impulse_vm_state_t in impulse_vm.h.
+/// Static AOT memory planner output (impulse_vm_memory_plan_t in impulse_vm_v11.h).
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Size = 640)]
-public unsafe struct ImpulseVmState
+[StructLayout(LayoutKind.Sequential)]
+public struct ImpulseVmMemoryPlan
 {
-    public uint Pc;
-    public uint Reserved;
-    public ulong Flags;
-    public fixed ulong Registers[64];
-    public fixed byte RegisterTypes[64];
-    public nint QueryContext;
-    public fixed uint CallStack[8];
-    public uint CallStackDepth;
-    public uint ReservedPadding2;
+    public nuint MinScratchBytes;
+    public nuint GuaranteedScratchBytes;
+    public nuint MaxResultBytes;
+}
+
+/// <summary>
+/// v0.11 ImpulseVM parameter binding (impulse_vm_param_binding_v11_t).
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct ImpulseVmParamBindingV11
+{
+    public uint ParamId;
+    public uint Kind;
+    public ushort DomainId;
+    public ushort Reserved;
+    public uint Count;
+    public ulong ScalarBits;
+    public void* DataPtr;
+    public ulong* ValidBits;
+}
+
+/// <summary>
+/// v0.11 ImpulseVM execution parameters (impulse_vm_params_v11_t).
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct ImpulseVmParamsV11
+{
+    public ulong GasLimit;
+    public void* GeometryOverride;
+    public ImpulseVmParamBindingV11* Bindings;
+    public uint BindingCount;
 }

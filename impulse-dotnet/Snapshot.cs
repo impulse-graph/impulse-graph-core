@@ -124,32 +124,54 @@ public sealed class Snapshot : IDisposable
         return ExecuteQueryCore(query, context, inputParam, ownedContext: null);
     }
 
-    private unsafe ExecutionResult ExecuteQueryCore(Query query, VmContext context, ulong inputParam, VmContext? ownedContext)
+    /// <summary>
+    /// Executes a .impb v0.11 bytecode container using a caller-owned VmContext workspace.
+    /// </summary>
+    public unsafe ImpulseVmStatus ExecuteImpbV11(
+        ReadOnlySpan<byte> impbBytes,
+        VmContext context,
+        ulong? seedNode = null,
+        ushort domainId = 0,
+        ulong gasLimit = ulong.MaxValue)
     {
         EnsureOpen();
-        ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(context);
-
-        var span = query.AsSpan();
-        if (span.IsEmpty)
+        if (impbBytes.IsEmpty)
         {
-            throw new ArgumentException("Query bytecode instruction span cannot be empty", nameof(query));
+            throw new ArgumentException("Bytecode container cannot be empty", nameof(impbBytes));
         }
 
-        ImpulseVmState state = default;
-        var ctxHandle = context.Handle;
-        if (ctxHandle == nint.Zero)
+        var wsHandle = context.Handle;
+        if (wsHandle == nint.Zero)
         {
-            throw new ObjectDisposedException(nameof(VmContext), "VM context handle has been disposed.");
+            throw new ObjectDisposedException(nameof(VmContext), "VM workspace has been disposed.");
         }
-        state.QueryContext = ctxHandle;
 
-        ImpulseVmStatus status;
+        ulong seed = seedNode ?? 0UL;
+        ImpulseVmParamBindingV11 binding = new()
+        {
+            ParamId = 0,
+            Kind = 6, // IMPULSE_VM_V11_PARAM_FRONTIER_IDS
+            DomainId = domainId,
+            Count = seedNode.HasValue ? 1u : 0u,
+            DataPtr = seedNode.HasValue ? &seed : null,
+        };
+        ImpulseVmParamsV11 execParams = new()
+        {
+            GasLimit = gasLimit,
+            GeometryOverride = null,
+            Bindings = seedNode.HasValue ? &binding : null,
+            BindingCount = seedNode.HasValue ? 1u : 0u,
+        };
+
+        uint rc;
+        nuint outBytes;
         try
         {
-            fixed (ImpulseInstruction* ptr = span)
+            fixed (byte* ptr = impbBytes)
             {
-                status = NativeMethods.impulse_vm_execute(ptr, (nuint)span.Length, &state, inputParam);
+                rc = NativeMethods.impulse_vm_execute_v11(
+                    ptr, (nuint)impbBytes.Length, Handle, &execParams, wsHandle, null, 0, out outBytes);
             }
         }
         finally
@@ -158,13 +180,12 @@ public sealed class Snapshot : IDisposable
             GC.KeepAlive(context);
         }
 
-        ulong[] registers = new ulong[64];
-        for (int i = 0; i < 64; i++)
-        {
-            registers[i] = state.Registers[i];
-        }
+        return (ImpulseVmStatus)rc;
+    }
 
-        return new ExecutionResult(status, state.Flags, registers, ownedContext);
+    private unsafe ExecutionResult ExecuteQueryCore(Query query, VmContext context, ulong inputParam, VmContext? ownedContext)
+    {
+        throw new NotSupportedException("Legacy v0.10 instruction execution has been retired; use ExecuteImpbV11 with .impb v0.11 containers.");
     }
 
     ~Snapshot() => Dispose(disposing: false);

@@ -79,7 +79,7 @@ extra_compile_args = (
     else ["-std=c++20"]
 )
 
-version = os.environ.get("IMPULSE_VERSION", "0.10.1").strip()
+version = os.environ.get("IMPULSE_VERSION", "0.11.0").strip()
 if version.startswith("v"):
     version = version[1:]
 
@@ -88,17 +88,19 @@ ext_modules = [
         "impulse_graph._impulse_native",
         [
             "src/impulse_python.cpp",
-            f"{rel_src_prefix}/impulse_bytecode_emitter.cpp",
             f"{rel_src_prefix}/impulse_graph.cpp",
             f"{rel_src_prefix}/impulse_snapshot_writer.cpp",
             f"{rel_src_prefix}/impulse_index.cpp",
             f"{rel_src_prefix}/impulse_simd.cpp",
-            f"{rel_src_prefix}/impulse_vm.cpp",
-            f"{rel_src_prefix}/impulse_vm_context.cpp",
-            f"{rel_src_prefix}/impulse_vm_fluent.cpp",
-            f"{rel_src_prefix}/impulse_vm_fluent_traversal.cpp",
-            f"{rel_src_prefix}/impulse_vm_fluent_multilane.cpp",
+            f"{rel_src_prefix}/impulse_test_control.cpp",
             f"{rel_src_prefix}/impulse_statement_c_api.cpp",
+            f"{rel_src_prefix}/vm/vm_bytecode_emitter.cpp",
+            f"{rel_src_prefix}/vm/vm_impscm_compiler.cpp",
+            f"{rel_src_prefix}/vm/vm_ictx_v2.cpp",
+            f"{rel_src_prefix}/vm/vm_validator.cpp",
+            f"{rel_src_prefix}/vm/vm_memory_planner.cpp",
+            f"{rel_src_prefix}/vm/vm_dispatch.cpp",
+            f"{rel_src_prefix}/vm/vm_simd_hwy.cpp",
         ]
         + (hwy_sources if not extra_objects else []),
         include_dirs=[

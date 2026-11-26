@@ -8,73 +8,44 @@ import numpy as np
 
 try:
     from ._impulse_native import (
-        CompiledQuery as _NativeCompiledQuery,
-    )
-    from ._impulse_native import (
-        Instruction,
-        RegisterType,
+        Statement,
         VmStatus,
+        VmWorkspace,
         opcodes,
-    )
-    from ._impulse_native import (
-        QueryBuilder as _NativeQueryBuilder,
-    )
-    from ._impulse_native import (
-        QueryResult as _NativeQueryResult,
-    )
-    from ._impulse_native import (
-        VmContext as _NativeVmContext,
-    )
-    from ._impulse_native import (
-        VmState as _NativeVmState,
-    )
-    from ._impulse_native import (
         optimize_cel as _native_optimize_cel,
-    )
-    from ._impulse_native import (
         parse_cel as _native_parse_cel,
+        plan_memory,
+        validate_bytecode,
     )
 except ImportError:
     try:
         from _impulse_native import (
-            CompiledQuery as _NativeCompiledQuery,
-        )
-        from _impulse_native import (
-            Instruction,
-            RegisterType,
+            Statement,
             VmStatus,
+            VmWorkspace,
             opcodes,
-        )
-        from _impulse_native import (
-            QueryBuilder as _NativeQueryBuilder,
-        )
-        from _impulse_native import (
-            QueryResult as _NativeQueryResult,
-        )
-        from _impulse_native import (
-            VmContext as _NativeVmContext,
-        )
-        from _impulse_native import (
-            VmState as _NativeVmState,
-        )
-        from _impulse_native import (
             optimize_cel as _native_optimize_cel,
-        )
-        from _impulse_native import (
             parse_cel as _native_parse_cel,
+            plan_memory,
+            validate_bytecode,
         )
     except ImportError:
-        _NativeQueryBuilder = None
-        _NativeCompiledQuery = None
-        _NativeQueryResult = None
-        _NativeVmContext = None
-        _NativeVmState = None
+        Statement = None
+        VmWorkspace = None
+        VmStatus = None
+        opcodes = None
         _native_parse_cel = None
         _native_optimize_cel = None
-        opcodes = None
-        RegisterType = None
-        VmStatus = None
-        Instruction = None
+        plan_memory = None
+        validate_bytecode = None
+
+_NativeQueryBuilder = None
+_NativeCompiledQuery = None
+_NativeQueryResult = None
+_NativeVmContext = None
+_NativeVmState = None
+Instruction = None
+RegisterType = None
 
 
 class VmContext:

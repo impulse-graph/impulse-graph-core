@@ -13,11 +13,11 @@ fn test_compile_cypher_to_impas() {
         asm
     );
     assert!(
-        asm.contains("OP_CSR_WALK") || asm.contains("OP_ADAPTIVE_WALK"),
+        asm.contains("WALK") || asm.contains("SPMV"),
         "Assembly missing traversal opcode: {}",
         asm
     );
-    assert!(asm.contains("OP_HALT"), "Assembly missing OP_HALT: {}", asm);
+    assert!(asm.contains("HALT"), "Assembly missing HALT: {}", asm);
 }
 
 #[test]
@@ -33,13 +33,11 @@ fn test_compile_implog_to_impas() {
         asm
     );
     assert!(
-        asm.contains("OP_CSR_WALK")
-            || asm.contains("OP_ADAPTIVE_WALK")
-            || asm.contains("OP_COLLECT_BITSET"),
+        asm.contains("WALK") || asm.contains("COLLECT"),
         "Assembly missing expected instructions: {}",
         asm
     );
-    assert!(asm.contains("OP_HALT"), "Assembly missing OP_HALT: {}", asm);
+    assert!(asm.contains("HALT"), "Assembly missing HALT: {}", asm);
 }
 
 #[test]
@@ -55,7 +53,7 @@ fn test_compile_impk_to_impas() {
         asm
     );
     assert!(
-        asm.contains("OP_CSR_WALK") || asm.contains("OP_MXV") || asm.contains("OP_ADAPTIVE_WALK"),
+        asm.contains("WALK") || asm.contains("SPMV"),
         "Assembly missing traversal opcode: {}",
         asm
     );
@@ -73,5 +71,5 @@ fn test_compile_impscm_to_impas() {
         "Assembly missing .version header: {}",
         asm
     );
-    assert!(asm.contains("OP_HALT"), "Assembly missing OP_HALT: {}", asm);
+    assert!(asm.contains("HALT"), "Assembly missing HALT: {}", asm);
 }

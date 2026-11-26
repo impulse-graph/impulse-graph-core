@@ -1,39 +1,36 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using ImpulseGraph.Native;
 
 namespace ImpulseGraph.Vm;
 
 /// <summary>
-/// Managed off-heap VM execution context handle wrapper.
-/// Manages off-heap vector buffers, bitsets, and intermediate VM registers.
+/// Managed caller-owned 128-byte-aligned v0.11 ImpulseVM workspace wrapper.
 /// </summary>
-public sealed class VmContext : IDisposable
+public sealed unsafe class VmContext : IDisposable
 {
-    private readonly Snapshot _snapshot;
-    private nint _handle;
-    public nint Handle => Volatile.Read(ref _handle);
+    private void* _rawBuf;
+    private nint _ws;
+    public nint Handle => Volatile.Read(ref _ws);
 
-    public VmContext(Snapshot snapshot)
+    public VmContext(Snapshot snapshot, nuint scratchBytes = 4 * 1024 * 1024)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var snapHandle = snapshot.Handle;
-        if (snapHandle == nint.Zero)
+        if (snapshot.Handle == nint.Zero)
         {
             throw new ObjectDisposedException(nameof(Snapshot), "Snapshot file handle has been closed or disposed.");
         }
-        _snapshot = snapshot;
-        try
+        nuint aligned = ((scratchBytes + 127) / 128) * 128;
+        if (aligned < 65536) aligned = 65536;
+        _rawBuf = NativeMemory.AlignedAlloc(aligned, 128);
+        NativeMemory.Clear(_rawBuf, aligned);
+        uint rc = NativeMethods.impulse_workspace_init(_rawBuf, aligned, out _ws);
+        if (rc != 0 || _ws == nint.Zero)
         {
-            _handle = NativeMethods.impulse_vm_context_create(snapHandle);
-        }
-        finally
-        {
-            GC.KeepAlive(snapshot);
-        }
-        if (_handle == nint.Zero)
-        {
-            throw new InvalidOperationException("Failed to allocate native Impulse VM execution context");
+            NativeMemory.AlignedFree(_rawBuf);
+            _rawBuf = null;
+            throw new InvalidOperationException($"impulse_workspace_init failed: status={rc}");
         }
     }
 
@@ -47,10 +44,11 @@ public sealed class VmContext : IDisposable
 
     private void Dispose(bool disposing)
     {
-        var handle = Interlocked.Exchange(ref _handle, nint.Zero);
-        if (handle != nint.Zero)
+        Interlocked.Exchange(ref _ws, nint.Zero);
+        if (_rawBuf != null)
         {
-            NativeMethods.impulse_vm_context_destroy(handle);
+            NativeMemory.AlignedFree(_rawBuf);
+            _rawBuf = null;
         }
     }
 }

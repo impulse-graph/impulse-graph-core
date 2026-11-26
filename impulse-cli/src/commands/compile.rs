@@ -61,6 +61,8 @@ struct RelationDef {
     src_column: Option<String>,
     tgt_column: Option<String>,
     pub include_csc: Option<bool>,
+    pub include_coo: Option<bool>,
+    pub coo_order: Option<u8>,
     attributes: Option<Vec<AttributeDef>>,
 }
 
@@ -730,6 +732,9 @@ pub fn run_with_options(
 
         if r_def.include_csc.unwrap_or(false) {
             writer.set_relation_include_csc(rel_idx, true);
+        }
+        if r_def.include_coo.unwrap_or(false) {
+            writer.set_relation_coo_v11(rel_idx, r_def.coo_order.unwrap_or(0));
         }
 
         let mut node_w = r_def.node_id_width.unwrap_or(4);

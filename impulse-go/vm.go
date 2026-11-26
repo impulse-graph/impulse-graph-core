@@ -1,556 +1,184 @@
 package impulse
 
 /*
-#include "impulse_vm.h"
+#include "impulse_vm_v11.h"
 #include <stdlib.h>
+#include <string.h>
+
+static void* alloc_aligned_128(size_t n) {
+    size_t aligned = ((n + 127) / 128) * 128;
+    if (aligned < 65536) aligned = 65536;
+    void* p = NULL;
+    if (posix_memalign(&p, 128, aligned) != 0) return NULL;
+    memset(p, 0, aligned);
+    return p;
+}
 */
 import "C"
 
 import (
-	"math/bits"
+	"errors"
+	"fmt"
 	"unsafe"
 )
 
-// Instruction defines a fixed 64-bit opcode instruction layout for ImpulseVM.
-type Instruction struct {
-	Opcode  uint8
-	Flags   uint8
-	DstReg  uint16
-	Payload uint32
+// VmStatus mirrors impulse_vm_status_v11_t in impulse_vm_v11.h.
+type VmStatus uint32
+
+const (
+	VmOk                  VmStatus = 0
+	VmErrInvalidOpcode    VmStatus = 1
+	VmErrOutOfBounds      VmStatus = 2
+	VmErrNullSnapshot     VmStatus = 3
+	VmErrStackOverflow    VmStatus = 4
+	VmErrStackUnderflow   VmStatus = 5
+	VmErrInvalidOperand   VmStatus = 6
+	VmErrUserThrow        VmStatus = 7
+	VmErrAssertionFailed  VmStatus = 8
+	VmErrTrap             VmStatus = 9
+	VmErrDomainMismatch   VmStatus = 10
+	VmErrBufferOverflow   VmStatus = 11
+	VmErrFloatingPoint    VmStatus = 12
+	VmErrGasExhausted     VmStatus = 13
+	VmErrTypeMismatch     VmStatus = 14
+	VmErrValidationFailed VmStatus = 15
+)
+
+// MemoryPlan holds static AOT scratch and result buffer bounds from impulse_vm_plan_memory.
+type MemoryPlan struct {
+	MinScratchBytes        uint64
+	GuaranteedScratchBytes uint64
+	MaxResultBytes         uint64
 }
 
-// VMContext manages off-heap execution handles (bitsets, node/float/double vectors, string vectors, value maps).
-type VMContext struct {
-	ptr      *C.impulse_vm_context_t
-	snapshot *Snapshot
+// DualIctxV2 holds the canonical logical & physical ICTX v2 digest.
+type DualIctxV2 struct {
+	LogicalHash  uint64
+	PhysicalHash uint64
 }
 
-// NewVMContext creates a new execution context bound to an immutable graph snapshot.
-func NewVMContext(snapshot *Snapshot) (*VMContext, error) {
+// ValidateBytecode runs the static load-time verifier over a .impb v0.11 container.
+func ValidateBytecode(impb []byte) (VmStatus, uint32) {
+	if len(impb) == 0 {
+		return VmErrValidationFailed, 0
+	}
+	res := C.impulse_vm_validate_v11(unsafe.Pointer(&impb[0]), C.size_t(len(impb)))
+	return VmStatus(res.status), uint32(res.bad_pc)
+}
+
+// PlanMemory computes deterministic scratch and result buffer bounds for a .impb v0.11 program.
+func PlanMemory(impb []byte, snapshot *Snapshot, maxDop uint16) (MemoryPlan, error) {
+	if len(impb) == 0 {
+		return MemoryPlan{}, errors.New("empty bytecode")
+	}
 	var cSnap *C.impulse_snapshot_t
 	if snapshot != nil {
 		cSnap = snapshot.Ptr()
 	}
-
-	ptr := C.impulse_vm_context_create(cSnap)
-	if ptr == nil {
-		return nil, VMErrNullSnapshot
-	}
-
-	return &VMContext{ptr: ptr, snapshot: snapshot}, nil
-}
-
-// Close releases the VM context and all associated off-heap buffers.
-func (ctx *VMContext) Close() {
-	if ctx.ptr != nil {
-		C.impulse_vm_context_destroy(ctx.ptr)
-		ctx.ptr = nil
-	}
-}
-
-// Reset clears active VM handles and execution stacks without freeing off-heap arenas.
-func (ctx *VMContext) Reset() {
-	if ctx.ptr != nil {
-		C.impulse_vm_context_reset(ctx.ptr)
-	}
-}
-
-// Ptr returns raw pointer to C handle.
-func (ctx *VMContext) Ptr() *C.impulse_vm_context_t {
-	return ctx.ptr
-}
-
-// VectorSize returns maximum capacity size for vectors in context.
-func (ctx *VMContext) VectorSize() int {
-	if ctx.ptr == nil {
-		return 0
-	}
-	return int(C.impulse_vm_context_get_vector_size(ctx.ptr))
-}
-
-func (ctx *VMContext) defaultVectorLen() int {
-	sz := ctx.VectorSize()
-	if sz > 0 {
-		return sz
-	}
-	if ctx.snapshot != nil {
-		m := ctx.snapshot.MaxNodeCount()
-		if m > 0 {
-			return int(m)
-		}
-	}
-	return 1024 * 1024
-}
-
-// Bitset operations
-func (ctx *VMContext) AcquireBitset() int {
-	return int(C.impulse_vm_context_acquire_bitset(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseBitset(handle int) {
-	C.impulse_vm_context_release_bitset(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) BitsetAdd(handle int, nodeID uint64) {
-	C.impulse_vm_context_bitset_add(ctx.ptr, C.size_t(handle), C.uint64_t(nodeID))
-}
-
-func (ctx *VMContext) BitsetTest(handle int, nodeID uint64) bool {
-	return bool(C.impulse_vm_context_bitset_test(ctx.ptr, C.size_t(handle), C.uint64_t(nodeID)))
-}
-
-func (ctx *VMContext) BitsetFill(handle int, count uint64) {
-	C.impulse_vm_context_bitset_fill(ctx.ptr, C.size_t(handle), C.uint64_t(count))
-}
-
-func (ctx *VMContext) BitsetGetWord(handle int, wordIdx int) uint64 {
-	return uint64(C.impulse_vm_context_bitset_get_word(ctx.ptr, C.size_t(handle), C.size_t(wordIdx)))
-}
-
-// BitsetWords returns a zero-copy view of the underlying 64-bit bitset words for handle.
-func (ctx *VMContext) BitsetWords(handle int) []uint64 {
-	if ctx.ptr == nil {
-		return nil
-	}
-	wc := int(C.impulse_vm_context_get_bitset_word_count(ctx.ptr))
-	if wc <= 0 {
-		return nil
-	}
-	ptr := C.impulse_vm_context_get_bitset_words(ctx.ptr, C.size_t(handle))
-	if ptr == nil {
-		return nil
-	}
-	return unsafe.Slice((*uint64)(unsafe.Pointer(ptr)), wc)
-}
-
-// BitsetCount returns the number of set bits in handle strictly below maxNodes in a single CGO pass.
-func (ctx *VMContext) BitsetCount(handle int, maxNodes uint64) int {
-	if maxNodes == 0 {
-		return 0
-	}
-	words := ctx.BitsetWords(handle)
-	if len(words) == 0 {
-		return 0
-	}
-	fullWords := int(maxNodes / 64)
-	remBits := maxNodes % 64
-	limit := fullWords
-	if limit > len(words) {
-		limit = len(words)
-	}
-	count := 0
-	for i := 0; i < limit; i++ {
-		count += bits.OnesCount64(words[i])
-	}
-	if remBits > 0 && fullWords < len(words) {
-		mask := (uint64(1) << remBits) - 1
-		count += bits.OnesCount64(words[fullWords] & mask)
-	}
-	return count
-}
-
-// BitsetToSlice extracts all set node IDs strictly below maxNodes using word-level bit scanning.
-func (ctx *VMContext) BitsetToSlice(handle int, maxNodes uint64) []uint64 {
-	if maxNodes == 0 {
-		return []uint64{}
-	}
-	words := ctx.BitsetWords(handle)
-	if len(words) == 0 {
-		return []uint64{}
-	}
-	fullWords := int(maxNodes / 64)
-	remBits := maxNodes % 64
-	limit := fullWords
-	if limit > len(words) {
-		limit = len(words)
-	}
-	results := make([]uint64, 0, ctx.BitsetCount(handle, maxNodes))
-	for i := 0; i < limit; i++ {
-		w := words[i]
-		base := uint64(i) * 64
-		for w != 0 {
-			tz := bits.TrailingZeros64(w)
-			results = append(results, base+uint64(tz))
-			w &= w - 1
-		}
-	}
-	if remBits > 0 && fullWords < len(words) {
-		mask := (uint64(1) << remBits) - 1
-		w := words[fullWords] & mask
-		base := uint64(fullWords) * 64
-		for w != 0 {
-			tz := bits.TrailingZeros64(w)
-			results = append(results, base+uint64(tz))
-			w &= w - 1
-		}
-	}
-	return results
-}
-
-// Float Vector operations
-func (ctx *VMContext) AcquireFloatVector() int {
-	return int(C.impulse_vm_context_acquire_float_vector(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseFloatVector(handle int) {
-	C.impulse_vm_context_release_float_vector(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) FloatVectorSet(handle int, index int, val float32) {
-	C.impulse_vm_context_float_vector_set(ctx.ptr, C.size_t(handle), C.size_t(index), C.float(val))
-}
-
-func (ctx *VMContext) GetFloatVector(handle int, count ...int) []float32 {
-	if ctx.ptr == nil {
-		return nil
-	}
-	cPtr := C.impulse_vm_context_get_float_vector(ctx.ptr, C.size_t(handle))
-	if cPtr == nil {
-		return nil
-	}
-	sz := ctx.defaultVectorLen()
-	if len(count) > 0 && count[0] > 0 {
-		sz = count[0]
-	}
-	return unsafe.Slice((*float32)(unsafe.Pointer(cPtr)), sz)
-}
-
-// Double Vector operations
-func (ctx *VMContext) AcquireDoubleVector() int {
-	return int(C.impulse_vm_context_acquire_double_vector(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseDoubleVector(handle int) {
-	C.impulse_vm_context_release_double_vector(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) DoubleVectorSet(handle int, index int, val float64) {
-	C.impulse_vm_context_double_vector_set(ctx.ptr, C.size_t(handle), C.size_t(index), C.double(val))
-}
-
-func (ctx *VMContext) GetDoubleVector(handle int, count ...int) []float64 {
-	if ctx.ptr == nil {
-		return nil
-	}
-	cPtr := C.impulse_vm_context_get_double_vector(ctx.ptr, C.size_t(handle))
-	if cPtr == nil {
-		return nil
-	}
-	sz := ctx.defaultVectorLen()
-	if len(count) > 0 && count[0] > 0 {
-		sz = count[0]
-	}
-	return unsafe.Slice((*float64)(unsafe.Pointer(cPtr)), sz)
-}
-
-// Node Vector operations
-func (ctx *VMContext) AcquireNodeVector() int {
-	return int(C.impulse_vm_context_acquire_node_vector(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseNodeVector(handle int) {
-	C.impulse_vm_context_release_node_vector(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) GetNodeVector(handle int, count ...int) []uint64 {
-	if ctx.ptr == nil {
-		return nil
-	}
-	cPtr := C.impulse_vm_context_get_node_vector(ctx.ptr, C.size_t(handle))
-	if cPtr == nil {
-		return nil
-	}
-	sz := ctx.defaultVectorLen()
-	if len(count) > 0 && count[0] > 0 {
-		sz = count[0]
-	}
-	return unsafe.Slice((*uint64)(unsafe.Pointer(cPtr)), sz)
-}
-
-// String Vector operations
-func (ctx *VMContext) AcquireStringVector() int {
-	return int(C.impulse_vm_context_acquire_string_vector(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseStringVector(handle int) {
-	C.impulse_vm_context_release_string_vector(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) StringVectorAdd(handle int, str string) {
-	cStr := C.CString(str)
-	defer C.free(unsafe.Pointer(cStr))
-	C.impulse_vm_context_string_vector_add(ctx.ptr, C.size_t(handle), cStr)
-}
-
-func (ctx *VMContext) StringVectorSize(handle int) int {
-	return int(C.impulse_vm_context_string_vector_size(ctx.ptr, C.size_t(handle)))
-}
-
-func (ctx *VMContext) StringVectorGet(handle int, index int) string {
-	cStr := C.impulse_vm_context_string_vector_get(ctx.ptr, C.size_t(handle), C.size_t(index))
-	if cStr == nil {
-		return ""
-	}
-	return C.GoString(cStr)
-}
-
-// Value Map operations
-func (ctx *VMContext) AcquireValueMap() int {
-	return int(C.impulse_vm_context_acquire_value_map(ctx.ptr))
-}
-
-func (ctx *VMContext) ReleaseValueMap(handle int) {
-	C.impulse_vm_context_release_value_map(ctx.ptr, C.size_t(handle))
-}
-
-func (ctx *VMContext) ValueMapSize(handle int) int {
-	return int(C.impulse_vm_context_value_map_size(ctx.ptr, C.size_t(handle)))
-}
-
-func (ctx *VMContext) ValueMapGetKey(handle int, index int) string {
-	cStr := C.impulse_vm_context_value_map_get_key(ctx.ptr, C.size_t(handle), C.size_t(index))
-	if cStr == nil {
-		return ""
-	}
-	return C.GoString(cStr)
-}
-
-func (ctx *VMContext) ValueMapGetValue(handle int, index int) float32 {
-	return float32(C.impulse_vm_context_value_map_get_value(ctx.ptr, C.size_t(handle), C.size_t(index)))
-}
-
-// VMState wraps the 640-byte aligned C VM state execution frame.
-type VMState struct {
-	state C.impulse_vm_state_t
-}
-
-// NewVMState creates a zeroed VMState frame ready for execution.
-func NewVMState() *VMState {
-	return &VMState{}
-}
-
-// SetQueryContext links a VMContext off-heap context handle pool to the state frame.
-func (s *VMState) SetQueryContext(ctx *VMContext) {
-	if ctx != nil {
-		s.state.query_context = ctx.Ptr()
-	} else {
-		s.state.query_context = nil
-	}
-}
-
-// GetRegister reads the value of hardware register R0..R63.
-func (s *VMState) GetRegister(regIdx int) uint64 {
-	if regIdx < 0 || regIdx >= 64 {
-		return 0
-	}
-	return uint64(s.state.registers[regIdx])
-}
-
-// SetRegister sets the value of hardware register R0..R63.
-func (s *VMState) SetRegister(regIdx int, val uint64) {
-	if regIdx >= 0 && regIdx < 64 {
-		s.state.registers[regIdx] = C.uint64_t(val)
-	}
-}
-
-// GetRegisterType returns the type tag for hardware register R0..R63.
-func (s *VMState) GetRegisterType(regIdx int) RegisterType {
-	if regIdx < 0 || regIdx >= 64 {
-		return TypeNull
-	}
-	return RegisterType(s.state.register_types[regIdx])
-}
-
-// SetRegisterType sets the type tag for hardware register R0..R63.
-func (s *VMState) SetRegisterType(regIdx int, typ RegisterType) {
-	if regIdx >= 0 && regIdx < 64 {
-		s.state.register_types[regIdx] = C.uint8_t(typ)
-	}
-}
-
-// Flags returns the status flags register (ZF, LT, GT, EQ, ST).
-func (s *VMState) Flags() uint64 {
-	return uint64(s.state.flags)
-}
-
-// PC returns the current program counter offset.
-func (s *VMState) PC() uint32 {
-	return uint32(s.state.pc)
-}
-
-// ExecuteVM executes a sequence of ImpulseVM bytecode instructions against a state frame.
-func ExecuteVM(bytecode []Instruction, state *VMState, inputParam uint64) error {
-	if state == nil {
-		return VMErrNullSnapshot
-	}
-
-	n := len(bytecode)
-	if n == 0 {
-		return nil
-	}
-
-	cInsts := make([]C.impulse_instruction_t, n)
-	for i, inst := range bytecode {
-		cInsts[i].opcode = C.uint8_t(inst.Opcode)
-		cInsts[i].flags = C.uint8_t(inst.Flags)
-		cInsts[i].dst_reg = C.uint16_t(inst.DstReg)
-		cInsts[i].payload = C.uint32_t(inst.Payload)
-	}
-
-	status := C.impulse_vm_execute(
-		&cInsts[0],
-		C.size_t(n),
-		&state.state,
-		C.uint64_t(inputParam),
+	var cPlan C.impulse_vm_memory_plan_t
+	rc := C.impulse_vm_plan_memory(
+		unsafe.Pointer(&impb[0]),
+		C.size_t(len(impb)),
+		cSnap,
+		C.uint16_t(maxDop),
+		&cPlan,
 	)
-
-	if status != C.IMPULSE_VM_OK {
-		return VMStatus(status)
+	if rc != 0 {
+		return MemoryPlan{}, fmt.Errorf("impulse_vm_plan_memory failed: status=%d", uint32(rc))
 	}
-
-	return nil
+	return MemoryPlan{
+		MinScratchBytes:        uint64(cPlan.min_scratch_bytes),
+		GuaranteedScratchBytes: uint64(cPlan.guaranteed_scratch_bytes),
+		MaxResultBytes:         uint64(cPlan.max_result_bytes),
+	}, nil
 }
 
-// QueryBuilder provides a fluent Go API for constructing impOps VM bytecode programs.
-type QueryBuilder struct {
-	instructions []Instruction
-	currentReg   uint16
+// VmWorkspace owns a 128-byte-aligned scratch arena initialized with impulse_workspace_init.
+type VmWorkspace struct {
+	rawBuf unsafe.Pointer
+	ws     *C.impulse_vm_workspace_v11_t
+	cap    C.size_t
 }
 
-// NewQueryBuilder initializes a new fluent QueryBuilder.
-func NewQueryBuilder() *QueryBuilder {
-	return &QueryBuilder{
-		instructions: make([]Instruction, 0, 8),
+// NewVmWorkspace allocates and placement-initializes a reusable v0.11 workspace.
+func NewVmWorkspace(scratchBytes uint64) (*VmWorkspace, error) {
+	if scratchBytes < 65536 {
+		scratchBytes = 65536
+	}
+	aligned := ((scratchBytes + 127) / 128) * 128
+	buf := C.alloc_aligned_128(C.size_t(aligned))
+	if buf == nil {
+		return nil, errors.New("failed to allocate 128-byte-aligned workspace")
+	}
+	var ws *C.impulse_vm_workspace_v11_t
+	rc := C.impulse_workspace_init(buf, C.size_t(aligned), &ws)
+	if rc != 0 || ws == nil {
+		C.free(buf)
+		return nil, fmt.Errorf("impulse_workspace_init failed: status=%d", uint32(rc))
+	}
+	return &VmWorkspace{rawBuf: buf, ws: ws, cap: C.size_t(aligned)}, nil
+}
+
+// Close releases the underlying aligned scratch buffer.
+func (w *VmWorkspace) Close() {
+	if w.rawBuf != nil {
+		C.free(w.rawBuf)
+		w.rawBuf = nil
+		w.ws = nil
 	}
 }
 
-func (b *QueryBuilder) InputNode(dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x02, Flags: 0, DstReg: dstReg, Payload: 0})
-	return b
-}
-
-func (b *QueryBuilder) InputSet(dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x03, Flags: 0, DstReg: dstReg, Payload: 0})
-	return b
-}
-
-func (b *QueryBuilder) LoadConstInt(val uint32, dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x04, Flags: 0, DstReg: dstReg, Payload: val})
-	return b
-}
-
-func (b *QueryBuilder) WalkEdge(relationID uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x10, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) WalkEdgeFiltered(relationID uint16, filterReg uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID) << 16) | (uint32(filterReg&0xFF) << 8) | uint32(b.currentReg&0xFF)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x11, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) Degree(relationID uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x12, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) CscWalk(relationID uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID) << 16) | uint32(b.currentReg)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x18, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) SetUnion(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
-	payload := (uint32(srcReg1) << 16) | uint32(srcReg2)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x30, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) SetIntersect(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
-	payload := (uint32(srcReg1) << 16) | uint32(srcReg2)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x31, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) SetDifference(srcReg1, srcReg2, dstReg uint16) *QueryBuilder {
-	payload := (uint32(srcReg2) << 16) | uint32(srcReg1)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x32, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) SetCardinality(srcReg, dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x33, Flags: 0, DstReg: dstReg, Payload: uint32(srcReg)})
-	return b
-}
-
-func (b *QueryBuilder) AfforestCC(relationID uint16, dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x40, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
-	return b
-}
-
-func (b *QueryBuilder) MxV(relationID uint16, vectorReg, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID&0xFF) << 8) | uint32(vectorReg&0xFF)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x41, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) BrandesForward(relationID uint16, dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x48, Flags: 0, DstReg: dstReg, Payload: uint32(relationID)})
-	return b
-}
-
-func (b *QueryBuilder) SampleNeighbors(relationID uint16, kSamples uint16, dstReg uint16) *QueryBuilder {
-	payload := (uint32(relationID) << 16) | uint32(kSamples)
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x60, Flags: 0, DstReg: dstReg, Payload: payload})
-	return b
-}
-
-func (b *QueryBuilder) RebacCheck(permissionID uint32, dstReg uint16) *QueryBuilder {
-	b.currentReg = dstReg
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x63, Flags: 0, DstReg: dstReg, Payload: permissionID})
-	return b
-}
-
-func (b *QueryBuilder) CollectBitset(reg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x90, Flags: 0, DstReg: reg, Payload: uint32(reg)})
-	b.currentReg = reg
-	return b
-}
-
-func (b *QueryBuilder) CollectArray(reg uint16) *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x91, Flags: 0, DstReg: reg, Payload: uint32(reg)})
-	b.currentReg = reg
-	return b
-}
-
-func (b *QueryBuilder) Halt() *QueryBuilder {
-	b.instructions = append(b.instructions, Instruction{Opcode: 0x00, Flags: 0, DstReg: 0, Payload: 0})
-	return b
-}
-
-func (b *QueryBuilder) Compile() []Instruction {
-	if len(b.instructions) == 0 || b.instructions[len(b.instructions)-1].Opcode != 0x00 {
-		b.Halt()
+// Execute runs a .impb v0.11 program with zero heap allocations inside the VM.
+func (w *VmWorkspace) Execute(impb []byte, snapshot *Snapshot, seedIDs []uint64, domainID uint16, gasLimit uint64) VmStatus {
+	if w.ws == nil || len(impb) == 0 {
+		return VmErrValidationFailed
 	}
-	bytecode := make([]Instruction, len(b.instructions))
-	copy(bytecode, b.instructions)
-	return bytecode
+	var cSnap *C.impulse_snapshot_t
+	if snapshot != nil {
+		cSnap = snapshot.Ptr()
+	}
+	var params C.impulse_vm_params_v11_t
+	params.gas_limit = C.uint64_t(gasLimit)
+	var binding C.impulse_vm_param_binding_v11_t
+	if len(seedIDs) > 0 {
+		binding.param_id = 0
+		binding.kind = C.IMPULSE_VM_V11_PARAM_FRONTIER_IDS
+		binding.domain_id = C.uint16_t(domainID)
+		binding.count = C.uint32_t(len(seedIDs))
+		binding.data_ptr = unsafe.Pointer(&seedIDs[0])
+		params.bindings = &binding
+		params.binding_count = 1
+	}
+	var outBytes C.size_t
+	rc := C.impulse_vm_execute_v11(
+		unsafe.Pointer(&impb[0]),
+		C.size_t(len(impb)),
+		cSnap,
+		&params,
+		w.ws,
+		nil,
+		0,
+		&outBytes,
+	)
+	return VmStatus(rc)
+}
+
+// OutputCount returns the number of terminal OP_COLLECT outputs produced by the last Execute call.
+func (w *VmWorkspace) OutputCount() uint32 {
+	if w.ws == nil {
+		return 0
+	}
+	return uint32(C.impulse_vm_v11_get_output_count(w.ws))
+}
+
+// ComputeIctxV2 computes the canonical Dual ICTX v2 digest for the workspace.
+func (w *VmWorkspace) ComputeIctxV2() DualIctxV2 {
+	if w.ws == nil {
+		return DualIctxV2{}
+	}
+	d := C.impulse_vm_v11_compute_ictx_v2(w.ws)
+	return DualIctxV2{
+		LogicalHash:  uint64(d.logical_hash),
+		PhysicalHash: uint64(d.physical_hash),
+	}
 }

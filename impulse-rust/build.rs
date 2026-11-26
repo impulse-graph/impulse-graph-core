@@ -240,34 +240,13 @@ fn main() {
 
     // Track changes to C++ source and header files
     println!("cargo:rerun-if-changed={}/src/impulse_simd.cpp", cpp_root);
-    println!("cargo:rerun-if-changed={}/src/impulse_vm.cpp", cpp_root);
     println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_context.cpp",
+        "cargo:rerun-if-changed={}/src/impulse_test_control.cpp",
         cpp_root
     );
-    println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_internal.hpp",
-        cpp_root
-    );
-    println!("cargo:rerun-if-changed={}/src/opcodes", cpp_root);
-    println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_fluent.cpp",
-        cpp_root
-    );
-    println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_traversal.cpp",
-        cpp_root
-    );
-    println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_multilane.cpp",
-        cpp_root
-    );
+    println!("cargo:rerun-if-changed={}/src/vm", cpp_root);
     println!(
         "cargo:rerun-if-changed={}/src/impulse_statement_c_api.cpp",
-        cpp_root
-    );
-    println!(
-        "cargo:rerun-if-changed={}/src/impulse_vm_fluent_internal.hpp",
         cpp_root
     );
     println!("cargo:rerun-if-changed={}/src/impulse_graph.cpp", cpp_root);
@@ -279,12 +258,12 @@ fn main() {
         "cargo:rerun-if-changed={}/src/impulse_graph_internal.hpp",
         cpp_root
     );
+    println!("cargo:rerun-if-changed={}/include/impulse_simd.h", cpp_root);
     println!(
-        "cargo:rerun-if-changed={}/src/impulse_bytecode_emitter.cpp",
+        "cargo:rerun-if-changed={}/include/impulse_vm_v11.h",
         cpp_root
     );
-    println!("cargo:rerun-if-changed={}/include/impulse_simd.h", cpp_root);
-    println!("cargo:rerun-if-changed={}/include/impulse_vm.h", cpp_root);
+    println!("cargo:rerun-if-changed={}/include/vm", cpp_root);
     println!(
         "cargo:rerun-if-changed={}/include/impulse_graph.h",
         cpp_root
@@ -318,43 +297,33 @@ fn main() {
         Path::new("/usr/include/omp.h").exists() || Path::new("/usr/lib/gcc").exists()
     };
 
-    // Compile C++ objects
+    // Compile C++ objects (canonical v0.11 VM + core)
     let compile = |rel: &str| {
         let src = format!("{}/src/{}", cpp_root, rel);
         compile_cpp(&src, cpp_root, &cpp_include, &hwy_inc, &out_dir, has_omp)
     };
-    let obj_simd = compile("impulse_simd.cpp");
-    let obj_vm = compile("impulse_vm.cpp");
-    let obj_vm_ctx = compile("impulse_vm_context.cpp");
-    let obj_fluent = compile("impulse_vm_fluent.cpp");
-    let obj_fluent_trav = compile("impulse_vm_fluent_traversal.cpp");
-    let obj_fluent_ml = compile("impulse_vm_fluent_multilane.cpp");
-    let obj_stmt_c_api = compile("impulse_statement_c_api.cpp");
-    let obj_graph = compile("impulse_graph.cpp");
-    let obj_writer = compile("impulse_snapshot_writer.cpp");
-    let obj_index = compile("impulse_index.cpp");
-    let obj_emitter = compile("impulse_bytecode_emitter.cpp");
+    let objs = vec![
+        compile("impulse_simd.cpp"),
+        compile("impulse_test_control.cpp"),
+        compile("impulse_statement_c_api.cpp"),
+        compile("impulse_graph.cpp"),
+        compile("impulse_snapshot_writer.cpp"),
+        compile("impulse_index.cpp"),
+        compile("vm/vm_bytecode_emitter.cpp"),
+        compile("vm/vm_impscm_compiler.cpp"),
+        compile("vm/vm_ictx_v2.cpp"),
+        compile("vm/vm_validator.cpp"),
+        compile("vm/vm_memory_planner.cpp"),
+        compile("vm/vm_dispatch.cpp"),
+        compile("vm/vm_simd_hwy.cpp"),
+    ];
 
     // Archive into a single static library
     if is_windows {
         let lib_file = format!("{}/impulse_native.lib", out_dir);
-        let status_lib = Command::new("lib")
-            .args([
-                "/nologo",
-                &format!("/OUT:{}", lib_file),
-                &obj_simd,
-                &obj_vm,
-                &obj_vm_ctx,
-                &obj_fluent,
-                &obj_fluent_trav,
-                &obj_fluent_ml,
-                &obj_stmt_c_api,
-                &obj_graph,
-                &obj_writer,
-                &obj_index,
-                &obj_emitter,
-            ])
-            .status();
+        let mut args = vec!["/nologo".to_string(), format!("/OUT:{}", lib_file)];
+        args.extend(objs.iter().cloned());
+        let status_lib = Command::new("lib").args(&args).status();
 
         assert!(
             status_lib.is_ok() && status_lib.unwrap().success(),
@@ -362,23 +331,9 @@ fn main() {
         );
     } else {
         let lib_file = format!("{}/libimpulse_native.a", out_dir);
-        let status_ar = Command::new("ar")
-            .args([
-                "rcs",
-                &lib_file,
-                &obj_simd,
-                &obj_vm,
-                &obj_vm_ctx,
-                &obj_fluent,
-                &obj_fluent_trav,
-                &obj_fluent_ml,
-                &obj_stmt_c_api,
-                &obj_graph,
-                &obj_writer,
-                &obj_index,
-                &obj_emitter,
-            ])
-            .status();
+        let mut args = vec!["rcs".to_string(), lib_file.clone()];
+        args.extend(objs.iter().cloned());
+        let status_ar = Command::new("ar").args(&args).status();
 
         assert!(
             status_ar.is_ok() && status_ar.unwrap().success(),

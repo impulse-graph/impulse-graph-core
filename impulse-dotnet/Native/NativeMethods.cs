@@ -48,16 +48,36 @@ internal static unsafe partial class NativeMethods
     public static partial nint impulse_get_last_error();
 
     [LibraryImport(LibName)]
-    public static partial nint impulse_vm_context_create(nint snapshot);
-
-    [LibraryImport(LibName)]
-    public static partial void impulse_vm_context_destroy(nint ctx);
-
-    [LibraryImport(LibName)]
-    public static partial ImpulseVmStatus impulse_vm_execute(
-        ImpulseInstruction* bytecode,
-        nuint instructionCount,
-        ImpulseVmState* vmState,
-        ulong inputParam
+    public static partial uint impulse_workspace_init(
+        void* scratchBuf,
+        nuint scratchBytes,
+        out nint outWs
     );
+
+    [LibraryImport(LibName)]
+    public static partial uint impulse_vm_v11_prepare_snapshot(nint snapshot);
+
+    [LibraryImport(LibName)]
+    public static partial uint impulse_vm_plan_memory(
+        void* impbBytes,
+        nuint impbLen,
+        nint snapshot,
+        ushort maxDop,
+        out ImpulseVmMemoryPlan outPlan
+    );
+
+    [LibraryImport(LibName)]
+    public static partial uint impulse_vm_execute_v11(
+        void* impbBytes,
+        nuint impbLen,
+        nint snapshot,
+        void* paramsPtr,
+        nint scratchWs,
+        void* resultBuf,
+        nuint resultCap,
+        out nuint outResultBytes
+    );
+
+    [LibraryImport(LibName)]
+    public static partial uint impulse_vm_v11_get_output_count(nint ws);
 }
