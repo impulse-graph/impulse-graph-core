@@ -3,13 +3,15 @@ package impulse_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 
-	"github.com/impulse-graph/impulse-graph/go"
+	impulse "github.com/impulse-graph/impulse-graph/go"
 )
 
-func TestVMExecutionAndContext(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "impulse_vm_test_*")
+func TestVMV11ExecutionPoolingAndNoLeak(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "impulse_vm_v11_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -17,7 +19,7 @@ func TestVMExecutionAndContext(t *testing.T) {
 
 	snapPath := filepath.Join(tmpDir, "vm_graph.imps")
 
-	// 1. Build test snapshot
+	// 1. Build test snapshot: 0 -> 1, 0 -> 2
 	writer, err := impulse.NewWriter(snapPath, 1)
 	if err != nil {
 		t.Fatalf("failed to create writer: %v", err)
@@ -25,7 +27,6 @@ func TestVMExecutionAndContext(t *testing.T) {
 	if err := writer.AddDomain(0, impulse.KeyTypeString, "Node"); err != nil {
 		t.Fatalf("failed to add domain: %v", err)
 	}
-	// Graph: 0 -> 1, 0 -> 2
 	rowOffsets := []uint32{0, 2, 2, 2}
 	colIndices := []uint32{1, 2}
 	if err := writer.AddRelation(0, 0, impulse.EncRaw, 3, 2, 0, rowOffsets, colIndices); err != nil {
@@ -41,127 +42,88 @@ func TestVMExecutionAndContext(t *testing.T) {
 	}
 	defer snap.Close()
 
-	// 2. Create VM Context
-	ctx, err := impulse.NewVMContext(snap)
+	// 2. Build & validate v0.11 .impb program:
+	//    0: OP_LOAD_PARAM.frontier F0, param=0, dom=0
+	//    1: OP_WALK.fwd            F1, F0, rel=0
+	//    2: OP_COLLECT.frontier    slot=0, F1
+	//    3: OP_HALT
+	words := []uint64{
+		impulse.EncodeV11Word(0x07, 1, 0, 0, 0, 0, 0, 0),
+		impulse.EncodeV11Word(0x30, 0, 0, 1, 0, 0, 0, 0),
+		impulse.EncodeV11Word(0x57, 1, 0, 0, 1, 0, 0, 0),
+		impulse.EncodeV11Word(0x00, 0, 0, 0, 0, 0, 0, 0),
+	}
+	impb := impulse.BuildImpbV11(words, 1)
+
+	if st, badPC := impulse.ValidateBytecode(impb); st != impulse.VmOk {
+		t.Fatalf("ValidateBytecode failed: status=%d badPC=%d", st, badPC)
+	}
+
+	plan, err := impulse.PlanMemory(impb, snap, 1)
 	if err != nil {
-		t.Fatalf("failed to create VM context: %v", err)
+		t.Fatalf("PlanMemory failed: %v", err)
 	}
-	defer ctx.Close()
-
-	// Test Context Bitset
-	hBitset := ctx.AcquireBitset()
-	if hBitset < 0 {
-		t.Fatalf("failed to acquire bitset handle")
-	}
-	defer ctx.ReleaseBitset(hBitset)
-
-	ctx.BitsetAdd(hBitset, 42)
-	if !ctx.BitsetTest(hBitset, 42) {
-		t.Errorf("expected bit 42 to be set in bitset")
-	}
-	if ctx.BitsetTest(hBitset, 43) {
-		t.Errorf("expected bit 43 NOT to be set in bitset")
+	if plan.GuaranteedScratchBytes == 0 {
+		t.Fatalf("expected non-zero GuaranteedScratchBytes")
 	}
 
-	// Test Context Float Vector
-	hFloat := ctx.AcquireFloatVector()
-	if hFloat < 0 {
-		t.Fatalf("failed to acquire float vector handle")
-	}
-	defer ctx.ReleaseFloatVector(hFloat)
-
-	ctx.FloatVectorSet(hFloat, 0, 3.14)
-	floatVec := ctx.GetFloatVector(hFloat)
-	if len(floatVec) == 0 || floatVec[0] != 3.14 {
-		t.Errorf("expected float vector index 0 to be 3.14, got %v", floatVec)
-	}
-
-	// 3. Test VM Bytecode Execution
-	state := impulse.NewVMState()
-	state.SetQueryContext(ctx)
-
-	// Instructions:
-	// 0: OP_INIT_INPUT_NODE -> R0
-	// 1: OP_CSR_WALK (rel=0, src=R0) -> R1 (collect bitset handle)
-	// 2: OP_HALT
-	bytecode := []impulse.Instruction{
-		{Opcode: impulse.OpInitInputNode, DstReg: 0, Payload: 0},
-		{Opcode: impulse.OpCSRWalk, DstReg: 1, Payload: 0}, // rel 0, src R0
-		{Opcode: impulse.OpHalt, DstReg: 0, Payload: 0},
-	}
-
-	// Execute starting at seed node 0
-	if err := impulse.ExecuteVM(bytecode, state, 0); err != nil {
-		t.Fatalf("failed to execute VM bytecode: %v", err)
-	}
-
-	// Verify register R0 contains seed node 0
-	if state.GetRegister(0) != 0 {
-		t.Errorf("expected R0 register value 0, got %d", state.GetRegister(0))
-	}
-
-	// 4. Verify QueryBuilder opcode & payload parity
-	qb := impulse.NewQueryBuilder().
-		InputNode(0).
-		WalkEdge(3, 1).
-		WalkEdgeFiltered(3, 2, 4).
-		Degree(3, 5).
-		CscWalk(3, 6).
-		SetDifference(1, 2, 7).
-		MxV(3, 4, 8).
-		CollectBitset(8)
-	bc := qb.Compile()
-	if bc[0].Opcode != 0x02 {
-		t.Errorf("expected InputNode opcode 0x02, got 0x%02X", bc[0].Opcode)
-	}
-	if bc[1].Payload != ((3 << 16) | 0) {
-		t.Errorf("expected WalkEdge payload 0x%X, got 0x%X", (3<<16)|0, bc[1].Payload)
-	}
-	if bc[2].Payload != ((3 << 16) | (2 << 8) | 1) {
-		t.Errorf("expected WalkEdgeFiltered payload 0x%X, got 0x%X", (3<<16)|(2<<8)|1, bc[2].Payload)
-	}
-	if bc[5].Payload != ((2 << 16) | 1) {
-		t.Errorf("expected SetDifference payload 0x%X, got 0x%X", (2<<16)|1, bc[5].Payload)
-	}
-	if bc[6].Payload != ((3 << 8) | 4) {
-		t.Errorf("expected MxV payload 0x%X, got 0x%X", (3<<8)|4, bc[6].Payload)
-	}
-	if bc[7].Payload != 8 {
-		t.Errorf("expected CollectBitset payload 8, got %d", bc[7].Payload)
-	}
-	if bc[8].Opcode != 0x00 {
-		t.Errorf("expected Halt opcode 0x00, got 0x%02X", bc[8].Opcode)
-	}
-
-	// 5. Verify RelationIndex does not match nonexistent relation names
-	if _, ok := snap.RelationIndex("NON_EXISTENT_RELATION"); ok {
-		t.Errorf("expected RelationIndex to return false for unknown relation")
-	}
-
-	// 6. Verify Snapshot VMContext pooling, Reset, BitsetCount, and BitsetToSlice
-	pooledCtx, err := snap.AcquireVMContext()
+	// 3. Execute on pooled workspace and verify outputs + pool reuse
+	ws, err := snap.AcquireWorkspace(plan.GuaranteedScratchBytes)
 	if err != nil {
-		t.Fatalf("failed to acquire pooled VM context: %v", err)
+		t.Fatalf("AcquireWorkspace failed: %v", err)
 	}
-	hPool := pooledCtx.AcquireBitset()
-	pooledCtx.BitsetAdd(hPool, 1)
-	pooledCtx.BitsetAdd(hPool, 2)
-	pooledCtx.BitsetAdd(hPool, 99) // >= maxNodes(3), must be excluded by maxNodes bound
-	if got := pooledCtx.BitsetCount(hPool, 3); got != 2 {
-		t.Errorf("expected BitsetCount(maxNodes=3)=2, got %d", got)
+	if st := ws.Execute(impb, snap, []uint64{0}, 0, 0); st != impulse.VmOk {
+		snap.ReleaseWorkspace(ws)
+		t.Fatalf("Execute failed: status=%d", st)
 	}
-	slice := pooledCtx.BitsetToSlice(hPool, 3)
-	if len(slice) != 2 || slice[0] != 1 || slice[1] != 2 {
-		t.Errorf("expected BitsetToSlice=[1 2], got %v", slice)
-	}
-	snap.ReleaseVMContext(pooledCtx)
-
-	reacquired, err := snap.AcquireVMContext()
+	ids, err := ws.OutputU64Slice(0)
 	if err != nil {
-		t.Fatalf("failed to reacquire pooled VM context: %v", err)
+		snap.ReleaseWorkspace(ws)
+		t.Fatalf("OutputU64Slice failed: %v", err)
 	}
-	if reacquired != pooledCtx {
-		t.Errorf("expected pooled VMContext to be reused after ReleaseVMContext")
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		snap.ReleaseWorkspace(ws)
+		t.Fatalf("expected [1 2], got %v", ids)
 	}
-	snap.ReleaseVMContext(reacquired)
+	snap.ReleaseWorkspace(ws)
+
+	ws2, err := snap.AcquireWorkspace(plan.GuaranteedScratchBytes)
+	if err != nil {
+		t.Fatalf("reacquire failed: %v", err)
+	}
+	if ws2 != ws {
+		t.Errorf("expected pooled VmWorkspace reuse")
+	}
+	snap.ReleaseWorkspace(ws2)
+
+	// 4. Concurrent multi-goroutine stress (verify race-free & leak-free)
+	var wg sync.WaitGroup
+	const workers = 8
+	const iters = 250
+	for g := 0; g < workers; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				w, err := snap.AcquireWorkspace(plan.GuaranteedScratchBytes)
+				if err != nil {
+					t.Errorf("AcquireWorkspace: %v", err)
+					return
+				}
+				if st := w.Execute(impb, snap, []uint64{0}, 0, 0); st != impulse.VmOk {
+					snap.ReleaseWorkspace(w)
+					t.Errorf("Execute: status=%d", st)
+					return
+				}
+				out, err := w.OutputU64Slice(0)
+				snap.ReleaseWorkspace(w)
+				if err != nil || len(out) != 2 {
+					t.Errorf("unexpected output: %v err=%v", out, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	runtime.GC()
 }

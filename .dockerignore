@@ -1,6 +1,7 @@
 .git
 .github
 **/build
+**/build_*
 **/cmake-build-debug
 **/target
 **/node_modules

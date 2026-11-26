@@ -105,69 +105,80 @@ func (t *Traversal) Project(fields ...string) *Traversal {
 	return t
 }
 
-func (t *Traversal) compile() ([]Instruction, uint16, error) {
+func (t *Traversal) compileV11(countOnly bool) ([]byte, uint16, error) {
 	if t.snapshot == nil || t.snapshot.Ptr() == nil {
 		return nil, 0, VMErrNullSnapshot
 	}
+	if len(t.steps) == 0 {
+		return nil, 0, fmt.Errorf("traversal has no steps")
+	}
 
-	qb := NewQueryBuilder()
-	currentReg := uint16(0)
+	firstRelID, found := t.snapshot.RelationIndex(t.steps[0].relationName)
+	if !found {
+		return nil, 0, fmt.Errorf("relation %q not found in snapshot catalog", t.steps[0].relationName)
+	}
+	firstEntry, err := t.snapshot.GetRelationEntry(firstRelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	startDom := firstEntry.SrcDomainID
+	if t.steps[0].direction == DirectionIn {
+		startDom = firstEntry.TgtDomainID
+	}
 
+	words := make([]uint64, 0, len(t.steps)+4)
+	// OP_LOAD_PARAM (0x07), subop=1 (.frontier), dst=F0, imm16_lo=0 (param 0), imm16_hi=startDom
+	words = append(words, EncodeV11Word(0x07, 1, 0, 0, 0, 0, 0, uint32(startDom)<<16))
+
+	curReg := uint8(0)
 	for idx, step := range t.steps {
-		relID, found := t.snapshot.RelationIndex(step.relationName)
-		if !found {
+		relID, ok := t.snapshot.RelationIndex(step.relationName)
+		if !ok {
 			return nil, 0, fmt.Errorf("relation %q not found in snapshot catalog", step.relationName)
 		}
-
-		dstReg := uint16((idx % 2) + 1)
-		if idx == 0 {
-			qb.InputNode(currentReg)
+		dstReg := uint8((idx + 1) & 1)
+		subop := uint8(0) // WALK.fwd
+		if step.direction == DirectionIn {
+			subop = 1 // WALK.rev
 		}
-
-		if step.filter != "" {
-			qb.WalkEdgeFiltered(relID, 0, dstReg)
-		} else if step.direction == DirectionOut {
-			qb.WalkEdge(relID, dstReg)
-		} else {
-			qb.CscWalk(relID, dstReg)
-		}
-		currentReg = dstReg
+		// OP_WALK (0x30), dst=dstReg, s1=curReg, imm16_lo=relID
+		words = append(words, EncodeV11Word(0x30, subop, 0, dstReg, curReg, 0, 0, uint32(relID)))
+		curReg = dstReg
 	}
 
-	qb.CollectBitset(currentReg)
-	return qb.Compile(), currentReg, nil
+	if countOnly {
+		// OP_SET_CARDINALITY (0x24), subop=0 (.card_1bit), dst=R0, s1=curReg
+		words = append(words, EncodeV11Word(0x24, 0, 0, 0, curReg, 0, 0, 0))
+		// OP_COLLECT (0x57), subop=0 (.scalar), s1=R0, imm16_lo=0
+		words = append(words, EncodeV11Word(0x57, 0, 0, 0, 0, 0, 0, 0))
+	} else {
+		// OP_COLLECT (0x57), subop=1 (.frontier), s1=curReg, imm16_lo=0
+		words = append(words, EncodeV11Word(0x57, 1, 0, 0, curReg, 0, 0, 0))
+	}
+	// OP_HALT (0x00)
+	words = append(words, EncodeV11Word(0x00, 0, 0, 0, 0, 0, 0, 0))
+
+	domReq := uint16(t.snapshot.DomainCount())
+	return BuildImpbV11(words, domReq), startDom, nil
 }
 
-func (t *Traversal) executeBitset() (*VMContext, int, error) {
-	bytecode, currentReg, err := t.compile()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	ctx, err := t.snapshot.AcquireVMContext()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	state := NewVMState()
-	state.SetQueryContext(ctx)
-
-	if err := ExecuteVM(bytecode, state, t.startNode); err != nil {
-		t.snapshot.ReleaseVMContext(ctx)
-		return nil, 0, err
-	}
-
-	return ctx, int(state.GetRegister(int(currentReg))), nil
-}
-
-// ToSlice executes the traversal and returns the active node IDs as a slice of uint64.
+// ToSlice executes the traversal on a pooled v0.11 VmWorkspace and returns the active node IDs.
 func (t *Traversal) ToSlice() ([]uint64, error) {
-	ctx, handle, err := t.executeBitset()
+	impb, startDom, err := t.compileV11(false)
 	if err != nil {
 		return nil, err
 	}
-	defer t.snapshot.ReleaseVMContext(ctx)
-	return ctx.BitsetToSlice(handle, t.snapshot.MaxNodeCount()), nil
+	ws, err := t.snapshot.AcquireWorkspace(4 * 1024 * 1024)
+	if err != nil {
+		return nil, err
+	}
+	defer t.snapshot.ReleaseWorkspace(ws)
+
+	seeds := []uint64{t.startNode}
+	if st := ws.Execute(impb, t.snapshot, seeds, startDom, 0); st != VmOk {
+		return nil, fmt.Errorf("impulse_vm_execute_v11 failed: status=%d", uint32(st))
+	}
+	return ws.OutputU64Slice(0)
 }
 
 // ToRecords executes the traversal and projects the specified attributes for all matching nodes.
@@ -193,12 +204,25 @@ func (t *Traversal) ToRecords() ([]Record, error) {
 
 // Count returns the number of reachable nodes at the end of the traversal.
 func (t *Traversal) Count() (int, error) {
-	ctx, handle, err := t.executeBitset()
+	impb, startDom, err := t.compileV11(true)
 	if err != nil {
 		return 0, err
 	}
-	defer t.snapshot.ReleaseVMContext(ctx)
-	return ctx.BitsetCount(handle, t.snapshot.MaxNodeCount()), nil
+	ws, err := t.snapshot.AcquireWorkspace(4 * 1024 * 1024)
+	if err != nil {
+		return 0, err
+	}
+	defer t.snapshot.ReleaseWorkspace(ws)
+
+	seeds := []uint64{t.startNode}
+	if st := ws.Execute(impb, t.snapshot, seeds, startDom, 0); st != VmOk {
+		return 0, fmt.Errorf("impulse_vm_execute_v11 failed: status=%d", uint32(st))
+	}
+	cnt, ok := ws.OutputScalarU64(0)
+	if !ok {
+		return 0, fmt.Errorf("missing scalar count output")
+	}
+	return int(cnt), nil
 }
 
 // ToSet returns the active node IDs as a unique set map.
