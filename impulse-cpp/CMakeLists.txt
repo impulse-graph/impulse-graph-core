@@ -222,4 +222,7 @@ if(IMPULSE_BUILD_TESTS)
 
     add_executable(bench_vm_e2e tests/bench_vm_e2e.cpp)
     target_link_libraries(bench_vm_e2e PRIVATE impulse_graph_static)
+
+    add_executable(bench_storage_coverage tests/bench_storage_coverage.cpp)
+    target_link_libraries(bench_storage_coverage PRIVATE impulse_graph_static)
 endif()

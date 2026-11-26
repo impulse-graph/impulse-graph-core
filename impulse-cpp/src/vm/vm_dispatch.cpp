@@ -385,7 +385,7 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
     vec->valid_bits = valid_bits;
 
     const uint32_t dim = (desc.dimension == 0u) ? 1u : desc.dimension;
-    if (base_type == 9u && dim > 1u) {
+    if (base_type == 6u && dim > 1u) {
         // Float32 embedding column -> V11Vector TAG_EMB (double** emb_rows)
         size_t total = static_cast<size_t>(n) * static_cast<size_t>(dim);
         if (payload_bytes < total * sizeof(float)) return nullptr;
@@ -426,36 +426,37 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
         vec->i64_data = out;
         return vec;
     }
-    if (base_type >= 5u && base_type <= 8u) {
-        const size_t elem_sz = (base_type == 5u) ? 1u : (base_type == 6u ? 2u : (base_type == 7u ? 4u : 8u));
-        if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
-        int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
-        if (n > 0u && !out) return nullptr;
-        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-            uint64_t v = 0;
-            if (base_type == 5u) { uint8_t x; std::memcpy(&x, ptr + i, 1); v = x; }
-            else if (base_type == 6u) { uint16_t x; std::memcpy(&x, ptr + i * 2u, 2); v = x; }
-            else if (base_type == 7u) { uint32_t x; std::memcpy(&x, ptr + i * 4u, 4); v = x; }
-            else { std::memcpy(&v, ptr + i * 8u, 8); }
-            out[i] = static_cast<int64_t>(v);
-        }
-        vec->elem_tag = kVecTagU64;
-        vec->i64_data = out;
-        return vec;
-    }
-    if (base_type == 9u || base_type == 10u) {
-        const size_t elem_sz = (base_type == 9u) ? 4u : 8u;
+    if (base_type == 6u || base_type == 7u) {
+        const size_t elem_sz = (base_type == 6u) ? 4u : 8u;
         if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
         double* out = (n > 0u) ? arena.alloc_array<double>(n, 8) : nullptr;
         if (n > 0u && !out) return nullptr;
         for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
             double v = 0.0;
-            if (base_type == 9u) { float x; std::memcpy(&x, ptr + i * 4u, 4); v = static_cast<double>(x); }
+            if (base_type == 6u) { float x; std::memcpy(&x, ptr + i * 4u, 4); v = static_cast<double>(x); }
             else { std::memcpy(&v, ptr + i * 8u, 8); }
-            out[i] = v;
+            if (std::isnan(v)) {
+                valid_bits[i >> 6] &= ~(1ULL << (i & 63u));
+                out[i] = 0.0;
+            } else {
+                out[i] = v;
+            }
         }
         vec->elem_tag = kVecTagF64;
         vec->f64_data = out;
+        return vec;
+    }
+    if (base_type == 8u || base_type == 9u) {
+        if (static_cast<size_t>(n) > payload_bytes / 8u) return nullptr;
+        int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
+        if (n > 0u && !out) return nullptr;
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
+            uint64_t v = 0;
+            std::memcpy(&v, ptr + i * 8u, 8);
+            out[i] = static_cast<int64_t>(v);
+        }
+        vec->elem_tag = kVecTagU64;
+        vec->i64_data = out;
         return vec;
     }
     return nullptr;

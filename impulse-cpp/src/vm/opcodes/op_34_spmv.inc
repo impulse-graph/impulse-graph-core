@@ -46,8 +46,6 @@ V11_OP_CASE(SPMV) {
     // Streaming forward SpMV path (!is_rev): avoids materializing an O(E) SpmvEdge array in arena.
     if (!is_rev) {
         const uint32_t row_off_len = rel->row_off_len;
-        const uint32_t* row_offsets = rel->row_offsets;
-        const uint64_t* col_targets = rel->col_targets;
 
         if (subop == 7u) { // .fwd_first_src
             int64_t* out = (n_out > 0u) ? ws.arena.alloc_array<int64_t>(n_out, 8) : nullptr;

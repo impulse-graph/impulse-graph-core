@@ -39,6 +39,7 @@ struct DomainDef {
     id: u16,
     name: String,
     key_type: String,
+    dense_id_width: Option<u8>,
     file: Option<String>,
     format: Option<String>,
     id_column: Option<String>,
@@ -60,6 +61,7 @@ struct RelationDef {
     format: Option<String>,
     src_column: Option<String>,
     tgt_column: Option<String>,
+    pub include_csr: Option<bool>,
     pub include_csc: Option<bool>,
     pub include_coo: Option<bool>,
     pub coo_order: Option<u8>,
@@ -696,6 +698,9 @@ pub fn run_with_options(
             .map(|m| m.len() as u64)
             .unwrap_or(0);
         writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name);
+        if let Some(w) = d.dense_id_width {
+            writer.set_domain_dense_id_width(d.id, w);
+        }
         writer.set_domain_node_count(d.id, node_count);
     }
 
@@ -730,6 +735,9 @@ pub fn run_with_options(
         writer.set_relation_name(rel_idx, rel_name);
         rel_name_to_id.insert(rel_name.to_string(), rel_idx as u16);
 
+        if let Some(inc_csr) = r_def.include_csr {
+            writer.set_relation_include_csr(rel_idx, inc_csr);
+        }
         if r_def.include_csc.unwrap_or(false) {
             writer.set_relation_include_csc(rel_idx, true);
         }

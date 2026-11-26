@@ -379,6 +379,8 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     uint64_t*      acc_f_bits[8]{};
     uint32_t       acc_f_bit_cap[8]{};
     V11MorselAccMl acc_ml[8]{};
+    uint64_t*      acc_ml_dense[8]{};
+    uint32_t       acc_ml_dense_cap[8]{};
     double*   acc_vf64[8]{};
     uint8_t*  acc_vf64_valid[8]{};
     uint32_t  acc_vf64_len[8]{};
@@ -492,11 +494,31 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             }
         }
         if (committed_ml_dom[d] >= 0) {
-            can_rewind_chunks = false;
+            uint16_t dom = static_cast<uint16_t>(committed_ml_dom[d]);
+            uint64_t dcard = (dom < view.domain_count) ? view.domain_cards[dom] : 0ULL;
+            if (dcard > 0ULL && dcard <= (1ULL << 22)) {
+                uint64_t* dense = ws.arena.alloc_array<uint64_t>(static_cast<size_t>(dcard), 64);
+                if (dense) {
+                    std::memset(dense, 0, static_cast<size_t>(dcard) * sizeof(uint64_t));
+                    acc_ml_dense[d] = dense;
+                    acc_ml_dense_cap[d] = static_cast<uint32_t>(dcard);
+                } else {
+                    can_rewind_chunks = false;
+                }
+            } else {
+                can_rewind_chunks = false;
+            }
             if (need_ml_accum[d] && ws.is_f_init(d) && ws.f_regs[d].multi_lane) {
                 for (uint32_t k = 0; k < ws.f_regs[d].ml_count; ++k) {
-                    if (!acc_ml[d].or_entry(ws.arena, ws.f_regs[d].ml_nodes[k], ws.f_regs[d].ml_masks[k])) {
-                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                    uint64_t node = ws.f_regs[d].ml_nodes[k];
+                    uint64_t mask = ws.f_regs[d].ml_masks[k];
+                    if (acc_ml_dense[d] && node < acc_ml_dense_cap[d]) {
+                        acc_ml_dense[d][node] |= mask;
+                    } else {
+                        can_rewind_chunks = false;
+                        if (!acc_ml[d].or_entry(ws.arena, node, mask)) {
+                            ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                        }
                     }
                 }
             }
@@ -1177,15 +1199,44 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                             }
                             bool r_ok = scalar && ws.is_r_valid(s2);
                             uint64_t r_val = r_ok ? ws.read_r_raw(s2) : 0ULL;
-                            for (uint32_t k = 0; k < cm_len; ++k) {
-                                uint32_t i = cm_ids[k];
-                                if (i >= ids->length || !ids->is_valid_at(i)) continue;
-                                bool has_lm = scalar ? r_ok : (i < lms->length && lms->is_valid_at(i));
-                                if (!has_lm) continue;
-                                uint64_t lm = scalar ? r_val : static_cast<uint64_t>(lms->i64_data[i]);
-                                if (lm != 0ULL) {
-                                    if (!acc_ml[dst].or_entry(ws.arena, static_cast<uint64_t>(ids->i64_data[i]), lm)) {
-                                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
+                            uint64_t* __restrict dense = acc_ml_dense[dst];
+                            const uint32_t dcap = acc_ml_dense_cap[dst];
+                            if (dense && !scalar && !masked &&
+                                ids->valid_bits == nullptr && lms->valid_bits == nullptr &&
+                                ids->length >= cm_len && lms->length >= cm_len) {
+                                const int64_t* __restrict id_arr = ids->i64_data;
+                                const int64_t* __restrict lm_arr = lms->i64_data;
+                                for (uint32_t i = 0; i < cm_len; ++i) {
+                                    uint64_t lm = static_cast<uint64_t>(lm_arr[i]);
+                                    if (lm != 0ULL) {
+                                        uint64_t tgt = static_cast<uint64_t>(id_arr[i]);
+                                        if (__builtin_expect(tgt < dcap, 1)) {
+                                            dense[tgt] |= lm;
+                                        } else {
+                                            can_rewind_chunks = false;
+                                            if (!acc_ml[dst].or_entry(ws.arena, tgt, lm)) {
+                                                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (uint32_t k = 0; k < cm_len; ++k) {
+                                    uint32_t i = cm_ids[k];
+                                    if (i >= ids->length || !ids->is_valid_at(i)) continue;
+                                    bool has_lm = scalar ? r_ok : (i < lms->length && lms->is_valid_at(i));
+                                    if (!has_lm) continue;
+                                    uint64_t lm = scalar ? r_val : static_cast<uint64_t>(lms->i64_data[i]);
+                                    if (lm != 0ULL) {
+                                        uint64_t tgt = static_cast<uint64_t>(ids->i64_data[i]);
+                                        if (dense && tgt < dcap) {
+                                            dense[tgt] |= lm;
+                                        } else {
+                                            can_rewind_chunks = false;
+                                            if (!acc_ml[dst].or_entry(ws.arena, tgt, lm)) {
+                                                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1420,19 +1471,56 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             if (committed_ml_dom[d] >= 0) {
                 uint16_t dom = static_cast<uint16_t>(committed_ml_dom[d]);
                 uint64_t dcard = view.domain_cards[dom];
-                uint32_t cnt = acc_ml[d].len;
-                if (cnt > 0u) any_non_empty = true;
-                uint32_t* perm = (cnt > 0u) ? ws.arena.alloc_array<uint32_t>(cnt, 8) : nullptr;
-                uint64_t* ns   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
-                uint64_t* ms   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
-                if (cnt > 0u && (!perm || !ns || !ms)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
-                for (uint32_t i = 0; i < cnt; ++i) perm[i] = i;
-                std::sort(perm, perm + cnt, [&](uint32_t a, uint32_t b) { return acc_ml[d].nodes[a] < acc_ml[d].nodes[b]; });
-                for (uint32_t i = 0; i < cnt; ++i) { ns[i] = acc_ml[d].nodes[perm[i]]; ms[i] = acc_ml[d].masks[perm[i]]; }
-                if (!staged_f[d].init_multi_lane(ws.arena, dom, dcard, 64u, 64u, ns, ms, cnt, ws.geometry)) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                if (acc_ml_dense[d] && acc_ml[d].len == 0u) {
+                    const uint32_t dcap = acc_ml_dense_cap[d];
+                    const uint64_t* dense = acc_ml_dense[d];
+                    uint32_t cnt = 0u;
+                    for (uint32_t i = 0; i < dcap; ++i) {
+                        if (dense[i] != 0ULL) ++cnt;
+                    }
+                    if (cnt > 0u) any_non_empty = true;
+                    uint64_t* ns = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+                    uint64_t* ms = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+                    if (cnt > 0u && (!ns || !ms)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
+                    uint32_t pos = 0u;
+                    for (uint32_t i = 0; i < dcap; ++i) {
+                        uint64_t m = dense[i];
+                        if (m != 0ULL) {
+                            ns[pos] = i;
+                            ms[pos] = m;
+                            ++pos;
+                        }
+                    }
+                    if (!staged_f[d].init_multi_lane(ws.arena, dom, dcard, 64u, 64u, ns, ms, cnt, ws.geometry)) {
+                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                    }
+                    staged_f_set[d] = true;
+                } else {
+                    if (acc_ml_dense[d]) {
+                        const uint32_t dcap = acc_ml_dense_cap[d];
+                        const uint64_t* dense = acc_ml_dense[d];
+                        for (uint32_t i = 0; i < dcap; ++i) {
+                            if (dense[i] != 0ULL) {
+                                if (!acc_ml[d].or_entry(ws.arena, i, dense[i])) {
+                                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                                }
+                            }
+                        }
+                    }
+                    uint32_t cnt = acc_ml[d].len;
+                    if (cnt > 0u) any_non_empty = true;
+                    uint32_t* perm = (cnt > 0u) ? ws.arena.alloc_array<uint32_t>(cnt, 8) : nullptr;
+                    uint64_t* ns   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+                    uint64_t* ms   = (cnt > 0u) ? ws.arena.alloc_array<uint64_t>(cnt, 8) : nullptr;
+                    if (cnt > 0u && (!perm || !ns || !ms)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
+                    for (uint32_t i = 0; i < cnt; ++i) perm[i] = i;
+                    std::sort(perm, perm + cnt, [&](uint32_t a, uint32_t b) { return acc_ml[d].nodes[a] < acc_ml[d].nodes[b]; });
+                    for (uint32_t i = 0; i < cnt; ++i) { ns[i] = acc_ml[d].nodes[perm[i]]; ms[i] = acc_ml[d].masks[perm[i]]; }
+                    if (!staged_f[d].init_multi_lane(ws.arena, dom, dcard, 64u, 64u, ns, ms, cnt, ws.geometry)) {
+                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return;
+                    }
+                    staged_f_set[d] = true;
                 }
-                staged_f_set[d] = true;
             }
             if (committed_vf64[d] && has_vf64[d]) {
                 uint32_t n = acc_vf64_len[d];
