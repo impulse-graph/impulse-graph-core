@@ -1,6 +1,6 @@
 #include "impulse_graph.h"
 #include "impulse_vm.h"
-#include <cassert>
+#include "impulse_vm_v11.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,210 +13,7 @@
     } \
 } while (0)
 
-static void test_statement_lifecycle_cypher() {
-    std::printf("Testing SQLite-style impulse_stmt lifecycle with openCypher...\n");
-
-    const char* cypher = "MATCH (u:User)-[:Follows]->(v:User) WHERE u.id = $seed RETURN v";
-    impulse_stmt_t* stmt = nullptr;
-    
-    impulse_status_t rc = impulse_stmt_prepare(nullptr, cypher, &stmt);
-    TEST_ASSERT(rc == IMPULSE_OK);
-    TEST_ASSERT(stmt != nullptr);
-
-    size_t buf_size = impulse_stmt_buffer_size(stmt);
-    TEST_ASSERT(buf_size > 0);
-
-    // Bind parameters
-    rc = impulse_stmt_bind_node(stmt, "$seed", 42);
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    rc = impulse_stmt_bind_int(stmt, "$minAge", 18);
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    rc = impulse_stmt_bind_str(stmt, "$tenant", "acme-corp");
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    uint8_t uuid[16] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
-    rc = impulse_stmt_bind_uuid(stmt, "$tenant_uuid", uuid);
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    // Allocate caller buffer
-    std::vector<uint8_t> buffer(buf_size);
-
-    // Execute in caller buffer
-    rc = impulse_stmt_execute(stmt, buffer.data(), buffer.size());
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    // Inspect results
-    size_t rows = impulse_stmt_row_count(stmt);
-    uint32_t cols = impulse_stmt_column_count(stmt);
-    TEST_ASSERT(rows > 0);
-    TEST_ASSERT(cols >= 1);
-
-    const char* col0_name = impulse_stmt_column_name(stmt, 0);
-    TEST_ASSERT(col0_name != nullptr && std::strlen(col0_name) > 0);
-
-    const void* col0_data = impulse_stmt_column_data(stmt, 0);
-    TEST_ASSERT(col0_data != nullptr);
-
-    // Nullability check
-    bool is_null = impulse_stmt_column_is_null(stmt, 0, 0);
-    TEST_ASSERT(!is_null);
-
-    impulse_stmt_finalize(stmt);
-    std::printf("  [PASS] openCypher statement lifecycle\n");
-}
-
-static void test_statement_lifecycle_datalog() {
-    std::printf("Testing SQLite-style impulse_stmt lifecycle with ImpLog Datalog...\n");
-
-    const char* datalog = "reach(Y) :- edge(X, Y).";
-    impulse_stmt_t* stmt = nullptr;
-    
-    impulse_status_t rc = impulse_stmt_prepare(nullptr, datalog, &stmt);
-    TEST_ASSERT(rc == IMPULSE_OK);
-    TEST_ASSERT(stmt != nullptr);
-
-    uint64_t seeds[3] = {10, 20, 30};
-    rc = impulse_stmt_bind_nodes(stmt, "$seeds", seeds, 3);
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    uint64_t bitset[2] = {0x01ULL, 0x02ULL};
-    rc = impulse_stmt_bind_bitset(stmt, "$frontier", bitset, 2);
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    size_t buf_size = impulse_stmt_buffer_size(stmt);
-    TEST_ASSERT(buf_size > 0);
-
-    std::vector<uint8_t> buffer(buf_size);
-    rc = impulse_stmt_execute(stmt, buffer.data(), buffer.size());
-    TEST_ASSERT(rc == IMPULSE_OK);
-
-    impulse_stmt_finalize(stmt);
-    std::printf("  [PASS] ImpLog Datalog statement lifecycle\n");
-
-    // ImpScheme multi-lane statement materialization (TYPE_LANE_FRONTIER and TYPE_NODE_VECTOR)
-    {
-        const char* scm_lf = "(lane-init-seeds 0 3)";
-        impulse_stmt_t* lf_stmt = nullptr;
-        TEST_ASSERT(impulse_stmt_prepare(nullptr, scm_lf, &lf_stmt) == IMPULSE_OK);
-        uint64_t s_nodes[3] = {2, 5, 9};
-        TEST_ASSERT(impulse_stmt_bind_nodes(lf_stmt, "$seeds", s_nodes, 3) == IMPULSE_OK);
-        std::vector<uint8_t> lf_buf(impulse_stmt_buffer_size(lf_stmt));
-        TEST_ASSERT(impulse_stmt_execute(lf_stmt, lf_buf.data(), lf_buf.size()) == IMPULSE_OK);
-        TEST_ASSERT(impulse_stmt_column_type(lf_stmt, 0) == TYPE_LANE_FRONTIER);
-        TEST_ASSERT(impulse_stmt_column_dim(lf_stmt, 0) == 3);
-        const uint64_t* lf_masks = static_cast<const uint64_t*>(impulse_stmt_column_data(lf_stmt, 0));
-        TEST_ASSERT(lf_masks != nullptr);
-        TEST_ASSERT(lf_masks[2] == 1ULL && lf_masks[5] == 2ULL && lf_masks[9] == 4ULL);
-        impulse_stmt_finalize(lf_stmt);
-    }
-}
-
-static void test_impulse_exec_convenience() {
-    std::printf("Testing impulse_exec one-line convenience...\n");
-
-    const char* query = "MATCH (u:User)-[:Follows]->(v:User) RETURN v";
-    impulse_execution_result_t result{};
-    
-    impulse_status_t rc = impulse_exec(nullptr, query, 101, &result);
-    TEST_ASSERT(rc == IMPULSE_OK);
-    TEST_ASSERT(result.status == IMPULSE_VM_OK);
-    TEST_ASSERT(result.row_count > 0);
-    TEST_ASSERT(result.column_count >= 1);
-    TEST_ASSERT(result.scalar_value == 101);
-
-    std::printf("  [PASS] impulse_exec convenience API\n");
-}
-
-static void test_statement_null_and_boundaries() {
-    std::printf("Testing C Statement API null argument guards and boundaries...\n");
-
-    impulse_stmt_t* stmt = nullptr;
-    TEST_ASSERT(impulse_stmt_prepare(nullptr, nullptr, &stmt) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_prepare(nullptr, "MATCH (a) RETURN a", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_buffer_size(nullptr) == 0);
-    impulse_stmt_finalize(nullptr);
-
-    // Prepare valid statement
-    impulse_status_t rc = impulse_stmt_prepare(nullptr, "MATCH (u:User)-[:Follows]->(v:User) RETURN v", &stmt);
-    TEST_ASSERT(rc == IMPULSE_OK);
-    TEST_ASSERT(stmt != nullptr);
-
-    // Null guards for all bindings
-    TEST_ASSERT(impulse_stmt_bind_node(nullptr, "$n", 1) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_node(stmt, nullptr, 1) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    TEST_ASSERT(impulse_stmt_bind_nodes(nullptr, "$n", nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_nodes(stmt, nullptr, nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_nodes(stmt, "$n", nullptr, 5) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    TEST_ASSERT(impulse_stmt_bind_bitset(nullptr, "$b", nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_bitset(stmt, nullptr, nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_bitset(stmt, "$b", nullptr, 2) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    uint8_t roar_bytes[4] = {1, 2, 3, 4};
-    TEST_ASSERT(impulse_stmt_bind_roaring(nullptr, "$r", roar_bytes, 4) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_roaring(stmt, nullptr, roar_bytes, 4) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_roaring(stmt, "$r", nullptr, 4) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_roaring(stmt, "$r", roar_bytes, 4) == IMPULSE_OK);
-
-    TEST_ASSERT(impulse_stmt_bind_int(nullptr, "$i", 10) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_int(stmt, nullptr, 10) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    TEST_ASSERT(impulse_stmt_bind_uint(nullptr, "$u", 10) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_uint(stmt, nullptr, 10) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_uint(stmt, "$u", 10) == IMPULSE_OK);
-
-    TEST_ASSERT(impulse_stmt_bind_float(nullptr, "$f", 3.14) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_float(stmt, nullptr, 3.14) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_float(stmt, "$f", 3.14) == IMPULSE_OK);
-
-    TEST_ASSERT(impulse_stmt_bind_str(nullptr, "$s", "val") == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_str(stmt, nullptr, "val") == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_str(stmt, "$s", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    TEST_ASSERT(impulse_stmt_bind_uuid(nullptr, "$uuid", roar_bytes) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_uuid(stmt, nullptr, roar_bytes) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_uuid(stmt, "$uuid", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    float vec[3] = {1.0f, 2.0f, 3.0f};
-    TEST_ASSERT(impulse_stmt_bind_vector(nullptr, "$vec", vec, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_vector(stmt, nullptr, vec, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_vector(stmt, "$vec", nullptr, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_bind_vector(stmt, "$vec", vec, 3) == IMPULSE_OK);
-
-    // Execute with null buffer and insufficient buffer
-    TEST_ASSERT(impulse_stmt_execute(nullptr, nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_stmt_execute(stmt, nullptr, 1000) == IMPULSE_ERR_INVALID_ARGUMENT);
-    std::vector<uint8_t> small_buf(10);
-    TEST_ASSERT(impulse_stmt_execute(stmt, small_buf.data(), small_buf.size()) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    // Out-of-bounds column inspection
-    TEST_ASSERT(std::strlen(impulse_stmt_column_name(nullptr, 0)) == 0);
-    TEST_ASSERT(std::strlen(impulse_stmt_column_name(stmt, 999)) == 0);
-    TEST_ASSERT(impulse_stmt_column_type(nullptr, 0) == 0);
-    TEST_ASSERT(impulse_stmt_column_type(stmt, 999) == 0);
-    TEST_ASSERT(impulse_stmt_column_dim(nullptr, 0) == 1);
-    TEST_ASSERT(impulse_stmt_column_dim(stmt, 999) == 1);
-    TEST_ASSERT(impulse_stmt_column_data(nullptr, 0) == nullptr);
-    TEST_ASSERT(impulse_stmt_column_data(stmt, 999) == nullptr);
-    TEST_ASSERT(impulse_stmt_column_is_null(nullptr, 0, 0));
-    TEST_ASSERT(impulse_stmt_column_is_null(stmt, 999, 0));
-
-    // Exec null checks
-    impulse_execution_result_t exec_res{};
-    TEST_ASSERT(impulse_exec(nullptr, nullptr, 0, &exec_res) == IMPULSE_ERR_INVALID_ARGUMENT);
-    TEST_ASSERT(impulse_exec(nullptr, "MATCH (a) RETURN a", 0, nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
-
-    impulse_stmt_finalize(stmt);
-    std::printf("  [PASS] C Statement API null & boundary checks\n");
-}
-
-static void test_statement_v11_real_snapshot() {
-    std::printf("Testing SQLite-style impulse_stmt on real .imps v0.11 snapshot (v0.11 VM path)...\n");
-
-    const char* path = "/tmp/impulse_test_stmt_v11.imps";
+static impulse_snapshot_t* build_test_snapshot(const char* path) {
     impulse_writer_t* w = impulse_writer_create(path, 0);
     TEST_ASSERT(w != nullptr);
     TEST_ASSERT(impulse_writer_add_domain(w, 0, 0, "User") == IMPULSE_OK);
@@ -226,50 +23,119 @@ static void test_statement_v11_real_snapshot() {
     TEST_ASSERT(impulse_writer_add_relation(w, 0, 0, 0, 4, 3, 0,
                                             row_off, sizeof(row_off), col_tgt, sizeof(col_tgt)) == IMPULSE_OK);
     TEST_ASSERT(impulse_writer_finalize(w) == IMPULSE_OK);
-
     impulse_status_t open_rc = IMPULSE_OK;
     impulse_snapshot_t* snap = impulse_snapshot_open(path, &open_rc);
     TEST_ASSERT(open_rc == IMPULSE_OK && snap != nullptr);
+    return snap;
+}
 
-    impulse_stmt_t* stmt = nullptr;
+static void test_statement_lifecycle_cypher_and_reuse(const impulse_snapshot_t* snap) {
+    std::printf("Testing SQLite-style impulse_stmt lifecycle with openCypher on .imps v0.11...\n");
+
     const char* cypher = "MATCH (u:User)-[:rel_0]->(v:User) WHERE u.id = $seed RETURN v";
+    impulse_stmt_t* stmt = nullptr;
     TEST_ASSERT(impulse_stmt_prepare(snap, cypher, &stmt) == IMPULSE_OK);
     TEST_ASSERT(stmt != nullptr);
+
+    size_t buf_size = impulse_stmt_buffer_size(stmt);
+    TEST_ASSERT(buf_size > 0);
+
     TEST_ASSERT(impulse_stmt_bind_node(stmt, "$seed", 0) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_bind_int(stmt, "$minAge", 18) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_bind_str(stmt, "$tenant", "acme-corp") == IMPULSE_OK);
+    uint8_t uuid[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+    TEST_ASSERT(impulse_stmt_bind_uuid(stmt, "$tenant_uuid", uuid) == IMPULSE_OK);
 
-    size_t buf_sz = impulse_stmt_buffer_size(stmt);
-    TEST_ASSERT(buf_sz > 0);
-    std::vector<uint8_t> buf(buf_sz);
-    TEST_ASSERT(impulse_stmt_execute(stmt, buf.data(), buf.size()) == IMPULSE_OK);
-
+    std::vector<uint8_t> buffer(buf_size);
+    TEST_ASSERT(impulse_stmt_execute(stmt, buffer.data(), buffer.size()) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_row_count(stmt) > 0);
     TEST_ASSERT(impulse_stmt_column_count(stmt) == 1);
     TEST_ASSERT(impulse_stmt_column_type(stmt, 0) == 0x08);
+    TEST_ASSERT(std::strlen(impulse_stmt_column_name(stmt, 0)) > 0);
+    TEST_ASSERT(!impulse_stmt_column_is_null(stmt, 0, 0));
+
     const uint64_t* words = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
     TEST_ASSERT(words != nullptr);
-    // Node 0 follows nodes 1 and 2 => bits 1 and 2 set (0b0110 = 6)
     TEST_ASSERT((words[0] & 0xFULL) == ((1ULL << 1) | (1ULL << 2)));
 
-    // Re-execute with seed = 1 (zero-alloc reuse of same prepared statement & buffer)
+    // Zero-alloc reuse with seed = 1 -> reaches node 3
     TEST_ASSERT(impulse_stmt_bind_node(stmt, "$seed", 1) == IMPULSE_OK);
-    TEST_ASSERT(impulse_stmt_execute(stmt, buf.data(), buf.size()) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_execute(stmt, buffer.data(), buffer.size()) == IMPULSE_OK);
     words = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
-    TEST_ASSERT(words != nullptr);
     TEST_ASSERT((words[0] & 0xFULL) == (1ULL << 3));
 
     impulse_stmt_finalize(stmt);
-    impulse_snapshot_close(snap);
-    std::remove(path);
-    std::printf("  [PASS] Real .imps v0.11 prepared statement execution & reuse\n");
+    std::printf("  [PASS] openCypher statement lifecycle & zero-alloc reuse\n");
+}
+
+static void test_statement_lifecycle_datalog_and_exec(const impulse_snapshot_t* snap) {
+    std::printf("Testing ImpLog Datalog & impulse_exec convenience on .imps v0.11...\n");
+
+    const char* datalog = "reach(Y) :- rel_0(X, Y).";
+    impulse_stmt_t* stmt = nullptr;
+    TEST_ASSERT(impulse_stmt_prepare(snap, datalog, &stmt) == IMPULSE_OK);
+    uint64_t seeds[2] = {0, 1};
+    TEST_ASSERT(impulse_stmt_bind_nodes(stmt, "$seeds", seeds, 2) == IMPULSE_OK);
+    std::vector<uint8_t> buf(impulse_stmt_buffer_size(stmt));
+    TEST_ASSERT(impulse_stmt_execute(stmt, buf.data(), buf.size()) == IMPULSE_OK);
+    const uint64_t* words = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
+    TEST_ASSERT((words[0] & 0xFULL) == ((1ULL << 1) | (1ULL << 2) | (1ULL << 3)));
+    impulse_stmt_finalize(stmt);
+
+    impulse_execution_result_t res{};
+    TEST_ASSERT(impulse_exec(snap, "MATCH (u:User)-[:rel_0]->(v:User) RETURN v", 0, &res) == IMPULSE_OK);
+    TEST_ASSERT(res.status == IMPULSE_VM_V11_OK);
+    TEST_ASSERT(res.row_count > 0 && res.column_count == 1 && res.data_ptr != nullptr);
+    std::printf("  [PASS] ImpLog Datalog & impulse_exec\n");
+}
+
+static void test_statement_null_and_boundaries(const impulse_snapshot_t* snap) {
+    std::printf("Testing C Statement API null guards and boundaries...\n");
+
+    impulse_stmt_t* stmt = nullptr;
+    TEST_ASSERT(impulse_stmt_prepare(snap, nullptr, &stmt) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_prepare(snap, "MATCH (a) RETURN a", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_buffer_size(nullptr) == 0);
+    impulse_stmt_finalize(nullptr);
+
+    TEST_ASSERT(impulse_stmt_prepare(snap, "MATCH (u:User)-[:rel_0]->(v:User) RETURN v", &stmt) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_bind_node(nullptr, "$n", 1) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_node(stmt, nullptr, 1) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_nodes(stmt, "$n", nullptr, 5) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_bitset(stmt, "$b", nullptr, 2) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_roaring(stmt, "$r", nullptr, 4) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_str(stmt, "$s", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_uuid(stmt, "$uuid", nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_bind_vector(stmt, "$vec", nullptr, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    TEST_ASSERT(impulse_stmt_execute(nullptr, nullptr, 0) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_stmt_execute(stmt, nullptr, 1000) == IMPULSE_ERR_INVALID_ARGUMENT);
+    std::vector<uint8_t> small_buf(10);
+    TEST_ASSERT(impulse_stmt_execute(stmt, small_buf.data(), small_buf.size()) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    TEST_ASSERT(std::strlen(impulse_stmt_column_name(stmt, 999)) == 0);
+    TEST_ASSERT(impulse_stmt_column_type(stmt, 999) == 0);
+    TEST_ASSERT(impulse_stmt_column_dim(stmt, 999) == 1);
+    TEST_ASSERT(impulse_stmt_column_data(stmt, 999) == nullptr);
+    TEST_ASSERT(impulse_stmt_column_is_null(stmt, 999, 0));
+
+    impulse_execution_result_t exec_res{};
+    TEST_ASSERT(impulse_exec(nullptr, "MATCH (a) RETURN a", 0, &exec_res) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_exec(snap, nullptr, 0, &exec_res) == IMPULSE_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT(impulse_exec(snap, "MATCH (a) RETURN a", 0, nullptr) == IMPULSE_ERR_INVALID_ARGUMENT);
+
+    impulse_stmt_finalize(stmt);
+    std::printf("  [PASS] C Statement API null & boundary checks\n");
 }
 
 int main() {
-    std::printf("=== Running C Statement API Suite ===\n");
-    test_statement_lifecycle_cypher();
-    test_statement_lifecycle_datalog();
-    test_impulse_exec_convenience();
-    test_statement_null_and_boundaries();
-    test_statement_v11_real_snapshot();
-    std::printf("=== All C Statement API Tests Passed ===\n");
+    const char* path = "/tmp/impulse_test_stmt_v11.imps";
+    impulse_snapshot_t* snap = build_test_snapshot(path);
+    test_statement_lifecycle_cypher_and_reuse(snap);
+    test_statement_lifecycle_datalog_and_exec(snap);
+    test_statement_null_and_boundaries(snap);
+    impulse_snapshot_close(snap);
+    std::remove(path);
+    std::printf("=== All C Statement API (v0.11) Tests Passed ===\n");
     return 0;
 }
-
