@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_plan_memory(
@@ -43,11 +44,30 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_plan_memory(
         }
     }
 
-    size_t dense_bytes_per_f = static_cast<size_t>(((max_dom_card + 63ULL) / 64ULL) * 8ULL);
-    size_t id_array_per_f    = static_cast<size_t>(max_dom_card * sizeof(uint32_t));
-    size_t f_slot_bound      = (std::max)(dense_bytes_per_f, id_array_per_f) + 4096u;
-    size_t v_slot_bound      = static_cast<size_t>(max_dom_card * sizeof(uint64_t)) +
-                               static_cast<size_t>(((max_dom_card + 63ULL) / 64ULL) * 8ULL) + 128u;
+    auto safe_add = [](size_t a, size_t b, size_t* out) -> bool {
+        if (b > (std::numeric_limits<size_t>::max)() - a) return false;
+        *out = a + b;
+        return true;
+    };
+    auto safe_mul = [](size_t a, size_t b, size_t* out) -> bool {
+        if (a != 0u && b > (std::numeric_limits<size_t>::max)() / a) return false;
+        *out = a * b;
+        return true;
+    };
+
+    if (max_dom_card > (std::numeric_limits<size_t>::max)() / 32ULL) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
+    const size_t card_sz = static_cast<size_t>(max_dom_card);
+    size_t dense_bytes_per_f = ((card_sz + 63u) / 64u) * 8u;
+    size_t id_array_per_f = 0u, f_slot_bound = 0u, v_data = 0u, v_slot_bound = 0u;
+    if (!safe_mul(card_sz, sizeof(uint32_t), &id_array_per_f) ||
+        !safe_add((std::max)(dense_bytes_per_f, id_array_per_f), 4096u, &f_slot_bound) ||
+        !safe_mul(card_sz, sizeof(uint64_t), &v_data) ||
+        !safe_add(v_data, dense_bytes_per_f, &v_slot_bound) ||
+        !safe_add(v_slot_bound, 128u, &v_slot_bound)) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
 
     const auto* code_ptr = static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr);
     size_t n = hdr.code_word_count;
@@ -66,21 +86,41 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_plan_memory(
             transient_max = (std::max)(transient_max, static_cast<size_t>(dop) * 32768u);
         } else if (op == static_cast<uint8_t>(Opcode::OP_GRAPH_KERNEL)) {
             if (subop == 1u || subop == 2u) {
-                transient_max = (std::max)(transient_max, static_cast<size_t>(max_dom_card * 16ULL));
+                size_t gk = 0u;
+                if (!safe_mul(card_sz, 16u, &gk)) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                transient_max = (std::max)(transient_max, gk);
             } else if (subop == 3u || subop == 4u) {
-                size_t tri = static_cast<size_t>(max_dom_card * 8ULL) +
-                             static_cast<size_t>(dop) * static_cast<size_t>((max_dom_card + 7ULL) / 8ULL);
+                size_t tri_a = 0u, tri_b = 0u, tri = 0u;
+                if (!safe_mul(card_sz, 8u, &tri_a) ||
+                    !safe_mul(static_cast<size_t>(dop), (card_sz + 7u) / 8u, &tri_b) ||
+                    !safe_add(tri_a, tri_b, &tri)) {
+                    return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                }
                 transient_max = (std::max)(transient_max, tri);
             }
         } else if (op == static_cast<uint8_t>(Opcode::OP_COLLECT)) {
-            max_result += v_slot_bound;
+            if (!safe_add(max_result, v_slot_bound, &max_result)) {
+                return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+            }
         }
         pc += ext ? 2u : 1u;
     }
 
-    size_t min_scratch = ws_header + morsel_tls + 65536u;
-    size_t guaranteed  = ws_header + morsel_tls + (16u * f_slot_bound) + (16u * v_slot_bound) +
-                         (f_slot_bound / 4u) + transient_max;
+    size_t min_scratch = 0u, f16 = 0u, v16 = 0u, guaranteed = 0u;
+    if (!safe_add(ws_header, morsel_tls, &min_scratch) ||
+        !safe_add(min_scratch, 65536u, &min_scratch) ||
+        !safe_mul(16u, f_slot_bound, &f16) ||
+        !safe_mul(16u, v_slot_bound, &v16) ||
+        !safe_add(ws_header, morsel_tls, &guaranteed) ||
+        !safe_add(guaranteed, f16, &guaranteed) ||
+        !safe_add(guaranteed, v16, &guaranteed) ||
+        !safe_add(guaranteed, f_slot_bound / 4u, &guaranteed) ||
+        !safe_add(guaranteed, transient_max, &guaranteed) ||
+        min_scratch > (std::numeric_limits<size_t>::max)() - 127u ||
+        guaranteed > (std::numeric_limits<size_t>::max)() - 127u ||
+        max_result > (std::numeric_limits<size_t>::max)() - 63u) {
+        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    }
 
     out_plan->min_scratch_bytes        = (min_scratch + 127u) & ~size_t(127u);
     out_plan->guaranteed_scratch_bytes = (guaranteed + 127u) & ~size_t(127u);

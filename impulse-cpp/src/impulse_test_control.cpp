@@ -1,11 +1,11 @@
 /**
- * @file impulse_vm_context.cpp
- * @brief C-ABI lifecycle, off-heap handle pool management, mock graph binding,
- *        and fault-injection / MC/DC coverage hooks for ImpulseVM.
+ * @file impulse_test_control.cpp
+ * @brief Fault-injection, testcase telemetry, and MC/DC branch coverage hooks.
  */
 #include "impulse_assert.h"
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include "impulse_sha256.h"
 
-int g_vm_branch_cov_fast = 0;
+static std::atomic<int> g_vm_branch_cov_fast{0};
 
 namespace {
 
@@ -34,7 +34,7 @@ struct FaultSimState {
 };
 std::mutex g_faultsim_mutex;
 FaultSimState g_faultsim;
-int g_faultsim_fast = 0;
+std::atomic<int> g_faultsim_fast{0};
 
 struct TestcaseStatsState {
     static constexpr size_t TABLE_SIZE = 8192;
@@ -99,8 +99,7 @@ void impulse_test_set_opt_disable_mask(uint32_t mask) {
 
 void impulse_testcase_record(const char* file, int line, int cond_val) {
     if (cond_val) {
-        uint64_t cur_hits = g_testcase_stats.total_hits.load(std::memory_order_relaxed);
-        g_testcase_stats.total_hits.store(cur_hits + 1, std::memory_order_relaxed);
+        g_testcase_stats.total_hits.fetch_add(1, std::memory_order_relaxed);
     }
     uint8_t bit = cond_val ? 0x01u : 0x02u;
     size_t idx = testcase_site_index(file, line);
@@ -113,7 +112,7 @@ void impulse_testcase_record(const char* file, int line, int cond_val) {
 static int impulse_faultsim_step_slow(void) {
     std::lock_guard<std::mutex> lock(g_faultsim_mutex);
     if (!g_faultsim.enable) {
-        g_faultsim_fast = 0;
+        g_faultsim_fast.store(0, std::memory_order_relaxed);
         return 0;
     }
     g_faultsim.n_total++;
@@ -125,7 +124,7 @@ static int impulse_faultsim_step_slow(void) {
         g_faultsim.repeat--;
         if (g_faultsim.repeat == 0) {
             g_faultsim.enable = 0;
-            g_faultsim_fast = 0;
+            g_faultsim_fast.store(0, std::memory_order_relaxed);
         }
         g_faultsim.n_fail++;
         if (g_faultsim.benign_depth > 0) {
@@ -134,12 +133,12 @@ static int impulse_faultsim_step_slow(void) {
         return 1;
     }
     g_faultsim.enable = 0;
-    g_faultsim_fast = 0;
+    g_faultsim_fast.store(0, std::memory_order_relaxed);
     return 0;
 }
 
 int impulse_faultsim_step(void) {
-    if (IMPULSE_LIKELY(g_faultsim_fast == 0)) return 0;
+    if (IMPULSE_LIKELY(g_faultsim_fast.load(std::memory_order_relaxed) == 0)) return 0;
     return impulse_faultsim_step_slow();
 }
 
@@ -162,7 +161,7 @@ void impulse_vm_branch_coverage_reset(void) {
 
 void impulse_vm_branch_coverage_set_enabled(int enabled) {
     int v = enabled ? 1 : 0;
-    g_vm_branch_cov_fast = v;
+    g_vm_branch_cov_fast.store(v, std::memory_order_relaxed);
     g_vm_branch_cov_enabled.store(v, std::memory_order_relaxed);
 }
 
@@ -172,7 +171,7 @@ int impulse_vm_branch_coverage_is_enabled(void) {
 
 void impulse_vm_branch_coverage_record(uint32_t pc, uint8_t opcode, uint32_t site_id,
                                        uint8_t kind_mask, uint8_t expectation, uint8_t branch_index) {
-    if (IMPULSE_LIKELY(g_vm_branch_cov_fast == 0 && expectation == IMPULSE_COV_BOTH)) return;
+    if (IMPULSE_LIKELY(g_vm_branch_cov_fast.load(std::memory_order_relaxed) == 0 && expectation == IMPULSE_COV_BOTH)) return;
     uint8_t bit = static_cast<uint8_t>(1u << branch_index);
     if (expectation == IMPULSE_COV_ALWAYS_TAKEN && branch_index != 0) {
         IMPULSE_ASSERT_FAILED("IMPULSE_COV_ALWAYS_TAKEN", "branch_index == 0", __FILE__, __LINE__, __func__);
@@ -260,7 +259,7 @@ int impulse_test_control(int op, ...) {
             g_faultsim.delay = (delay >= 0) ? delay : 0;
             g_faultsim.repeat = (repeat >= 0) ? repeat : 0;
             g_faultsim.enable = (repeat > 0) ? 1 : 0;
-            g_faultsim_fast = g_faultsim.enable;
+            g_faultsim_fast.store(g_faultsim.enable, std::memory_order_relaxed);
             g_faultsim.n_fail = 0;
             g_faultsim.n_benign_fail = 0;
             g_faultsim.n_total = 0;
