@@ -213,12 +213,62 @@ static void test_statement_null_and_boundaries() {
     std::printf("  [PASS] C Statement API null & boundary checks\n");
 }
 
+static void test_statement_v11_real_snapshot() {
+    std::printf("Testing SQLite-style impulse_stmt on real .imps v0.11 snapshot (v0.11 VM path)...\n");
+
+    const char* path = "/tmp/impulse_test_stmt_v11.imps";
+    impulse_writer_t* w = impulse_writer_create(path, 0);
+    TEST_ASSERT(w != nullptr);
+    TEST_ASSERT(impulse_writer_add_domain(w, 0, 0, "User") == IMPULSE_OK);
+    // 0 -> 1, 0 -> 2, 1 -> 3
+    uint32_t row_off[5] = {0, 2, 3, 3, 3};
+    uint32_t col_tgt[3] = {1, 2, 3};
+    TEST_ASSERT(impulse_writer_add_relation(w, 0, 0, 0, 4, 3, 0,
+                                            row_off, sizeof(row_off), col_tgt, sizeof(col_tgt)) == IMPULSE_OK);
+    TEST_ASSERT(impulse_writer_finalize(w) == IMPULSE_OK);
+
+    impulse_status_t open_rc = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(path, &open_rc);
+    TEST_ASSERT(open_rc == IMPULSE_OK && snap != nullptr);
+
+    impulse_stmt_t* stmt = nullptr;
+    const char* cypher = "MATCH (u:User)-[:rel_0]->(v:User) WHERE u.id = $seed RETURN v";
+    TEST_ASSERT(impulse_stmt_prepare(snap, cypher, &stmt) == IMPULSE_OK);
+    TEST_ASSERT(stmt != nullptr);
+    TEST_ASSERT(impulse_stmt_bind_node(stmt, "$seed", 0) == IMPULSE_OK);
+
+    size_t buf_sz = impulse_stmt_buffer_size(stmt);
+    TEST_ASSERT(buf_sz > 0);
+    std::vector<uint8_t> buf(buf_sz);
+    TEST_ASSERT(impulse_stmt_execute(stmt, buf.data(), buf.size()) == IMPULSE_OK);
+
+    TEST_ASSERT(impulse_stmt_column_count(stmt) == 1);
+    TEST_ASSERT(impulse_stmt_column_type(stmt, 0) == 0x08);
+    const uint64_t* words = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
+    TEST_ASSERT(words != nullptr);
+    // Node 0 follows nodes 1 and 2 => bits 1 and 2 set (0b0110 = 6)
+    TEST_ASSERT((words[0] & 0xFULL) == ((1ULL << 1) | (1ULL << 2)));
+
+    // Re-execute with seed = 1 (zero-alloc reuse of same prepared statement & buffer)
+    TEST_ASSERT(impulse_stmt_bind_node(stmt, "$seed", 1) == IMPULSE_OK);
+    TEST_ASSERT(impulse_stmt_execute(stmt, buf.data(), buf.size()) == IMPULSE_OK);
+    words = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
+    TEST_ASSERT(words != nullptr);
+    TEST_ASSERT((words[0] & 0xFULL) == (1ULL << 3));
+
+    impulse_stmt_finalize(stmt);
+    impulse_snapshot_close(snap);
+    std::remove(path);
+    std::printf("  [PASS] Real .imps v0.11 prepared statement execution & reuse\n");
+}
+
 int main() {
     std::printf("=== Running C Statement API Suite ===\n");
     test_statement_lifecycle_cypher();
     test_statement_lifecycle_datalog();
     test_impulse_exec_convenience();
     test_statement_null_and_boundaries();
+    test_statement_v11_real_snapshot();
     std::printf("=== All C Statement API Tests Passed ===\n");
     return 0;
 }
