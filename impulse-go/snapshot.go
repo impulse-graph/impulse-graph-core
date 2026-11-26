@@ -2,6 +2,7 @@ package impulse
 
 /*
 #include "impulse_graph.h"
+#include "impulse_vm_v11.h"
 #include <stdlib.h>
 */
 import "C"
@@ -16,7 +17,7 @@ import (
 type Snapshot struct {
 	ptr    *C.impulse_snapshot_t
 	poolMu sync.RWMutex
-	vmPool chan *VMContext
+	wsPool chan *VmWorkspace
 	closed bool
 }
 
@@ -34,6 +35,7 @@ func OpenSnapshot(path string) (*Snapshot, error) {
 		}
 		return nil, Status(status)
 	}
+	_ = C.impulse_vm_v11_prepare_snapshot(ptr)
 
 	poolCap := runtime.GOMAXPROCS(0) * 2
 	if poolCap < 8 {
@@ -41,59 +43,65 @@ func OpenSnapshot(path string) (*Snapshot, error) {
 	}
 	s := &Snapshot{
 		ptr:    ptr,
-		vmPool: make(chan *VMContext, poolCap),
+		wsPool: make(chan *VmWorkspace, poolCap),
 	}
 	runtime.SetFinalizer(s, (*Snapshot).Close)
 	return s, nil
 }
 
-// AcquireVMContext borrows a pooled VMContext bound to this Snapshot, or creates one if the pool is empty.
-func (s *Snapshot) AcquireVMContext() (*VMContext, error) {
+// AcquireWorkspace borrows a pooled 128B-aligned v0.11 VmWorkspace, or allocates one if the pool is empty.
+func (s *Snapshot) AcquireWorkspace(scratchBytes uint64) (*VmWorkspace, error) {
+	if scratchBytes < 4*1024*1024 {
+		scratchBytes = 4 * 1024 * 1024
+	}
 	s.poolMu.RLock()
 	if s.closed || s.ptr == nil {
 		s.poolMu.RUnlock()
 		return nil, VMErrNullSnapshot
 	}
 	select {
-	case ctx := <-s.vmPool:
+	case ws := <-s.wsPool:
 		s.poolMu.RUnlock()
-		return ctx, nil
+		if uint64(ws.cap) >= scratchBytes {
+			return ws, nil
+		}
+		ws.Close()
+		return NewVmWorkspace(scratchBytes)
 	default:
 		s.poolMu.RUnlock()
-		return NewVMContext(s)
+		return NewVmWorkspace(scratchBytes)
 	}
 }
 
-// ReleaseVMContext resets and returns a VMContext to the Snapshot pool, or destroys it if the pool is full or closed.
-func (s *Snapshot) ReleaseVMContext(ctx *VMContext) {
-	if ctx == nil || ctx.Ptr() == nil {
+// ReleaseWorkspace returns a v0.11 VmWorkspace to the Snapshot pool, or frees it if the pool is full or closed.
+func (s *Snapshot) ReleaseWorkspace(ws *VmWorkspace) {
+	if ws == nil || ws.rawBuf == nil {
 		return
 	}
 	s.poolMu.RLock()
-	if s.closed || s.vmPool == nil {
+	if s.closed || s.wsPool == nil {
 		s.poolMu.RUnlock()
-		ctx.Close()
+		ws.Close()
 		return
 	}
-	ctx.Reset()
 	select {
-	case s.vmPool <- ctx:
+	case s.wsPool <- ws:
 		s.poolMu.RUnlock()
 	default:
 		s.poolMu.RUnlock()
-		ctx.Close()
+		ws.Close()
 	}
 }
 
-// Close unmaps physical memory and releases snapshot resources.
+// Close unmaps physical memory and releases snapshot resources and all pooled workspaces.
 func (s *Snapshot) Close() {
 	s.poolMu.Lock()
 	s.closed = true
-	if s.vmPool != nil {
+	if s.wsPool != nil {
 		for {
 			select {
-			case ctx := <-s.vmPool:
-				ctx.Close()
+			case ws := <-s.wsPool:
+				ws.Close()
 			default:
 				goto drained
 			}
