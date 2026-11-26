@@ -16,7 +16,17 @@ V11_OP_CASE(WALK) {
     bool endo = (rel->src_dom == rel->tgt_dom);
     uint16_t in_dom  = (subop == 1u || subop == 9u) ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = (subop == 1u || subop == 9u) ? rel->src_dom : rel->tgt_dom;
+    bool needs_fwd = (subop == 0u || subop == 2u || subop == 3u || subop == 4u || subop == 7u);
+    bool needs_rev = (subop == 1u || subop == 2u || subop == 5u || subop == 6u);
     if ((subop == 8u || subop == 9u) && !rel->has_coo) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (needs_fwd && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (needs_rev && !rel->has_csc && rel->csc_row_off_raw == nullptr && (rel->csr_row_off_raw != nullptr || rel->has_coo)) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
@@ -398,6 +408,86 @@ V11_OP_CASE(WALK) {
                 ws.set_f_init(dst, true);
                 ws.set_zf(k == 0u);
                 ws.set_st(st_flag);
+                ws.state.pc += 1u;
+                V11_DISPATCH();
+            }
+        } else {
+            ws.arena.pos = saved_mark;
+        }
+    }
+
+    // Fast dense bitset path for reverse 1-hop walk (subop 1) directly over off-heap CSC
+    if (subop == 1u && rel->has_csc && rel->csc_row_off_raw != nullptr &&
+        out_card > 0ULL && out_card <= (1ULL << 22)) {
+        const uint32_t n_out = static_cast<uint32_t>(out_card);
+        const size_t n_words = (static_cast<size_t>(n_out) + 63u) >> 6;
+        const size_t saved_mark = ws.arena.pos;
+        uint64_t* vis_bits = ws.arena.alloc_array<uint64_t>(n_words, 64);
+        uint64_t* excl_bits = (s_excl_len > 0u) ? ws.arena.alloc_array<uint64_t>(n_words, 64) : nullptr;
+        if (vis_bits && (s_excl_len == 0u || excl_bits)) {
+            std::memset(vis_bits, 0, n_words * sizeof(uint64_t));
+            if (excl_bits) {
+                std::memset(excl_bits, 0, n_words * sizeof(uint64_t));
+                for (uint32_t i = 0; i < s_excl_len; ++i) {
+                    uint32_t x = s_excl[i];
+                    if (x < n_out) excl_bits[x >> 6] |= (1ULL << (x & 63u));
+                }
+            }
+            const uint32_t csc_rows = rel->csc_row_off_len;
+            uint32_t vis_cnt = 0u;
+            for (uint32_t i = 0; i < s_src_len; ++i) {
+                uint32_t u = s_src[i];
+                if (u + 1u >= csc_rows) continue;
+                uint32_t e0 = rel->csc_row_off(u), e1 = rel->csc_row_off(u + 1u);
+                for (uint32_t e = e0; e < e1; ++e) {
+                    uint32_t v = static_cast<uint32_t>(rel->csc_col_src(e));
+                    if (v >= n_out) continue;
+                    uint64_t bit = 1ULL << (v & 63u);
+                    size_t wi = v >> 6;
+                    if (excl_bits && (excl_bits[wi] & bit)) continue;
+                    if ((vis_bits[wi] & bit) == 0ULL) {
+                        vis_bits[wi] |= bit;
+                        ++vis_cnt;
+                    }
+                }
+            }
+            if (s_accum_len > 0u) {
+                for (uint32_t i = 0; i < s_accum_len; ++i) {
+                    uint32_t x = s_accum[i];
+                    if (x < n_out) {
+                        uint64_t bit = 1ULL << (x & 63u);
+                        size_t wi = x >> 6;
+                        if ((vis_bits[wi] & bit) == 0ULL) {
+                            vis_bits[wi] |= bit;
+                            ++vis_cnt;
+                        }
+                    }
+                }
+            }
+            uint32_t* final_s = (vis_cnt > 0u) ? ws.arena.alloc_array<uint32_t>(vis_cnt, 8) : nullptr;
+            if (vis_cnt > 0u && !final_s) {
+                ws.arena.pos = saved_mark;
+            } else {
+                uint32_t k = 0u;
+                for (size_t wi = 0; wi < n_words; ++wi) {
+                    uint64_t word = vis_bits[wi];
+                    uint32_t base = static_cast<uint32_t>(wi << 6);
+                    while (word != 0ULL) {
+                        uint32_t b = static_cast<uint32_t>(std::countr_zero(word));
+                        final_s[k++] = base + b;
+                        word &= (word - 1ULL);
+                    }
+                }
+                ws.f_regs[dst].reset_empty(out_dom, out_card);
+                if (k > 0u) {
+                    ws.f_regs[dst].nodes = final_s;
+                    ws.f_regs[dst].node_count = k;
+                    ws.f_regs[dst].tier = compute_tier(ws.geometry, out_card, k, false);
+                    ws.f_regs[dst].cached_card = (ws.f_regs[dst].tier == kTier0Inline || ws.f_regs[dst].tier == kTierAllSpan)
+                        ? static_cast<int64_t>(k) : -1;
+                }
+                ws.set_f_init(dst, true);
+                ws.set_zf(k == 0u);
                 ws.state.pc += 1u;
                 V11_DISPATCH();
             }

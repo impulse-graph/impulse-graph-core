@@ -54,6 +54,7 @@ pub struct WriterRelation {
     pub coo_src_indices: Option<Vec<u32>>,
     pub csc_override: Option<(Vec<u32>, Vec<u32>)>,
     pub virtual_component_ids: Vec<u16>,
+    pub include_csr: bool,
     pub include_csc: bool,
     pub include_coo_v11: bool,
     pub coo_order: u8,
@@ -161,6 +162,7 @@ impl SnapshotWriter {
             coo_src_indices: None,
             csc_override: None,
             virtual_component_ids: Vec::new(),
+            include_csr: true,
             include_csc: false,
             include_coo_v11: false,
             coo_order: 0,
@@ -214,6 +216,12 @@ impl SnapshotWriter {
     pub fn set_relation_name(&mut self, relation_index: usize, name: &str) {
         if relation_index < self.relations.len() {
             self.relations[relation_index].name = name.to_string();
+        }
+    }
+
+    pub fn set_relation_include_csr(&mut self, relation_index: usize, include_csr: bool) {
+        if relation_index < self.relations.len() {
+            self.relations[relation_index].include_csr = include_csr;
         }
     }
 
@@ -832,7 +840,7 @@ impl SnapshotWriter {
                 };
                 rel.csr_col_idx_bytes = col_bytes.len() as u64;
                 payload.extend_from_slice(&col_bytes);
-            } else {
+            } else if rel.include_csr {
                 // Standard CSR
                 for w in rel.row_offsets.windows(2) {
                     if w[0] > w[1] || (w[1] as usize) > rel.col_indices.len() {
@@ -841,11 +849,17 @@ impl SnapshotWriter {
                 }
                 Self::align_buffer(&mut payload, 128);
                 rel.csr_row_off_offset = payload_base_offset + payload.len() as u64;
-                let row_bytes: Vec<u8> = rel
-                    .row_offsets
-                    .iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect();
+                let row_bytes: Vec<u8> = if rel.edge_index_width == 8 {
+                    rel.row_offsets
+                        .iter()
+                        .flat_map(|&v| (v as u64).to_le_bytes())
+                        .collect()
+                } else {
+                    rel.row_offsets
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect()
+                };
                 rel.csr_row_off_bytes = row_bytes.len() as u64;
                 payload.extend_from_slice(&row_bytes);
 
@@ -856,6 +870,11 @@ impl SnapshotWriter {
                         .iter()
                         .flat_map(|&v| (v as u16).to_le_bytes())
                         .collect()
+                } else if rel.node_id_width == 8 {
+                    rel.col_indices
+                        .iter()
+                        .flat_map(|&v| (v as u64).to_le_bytes())
+                        .collect()
                 } else {
                     rel.col_indices
                         .iter()
@@ -864,6 +883,11 @@ impl SnapshotWriter {
                 };
                 rel.csr_col_idx_bytes = col_bytes.len() as u64;
                 payload.extend_from_slice(&col_bytes);
+            } else {
+                rel.csr_row_off_offset = 0;
+                rel.csr_row_off_bytes = 0;
+                rel.csr_col_idx_offset = 0;
+                rel.csr_col_idx_bytes = 0;
             }
 
             // CSC Arrays (if enabled)
@@ -964,20 +988,39 @@ impl SnapshotWriter {
                     rel.csc_row_off_offset = 0;
                     rel.csc_row_off_bytes = 0;
                 } else {
-                    let csc_row_bytes: Vec<u8> = csc_row_offsets
-                        .iter()
-                        .flat_map(|v| v.to_le_bytes())
-                        .collect();
+                    let csc_row_bytes: Vec<u8> = if rel.edge_index_width == 8 {
+                        csc_row_offsets
+                            .iter()
+                            .flat_map(|&v| (v as u64).to_le_bytes())
+                            .collect()
+                    } else {
+                        csc_row_offsets
+                            .iter()
+                            .flat_map(|v| v.to_le_bytes())
+                            .collect()
+                    };
                     Self::align_buffer(&mut payload, 128);
                     rel.csc_row_off_offset = payload_base_offset + payload.len() as u64;
                     rel.csc_row_off_bytes = csc_row_bytes.len() as u64;
                     payload.extend_from_slice(&csc_row_bytes);
                 }
 
-                let csc_col_bytes: Vec<u8> = if rel.node_id_width == 2 {
+                let csc_src_w = self
+                    .domains
+                    .iter()
+                    .find(|d| d.domain_id == rel.src_domain_id)
+                    .map(|d| d.dense_id_width)
+                    .filter(|&w| w == 2 || w == 4 || w == 8)
+                    .unwrap_or(rel.node_id_width);
+                let csc_col_bytes: Vec<u8> = if csc_src_w == 2 {
                     csc_col_indices
                         .iter()
                         .flat_map(|&v| (v as u16).to_le_bytes())
+                        .collect()
+                } else if csc_src_w == 8 {
+                    csc_col_indices
+                        .iter()
+                        .flat_map(|&v| (v as u64).to_le_bytes())
                         .collect()
                 } else {
                     csc_col_indices

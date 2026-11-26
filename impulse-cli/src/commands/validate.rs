@@ -149,9 +149,9 @@ pub fn validate_reader(
         .into());
     }
     let ver = header.version();
-    if ver != IMPULSE_VERSION_PACKED && ver != IMPULSE_VERSION_V090 {
+    if ver != 11 && ver != IMPULSE_VERSION_PACKED && ver != IMPULSE_VERSION_V090 {
         return Err(format!(
-            "Unsupported version 0x{:04X}, expected 0x{:04X} (v0.10.0) or 0x{:04X} (v0.9.0)",
+            "Unsupported version 0x{:04X}, expected 0x000B (v0.11.0), 0x{:04X} (v0.10.0), or 0x{:04X} (v0.9.0)",
             ver, IMPULSE_VERSION_PACKED, IMPULSE_VERSION_V090
         )
         .into());
@@ -434,6 +434,9 @@ pub fn validate_reader(
                 }
             }
         } else if rel.node_count > 0
+            && rel.csr_row_off_bytes > 0
+            && rel.edge_index_width == 4
+            && rel.node_id_width <= 4
             && (rel.encoding_id == 0 || rel.encoding_id == 2 || rel.encoding_id == 3)
         {
             let row_offsets = reader.get_row_offsets(idx)?;
