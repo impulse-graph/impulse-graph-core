@@ -6,6 +6,7 @@
  * Coarse kernels are marked IMPULSE_V11_NOINLINE to keep the main dispatch loop L1i-resident.
  */
 #pragma once
+#include "v11_simd_kernels.hpp"
 
 #include "v11_p2_helpers.hpp"
 
@@ -678,12 +679,31 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
             bool scalar = (flags & FLAG_SCALAR_RHS) != 0u;
 
             const V11Frontier* active_mask = nullptr;
+            bool use_sparse_mask = false;
+            const uint32_t* mask_ids = nullptr;
+            uint32_t mask_cnt = 0u;
             if (masked) {
                 active_mask = p3_get_f1bit(ws, s3);
                 if (!active_mask) break;
+                if (active_mask->tier == kTierEmpty) {
+                    use_sparse_mask = true;
+                    mask_ids = nullptr;
+                    mask_cnt = 0u;
+                } else if (active_mask->tier != kTierAllSpan) {
+                    use_sparse_mask = true;
+                    mask_ids = active_mask->nodes;
+                    mask_cnt = active_mask->node_count;
+                }
             }
-            auto lane_active = [&](uint32_t i) noexcept -> bool {
-                return active_mask == nullptr || active_mask->contains_1bit(i);
+            auto for_each_lane = [&](auto&& fn) noexcept {
+                if (use_sparse_mask) {
+                    for (uint32_t k = 0; k < mask_cnt; ++k) {
+                        uint32_t i = mask_ids[k];
+                        if (i < len) fn(i);
+                    }
+                } else {
+                    for (uint32_t i = 0; i < len; ++i) fn(i);
+                }
             };
 
 #ifdef IMPULSE_V11_OPCODE_PROFILE
@@ -805,14 +825,66 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         col = p3_find_edge_attr(view.relations[imm_lo], imm_hi);
                     }
                     if (!col) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
-                    bool oob = false;
-                    for (uint32_t i = 0; i < len; ++i) {
-                        if (!lane_active(i)) continue;
-                        if (idx_vec->is_valid_at(i)) {
-                            uint64_t id = static_cast<uint64_t>(idx_vec->i64_data[i]);
-                            if (id >= col->length) { oob = true; break; }
+                    // Fast path: unmasked, all-valid u64 index vector (M0/M1/M2) into f64 column
+                    if (!use_sparse_mask && col->elem_tag == kVecTagF64 && idx_vec->valid_bits == nullptr) {
+                        size_t vwords = (static_cast<size_t>(len) + 63u) >> 6;
+                        if (vwords == 0u) vwords = 1u;
+                        uint64_t* vbits = ws.arena.alloc_array<uint64_t>(vwords, 8);
+                        double* out = ws.arena.alloc_array<double>(len, 8);
+                        auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+                        if (!vbits || !out || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+                        const int64_t* __restrict idxs = idx_vec->i64_data;
+                        const double* __restrict src_col = col->f64_data;
+                        const uint64_t col_len = col->length;
+                        bool oob = false;
+                        if (col->valid_bits == nullptr) {
+                            uint32_t i = 0u;
+                            for (; i + 4u <= len; i += 4u) {
+                                uint64_t id0 = static_cast<uint64_t>(idxs[i + 0u]);
+                                uint64_t id1 = static_cast<uint64_t>(idxs[i + 1u]);
+                                uint64_t id2 = static_cast<uint64_t>(idxs[i + 2u]);
+                                uint64_t id3 = static_cast<uint64_t>(idxs[i + 3u]);
+                                if (id0 >= col_len || id1 >= col_len || id2 >= col_len || id3 >= col_len) { oob = true; break; }
+                                out[i + 0u] = src_col[id0];
+                                out[i + 1u] = src_col[id1];
+                                out[i + 2u] = src_col[id2];
+                                out[i + 3u] = src_col[id3];
+                            }
+                            if (!oob) {
+                                for (; i < len; ++i) {
+                                    uint64_t id = static_cast<uint64_t>(idxs[i]);
+                                    if (id >= col_len) { oob = true; break; }
+                                    out[i] = src_col[id];
+                                }
+                            }
+                            if (oob) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
+                            std::memset(vbits, 0xFF, vwords * sizeof(uint64_t));
+                            if (len & 63u) vbits[vwords - 1u] = (1ULL << (len & 63u)) - 1ULL;
+                        } else {
+                            std::memset(vbits, 0, vwords * sizeof(uint64_t));
+                            for (uint32_t i = 0; i < len; ++i) {
+                                uint64_t id = static_cast<uint64_t>(idxs[i]);
+                                if (id >= col_len) { oob = true; break; }
+                                if (col->is_valid_at(static_cast<uint32_t>(id))) {
+                                    out[i] = src_col[id];
+                                    vbits[i >> 6] |= (1ULL << (i & 63u));
+                                }
+                            }
+                            if (oob) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
                         }
+                        new (ov) V11Vector();
+                        ov->elem_tag = kVecTagF64; ov->length = len; ov->f64_data = out; ov->valid_bits = vbits;
+                        ws.v_regs[dst] = ov;
+                        ws.state.pc += 1u;
+                        break;
                     }
+                    bool oob = false;
+                    for_each_lane([&](uint32_t i) {
+                        if (!oob && idx_vec->is_valid_at(i)) {
+                            uint64_t id = static_cast<uint64_t>(idx_vec->i64_data[i]);
+                            if (id >= col->length) oob = true;
+                        }
+                    });
                     if (oob) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
                     size_t vwords = (static_cast<size_t>(len) + 63u) >> 6;
                     if (vwords == 0u) vwords = 1u;
@@ -827,37 +899,37 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     if (col->elem_tag == kVecTagF64) {
                         ov->f64_data = ws.arena.alloc_array<double>(len, 8);
                         if (!ov->f64_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                        for (uint32_t i = 0; i < len; ++i) {
-                            if (!lane_active(i) || !idx_vec->is_valid_at(i)) continue;
+                        for_each_lane([&](uint32_t i) {
+                            if (!idx_vec->is_valid_at(i)) return;
                             uint32_t id = static_cast<uint32_t>(idx_vec->i64_data[i]);
                             if (col->is_valid_at(id)) {
                                 ov->f64_data[i] = col->f64_data[id];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
-                        }
+                        });
                     } else if (col->elem_tag == kVecTagI64 || col->elem_tag == kVecTagU64) {
                         ov->i64_data = ws.arena.alloc_array<int64_t>(len, 8);
                         if (!ov->i64_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                        for (uint32_t i = 0; i < len; ++i) {
-                            if (!lane_active(i) || !idx_vec->is_valid_at(i)) continue;
+                        for_each_lane([&](uint32_t i) {
+                            if (!idx_vec->is_valid_at(i)) return;
                             uint32_t id = static_cast<uint32_t>(idx_vec->i64_data[i]);
                             if (col->is_valid_at(id)) {
                                 ov->i64_data[i] = col->i64_data[id];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
-                        }
+                        });
                     } else if (col->elem_tag == kVecTagStr) {
                         ov->str_data = ws.arena.alloc_array<V11StrSlice>(len, alignof(V11StrSlice));
                         if (!ov->str_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
                         std::memset(ov->str_data, 0, static_cast<size_t>(len) * sizeof(V11StrSlice));
-                        for (uint32_t i = 0; i < len; ++i) {
-                            if (!lane_active(i) || !idx_vec->is_valid_at(i)) continue;
+                        for_each_lane([&](uint32_t i) {
+                            if (!idx_vec->is_valid_at(i)) return;
                             uint32_t id = static_cast<uint32_t>(idx_vec->i64_data[i]);
                             if (col->is_valid_at(id)) {
                                 ov->str_data[i] = col->str_data[id];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
-                        }
+                        });
                     } else {
                         ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
                         break;
@@ -885,8 +957,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         if (!ov->f64_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
                         double r_sc = scalar && ws.is_r_valid(s2) ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
                         bool r_sc_ok = scalar && ws.is_r_valid(s2) && !std::isnan(r_sc);
-                        for (uint32_t i = 0; i < len; ++i) {
-                            if (!lane_active(i)) continue;
+                        for_each_lane([&](uint32_t i) {
                             if (i < lhs->length && lhs->is_valid_at(i)) {
                                 ov->f64_data[i] = lhs->f64_data[i];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
@@ -896,14 +967,13 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                 ov->f64_data[i] = rv->f64_data[i];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
-                        }
+                        });
                         ws.v_regs[dst] = ov;
                         ws.state.pc += 1u;
                     } else if (lhs->elem_tag == kVecTagI64 || lhs->elem_tag == kVecTagU64) {
                         ov->i64_data = ws.arena.alloc_array<int64_t>(len, 8);
                         if (!ov->i64_data) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                        for (uint32_t i = 0; i < len; ++i) {
-                            if (!lane_active(i)) continue;
+                        for_each_lane([&](uint32_t i) {
                             if (i < lhs->length && lhs->is_valid_at(i)) {
                                 ov->i64_data[i] = lhs->i64_data[i];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
@@ -913,7 +983,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                 ov->i64_data[i] = rv->i64_data[i];
                                 vbits[i >> 6] |= (1ULL << (i & 63u));
                             }
-                        }
+                        });
                         ws.v_regs[dst] = ov;
                         ws.state.pc += 1u;
                     } else {
@@ -930,32 +1000,51 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     double* out = ws.arena.alloc_array<double>(len, 8);
                     auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
                     if (!vbits || !out || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                    std::memset(vbits, 0, vwords * sizeof(uint64_t));
                     const V11Vector* rv = scalar ? nullptr : ws.v_regs[s2];
                     double r_sc = scalar && ws.is_r_valid(s2) ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
                     bool r_sc_ok = scalar && ws.is_r_valid(s2) && !std::isnan(r_sc);
-                    for (uint32_t i = 0; i < len; ++i) {
-                        if (!lane_active(i) || i >= lhs->length || !lhs->is_valid_at(i)) continue;
-                        double x = lhs->f64_data[i];
-                        double r = std::numeric_limits<double>::quiet_NaN();
-                        if (subop == 8u) r = -x;
-                        else if (subop == 9u) r = std::fabs(x);
-                        else if (subop == 10u) { if (x < 0.0) continue; r = std::sqrt(x); }
-                        else {
-                            bool has_y = scalar ? r_sc_ok : (rv && rv->elem_tag == kVecTagF64 && i < rv->length && rv->is_valid_at(i));
-                            if (!has_y) continue;
-                            double y = scalar ? r_sc : rv->f64_data[i];
-                            if (subop == 0u) r = x + y;
-                            else if (subop == 1u) r = x - y;
-                            else if (subop == 2u) r = x * y;
-                            else if (subop == 3u) r = (y == 0.0) ? std::numeric_limits<double>::quiet_NaN() : (x / y);
-                            else if (subop == 6u) r = p1_ieee_min_f64(x, y);
-                            else if (subop == 7u) r = p1_ieee_max_f64(x, y);
+                    if (!use_sparse_mask && lhs->length >= len &&
+                        (subop <= 3u || subop == 8u || subop == 9u || subop == 10u) &&
+                        (subop >= 8u || scalar || (rv && rv->elem_tag == kVecTagF64 && rv->length >= len))) {
+                        if (subop >= 8u) {
+                            simd::f64_arith_unary(subop, lhs->f64_data, out, len);
+                            simd::f64_pack_valid_words(out, lhs->valid_bits, nullptr, false, false, vbits, len);
+                        } else if (scalar) {
+                            if (r_sc_ok) {
+                                simd::f64_arith_scalar(subop, lhs->f64_data, r_sc, out, len);
+                                simd::f64_pack_valid_words(out, lhs->valid_bits, nullptr, true, true, vbits, len);
+                            } else {
+                                std::memset(vbits, 0, vwords * sizeof(uint64_t));
+                            }
+                        } else {
+                            simd::f64_arith_vec(subop, lhs->f64_data, rv->f64_data, out, len);
+                            simd::f64_pack_valid_words(out, lhs->valid_bits, rv->valid_bits, true, true, vbits, len);
                         }
-                        if (!std::isnan(r)) {
-                            out[i] = r;
-                            vbits[i >> 6] |= (1ULL << (i & 63u));
-                        }
+                    } else {
+                        std::memset(vbits, 0, vwords * sizeof(uint64_t));
+                        for_each_lane([&](uint32_t i) {
+                            if (i >= lhs->length || !lhs->is_valid_at(i)) return;
+                            double x = lhs->f64_data[i];
+                            double r = std::numeric_limits<double>::quiet_NaN();
+                            if (subop == 8u) r = -x;
+                            else if (subop == 9u) r = std::fabs(x);
+                            else if (subop == 10u) { if (x < 0.0) return; r = std::sqrt(x); }
+                            else {
+                                bool has_y = scalar ? r_sc_ok : (rv && rv->elem_tag == kVecTagF64 && i < rv->length && rv->is_valid_at(i));
+                                if (!has_y) return;
+                                double y = scalar ? r_sc : rv->f64_data[i];
+                                if (subop == 0u) r = x + y;
+                                else if (subop == 1u) r = x - y;
+                                else if (subop == 2u) r = x * y;
+                                else if (subop == 3u) r = (y == 0.0) ? std::numeric_limits<double>::quiet_NaN() : (x / y);
+                                else if (subop == 6u) r = p1_ieee_min_f64(x, y);
+                                else if (subop == 7u) r = p1_ieee_max_f64(x, y);
+                            }
+                            if (!std::isnan(r)) {
+                                out[i] = r;
+                                vbits[i >> 6] |= (1ULL << (i & 63u));
+                            }
+                        });
                     }
                     new (ov) V11Vector();
                     ov->elem_tag = kVecTagF64; ov->length = len; ov->f64_data = out; ov->valid_bits = vbits;
@@ -976,28 +1065,36 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     uint64_t* data  = ws.arena.alloc_array<uint64_t>(vwords, 8);
                     auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
                     if (!valid || !data || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                    std::memset(valid, 0, vwords * sizeof(uint64_t));
-                    std::memset(data, 0, vwords * sizeof(uint64_t));
                     const V11Vector* rv = scalar ? nullptr : ws.v_regs[s2];
                     bool r_sc_ok = scalar && ws.is_r_valid(s2);
                     double r_sc = r_sc_ok ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
-                    for (uint32_t i = 0; i < len; ++i) {
-                        if (!lane_active(i) || i >= lhs->length || !lhs->is_valid_at(i)) continue;
-                        bool has_y = scalar ? r_sc_ok : (rv && rv->elem_tag == kVecTagF64 && i < rv->length && rv->is_valid_at(i));
-                        if (!has_y) continue;
-                        double x = lhs->f64_data[i];
-                        double y = scalar ? r_sc : rv->f64_data[i];
-                        if (std::isnan(x) || std::isnan(y)) continue;
-                        bool res = false;
-                        if (subop == 0u) res = (x == y);
-                        else if (subop == 1u) res = (x != y);
-                        else if (subop == 2u) res = (x <  y);
-                        else if (subop == 3u) res = (x <= y);
-                        else if (subop == 4u) res = (x >  y);
-                        else if (subop == 5u) res = (x >= y);
-                        uint64_t bit = 1ULL << (i & 63u);
-                        valid[i >> 6] |= bit;
-                        if (res) data[i >> 6] |= bit;
+                    if (!use_sparse_mask && subop <= 5u && lhs->length >= len &&
+                        (scalar || (rv && rv->elem_tag == kVecTagF64 && rv->length >= len))) {
+                        simd::f64_cmp_words(subop, lhs->f64_data, rv ? rv->f64_data : nullptr,
+                                            scalar, r_sc, r_sc_ok,
+                                            lhs->valid_bits, rv ? rv->valid_bits : nullptr,
+                                            valid, data, len);
+                    } else {
+                        std::memset(valid, 0, vwords * sizeof(uint64_t));
+                        std::memset(data, 0, vwords * sizeof(uint64_t));
+                        for_each_lane([&](uint32_t i) {
+                            if (i >= lhs->length || !lhs->is_valid_at(i)) return;
+                            bool has_y = scalar ? r_sc_ok : (rv && rv->elem_tag == kVecTagF64 && i < rv->length && rv->is_valid_at(i));
+                            if (!has_y) return;
+                            double x = lhs->f64_data[i];
+                            double y = scalar ? r_sc : rv->f64_data[i];
+                            if (std::isnan(x) || std::isnan(y)) return;
+                            bool res = false;
+                            if (subop == 0u) res = (x == y);
+                            else if (subop == 1u) res = (x != y);
+                            else if (subop == 2u) res = (x <  y);
+                            else if (subop == 3u) res = (x <= y);
+                            else if (subop == 4u) res = (x >  y);
+                            else if (subop == 5u) res = (x >= y);
+                            uint64_t bit = 1ULL << (i & 63u);
+                            valid[i >> 6] |= bit;
+                            if (res) data[i >> 6] |= bit;
+                        });
                     }
                     new (ov) V11Vector();
                     ov->elem_tag = kVecTagBool3vl; ov->length = len; ov->valid_bits = valid; ov->bool_data_bits = data;
@@ -1011,10 +1108,9 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                     if (!bv || bv->elem_tag != kVecTagBool3vl) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break; }
                     uint32_t* tmp = (bv->length > 0u) ? ws.arena.alloc_array<uint32_t>(bv->length, 8) : nullptr;
                     if (bv->length > 0u && !tmp) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-                    uint32_t cnt = 0u;
-                    for (uint32_t i = 0; i < bv->length; ++i) {
-                        if (bv->is_valid_at(i) && bv->bool_data_at(i)) tmp[cnt++] = i;
-                    }
+                    uint32_t cnt = (bv->length > 0u)
+                        ? simd::b2f_extract_words(bv->valid_bits, bv->bool_data_bits, bv->length, tmp)
+                        : 0u;
                     if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, 0xFFFFu, len, tmp, cnt, kGeomP0, true)) {
                         ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break;
                     }

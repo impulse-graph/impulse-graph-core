@@ -32,41 +32,20 @@ V11_OP_CASE(VEC_MATH_ARITH) {
     if (n > 0u) std::memset(out, 0, static_cast<size_t>(n) * sizeof(double));
     std::memset(out_valid, 0, vwords * sizeof(uint64_t));
 
-    if (!mask && !scalar_rhs && subop <= 2u &&
-        va->elem_tag == kVecTagF64 && vb->elem_tag == kVecTagF64 &&
-        va->valid_bits != nullptr && vb->valid_bits != nullptr) {
-        const double* __restrict pa = va->f64_data;
-        const double* __restrict pb = vb->f64_data;
-        double* __restrict po = out;
-        const uint64_t* __restrict vba = va->valid_bits;
-        const uint64_t* __restrict vbb = vb->valid_bits;
-        uint64_t* __restrict vbo = out_valid;
-        for (uint32_t widx = 0; widx < static_cast<uint32_t>(vwords); ++widx) {
-            uint64_t vm = vba[widx] & vbb[widx];
-            if (vm == 0ULL) continue;
-            uint32_t base = widx << 6;
-            uint32_t end = (base + 64u < n) ? (base + 64u) : n;
-            uint64_t om = 0ULL;
-            if (subop == 0u) {
-                for (uint32_t i = base; i < end; ++i) {
-                    if (((vm >> (i & 63u)) & 1ULL) == 0ULL) continue;
-                    double r = pa[i] + pb[i];
-                    if (!std::isnan(r)) { po[i] = r; om |= (1ULL << (i & 63u)); }
-                }
-            } else if (subop == 1u) {
-                for (uint32_t i = base; i < end; ++i) {
-                    if (((vm >> (i & 63u)) & 1ULL) == 0ULL) continue;
-                    double r = pa[i] - pb[i];
-                    if (!std::isnan(r)) { po[i] = r; om |= (1ULL << (i & 63u)); }
-                }
-            } else {
-                for (uint32_t i = base; i < end; ++i) {
-                    if (((vm >> (i & 63u)) & 1ULL) == 0ULL) continue;
-                    double r = pa[i] * pb[i];
-                    if (!std::isnan(r)) { po[i] = r; om |= (1ULL << (i & 63u)); }
-                }
+    if (!mask && va->elem_tag == kVecTagF64 && n > 0u &&
+        (subop <= 3u || subop == 8u || subop == 9u || subop == 10u || subop == 12u || subop == 13u) &&
+        (!is_binary || scalar_rhs || (vb && vb->elem_tag == kVecTagF64))) {
+        if (!is_binary) {
+            simd::f64_arith_unary(subop, va->f64_data, out, n);
+            simd::f64_pack_valid_words(out, va->valid_bits, nullptr, false, false, out_valid, n);
+        } else if (scalar_rhs) {
+            if (s_valid && !std::isnan(s_val)) {
+                simd::f64_arith_scalar(subop, va->f64_data, s_val, out, n);
+                simd::f64_pack_valid_words(out, va->valid_bits, nullptr, true, true, out_valid, n);
             }
-            vbo[widx] = om;
+        } else {
+            simd::f64_arith_vec(subop, va->f64_data, vb->f64_data, out, n);
+            simd::f64_pack_valid_words(out, va->valid_bits, vb->valid_bits, true, true, out_valid, n);
         }
     } else for (uint32_t i = 0; i < n; ++i) {
         if (!p4_lane_active(mask, i) || !va->is_valid_at(i)) continue;

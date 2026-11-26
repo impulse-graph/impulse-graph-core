@@ -69,7 +69,13 @@ V11_OP_CASE(VEC_CMP) {
         bool sc_valid = scalar_rhs && subop == 6u && p4_is_scalar_f64_valid(ws, s3);
         double sc_val = sc_valid ? p4_read_scalar_f64(ws, s3) : std::numeric_limits<double>::quiet_NaN();
 
-        for (uint32_t i = 0; i < n; ++i) {
+        if (!mask && subop <= 5u && n > 0u &&
+            (scalar_rhs || (vb && vb->elem_tag == kVecTagF64))) {
+            simd::f64_cmp_words(subop, va->f64_data, vb ? vb->f64_data : nullptr,
+                                scalar_rhs, sb_val, sb_valid,
+                                va->valid_bits, vb ? vb->valid_bits : nullptr,
+                                out_valid, out_data, n);
+        } else for (uint32_t i = 0; i < n; ++i) {
             if (!p4_lane_active(mask, i) || !va->is_valid_at(i)) continue;
             double x = va->f64_data[i];
             if (std::isnan(x)) continue;

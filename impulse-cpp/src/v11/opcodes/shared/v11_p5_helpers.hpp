@@ -228,6 +228,9 @@ inline bool p5_vec_to_f64_dense(V11Arena& arena, const V11Vector* v, double** ou
 
 inline double p5_sim_metric(uint8_t metric, const double* a, uint32_t a_len, const double* b, uint32_t b_len) noexcept {
     uint32_t d = (a_len < b_len) ? a_len : b_len;
+    if (d >= 8u && a && b) {
+        return simd::f64_sim_metric(metric, a, b, d);
+    }
     double dot = 0.0, na = 0.0, nb = 0.0, l2 = 0.0;
     for (uint32_t i = 0; i < d; ++i) {
         double x = a[i], y = b[i];
