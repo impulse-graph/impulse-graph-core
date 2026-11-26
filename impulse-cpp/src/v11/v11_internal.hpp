@@ -419,14 +419,24 @@ struct V11RelView {
     const uint8_t*  csr_col_idx_raw = nullptr;
     const uint8_t*  csc_row_off_raw = nullptr;
     const uint8_t*  csc_col_idx_raw = nullptr;
+    const uint8_t*  coo_src_raw     = nullptr;
+    const uint8_t*  coo_tgt_raw     = nullptr;
+    const uint8_t*  coo_edge_id_raw = nullptr;
     uint32_t        csc_row_off_len = 0;
+    uint32_t        coo_edge_count  = 0;
     uint8_t         node_id_width   = 4;
     uint8_t         edge_idx_width  = 4;
-    // In-memory compliance fixture arrays (used only when csr_row_off_raw == nullptr)
+    uint8_t         coo_src_width   = 4;
+    uint8_t         coo_tgt_width   = 4;
+    uint8_t         coo_order       = 0;
+    // In-memory compliance fixture arrays (used only when raw mmap pointers == nullptr)
     const uint32_t* row_offsets = nullptr;
     uint32_t   row_off_len  = 0;
     const uint64_t* col_targets = nullptr;
     uint32_t   col_tgt_len  = 0;
+    const uint64_t* coo_srcs    = nullptr;
+    const uint64_t* coo_tgts    = nullptr;
+    const uint64_t* coo_edge_ids = nullptr;
     bool       has_csr      = false;
     bool       has_csc      = false;
     bool       has_coo      = false;
@@ -467,6 +477,42 @@ struct V11RelView {
             return v;
         }
         return col_targets[e];
+    }
+
+    inline uint64_t coo_src(uint32_t i) const noexcept {
+        if (coo_src_raw) {
+            if (coo_src_width == 4u) {
+                uint32_t v = 0; std::memcpy(&v, coo_src_raw + static_cast<size_t>(i) * 4u, 4u); return v;
+            }
+            if (coo_src_width == 2u) {
+                uint16_t v = 0; std::memcpy(&v, coo_src_raw + static_cast<size_t>(i) * 2u, 2u); return v;
+            }
+            uint64_t v = 0; std::memcpy(&v, coo_src_raw + static_cast<size_t>(i) * 8u, 8u); return v;
+        }
+        return coo_srcs[i];
+    }
+
+    inline uint64_t coo_tgt(uint32_t i) const noexcept {
+        if (coo_tgt_raw) {
+            if (coo_tgt_width == 4u) {
+                uint32_t v = 0; std::memcpy(&v, coo_tgt_raw + static_cast<size_t>(i) * 4u, 4u); return v;
+            }
+            if (coo_tgt_width == 2u) {
+                uint16_t v = 0; std::memcpy(&v, coo_tgt_raw + static_cast<size_t>(i) * 2u, 2u); return v;
+            }
+            uint64_t v = 0; std::memcpy(&v, coo_tgt_raw + static_cast<size_t>(i) * 8u, 8u); return v;
+        }
+        return coo_tgts[i];
+    }
+
+    inline uint64_t coo_edge_id(uint32_t i) const noexcept {
+        if (coo_edge_id_raw) {
+            if (edge_idx_width == 8u) {
+                uint64_t v = 0; std::memcpy(&v, coo_edge_id_raw + static_cast<size_t>(i) * 8u, 8u); return v;
+            }
+            uint32_t v = 0; std::memcpy(&v, coo_edge_id_raw + static_cast<size_t>(i) * 4u, 4u); return v;
+        }
+        return coo_edge_ids ? coo_edge_ids[i] : static_cast<uint64_t>(i);
     }
 
     inline uint32_t csc_row_off(uint32_t v) const noexcept {
@@ -561,6 +607,11 @@ struct V11OutputSlot {
     uint16_t   slot = 0;
     V11Vector* vec  = nullptr;
 };
+
+bool v11_exec_morsel_p4_op(
+    impulse_vm_workspace_v11_t& ws,
+    const V11SnapshotView* snap,
+    uint64_t w) noexcept;
 
 } // namespace impulse::vm::v11
 
@@ -815,5 +866,10 @@ impulse_vm_status_v11_t execute_words_internal(
     uint64_t max_steps,
     uint32_t entry_pc = 0u,
     bool already_validated = false) noexcept;
+
+bool v11_exec_morsel_p4_op(
+    impulse_vm_workspace_v11_t& ws,
+    const V11SnapshotView* snap,
+    uint64_t w) noexcept;
 
 } // namespace impulse::vm::v11

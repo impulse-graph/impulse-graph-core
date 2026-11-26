@@ -40,11 +40,11 @@
   X(OP_SET_CONTAINS, 0x25, SET_CONTAINS, 2, 0x0, 0x0003, Forbidden) \
   X(OP_SET_CONVERT, 0x26, SET_CONVERT, 2, 0x4, 0x000F, BodyOk) \
   X(OP_STABLE_CHECK, 0x27, STABLE_CHECK, 2, 0x0, 0x0003, Forbidden) \
-  X(OP_WALK, 0x30, WALK, 3, 0x5, 0x00FF, Forbidden) \
+  X(OP_WALK, 0x30, WALK, 3, 0x5, 0x03FF, Forbidden) \
   X(OP_WALK_FILTERED, 0x31, WALK_FILTERED, 3, 0x5, 0xFFFF, Forbidden) \
   X(OP_DEGREE, 0x33, DEGREE, 3, 0x1, 0x003F, Forbidden) \
   X(OP_SPMV, 0x34, SPMV, 3, 0x7, 0x01FF, Forbidden) \
-  X(OP_WALK_MORSEL, 0x35, WALK_MORSEL, 3, 0x1, 0x0003, Header) \
+  X(OP_WALK_MORSEL, 0x35, WALK_MORSEL, 3, 0x1, 0x000F, Header) \
   X(OP_FILTER_MORSEL, 0x36, FILTER_MORSEL, 3, 0x0, 0x0001, Header) \
   X(OP_MORSEL_COMMIT, 0x37, MORSEL_COMMIT, 3, 0x7, 0x01FF, CommitOnly) \
   X(OP_MORSEL_END, 0x38, MORSEL_END, 3, 0x0, 0x0001, EndOnly) \
@@ -314,6 +314,8 @@ inline constexpr uint8_t kWALK_FWD_FIXPOINT_STAR = 4u;
 inline constexpr uint8_t kWALK_REV_FIXPOINT_PLUS = 5u;
 inline constexpr uint8_t kWALK_REV_FIXPOINT_STAR = 6u;
 inline constexpr uint8_t kWALK_FWD_BOUNDED = 7u;
+inline constexpr uint8_t kWALK_COO_FWD = 8u;
+inline constexpr uint8_t kWALK_COO_REV = 9u;
 inline constexpr uint8_t kWALK_FILTERED_EQ = 0u;
 inline constexpr uint8_t kWALK_FILTERED_NE = 1u;
 inline constexpr uint8_t kWALK_FILTERED_LT = 2u;
@@ -347,6 +349,8 @@ inline constexpr uint8_t kSPMV_FWD_FIRST_SRC = 7u;
 inline constexpr uint8_t kSPMV_FWD_ARGMIN_PLUS = 8u;
 inline constexpr uint8_t kWALK_MORSEL_FWD = 0u;
 inline constexpr uint8_t kWALK_MORSEL_REV = 1u;
+inline constexpr uint8_t kWALK_MORSEL_COO_FWD = 2u;
+inline constexpr uint8_t kWALK_MORSEL_COO_REV = 3u;
 inline constexpr uint8_t kFILTER_MORSEL_NODE = 0u;
 inline constexpr uint8_t kMORSEL_COMMIT_YIELD_FRONTIER = 0u;
 inline constexpr uint8_t kMORSEL_COMMIT_YIELD_LANE_OR = 1u;

@@ -410,7 +410,13 @@ std::string run_fixture_json(const std::string& profile,
     std::map<uint16_t, std::pair<uint16_t, uint16_t>> rel_meta;
     std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint64_t>>> rel_csr;
     std::map<uint16_t, std::array<bool, 4>> rel_flags;
-    std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint64_t>>> rel_coo;
+    struct CooFixtureData {
+        std::vector<uint64_t> srcs;
+        std::vector<uint64_t> tgts;
+        std::vector<uint64_t> edge_ids;
+        uint8_t order = 0;
+    };
+    std::map<uint16_t, CooFixtureData> rel_coo;
     std::map<uint16_t, std::vector<std::vector<int>>> rel_dense;
     std::vector<V11DomAttrEntry> node_attrs;
     std::map<uint16_t, std::vector<std::pair<uint32_t, V11Vector*>>> edge_attrs;
@@ -448,15 +454,25 @@ std::string run_fixture_json(const std::string& profile,
                 rel_flags[rid][1] = true;
             } else if (kind == ".coo_inline" && kv) {
                 uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
-                std::vector<uint32_t> srcs;
-                std::vector<uint64_t> tgts;
-                if (const JsonVal* s = kv->get("sources"); s && s->kind == JsonVal::Kind::Array) {
-                    for (const auto& x : s->arr) srcs.push_back(static_cast<uint32_t>(as_i64(&x)));
+                CooFixtureData cd{};
+                const JsonVal* s = kv->get("sources") ? kv->get("sources") : kv->get("srcs");
+                const JsonVal* t = kv->get("targets") ? kv->get("targets") : kv->get("tgts");
+                if (s && s->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : s->arr) cd.srcs.push_back(static_cast<uint64_t>(as_i64(&x)));
                 }
-                if (const JsonVal* t = kv->get("targets"); t && t->kind == JsonVal::Kind::Array) {
-                    for (const auto& x : t->arr) tgts.push_back(static_cast<uint64_t>(as_i64(&x)));
+                if (t && t->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : t->arr) cd.tgts.push_back(static_cast<uint64_t>(as_i64(&x)));
                 }
-                rel_coo[rid] = {std::move(srcs), std::move(tgts)};
+                if (const JsonVal* e = kv->get("edge_ids"); e && e->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : e->arr) cd.edge_ids.push_back(static_cast<uint64_t>(as_i64(&x)));
+                }
+                if (const JsonVal* ord = kv->get("order"); ord && ord->kind == JsonVal::Kind::String) {
+                    if (ord->sval == "src") cd.order = 1;
+                    else if (ord->sval == "src_tgt") cd.order = 2;
+                    else if (ord->sval == "tgt") cd.order = 3;
+                    else if (ord->sval == "tgt_src") cd.order = 4;
+                }
+                rel_coo[rid] = std::move(cd);
                 rel_flags[rid][2] = true;
             } else if (kind == ".dense_inline" && kv) {
                 uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
@@ -714,12 +730,12 @@ std::string run_fixture_json(const std::string& profile,
                 owned_row_offs[rid] = it->second.first;
                 owned_col_tgts[rid] = it->second.second;
             } else if (auto it = rel_coo.find(r16); it != rel_coo.end()) {
-                const auto& srcs = it->second.first;
-                const auto& tgts = it->second.second;
+                const auto& srcs = it->second.srcs;
+                const auto& tgts = it->second.tgts;
                 std::vector<std::vector<uint64_t>> buckets(n_src);
                 size_t lim = std::min(srcs.size(), tgts.size());
                 for (size_t i = 0; i < lim; ++i) {
-                    if (srcs[i] < n_src) buckets[srcs[i]].push_back(tgts[i]);
+                    if (srcs[i] < n_src) buckets[static_cast<size_t>(srcs[i])].push_back(tgts[i]);
                 }
                 owned_row_offs[rid].assign(n_src + 1u, 0u);
                 for (uint32_t u = 0; u < n_src; ++u) {
@@ -760,6 +776,13 @@ std::string run_fixture_json(const std::string& profile,
             rv.row_off_len = static_cast<uint32_t>(owned_row_offs[rid].size());
             rv.col_targets = owned_col_tgts[rid].data();
             rv.col_tgt_len = static_cast<uint32_t>(owned_col_tgts[rid].size());
+            if (auto cit = rel_coo.find(r16); cit != rel_coo.end()) {
+                rv.coo_srcs = cit->second.srcs.data();
+                rv.coo_tgts = cit->second.tgts.data();
+                rv.coo_edge_ids = cit->second.edge_ids.empty() ? nullptr : cit->second.edge_ids.data();
+                rv.coo_edge_count = static_cast<uint32_t>(std::min(cit->second.srcs.size(), cit->second.tgts.size()));
+                rv.coo_order = cit->second.order;
+            }
             rv.has_csr = fl[0];
             rv.has_csc = fl[1];
             rv.has_coo = fl[2];
