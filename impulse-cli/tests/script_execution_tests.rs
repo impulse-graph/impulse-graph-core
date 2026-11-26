@@ -39,8 +39,12 @@ fn test_unified_benchmark_snapshot_and_multi_script_execution() {
     // 3. Test ReBAC ImpLog Script against Unified Snapshot
     let implog_source = fs::read_to_string("examples/cugraph_benchmarks/authz_rebac.implog")
         .expect("Failed to read examples/cugraph_benchmarks/authz_rebac.implog");
-    let rebac_asm = compiler::compile_script_to_impas(&implog_source, LanguageTarget::ImpLog)
-        .expect("Failed to compile ImpLog");
+    let rebac_asm = compiler::compile_script_to_impas_with_snapshot(
+        Some(&snapshot_path),
+        &implog_source,
+        LanguageTarget::ImpLog,
+    )
+    .expect("Failed to compile ImpLog");
     println!("Compiled ReBAC Assembly:\n{}", rebac_asm);
 
     let rebac_impas_path = temp_dir.join("rebac.impas");
@@ -57,14 +61,19 @@ fn test_unified_benchmark_snapshot_and_multi_script_execution() {
     let run_rebac = commands::run::run(&snapshot_path, &rebac_impb_path, 0);
     assert!(
         run_rebac.is_ok(),
-        "Failed to execute ReBAC query against unified snapshot"
+        "Failed to execute ReBAC query against unified snapshot: {:?}",
+        run_rebac.err()
     );
 
     // 4. Test ImpK Triangles Script against Unified Snapshot
     let impk_triangles = fs::read_to_string("examples/cugraph_benchmarks/triangles.impk")
         .expect("Failed to read triangles.impk");
-    let tri_asm = compiler::compile_script_to_impas(&impk_triangles, LanguageTarget::ImpK)
-        .expect("Failed to compile ImpK triangles");
+    let tri_asm = compiler::compile_script_to_impas_with_snapshot(
+        Some(&snapshot_path),
+        &impk_triangles,
+        LanguageTarget::ImpK,
+    )
+    .expect("Failed to compile ImpK triangles");
 
     let tri_impas_path = temp_dir.join("triangles.impas");
     let tri_impb_path = temp_dir.join("triangles.impb");
@@ -79,14 +88,19 @@ fn test_unified_benchmark_snapshot_and_multi_script_execution() {
     let run_tri = commands::run::run(&snapshot_path, &tri_impb_path, 0);
     assert!(
         run_tri.is_ok(),
-        "Failed to execute Triangles query against unified snapshot"
+        "Failed to execute Triangles query against unified snapshot: {:?}",
+        run_tri.err()
     );
 
     // 5. Test ImpK BFS Script against Unified Snapshot
     let impk_bfs = fs::read_to_string("examples/cugraph_benchmarks/bfs.impk")
         .expect("Failed to read bfs.impk");
-    let bfs_asm = compiler::compile_script_to_impas(&impk_bfs, LanguageTarget::ImpK)
-        .expect("Failed to compile ImpK BFS");
+    let bfs_asm = compiler::compile_script_to_impas_with_snapshot(
+        Some(&snapshot_path),
+        &impk_bfs,
+        LanguageTarget::ImpK,
+    )
+    .expect("Failed to compile ImpK BFS");
 
     let bfs_impas_path = temp_dir.join("bfs.impas");
     let bfs_impb_path = temp_dir.join("bfs.impb");
@@ -98,14 +112,19 @@ fn test_unified_benchmark_snapshot_and_multi_script_execution() {
     let run_bfs = commands::run::run(&snapshot_path, &bfs_impb_path, 0);
     assert!(
         run_bfs.is_ok(),
-        "Failed to execute BFS query against unified snapshot"
+        "Failed to execute BFS query against unified snapshot: {:?}",
+        run_bfs.err()
     );
 
     // 6. Test ImpK PageRank Script against Unified Snapshot
     let impk_pr = fs::read_to_string("examples/cugraph_benchmarks/pagerank.impk")
         .expect("Failed to read pagerank.impk");
-    let pr_asm = compiler::compile_script_to_impas(&impk_pr, LanguageTarget::ImpK)
-        .expect("Failed to compile ImpK PageRank");
+    let pr_asm = compiler::compile_script_to_impas_with_snapshot(
+        Some(&snapshot_path),
+        &impk_pr,
+        LanguageTarget::ImpK,
+    )
+    .expect("Failed to compile ImpK PageRank");
 
     let pr_impas_path = temp_dir.join("pagerank.impas");
     let pr_impb_path = temp_dir.join("pagerank.impb");
@@ -117,6 +136,7 @@ fn test_unified_benchmark_snapshot_and_multi_script_execution() {
     let run_pr = commands::run::run(&snapshot_path, &pr_impb_path, 0);
     assert!(
         run_pr.is_ok(),
-        "Failed to execute PageRank query against unified snapshot"
+        "Failed to execute PageRank query against unified snapshot: {:?}",
+        run_pr.err()
     );
 }

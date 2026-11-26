@@ -428,50 +428,49 @@ fn test_assemble_disassemble_multilane_and_vector_opcodes() {
     let impas_path = dir.join("multilane_vec.impas");
     let impb_path = dir.join("multilane_vec.impb");
 
-    let asm_src = r#"; Multi-lane, Stream Shader & Vector ANN assembly test
+    let asm_src = r#"; Multi-lane, Morsel & Vector ANN assembly test (v0.11 ISA)
+.version 0.11.0
 .domain "Airport" = 0
 .relation "FLIGHT" = 0
 .attribute "embedding" = 0
 
-OP_LOAD_INLINE_SET R1, 0
-OP_CSR_WALK_STATE R2, R1, REL_0
-OP_COO_WALK_STREAM R3, R1, REL_0
-OP_STREAM_FUNC_BEGIN R0, 0
-OP_STREAM_LOAD_SRC R4, 0
-OP_STREAM_REDUCE_ARGMIN R5, R4, 0
-OP_STREAM_FUNC_END
-OP_LANE_INIT_SEEDS R10, R1, 8
-OP_LANE_CSR_WALK R11, R10, REL_0
-OP_LANE_CSC_WALK R12, R11, REL_0
-OP_LANE_FILTER_QUORUM R13, R12, 2
-OP_LANE_REDUCE_AND R14, R12
-OP_LANE_REDUCE_ATTR R15, R12, ATTR_0, BINARY_OP_ARGMIN
-OP_LANE_SET_COVER R16, R12, 4
-OP_VECTOR_ANN_SEARCH R20, R1, 0, 10, 32
-OP_VECTOR_RERANK_DOT R21, R20, R1, ATTR_0
-OP_HALT
+FSEED sub=1 dst=0 imm=0x00000001
+WALK sub=0 dst=1 s1=0 imm=0x00000000
+WALK sub=1 dst=2 s1=1 imm=0x00000000
+WALK_MORSEL sub=0 dst=3 s1=0 imm=0x00000000
+GATHER_NODE_ATTR sub=0 dst=0 s1=0 imm=0x00000000
+MORSEL_COMMIT sub=0 dst=3 s1=0 imm=0x00000000
+MORSEL_END sub=0 dst=0 s1=0 imm=0x00000000
+LANE_INIT_SEEDS sub=0 dst=0 s1=0 imm=0x00000008
+LANE_WALK sub=0 dst=1 s1=0 imm=0x00000000
+LANE_FILTER_QUORUM sub=0 dst=2 s1=1 imm=0x00000002
+LANE_REDUCE_AND sub=0 dst=3 s1=1 imm=0x00000000
+LANE_REDUCE_ATTR sub=0 dst=4 s1=1 imm=0x00000000
+VECTOR_ANN_SEARCH sub=0 dst=5 s1=0 imm=0x0000000A
+VECTOR_RERANK sub=0 dst=6 s1=5 s2=0 imm=0x00000000
+HALT
 "#;
     fs::write(&impas_path, asm_src).unwrap();
 
     commands::assemble::run(&impas_path, &impb_path).expect("assemble failed");
     let bytes = fs::read(&impb_path).unwrap();
-    assert_eq!(bytes.len(), 17 * 8);
+    // 32-byte IMPB v11 header + 15 * 8-byte instruction words
+    assert_eq!(bytes.len(), 32 + 15 * 8);
 
     let disasm =
         commands::disassemble::disassemble_bytes(&bytes, None).expect("disassemble failed");
-    assert!(disasm.contains("OP_LOAD_INLINE_SET"));
-    assert!(disasm.contains("OP_CSR_WALK_STATE"));
-    assert!(disasm.contains("OP_COO_WALK_STREAM"));
-    assert!(disasm.contains("OP_STREAM_REDUCE_ARGMIN"));
-    assert!(disasm.contains("OP_LANE_INIT_SEEDS"));
-    assert!(disasm.contains("OP_LANE_CSR_WALK"));
-    assert!(disasm.contains("OP_LANE_CSC_WALK"));
-    assert!(disasm.contains("OP_LANE_FILTER_QUORUM"));
-    assert!(disasm.contains("OP_LANE_REDUCE_AND"));
-    assert!(disasm.contains("OP_LANE_REDUCE_ATTR"));
-    assert!(disasm.contains("OP_LANE_SET_COVER"));
-    assert!(disasm.contains("OP_VECTOR_ANN_SEARCH"));
-    assert!(disasm.contains("OP_VECTOR_RERANK_DOT"));
+    assert!(disasm.contains("FSEED"));
+    assert!(disasm.contains("WALK"));
+    assert!(disasm.contains("WALK_MORSEL"));
+    assert!(disasm.contains("MORSEL_COMMIT"));
+    assert!(disasm.contains("LANE_INIT_SEEDS"));
+    assert!(disasm.contains("LANE_WALK"));
+    assert!(disasm.contains("LANE_FILTER_QUORUM"));
+    assert!(disasm.contains("LANE_REDUCE_AND"));
+    assert!(disasm.contains("LANE_REDUCE_ATTR"));
+    assert!(disasm.contains("VECTOR_ANN_SEARCH"));
+    assert!(disasm.contains("VECTOR_RERANK"));
+    assert!(disasm.contains("HALT"));
 
     let _ = fs::remove_dir_all(&dir);
 }

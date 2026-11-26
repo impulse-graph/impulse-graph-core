@@ -34,6 +34,7 @@ pub struct WriterDomain {
     pub name: String,
     pub node_count: u64,
     pub key_attr_index: u16,
+    pub dense_id_width: u8,
     pub attributes: Vec<AttributeField>,
 }
 
@@ -54,6 +55,8 @@ pub struct WriterRelation {
     pub csc_override: Option<(Vec<u32>, Vec<u32>)>,
     pub virtual_component_ids: Vec<u16>,
     pub include_csc: bool,
+    pub include_coo_v11: bool,
+    pub coo_order: u8,
     pub attributes: Vec<AttributeField>,
     pub csr_row_off_offset: u64,
     pub csr_row_off_bytes: u64,
@@ -63,6 +66,12 @@ pub struct WriterRelation {
     pub csc_row_off_bytes: u64,
     pub csc_col_idx_offset: u64,
     pub csc_col_idx_bytes: u64,
+    pub coo_src_offset: u64,
+    pub coo_src_bytes: u64,
+    pub coo_tgt_offset: u64,
+    pub coo_tgt_bytes: u64,
+    pub coo_edge_id_offset: u64,
+    pub coo_edge_id_bytes: u64,
 }
 
 pub struct SnapshotWriter {
@@ -101,6 +110,7 @@ impl SnapshotWriter {
                 name: name.to_string(),
                 node_count: 0,
                 key_attr_index: 0xFFFF,
+                dense_id_width: 0,
                 attributes: Vec::new(),
             });
         }
@@ -109,6 +119,19 @@ impl SnapshotWriter {
     pub fn set_domain_key_attr(&mut self, domain_id: u16, key_attr_index: u16) {
         if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
             dom.key_attr_index = key_attr_index;
+        }
+    }
+
+    pub fn set_domain_dense_id_width(&mut self, domain_id: u16, width: u8) {
+        if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
+            dom.dense_id_width = width;
+        }
+    }
+
+    pub fn set_relation_coo_v11(&mut self, relation_index: usize, coo_order: u8) {
+        if let Some(rel) = self.relations.get_mut(relation_index) {
+            rel.include_coo_v11 = true;
+            rel.coo_order = coo_order;
         }
     }
 
@@ -139,6 +162,8 @@ impl SnapshotWriter {
             csc_override: None,
             virtual_component_ids: Vec::new(),
             include_csc: false,
+            include_coo_v11: false,
+            coo_order: 0,
             attributes: Vec::new(),
             csr_row_off_offset: 0,
             csr_row_off_bytes: 0,
@@ -148,6 +173,12 @@ impl SnapshotWriter {
             csc_row_off_bytes: 0,
             csc_col_idx_offset: 0,
             csc_col_idx_bytes: 0,
+            coo_src_offset: 0,
+            coo_src_bytes: 0,
+            coo_tgt_offset: 0,
+            coo_tgt_bytes: 0,
+            coo_edge_id_offset: 0,
+            coo_edge_id_bytes: 0,
         });
     }
 
@@ -637,6 +668,19 @@ impl SnapshotWriter {
             .collect();
 
         // Compute exact Section 2 Directory Table byte length prior to 4KB page padding
+        let emit_v11 = self.relations.iter().any(|r| r.include_coo_v11)
+            || self.domains.iter().any(|d| d.dense_id_width != 0);
+        let target_version = if emit_v11 {
+            IMPULSE_VERSION_V011
+        } else {
+            IMPULSE_VERSION_PACKED
+        };
+        let rel_entry_size = if emit_v11 {
+            std::mem::size_of::<RelationDirectoryEntryV011>()
+        } else {
+            std::mem::size_of::<RelationDirectoryEntry>()
+        };
+
         let mut dir_len = align_128((4 + string_pool.len()) as u64) as usize;
         for dom in &self.domains {
             dir_len += std::mem::size_of::<DomainCatalogEntry>()
@@ -644,8 +688,8 @@ impl SnapshotWriter {
         }
         dir_len = align_128(dir_len as u64) as usize;
         for rel in &self.relations {
-            dir_len += std::mem::size_of::<RelationDirectoryEntry>()
-                + rel.attributes.len() * std::mem::size_of::<AttributeDescriptor>();
+            dir_len +=
+                rel_entry_size + rel.attributes.len() * std::mem::size_of::<AttributeDescriptor>();
         }
         dir_len = align_128(dir_len as u64) as usize;
         dir_len += self.indexes.len() * std::mem::size_of::<IndexDirectoryEntry>();
@@ -952,6 +996,60 @@ impl SnapshotWriter {
                 rel.csc_col_idx_bytes = 0;
             }
 
+            // Serialize v0.11 dedicated COO arrays if requested
+            if rel.include_coo_v11 && !is_virtual {
+                let mut coo_srcs: Vec<u32> = Vec::with_capacity(rel.edge_count as usize);
+                let mut coo_tgts: Vec<u32> = Vec::with_capacity(rel.edge_count as usize);
+                if let Some(ref srcs) = rel.coo_src_indices {
+                    coo_srcs.extend_from_slice(srcs);
+                    coo_tgts.extend_from_slice(&rel.col_indices);
+                } else if rel.row_offsets.len() > 1 {
+                    let n_src = rel.row_offsets.len() - 1;
+                    for u in 0..n_src {
+                        let s = rel.row_offsets[u] as usize;
+                        let e = rel.row_offsets[u + 1] as usize;
+                        for &v in &rel.col_indices[s..e.min(rel.col_indices.len())] {
+                            coo_srcs.push(u as u32);
+                            coo_tgts.push(v);
+                        }
+                    }
+                }
+                let src_w = self
+                    .domains
+                    .iter()
+                    .find(|d| d.domain_id == rel.src_domain_id)
+                    .map(|d| d.dense_id_width)
+                    .filter(|&w| w == 2 || w == 4 || w == 8)
+                    .unwrap_or(rel.node_id_width);
+                let tgt_w = self
+                    .domains
+                    .iter()
+                    .find(|d| d.domain_id == rel.tgt_domain_id)
+                    .map(|d| d.dense_id_width)
+                    .filter(|&w| w == 2 || w == 4 || w == 8)
+                    .unwrap_or(rel.node_id_width);
+                let pack_ids = |ids: &[u32], w: u8| -> Vec<u8> {
+                    match w {
+                        2 => ids.iter().flat_map(|&v| (v as u16).to_le_bytes()).collect(),
+                        8 => ids.iter().flat_map(|&v| (v as u64).to_le_bytes()).collect(),
+                        _ => ids.iter().flat_map(|&v| v.to_le_bytes()).collect(),
+                    }
+                };
+                if !coo_srcs.is_empty() {
+                    let s_bytes = pack_ids(&coo_srcs, src_w);
+                    Self::align_buffer(&mut payload, 128);
+                    rel.coo_src_offset = payload_base_offset + payload.len() as u64;
+                    rel.coo_src_bytes = s_bytes.len() as u64;
+                    payload.extend_from_slice(&s_bytes);
+
+                    let t_bytes = pack_ids(&coo_tgts, tgt_w);
+                    Self::align_buffer(&mut payload, 128);
+                    rel.coo_tgt_offset = payload_base_offset + payload.len() as u64;
+                    rel.coo_tgt_bytes = t_bytes.len() as u64;
+                    payload.extend_from_slice(&t_bytes);
+                }
+            }
+
             // Serialize Edge Attributes
             for attr in &mut rel.attributes {
                 Self::align_buffer(&mut payload, 128);
@@ -1014,7 +1112,7 @@ impl SnapshotWriter {
             let dom_entry = DomainCatalogEntry {
                 domain_id: dom.domain_id,
                 key_type: dom.key_type as u8,
-                reserved: 0,
+                reserved: if emit_v11 { dom.dense_id_width } else { 0 },
                 name_offset: domain_name_offsets[d_idx],
                 node_count: dom.node_count,
                 attr_count: dom.attributes.len() as u16,
@@ -1063,6 +1161,11 @@ impl SnapshotWriter {
             {
                 sec_features |= IMPULSE_SECTION_FEAT_INCLUDE_CSC;
             }
+            if !is_virtual
+                && (rel.include_coo_v11 || (rel.coo_src_bytes > 0 && rel.coo_tgt_bytes > 0))
+            {
+                sec_features |= IMPULSE_SECTION_FEAT_HAS_COO;
+            }
             if !is_virtual && rel.attributes.iter().any(|a| a.name == "weight") {
                 sec_features |= IMP_REL_FEATURE_WEIGHTED;
             }
@@ -1110,6 +1213,17 @@ impl SnapshotWriter {
                 )
             };
             dir_table_bytes.extend_from_slice(rel_bytes);
+            if emit_v11 {
+                let mut ext64 = [0u8; 64];
+                ext64[0..8].copy_from_slice(&rel.coo_src_offset.to_le_bytes());
+                ext64[8..16].copy_from_slice(&rel.coo_src_bytes.to_le_bytes());
+                ext64[16..24].copy_from_slice(&rel.coo_tgt_offset.to_le_bytes());
+                ext64[24..32].copy_from_slice(&rel.coo_tgt_bytes.to_le_bytes());
+                ext64[32..40].copy_from_slice(&rel.coo_edge_id_offset.to_le_bytes());
+                ext64[40..48].copy_from_slice(&rel.coo_edge_id_bytes.to_le_bytes());
+                ext64[48] = rel.coo_order;
+                dir_table_bytes.extend_from_slice(&ext64);
+            }
 
             for (attr_idx, attr) in rel.attributes.iter().enumerate() {
                 let attr_name_off = attr_name_offsets[rel_idx][attr_idx];
@@ -1193,7 +1307,7 @@ impl SnapshotWriter {
         let footer_len = (final_payload.len() + 16 - footer_start) as u64;
         let trailer = FooterTrailer {
             footer_length: footer_len,
-            spec_version: IMPULSE_VERSION_PACKED as u32,
+            spec_version: target_version as u32,
             footer_magic: IMPULSE_MAGIC,
         };
         let trailer_bytes = unsafe {
@@ -1207,7 +1321,7 @@ impl SnapshotWriter {
         // 4. Build Header Page 0 (4096 Bytes)
         let mut header = SnapshotHeader {
             magic: IMPULSE_MAGIC,
-            version: IMPULSE_VERSION_PACKED,
+            version: target_version,
             data_offset: IMPULSE_DEFAULT_DATA_OFFSET,
             domain_count: self.domains.len() as u16,
             relation_count: self.relations.len() as u16,
