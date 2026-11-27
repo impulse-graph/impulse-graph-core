@@ -1055,7 +1055,7 @@ int main(int argc, char** argv) {
         (void)impulse_vm_v11_prepare_snapshot(opened_snap);
     }
 
-    constexpr size_t kScratchSize = 64u * 1024u * 1024u; // 64 MB 128B-aligned caller buffer
+    constexpr size_t kScratchSize = 128u * 1024u * 1024u; // 128 MB 128B-aligned caller buffer
     void* scratch_buf = nullptr;
 #if defined(_WIN32)
     scratch_buf = _aligned_malloc(kScratchSize, 128);
