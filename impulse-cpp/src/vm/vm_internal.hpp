@@ -617,6 +617,8 @@ bool v11_exec_morsel_p4_op(
     const V11SnapshotView* snap,
     uint64_t w) noexcept;
 
+const V11SnapshotView* v11_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
+
 } // namespace impulse::vm
 
 /** Concrete definition of caller-owned workspace header (placement-initialized in scratch_buf). */
@@ -875,5 +877,7 @@ bool v11_exec_morsel_p4_op(
     impulse_vm_workspace_v11_t& ws,
     const V11SnapshotView* snap,
     uint64_t w) noexcept;
+
+const V11SnapshotView* v11_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
 
 } // namespace impulse::vm
