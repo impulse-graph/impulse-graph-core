@@ -111,6 +111,57 @@ V11_OP_CASE(WALK_MORSEL) {
                 }
             }
         }
+    } else if (rel->has_csc && rel->csc_row_off_raw != nullptr) {
+        if (f_src->multi_lane) {
+            size_t cap = 0u;
+            for (uint32_t k = 0; k < f_src->ml_count; ++k) {
+                if (f_src->ml_masks[k] == 0ULL) continue;
+                uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
+                if (v + 1u < rel->csc_row_off_len) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
+            }
+            if (cap > 0u) {
+                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
+                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                for (uint32_t k = 0; k < f_src->ml_count; ++k) {
+                    uint64_t lm = f_src->ml_masks[k];
+                    if (lm == 0ULL) continue;
+                    uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
+                    if (v + 1u < rel->csc_row_off_len) {
+                        uint32_t e0 = rel->csc_row_off(v), e1 = rel->csc_row_off(v + 1u);
+                        for (uint32_t p = e0; p < e1; ++p) {
+                            uint64_t u = rel->csc_col_src(p);
+                            if (!p3_sorted_contains(s_excl, s_excl_len, static_cast<uint32_t>(u))) {
+                                items[item_cnt++] = {u, v, p, lm};
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
+            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            size_t cap = 0u;
+            for (uint32_t i = 0; i < src_len; ++i) {
+                uint32_t v = src_ids[i];
+                if (v + 1u < rel->csc_row_off_len) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
+            }
+            if (cap > 0u) {
+                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
+                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                for (uint32_t i = 0; i < src_len; ++i) {
+                    uint32_t v = src_ids[i];
+                    if (v + 1u < rel->csc_row_off_len) {
+                        uint32_t e0 = rel->csc_row_off(v), e1 = rel->csc_row_off(v + 1u);
+                        for (uint32_t p = e0; p < e1; ++p) {
+                            uint64_t u = rel->csc_col_src(p);
+                            if (!p3_sorted_contains(s_excl, s_excl_len, static_cast<uint32_t>(u))) {
+                                items[item_cnt++] = {u, v, p, 1ULL};
+                            }
+                        }
+                    }
+                }
+            }
+        }
     } else {
         V11RevAdj rev_adj{};
         if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }

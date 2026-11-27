@@ -87,6 +87,26 @@ IMPULSE_V11_NOINLINE inline bool p3_build_rev_adj(V11Arena& arena,
     if (!offs) return false;
     std::memset(offs, 0, (static_cast<size_t>(n_tgt) + 1u) * sizeof(uint32_t));
 
+    if (rel.has_csc && rel.csc_row_off_raw != nullptr && rel.row_off_len == 0u) {
+        uint32_t csc_n = (rel.csc_row_off_len > 0u) ? (rel.csc_row_off_len - 1u) : 0u;
+        uint32_t lim = (csc_n < n_tgt) ? csc_n : n_tgt;
+        for (uint32_t v = 0; v <= lim; ++v) offs[v] = rel.csc_row_off(v);
+        for (uint32_t v = lim + 1u; v <= n_tgt; ++v) offs[v] = offs[lim];
+        uint32_t total = offs[n_tgt];
+        uint32_t* srcs  = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
+        uint32_t* edges = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
+        if (total > 0u && (!srcs || !edges)) return false;
+        for (uint32_t p = 0; p < total; ++p) {
+            srcs[p]  = static_cast<uint32_t>(rel.csc_col_src(p));
+            edges[p] = p;
+        }
+        out->n_tgt   = n_tgt;
+        out->offsets = offs;
+        out->srcs    = srcs;
+        out->edges   = edges;
+        return true;
+    }
+
     uint32_t n_src = (rel.row_off_len > 0u) ? (rel.row_off_len - 1u) : 0u;
     uint32_t total = 0u;
     for (uint32_t u = 0; u < n_src; ++u) {
