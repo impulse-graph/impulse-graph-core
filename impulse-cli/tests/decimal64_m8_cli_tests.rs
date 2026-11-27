@@ -80,22 +80,31 @@ fn pack_nullable_i64(vals: &[Option<i64>]) -> Vec<u8> {
 
 fn unpack_i64(bytes: &[u8]) -> Vec<i64> {
     bytes
-        .chunks_exact(8)
-        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .copied()
+        .map(i64::from_le_bytes)
         .collect()
 }
 
 fn unpack_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .copied()
+        .map(f32::from_le_bytes)
         .collect()
 }
 
 fn unpack_f64(bytes: &[u8]) -> Vec<f64> {
     bytes
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .copied()
+        .map(f64::from_le_bytes)
         .collect()
 }
 
