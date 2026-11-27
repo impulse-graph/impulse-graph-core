@@ -193,6 +193,8 @@ struct impulse_writer_index {
 struct impulse_writer_attr {
     std::string name;
     uint8_t type_code;
+    uint8_t reserved1 = 0;
+    uint16_t reserved2 = 0;
     uint32_t dimension;
     std::vector<uint8_t> data;
     std::vector<uint8_t> offsets;

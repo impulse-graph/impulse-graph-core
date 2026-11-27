@@ -8,6 +8,8 @@ pub struct AttributeField {
     pub name: String,
     pub type_code: u8,
     pub dimension: u32,
+    pub precision: u16,
+    pub scale: u8,
     pub data: Vec<u8>,
     pub offsets: Option<Vec<u32>>,
     pub data_offset: u64,
@@ -293,6 +295,30 @@ impl SnapshotWriter {
         data: Vec<u8>,
         offsets: Option<Vec<u32>>,
     ) {
+        self.add_attribute_to_relation_with_meta(
+            relation_index,
+            name,
+            type_code,
+            dimension,
+            0,
+            0,
+            data,
+            offsets,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_attribute_to_relation_with_meta(
+        &mut self,
+        relation_index: usize,
+        name: &str,
+        type_code: u8,
+        dimension: u32,
+        precision: u16,
+        scale: u8,
+        data: Vec<u8>,
+        offsets: Option<Vec<u32>>,
+    ) {
         if relation_index < self.relations.len() {
             self.relations[relation_index]
                 .attributes
@@ -300,6 +326,8 @@ impl SnapshotWriter {
                     name: name.to_string(),
                     type_code,
                     dimension,
+                    precision,
+                    scale,
                     data,
                     offsets,
                     data_offset: 0,
@@ -319,11 +347,30 @@ impl SnapshotWriter {
         data: Vec<u8>,
         offsets: Option<Vec<u32>>,
     ) {
+        self.add_attribute_to_domain_with_meta(
+            domain_id, name, type_code, dimension, 0, 0, data, offsets,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_attribute_to_domain_with_meta(
+        &mut self,
+        domain_id: u16,
+        name: &str,
+        type_code: u8,
+        dimension: u32,
+        precision: u16,
+        scale: u8,
+        data: Vec<u8>,
+        offsets: Option<Vec<u32>>,
+    ) {
         if let Some(dom) = self.domains.iter_mut().find(|d| d.domain_id == domain_id) {
             dom.attributes.push(AttributeField {
                 name: name.to_string(),
                 type_code,
                 dimension,
+                precision,
+                scale,
                 data,
                 offsets,
                 data_offset: 0,
@@ -1174,8 +1221,8 @@ impl SnapshotWriter {
                 let attr_desc = AttributeDescriptor {
                     name_offset: dom_attr_name_offsets[d_idx][a_idx],
                     type_code: attr.type_code,
-                    reserved1: 0,
-                    reserved2: 0,
+                    reserved1: attr.scale,
+                    reserved2: attr.precision,
                     dimension: attr.dimension,
                     data_offset: attr.data_offset,
                     data_bytes: attr.data_bytes,
@@ -1273,8 +1320,8 @@ impl SnapshotWriter {
                 let attr_desc = AttributeDescriptor {
                     name_offset: attr_name_off,
                     type_code: attr.type_code,
-                    reserved1: 0,
-                    reserved2: 0,
+                    reserved1: attr.scale,
+                    reserved2: attr.precision,
                     dimension: attr.dimension,
                     data_offset: attr.data_offset,
                     data_bytes: attr.data_bytes,

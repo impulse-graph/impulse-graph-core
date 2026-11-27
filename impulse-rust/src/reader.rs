@@ -86,6 +86,8 @@ pub struct AttributeInfo {
     pub name: String,
     pub type_code: u8,
     pub dimension: u32,
+    pub precision: u16,
+    pub scale: u8,
     pub data_offset: u64,
     pub data_bytes: u64,
     pub offsets_offset: u64,
@@ -358,6 +360,10 @@ impl SnapshotReader {
                         let dim = unsafe {
                             std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.dimension))
                         };
+                        let attr_scale = attr_desc.reserved1;
+                        let attr_precision = unsafe {
+                            std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.reserved2))
+                        };
 
                         if data_bytes > 0
                             && (data_off as usize).saturating_add(data_bytes as usize) > slice.len()
@@ -370,10 +376,43 @@ impl SnapshotReader {
                             return Err(ImpulseError::BufferOverflow);
                         }
 
+                        if (attr_desc.type_code & IMPULSE_TYPE_MASK) == 0x15 {
+                            if attr_precision < 1
+                                || attr_precision > 18
+                                || (attr_scale as u16) > attr_precision
+                            {
+                                return Err(ImpulseError::InvalidArgument);
+                            }
+                            let row_count = dom_entry.node_count();
+                            if row_count > 0 {
+                                let dim_u64 = (dim.max(1)) as u64;
+                                let is_nullable =
+                                    (attr_desc.type_code & IMPULSE_NULLABLE_FLAG) != 0;
+                                let padded_bm = if is_nullable {
+                                    let words = row_count.div_ceil(64);
+                                    let raw_bm =
+                                        words.checked_mul(8).ok_or(ImpulseError::BufferOverflow)?;
+                                    (raw_bm + 127) & !127
+                                } else {
+                                    0
+                                };
+                                let req_payload = row_count
+                                    .checked_mul(dim_u64)
+                                    .and_then(|v| v.checked_mul(8))
+                                    .and_then(|v| v.checked_add(padded_bm))
+                                    .ok_or(ImpulseError::BufferOverflow)?;
+                                if data_off == 0 || data_bytes < req_payload {
+                                    return Err(ImpulseError::BufferOverflow);
+                                }
+                            }
+                        }
+
                         attributes.push(AttributeInfo {
                             name: attr_name,
                             type_code: attr_desc.type_code,
                             dimension: dim,
+                            precision: attr_precision,
+                            scale: attr_scale,
                             data_offset: data_off,
                             data_bytes,
                             offsets_offset: offs_off,
@@ -482,15 +521,66 @@ impl SnapshotReader {
                     cur += std::mem::size_of::<AttributeDescriptor>();
 
                     let attr_name = validate_and_get_string(attr_desc.name_offset() as usize)?;
+                    let attr_scale = attr_desc.reserved1;
+                    let attr_precision = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.reserved2))
+                    };
+                    let dim = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.dimension))
+                    };
+                    let data_off = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_offset))
+                    };
+                    let data_bytes = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.data_bytes))
+                    };
+                    let offs_off = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_offset))
+                    };
+                    let offs_bytes = unsafe {
+                        std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_bytes))
+                    };
+
+                    if (attr_desc.type_code & IMPULSE_TYPE_MASK) == 0x15 {
+                        if attr_precision < 1
+                            || attr_precision > 18
+                            || (attr_scale as u16) > attr_precision
+                        {
+                            return Err(ImpulseError::InvalidArgument);
+                        }
+                        let row_count = rel_entry.edge_count;
+                        if row_count > 0 {
+                            let dim_u64 = (dim.max(1)) as u64;
+                            let is_nullable = (attr_desc.type_code & IMPULSE_NULLABLE_FLAG) != 0;
+                            let padded_bm = if is_nullable {
+                                let words = row_count.div_ceil(64);
+                                let raw_bm =
+                                    words.checked_mul(8).ok_or(ImpulseError::BufferOverflow)?;
+                                (raw_bm + 127) & !127
+                            } else {
+                                0
+                            };
+                            let req_payload = row_count
+                                .checked_mul(dim_u64)
+                                .and_then(|v| v.checked_mul(8))
+                                .and_then(|v| v.checked_add(padded_bm))
+                                .ok_or(ImpulseError::BufferOverflow)?;
+                            if data_off == 0 || data_bytes < req_payload {
+                                return Err(ImpulseError::BufferOverflow);
+                            }
+                        }
+                    }
 
                     attributes.push(AttributeInfo {
                         name: attr_name,
                         type_code: attr_desc.type_code,
-                        dimension: attr_desc.dimension,
-                        data_offset: attr_desc.data_offset,
-                        data_bytes: attr_desc.data_bytes,
-                        offsets_offset: attr_desc.offsets_offset,
-                        offsets_bytes: attr_desc.offsets_bytes,
+                        dimension: dim,
+                        precision: attr_precision,
+                        scale: attr_scale,
+                        data_offset: data_off,
+                        data_bytes,
+                        offsets_offset: offs_off,
+                        offsets_bytes: offs_bytes,
                     });
                 }
 

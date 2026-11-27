@@ -139,11 +139,13 @@ pub fn run_with_options(
                     raw_offsets,
                     new_to_old,
                 );
-                writer.add_attribute_to_domain(
+                writer.add_attribute_to_domain_with_meta(
                     d.domain_id,
                     &attr.name,
                     attr.type_code,
                     attr.dimension,
+                    attr.precision,
+                    attr.scale,
                     new_data,
                     new_offs,
                 );
@@ -274,11 +276,13 @@ pub fn run_with_options(
                     perm_new_to_old,
                 );
 
-                writer.add_attribute_to_relation(
+                writer.add_attribute_to_relation_with_meta(
                     idx,
                     &attr.name,
                     attr.type_code,
                     attr.dimension,
+                    attr.precision,
+                    attr.scale,
                     new_data,
                     new_offs,
                 );
@@ -514,10 +518,10 @@ pub fn run_with_options(
 fn attribute_element_byte_stride(type_code: u8, dimension: u32) -> usize {
     let base_type = type_code & IMPULSE_TYPE_MASK;
     let base_bytes = match base_type {
-        0x01 => 1,
-        0x02 | 0x05 => 2,
-        0x03 | 0x06 => 4,
-        0x04 | 0x07 | 0x08 | 0x09 | 0x0D => 8,
+        0x01 | 0x11 => 1,
+        0x02 | 0x05 | 0x12 => 2,
+        0x03 | 0x06 | 0x13 => 4,
+        0x04 | 0x07 | 0x08 | 0x09 | 0x0D | 0x14 | 0x15 => 8,
         0x0E => 16,
         0x0A => 1,
         _ => 0,

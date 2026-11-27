@@ -211,6 +211,72 @@ static void test_stream_compaction_and_writer() {
     std::printf("  PASS: test_stream_compaction_and_writer\n");
 }
 
+static void test_decimal64_storage_and_validation() {
+    const char* dec_file = "__impulse_test_decimal64.imps";
+    impulse_writer_t* w = impulse_writer_create(dec_file, 0);
+    ASSERT_TRUE(w != nullptr);
+    ASSERT_EQ(impulse_writer_add_domain(w, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 3), IMPULSE_OK);
+
+    int64_t vals[3] = {12345LL, -9999LL, 0LL};
+    // Invalid (P, S) rejected at writer
+    ASSERT_EQ(impulse_writer_add_domain_attribute_decimal64(w, 0, "bad_p0", 0x15, 1, 0, 0, vals, sizeof(vals)),
+              IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_writer_add_domain_attribute_decimal64(w, 0, "bad_p19", 0x15, 1, 19, 2, vals, sizeof(vals)),
+              IMPULSE_ERR_INVALID_ARGUMENT);
+    ASSERT_EQ(impulse_writer_add_domain_attribute_decimal64(w, 0, "bad_s", 0x15, 1, 5, 6, vals, sizeof(vals)),
+              IMPULSE_ERR_INVALID_ARGUMENT);
+
+    // Valid DECIMAL64(10, 2)
+    ASSERT_EQ(impulse_writer_add_domain_attribute_decimal64(w, 0, "balance", 0x15, 1, 10, 2, vals, sizeof(vals)),
+              IMPULSE_OK);
+
+    uint32_t row_offs[4] = {0, 1, 1, 1};
+    uint32_t col_idx[1] = {1};
+    ASSERT_EQ(impulse_writer_add_relation(w, 0, 0, 0, 3, 1, 0, row_offs, sizeof(row_offs), col_idx, sizeof(col_idx)),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(w), IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    impulse_status_t st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(dec_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(snap != nullptr);
+
+    const void* ptr = nullptr;
+    uint64_t bytes = 0;
+    uint8_t tc = 0;
+    uint32_t dim = 0;
+    ASSERT_EQ(impulse_snapshot_get_domain_attribute_buffers(snap, 0, 0, &ptr, &bytes, nullptr, nullptr, &tc, &dim), IMPULSE_OK);
+    ASSERT_EQ(tc, 0x15);
+    ASSERT_EQ(dim, 1u);
+    ASSERT_EQ(bytes, 24ULL);
+    const auto* out_vals = static_cast<const int64_t*>(ptr);
+    ASSERT_EQ(out_vals[0], 12345LL);
+    ASSERT_EQ(out_vals[1], -9999LL);
+    ASSERT_EQ(out_vals[2], 0LL);
+    impulse_snapshot_close(snap);
+
+    // Negative open test: raw 0x15 with precision=0, scale=0 (via generic writer API) must be rejected on open
+    const char* bad_file = "__impulse_test_decimal64_bad.imps";
+    impulse_writer_t* bw = impulse_writer_create(bad_file, 0);
+    ASSERT_EQ(impulse_writer_add_domain(bw, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(bw, 0, 3), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_domain_attribute(bw, 0, "bad_dec", 0x15, 1, vals, sizeof(vals), nullptr, 0), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_relation(bw, 0, 0, 0, 3, 1, 0, row_offs, sizeof(row_offs), col_idx, sizeof(col_idx)),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(bw), IMPULSE_OK);
+    impulse_writer_destroy(bw);
+
+    impulse_snapshot_t* bad_snap = impulse_snapshot_open(bad_file, &st);
+    ASSERT_TRUE(bad_snap == nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+
+    std::remove(dec_file);
+    std::remove(bad_file);
+    std::printf("  PASS: test_decimal64_storage_and_validation\n");
+}
+
 int main() {
     std::printf("impulse_graph_test: running tests...\n\n");
 
@@ -220,6 +286,7 @@ int main() {
     test_neighbor_sampler();
     test_null_arguments();
     test_stream_compaction_and_writer();
+    test_decimal64_storage_and_validation();
 
     std::remove(TEST_FILE);
     std::printf("\nAll tests passed.\n");
