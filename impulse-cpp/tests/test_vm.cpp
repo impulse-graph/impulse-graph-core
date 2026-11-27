@@ -33,6 +33,7 @@ using namespace impulse::vm;
 static std::atomic<size_t> g_alloc_count{0};
 static std::atomic<bool>   g_track_allocs{false};
 
+#if !defined(__SANITIZE_THREAD__) && !(defined(__has_feature) && __has_feature(thread_sanitizer))
 void* operator new(size_t sz) {
     if (g_track_allocs.load(std::memory_order_relaxed)) {
         g_alloc_count.fetch_add(1, std::memory_order_relaxed);
@@ -49,6 +50,7 @@ void operator delete(void* p) noexcept {
 void operator delete(void* p, size_t) noexcept {
     std::free(p);
 }
+#endif
 
 static uint64_t enc(uint8_t op, uint8_t flags, uint8_t subop,
                     uint8_t dst, uint8_t s1, uint8_t s2, uint8_t s3, uint32_t imm32) {
@@ -96,7 +98,7 @@ static void test_xxh3_known_answers() {
 }
 
 static void test_workspace_guards_and_zero_malloc() {
-    alignas(128) uint8_t raw[1024 * 1024];
+    alignas(128) static uint8_t raw[1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
 
     // 1. Misaligned scratch_buf rejected
@@ -161,7 +163,7 @@ static void test_workspace_guards_and_zero_malloc() {
 }
 
 static void test_swe_sweep_p1_regressions() {
-    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    alignas(128) static uint8_t raw[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -292,7 +294,7 @@ static void test_swe_sweep_p1_regressions() {
 }
 
 static void test_swe_sweep_p2_regressions() {
-    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    alignas(128) static uint8_t raw[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -341,7 +343,7 @@ static void test_swe_sweep_p2_regressions() {
 }
 
 static void test_swe_sweep_p3_regressions() {
-    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    alignas(128) static uint8_t raw[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -441,7 +443,7 @@ static void test_swe_sweep_p3_regressions() {
 }
 
 static void test_swe_sweep_p4_regressions() {
-    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    alignas(128) static uint8_t raw[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -507,7 +509,7 @@ static void test_swe_sweep_p4_regressions() {
 }
 
 static void test_swe_sweep_p5_regressions() {
-    alignas(128) uint8_t raw[4 * 1024 * 1024];
+    alignas(128) static uint8_t raw[4 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -596,7 +598,7 @@ static void test_real_imps_bridge_e2e() {
     hdr.required_domains = 1u;
     std::memcpy(impb.data(), &hdr, sizeof(hdr));
 
-    alignas(128) uint8_t raw[2 * 1024 * 1024];
+    alignas(128) static uint8_t raw[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -691,7 +693,7 @@ static void test_full_pillars_zero_malloc_and_tight_arena_oom() {
     constexpr size_t kProgLen = sizeof(prog) / sizeof(prog[0]);
 
     // 1. Baseline run with generous buffer under strict zero-malloc gate
-    alignas(128) uint8_t big_buf[256 * 1024];
+    alignas(128) static uint8_t big_buf[256 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(big_buf, sizeof(big_buf), &ws) == IMPULSE_VM_V11_OK);
 
@@ -756,7 +758,7 @@ static void test_validator_zero_malloc_large_and_branchy() {
     words.push_back(enc(0x00, 0, 0, 0, 0, 0, 0, 0));              // HALT.ok
 
     auto impb = build_impb(words);
-    alignas(128) uint8_t raw[1024 * 1024];
+    alignas(128) static uint8_t raw[1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -803,7 +805,7 @@ static void test_mcdc_validator_planner_and_cabi() {
     CHECK(impulse_vm_plan_memory(planner_impb.data(), planner_impb.size(), nullptr, 4, &plan) == IMPULSE_VM_V11_OK);
 
     // 2. C-ABI entrypoints in v11_vm_dispatch.cpp (null/alignment/size/header/params guards)
-    alignas(128) uint8_t raw[512 * 1024];
+    alignas(128) static uint8_t raw[512 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(nullptr, sizeof(raw), &ws) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
     CHECK(impulse_workspace_init(raw, sizeof(raw), nullptr) == IMPULSE_VM_V11_ERR_INVALID_OPERAND);
@@ -1060,7 +1062,7 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     auto compiled = ImpulseBytecodeEmitter::emit(two_hop, snap, 0);
     CHECK(!compiled.impb_bytes.empty());
 
-    alignas(128) uint8_t raw[1024 * 1024];
+    alignas(128) static uint8_t raw[1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(raw, sizeof(raw), &ws) == IMPULSE_VM_V11_OK);
 
@@ -1163,7 +1165,7 @@ static void test_v11_imps_coo_roundtrip_and_hardening() {
         coo_tgt0, sizeof(coo_tgt0),
         coo_eid0, sizeof(coo_eid0),
         IMPULSE_COO_ORDER_UNSORTED) == IMPULSE_OK);
-    CHECK(impulse_writer_add_attribute(w, 0, "weight", 10, 1, weights0, sizeof(weights0), nullptr, 0) == IMPULSE_OK);
+    CHECK(impulse_writer_add_attribute(w, 0, "weight", 7, 1, weights0, sizeof(weights0), nullptr, 0) == IMPULSE_OK);
 
     // Relation 1: CSR + COO SRC_TGT, identity edge IDs (coo_edge_id = nullptr)
     const uint32_t csr_ro1[7]  = {0, 2, 3, 5, 5, 5, 5};
@@ -1198,7 +1200,7 @@ static void test_v11_imps_coo_roundtrip_and_hardening() {
 
     CHECK(impulse_vm_v11_prepare_snapshot(snap) == IMPULSE_VM_V11_OK);
 
-    alignas(128) uint8_t scratch[2 * 1024 * 1024];
+    alignas(128) static uint8_t scratch[2 * 1024 * 1024];
     impulse_vm_workspace_v11_t* ws = nullptr;
     CHECK(impulse_workspace_init(scratch, sizeof(scratch), &ws) == IMPULSE_VM_V11_OK);
 

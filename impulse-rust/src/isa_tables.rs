@@ -1411,6 +1411,7 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
 };
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub const fn encode_word(
     op: Opcode,
     flags: u8,

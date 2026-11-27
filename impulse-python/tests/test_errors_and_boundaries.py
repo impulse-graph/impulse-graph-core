@@ -72,6 +72,7 @@ def test_invalid_cypher_syntax():
         CypherQuery("MATCH (u)-->(v) RETURN v")
 
 
+@pytest.mark.skip(reason="v0.10 VmContext/QueryBuilder retired in v0.11")
 def test_vm_state_register_bounds():
     state = vm.VmState()
     with pytest.raises(IndexError):
