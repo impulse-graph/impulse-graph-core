@@ -52,4 +52,5 @@ public static class ImpulseAttrTypes
 {
     public const byte AttrTypeBool = 0x0F;
     public const byte AttrTypeDecimal64 = 0x15;
+    public const byte AttrTypeDecimal64Nullable = 0x95;
 }

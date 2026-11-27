@@ -24,6 +24,23 @@ public struct ImpulseInstruction
 }
 
 /// <summary>
+/// Domain Catalog Entry Descriptor (Fixed 32 Bytes).
+/// Maps to impulse_domain_catalog_entry_v0_11_t in impulse_format_v0_11.h.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 32)]
+public unsafe struct ImpulseDomainEntry
+{
+    public ushort DomainId;
+    public byte KeyType;
+    public byte DenseIdWidth;
+    public uint NameOffset;
+    public ulong NodeCount;
+    public ushort AttrCount;
+    public ushort KeyAttrIndex;
+    public fixed byte Reserved2[12];
+}
+
+/// <summary>
 /// Relation Directory Entry Descriptor (Fixed 192 Bytes).
 /// Maps to impulse_relation_directory_entry_v0_11_t in impulse_format_v0_11.h.
 /// </summary>

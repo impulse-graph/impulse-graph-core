@@ -1798,6 +1798,29 @@ impulse_status_t impulse_snapshot_get_attribute_name(
     return IMPULSE_OK;
 }
 
+impulse_status_t impulse_snapshot_get_attribute_decimal64_meta(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    uint16_t* out_precision,
+    uint8_t* out_scale
+) {
+    if (!snapshot || relation_index >= snapshot->relation_attributes.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attrs = snapshot->relation_attributes[relation_index];
+    if (attribute_index >= attrs.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attr = attrs[attribute_index];
+    if ((attr.type_code & 0x7Fu) != 0x15u) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    if (out_precision) *out_precision = attr.reserved2;
+    if (out_scale) *out_scale = attr.reserved1;
+    return IMPULSE_OK;
+}
+
 impulse_status_t impulse_snapshot_get_relation_csc_buffers(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
@@ -1924,6 +1947,29 @@ impulse_status_t impulse_snapshot_get_domain_attribute_name(
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
     *out_name = names[attribute_index].c_str();
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_snapshot_get_domain_attribute_decimal64_meta(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    uint16_t attribute_index,
+    uint16_t* out_precision,
+    uint8_t* out_scale
+) {
+    if (!snapshot || domain_index >= snapshot->domain_attributes.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attrs = snapshot->domain_attributes[domain_index];
+    if (attribute_index >= attrs.size()) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    const auto& attr = attrs[attribute_index];
+    if ((attr.type_code & 0x7Fu) != 0x15u) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    if (out_precision) *out_precision = attr.reserved2;
+    if (out_scale) *out_scale = attr.reserved1;
     return IMPULSE_OK;
 }
 

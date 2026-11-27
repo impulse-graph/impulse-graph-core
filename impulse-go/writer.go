@@ -65,6 +65,18 @@ func (w *Writer) AddDomain(domainID uint16, keyType KeyType, name string) error 
 	return nil
 }
 
+// SetDomainNodeCount sets the explicit node count for a domain catalog entry.
+func (w *Writer) SetDomainNodeCount(domainIndex uint16, nodeCount uint64) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	status := C.impulse_writer_set_domain_node_count(w.ptr, C.uint16_t(domainIndex), C.uint64_t(nodeCount))
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
 // AddRelation registers a graph relation topology direct to the snapshot writer.
 func (w *Writer) AddRelation(
 	srcDomainID, tgtDomainID uint16,
@@ -237,6 +249,80 @@ func (w *Writer) AddAttributeDecimal64(
 		C.uint64_t(dataBytes),
 	)
 
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
+// AddDomainAttributeDecimal64Nullable adds a nullable DECIMAL64 (0x95) attribute column to a domain entry.
+func (w *Writer) AddDomainAttributeDecimal64Nullable(
+	domainIndex uint16,
+	name string,
+	dimension uint32,
+	precision uint16,
+	scale uint8,
+	values []NullableDecimal64,
+) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	packed := packNullableDecimal64Bytes(values)
+	var dataPtr unsafe.Pointer
+	if len(packed) > 0 {
+		dataPtr = unsafe.Pointer(&packed[0])
+	}
+	status := C.impulse_writer_add_domain_attribute_decimal64(
+		w.ptr,
+		C.uint16_t(domainIndex),
+		cName,
+		C.uint8_t(AttrTypeDecimal64Nullable),
+		C.uint32_t(dimension),
+		C.uint16_t(precision),
+		C.uint8_t(scale),
+		dataPtr,
+		C.uint64_t(len(packed)),
+	)
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
+// AddAttributeDecimal64Nullable adds a nullable DECIMAL64 (0x95) attribute column to a relation entry.
+func (w *Writer) AddAttributeDecimal64Nullable(
+	relationIndex uint16,
+	name string,
+	dimension uint32,
+	precision uint16,
+	scale uint8,
+	values []NullableDecimal64,
+) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	packed := packNullableDecimal64Bytes(values)
+	var dataPtr unsafe.Pointer
+	if len(packed) > 0 {
+		dataPtr = unsafe.Pointer(&packed[0])
+	}
+	status := C.impulse_writer_add_attribute_decimal64(
+		w.ptr,
+		C.uint16_t(relationIndex),
+		cName,
+		C.uint8_t(AttrTypeDecimal64Nullable),
+		C.uint32_t(dimension),
+		C.uint16_t(precision),
+		C.uint8_t(scale),
+		dataPtr,
+		C.uint64_t(len(packed)),
+	)
 	if status != C.IMPULSE_OK {
 		return Status(status)
 	}

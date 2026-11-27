@@ -29,10 +29,68 @@ internal static unsafe partial class NativeMethods
     public static partial ushort impulse_snapshot_relation_count(nint snapshot);
 
     [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_domain_entry(
+        nint snapshot,
+        ushort domainIndex,
+        out ImpulseDomainEntry outEntry,
+        nint outName
+    );
+
+    [LibraryImport(LibName)]
     public static partial ImpulseStatus impulse_snapshot_get_relation_entry(
         nint snapshot,
         ushort relationIndex,
         out ImpulseRelationEntry outEntry
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ushort impulse_snapshot_get_domain_attribute_count(
+        nint snapshot,
+        ushort domainIndex
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_domain_attribute_buffers(
+        nint snapshot,
+        ushort domainIndex,
+        ushort attributeIndex,
+        out void* outData,
+        out ulong outDataBytes,
+        out void* outOffsets,
+        out ulong outOffsetsBytes,
+        out byte outTypeCode,
+        out uint outDimension
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_domain_attribute_decimal64_meta(
+        nint snapshot,
+        ushort domainIndex,
+        ushort attributeIndex,
+        out ushort outPrecision,
+        out byte outScale
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_attribute_buffers(
+        nint snapshot,
+        ushort relationIndex,
+        ushort attributeIndex,
+        out void* outData,
+        out ulong outDataBytes,
+        out void* outOffsets,
+        out ulong outOffsetsBytes,
+        out byte outTypeCode,
+        out uint outDimension
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_attribute_decimal64_meta(
+        nint snapshot,
+        ushort relationIndex,
+        ushort attributeIndex,
+        out ushort outPrecision,
+        out byte outScale
     );
 
     [LibraryImport(LibName)]
