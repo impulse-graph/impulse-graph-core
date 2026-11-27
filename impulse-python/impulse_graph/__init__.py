@@ -910,9 +910,13 @@ class CompiledV11Program:
                 raise KeyError(f"Missing required query parameter '{name}'")
 
             pid = pm["param_id"]
-            if pm["is_decimal"]:
+            if val is None:
+                bindings.append({"param_id": pid, "kind": 0})
+            elif pm["is_decimal"]:
                 if isinstance(val, Decimal64):
-                    scaled = val.mantissa
+                    scaled = decimal_to_scaled_i64(
+                        val.to_decimal(), scale=pm["scale"], precision=pm["precision"]
+                    )
                 else:
                     scaled = decimal_to_scaled_i64(
                         val, scale=pm["scale"], precision=pm["precision"]
@@ -948,11 +952,22 @@ class CompiledV11Program:
             for slot, meta in enumerate(self.output_schema):
                 raw_out = ws.get_output(slot)
                 data = raw_out.get("data", [])
+                is_scalar = meta.get("collect_kind") == "scalar"
                 if meta["is_decimal"]:
-                    dec_vals = [scaled_i64_to_decimal(v, scale=meta["scale"]) for v in data]
-                    outputs[meta["name"]] = dec_vals[0] if len(dec_vals) == 1 else dec_vals
+                    dec_vals = [
+                        None if v is None else scaled_i64_to_decimal(v, scale=meta["scale"])
+                        for v in data
+                    ]
+                    outputs[meta["name"]] = (
+                        (dec_vals[0] if dec_vals else None) if is_scalar else dec_vals
+                    )
+                elif meta.get("type") == "BOOL":
+                    bool_vals = [None if v is None else bool(v) for v in data]
+                    outputs[meta["name"]] = (
+                        (bool_vals[0] if bool_vals else None) if is_scalar else bool_vals
+                    )
                 else:
-                    outputs[meta["name"]] = data[0] if len(data) == 1 else data
+                    outputs[meta["name"]] = (data[0] if data else None) if is_scalar else data
             return outputs
 
 
