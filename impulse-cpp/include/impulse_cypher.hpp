@@ -3,11 +3,14 @@
 
 #include "impulse_compiler.hpp"
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <memory>
 #include <stdexcept>
 #include <cctype>
 #include <algorithm>
+#include <sstream>
 
 namespace impulse::compiler {
 
@@ -53,6 +56,7 @@ enum class CypherTokenType {
     PARAM,        // $paramName
     STRING_LITERAL,
     NUMBER_LITERAL,
+    DECIMAL_LITERAL, // e.g. 19.99d or 100D
 
     TOK_EOF,
     TOK_ERROR
@@ -201,6 +205,12 @@ private:
                 advance();
             }
         }
+        size_t num_end = cursor_;
+        if (!is_at_end() && (peek() == 'd' || peek() == 'D') &&
+            !(std::isalnum(static_cast<unsigned char>(peek_next())) || peek_next() == '_')) {
+            advance(); // consume 'd'/'D' suffix
+            return {CypherTokenType::DECIMAL_LITERAL, src_.substr(start_pos, num_end - start_pos), start_pos, start_line, start_col};
+        }
         return {CypherTokenType::NUMBER_LITERAL, src_.substr(start_pos, cursor_ - start_pos), start_pos, start_line, start_col};
     }
 
@@ -307,12 +317,19 @@ struct CypherWherePredicate {
     std::vector<uint64_t> in_values{};
     std::vector<float> vector_arg{};
     uint16_t top_k{0};
+    bool is_decimal_literal{false};
+    bool is_cast{false};
+    std::string cast_target_type{};
+    uint16_t cast_precision{0};
+    uint8_t cast_scale{0};
+    bool is_string_literal{false};
+    bool is_param{false};
 };
 
 struct CypherReturnProjection {
     std::string variable;
     std::string attr_name;
-    enum class AggOp { NONE, COUNT, SUM, MIN, MAX, ARGMIN, ARGMAX } agg_op{AggOp::NONE};
+    enum class AggOp { NONE, COUNT, SUM, MIN, MAX, AVG, ARGMIN, ARGMAX } agg_op{AggOp::NONE};
     bool is_count{false};
     bool is_attr{false};
 };
@@ -655,19 +672,127 @@ private:
 
             std::string op = consume_comparison_op();
 
-            std::string val_or_param = curr_.lexeme;
-            if (curr_.type == CypherTokenType::PARAM || curr_.type == CypherTokenType::NUMBER_LITERAL
-                || curr_.type == CypherTokenType::STRING_LITERAL || curr_.type == CypherTokenType::IDENTIFIER) {
+            CypherWherePredicate pred{};
+            pred.target_var = var;
+            pred.field = prop;
+            pred.op = op;
+
+            bool neg_num = match(CypherTokenType::DASH);
+            if (neg_num) {
+                if (curr_.type == CypherTokenType::DECIMAL_LITERAL) {
+                    pred.value_or_param = "-" + curr_.lexeme;
+                    pred.is_decimal_literal = true;
+                    advance();
+                } else if (curr_.type == CypherTokenType::NUMBER_LITERAL) {
+                    pred.value_or_param = "-" + curr_.lexeme;
+                    advance();
+                } else {
+                    throw std::runtime_error("Expected numeric literal after '-' in WHERE predicate, got: " + curr_.lexeme);
+                }
+            } else if (curr_.type == CypherTokenType::DECIMAL_LITERAL) {
+                pred.value_or_param = curr_.lexeme;
+                pred.is_decimal_literal = true;
+                advance();
+            } else if (curr_.type == CypherTokenType::IDENTIFIER && to_lower_str(curr_.lexeme) == "decimal") {
+                advance();
+                consume(CypherTokenType::LPAREN, "Expected '(' after decimal");
+                if (curr_.type == CypherTokenType::STRING_LITERAL ||
+                    curr_.type == CypherTokenType::NUMBER_LITERAL ||
+                    curr_.type == CypherTokenType::DECIMAL_LITERAL) {
+                    pred.value_or_param = curr_.lexeme;
+                    pred.is_decimal_literal = true;
+                    advance();
+                } else if (match(CypherTokenType::DASH) &&
+                           (curr_.type == CypherTokenType::NUMBER_LITERAL || curr_.type == CypherTokenType::DECIMAL_LITERAL)) {
+                    pred.value_or_param = "-" + curr_.lexeme;
+                    pred.is_decimal_literal = true;
+                    advance();
+                } else {
+                    throw std::runtime_error("Expected decimal string or number inside decimal(...), got: " + curr_.lexeme);
+                }
+                consume(CypherTokenType::RPAREN, "Expected ')' after decimal(...)");
+            } else if (curr_.type == CypherTokenType::IDENTIFIER && to_lower_str(curr_.lexeme) == "cast") {
+                advance();
+                consume(CypherTokenType::LPAREN, "Expected '(' after CAST");
+                bool inner_neg = match(CypherTokenType::DASH);
+                if (inner_neg && (curr_.type == CypherTokenType::NUMBER_LITERAL || curr_.type == CypherTokenType::DECIMAL_LITERAL)) {
+                    pred.value_or_param = "-" + curr_.lexeme;
+                    pred.is_decimal_literal = (curr_.type == CypherTokenType::DECIMAL_LITERAL);
+                    advance();
+                } else if (curr_.type == CypherTokenType::PARAM) {
+                    pred.value_or_param = curr_.lexeme;
+                    pred.is_param = true;
+                    advance();
+                } else if (curr_.type == CypherTokenType::DECIMAL_LITERAL) {
+                    pred.value_or_param = curr_.lexeme;
+                    pred.is_decimal_literal = true;
+                    advance();
+                } else if (curr_.type == CypherTokenType::NUMBER_LITERAL) {
+                    pred.value_or_param = curr_.lexeme;
+                    advance();
+                } else if (curr_.type == CypherTokenType::STRING_LITERAL) {
+                    pred.value_or_param = curr_.lexeme;
+                    pred.is_string_literal = true;
+                    advance();
+                } else {
+                    throw std::runtime_error("Expected operand inside CAST(...), got: " + curr_.lexeme);
+                }
+                consume(CypherTokenType::KW_AS, "Expected 'AS' inside CAST(... AS TYPE)");
+                if (curr_.type != CypherTokenType::IDENTIFIER) {
+                    throw std::runtime_error("Expected target type name after 'AS' in CAST, got: " + curr_.lexeme);
+                }
+                std::string ty_upper = curr_.lexeme;
+                std::transform(ty_upper.begin(), ty_upper.end(), ty_upper.begin(), ::toupper);
+                advance();
+                pred.is_cast = true;
+                if (ty_upper == "DECIMAL" || ty_upper == "NUMERIC") {
+                    consume(CypherTokenType::LPAREN, "Expected '(' after DECIMAL in CAST");
+                    if (curr_.type != CypherTokenType::NUMBER_LITERAL) {
+                        throw std::runtime_error("Expected precision integer in DECIMAL(P, S)");
+                    }
+                    int p = std::stoi(curr_.lexeme);
+                    advance();
+                    consume(CypherTokenType::COMMA, "Expected ',' in DECIMAL(P, S)");
+                    if (curr_.type != CypherTokenType::NUMBER_LITERAL) {
+                        throw std::runtime_error("Expected scale integer in DECIMAL(P, S)");
+                    }
+                    int s = std::stoi(curr_.lexeme);
+                    advance();
+                    consume(CypherTokenType::RPAREN, "Expected ')' after DECIMAL(P, S)");
+                    if (p < 1 || p > 18 || s < 0 || s > p) {
+                        throw std::runtime_error("PARSE_ERROR: invalid DECIMAL(" + std::to_string(p) + ", " + std::to_string(s) + ")");
+                    }
+                    pred.cast_target_type = "DECIMAL";
+                    pred.cast_precision = static_cast<uint16_t>(p);
+                    pred.cast_scale = static_cast<uint8_t>(s);
+                } else if (ty_upper == "FLOAT" || ty_upper == "DOUBLE" || ty_upper == "F64") {
+                    pred.cast_target_type = "F64";
+                } else if (ty_upper == "INT" || ty_upper == "INTEGER" || ty_upper == "BIGINT" || ty_upper == "I64") {
+                    pred.cast_target_type = "I64";
+                } else {
+                    throw std::runtime_error("Unsupported CAST target type: " + ty_upper);
+                }
+                consume(CypherTokenType::RPAREN, "Expected ')' at end of CAST(...)");
+            } else if (curr_.type == CypherTokenType::PARAM) {
+                pred.value_or_param = curr_.lexeme;
+                pred.is_param = true;
+                advance();
+            } else if (curr_.type == CypherTokenType::STRING_LITERAL) {
+                pred.value_or_param = curr_.lexeme;
+                pred.is_string_literal = true;
+                advance();
+            } else if (curr_.type == CypherTokenType::NUMBER_LITERAL || curr_.type == CypherTokenType::IDENTIFIER) {
+                pred.value_or_param = curr_.lexeme;
                 advance();
             } else {
                 throw std::runtime_error("Expected parameter ($param) or literal in WHERE predicate, got: " + curr_.lexeme);
             }
 
             if (to_lower_str(prop) == "quorum") {
-                uint16_t k = static_cast<uint16_t>(std::stoul(val_or_param));
-                preds.push_back({var, "quorum", op, val_or_param, {k}, {}, k});
+                uint16_t k = static_cast<uint16_t>(std::stoul(pred.value_or_param));
+                preds.push_back({var, "quorum", op, pred.value_or_param, {k}, {}, k});
             } else {
-                preds.push_back({var, prop, op, val_or_param, {}, {}, 0});
+                preds.push_back(std::move(pred));
             }
         } while (match(CypherTokenType::KW_AND));
 
@@ -735,7 +860,7 @@ private:
 
         std::string fn_name = curr_.lexeme;
         std::string fn_lower = to_lower_str(fn_name);
-        if (fn_lower == "sum" || fn_lower == "min" || fn_lower == "max" ||
+        if (fn_lower == "sum" || fn_lower == "min" || fn_lower == "max" || fn_lower == "avg" ||
             fn_lower == "argmin" || fn_lower == "argmax") {
             advance();
             consume(CypherTokenType::LPAREN, "Expected '(' after aggregate function");
@@ -753,6 +878,7 @@ private:
             if (fn_lower == "sum") proj.agg_op = CypherReturnProjection::AggOp::SUM;
             else if (fn_lower == "min") proj.agg_op = CypherReturnProjection::AggOp::MIN;
             else if (fn_lower == "max") proj.agg_op = CypherReturnProjection::AggOp::MAX;
+            else if (fn_lower == "avg") proj.agg_op = CypherReturnProjection::AggOp::AVG;
             else if (fn_lower == "argmin") proj.agg_op = CypherReturnProjection::AggOp::ARGMIN;
             else if (fn_lower == "argmax") proj.agg_op = CypherReturnProjection::AggOp::ARGMAX;
             return proj;
@@ -947,6 +1073,236 @@ public:
         IMPULSE_AUDIT_ASSERT(steps.back()->kind() == NodeKind::COLLECT);
 
         return {std::make_shared<ScmProgram>(steps), seed_var, seed_val_or_param};
+    }
+
+    struct ParamTypeSpec {
+        std::string type; // "DECIMAL", "I64", "U64", "F64", "BOOL", "STR", "ID", "FRONTIER"
+        uint16_t precision{18};
+        uint8_t scale{0};
+        std::string domain_name{};
+    };
+
+    static std::pair<uint16_t, uint8_t> infer_decimal_ps(const std::string& text) {
+        size_t idx = 0;
+        if (idx < text.size() && (text[idx] == '-' || text[idx] == '+')) ++idx;
+        bool seen_dot = false;
+        bool seen_nonzero_int = false;
+        int sig_int = 0;
+        int frac = 0;
+        for (; idx < text.size(); ++idx) {
+            char c = text[idx];
+            if (c == '.') {
+                seen_dot = true;
+            } else if (c >= '0' && c <= '9') {
+                if (seen_dot) {
+                    ++frac;
+                } else if (c != '0' || seen_nonzero_int) {
+                    seen_nonzero_int = true;
+                    ++sig_int;
+                }
+            } else {
+                throw std::runtime_error("PARSE_ERROR: invalid decimal literal '" + text + "'");
+            }
+        }
+        int p = std::max(1, std::max(sig_int + frac, frac));
+        if (p > 18 || frac > 18) {
+            throw std::runtime_error("PARSE_ERROR: decimal literal '" + text + "' exceeds 18 digits");
+        }
+        return {static_cast<uint16_t>(p), static_cast<uint8_t>(frac)};
+    }
+
+    static std::string normalize_cmp_op(const std::string& op) {
+        if (op == "==") return "=";
+        if (op == "<>") return "!=";
+        return op;
+    }
+
+    static std::string format_param_type_scm(const ParamTypeSpec& spec) {
+        std::string upper = spec.type;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        if (upper == "DECIMAL") {
+            return "(decimal " + std::to_string(spec.precision) + " " + std::to_string(spec.scale) + ")";
+        }
+        if (upper == "ID") return "(id \"" + spec.domain_name + "\")";
+        if (upper == "FRONTIER") return "(frontier \"" + spec.domain_name + "\")";
+        if (upper == "U64" || upper == "U32") return "u64";
+        if (upper == "F64" || upper == "F32" || upper == "FLOAT" || upper == "DOUBLE") return "f64";
+        if (upper == "BOOL") return "bool";
+        if (upper == "STR" || upper == "STRING") return "str";
+        return "i64";
+    }
+
+    /**
+     * Lowers a parsed openCypher query (including DECIMAL64 literals, CAST(... AS DECIMAL(P, S)),
+     * and typed $param bindings) into canonical ImpScheme v0.11 SSA source for ImpScmV11Compiler.
+     */
+    static std::string lower_to_impscm_v11(
+        const std::string& cypher_query,
+        const std::unordered_map<std::string, ParamTypeSpec>& param_types = {}
+    ) {
+        CypherQuery query = CypherParser::parse(cypher_query);
+        return lower_to_impscm_v11(query, param_types);
+    }
+
+    static std::string lower_to_impscm_v11(
+        const CypherQuery& query,
+        const std::unordered_map<std::string, ParamTypeSpec>& param_types = {}
+    ) {
+        const std::string& start_dom = query.path.start_node.label;
+        const std::string& start_var = query.path.start_node.variable;
+        if (start_dom.empty()) {
+            throw std::runtime_error("PARSE_ERROR: Cypher v11 lowering requires a domain label on start node (e.g. (a:Account))");
+        }
+
+        // Map variable -> domain label
+        std::unordered_map<std::string, std::string> var_dom;
+        if (!start_var.empty()) var_dom[start_var] = start_dom;
+        for (const auto& step : query.path.steps) {
+            if (!step.target_node.variable.empty() && !step.target_node.label.empty()) {
+                var_dom[step.target_node.variable] = step.target_node.label;
+            }
+        }
+
+        // Collect all $params in order of appearance
+        std::vector<std::string> param_order;
+        std::unordered_set<std::string> seen_params;
+        auto register_param = [&](const std::string& p) {
+            if (!p.empty() && p[0] == '$' && seen_params.insert(p).second) {
+                param_order.push_back(p);
+            }
+        };
+
+        const CypherWherePredicate* seed_id_pred = nullptr;
+        for (const auto& pred : query.where_predicates) {
+            if (pred.is_param) register_param(pred.value_or_param);
+            if (pred.target_var == start_var && (pred.field == "id" || pred.field == "dense_id") &&
+                (pred.op == "=" || pred.op == "==") && !pred.is_cast && !pred.is_decimal_literal) {
+                seed_id_pred = &pred;
+            }
+        }
+
+        std::ostringstream out;
+        out << "(query\n";
+        for (const auto& pname : param_order) {
+            std::string bare = pname.substr(1);
+            auto it = param_types.find(pname);
+            if (it == param_types.end()) it = param_types.find(bare);
+            if (it != param_types.end()) {
+                out << "  (param " << pname << " " << format_param_type_scm(it->second) << ")\n";
+            } else if (seed_id_pred && seed_id_pred->value_or_param == pname) {
+                out << "  (param " << pname << " (id \"" << start_dom << "\"))\n";
+            } else {
+                out << "  (param " << pname << " i64)\n";
+            }
+        }
+
+        auto format_rhs_expr = [&](const CypherWherePredicate& pred) -> std::string {
+            if (pred.is_cast) {
+                if (pred.cast_target_type == "DECIMAL") {
+                    if (!pred.is_param) {
+                        // Constant literal cast to DECIMAL(P, S): emit exact (dec "..." P S) so boundary folding applies
+                        return "(dec \"" + pred.value_or_param + "\" " +
+                               std::to_string(pred.cast_precision) + " " +
+                               std::to_string(pred.cast_scale) + ")";
+                    }
+                    return "(cast " + pred.value_or_param + " (decimal " +
+                           std::to_string(pred.cast_precision) + " " +
+                           std::to_string(pred.cast_scale) + "))";
+                }
+                std::string inner = pred.is_string_literal ? ("\"" + pred.value_or_param + "\"") : pred.value_or_param;
+                std::string tname = (pred.cast_target_type == "F64") ? "f64" : "i64";
+                return "(cast " + inner + " " + tname + ")";
+            }
+            if (pred.is_decimal_literal) {
+                auto [p, s] = infer_decimal_ps(pred.value_or_param);
+                return "(dec \"" + pred.value_or_param + "\" " + std::to_string(p) + " " + std::to_string(s) + ")";
+            }
+            if (pred.is_string_literal) {
+                return "\"" + pred.value_or_param + "\"";
+            }
+            return pred.value_or_param;
+        };
+
+        out << "  (let (";
+        // Seed start frontier
+        int f_idx = 0;
+        auto cur_f_name = [&]() { return "f" + std::to_string(f_idx); };
+        if (seed_id_pred) {
+            out << "(f0 (seed \"" << start_dom << "\" " << seed_id_pred->value_or_param << "))";
+        } else {
+            out << "(f0 (domain-all \"" << start_dom << "\"))";
+        }
+
+        auto emit_filters_for_var = [&](const std::string& var_name) {
+            for (const auto& pred : query.where_predicates) {
+                if (&pred == seed_id_pred) continue;
+                if (pred.target_var != var_name) continue;
+                if (pred.field == "quorum" || pred.field == "vector_ann" || pred.op == "IN") continue;
+                std::string prev = cur_f_name();
+                ++f_idx;
+                out << "\n        (" << cur_f_name() << " (node-filter " << prev << " \""
+                    << pred.field << "\" " << normalize_cmp_op(pred.op) << " "
+                    << format_rhs_expr(pred) << "))";
+            }
+        };
+
+        emit_filters_for_var(start_var);
+
+        std::string cur_var = start_var;
+        std::string cur_dom = start_dom;
+        for (const auto& step : query.path.steps) {
+            const auto& edge = step.edge;
+            std::string dir = edge.is_undirected ? ":both" : (edge.is_forward ? ":fwd" : ":rev");
+            std::string prev = cur_f_name();
+            ++f_idx;
+            if (edge.is_unbounded) {
+                out << "\n        (" << cur_f_name() << " (walk " << dir << " \"" << edge.relation_name
+                    << "\" " << prev << " :transitive+))";
+            } else {
+                int hops = std::max(1, edge.max_hops);
+                for (int h = 0; h < hops; ++h) {
+                    if (h > 0) {
+                        prev = cur_f_name();
+                        ++f_idx;
+                    }
+                    out << "\n        (" << cur_f_name() << " (walk " << dir << " \"" << edge.relation_name
+                        << "\" " << prev << "))";
+                }
+            }
+            cur_var = step.target_node.variable;
+            if (!step.target_node.label.empty()) cur_dom = step.target_node.label;
+            emit_filters_for_var(cur_var);
+        }
+        out << ")\n";
+
+        std::string final_f = cur_f_name();
+        std::string ret_dom = cur_dom;
+        if (!query.projection.variable.empty()) {
+            auto it = var_dom.find(query.projection.variable);
+            if (it != var_dom.end()) ret_dom = it->second;
+        }
+
+        if (query.projection.is_count) {
+            out << "    (collect :scalar \"count\" (cardinality " << final_f << "))\n";
+        } else if (query.projection.agg_op == CypherReturnProjection::AggOp::SUM ||
+                   query.projection.agg_op == CypherReturnProjection::AggOp::MIN ||
+                   query.projection.agg_op == CypherReturnProjection::AggOp::MAX ||
+                   query.projection.agg_op == CypherReturnProjection::AggOp::AVG) {
+            std::string rkind = ":sum";
+            if (query.projection.agg_op == CypherReturnProjection::AggOp::MIN) rkind = ":min";
+            else if (query.projection.agg_op == CypherReturnProjection::AggOp::MAX) rkind = ":max";
+            else if (query.projection.agg_op == CypherReturnProjection::AggOp::AVG) rkind = ":avg";
+            out << "    (let ((col (load-node-attr \"" << ret_dom << "\" \"" << query.projection.attr_name << "\")))\n"
+                << "      (collect :scalar \"result\" (reduce " << rkind << " col :mask " << final_f << ")))\n";
+        } else if (query.projection.is_attr) {
+            out << "    (let ((col (load-node-attr \"" << ret_dom << "\" \"" << query.projection.attr_name << "\")))\n"
+                << "      (collect :vec \"result\" col :mask " << final_f << "))\n";
+        } else {
+            out << "    (collect :frontier-ids \"result\" " << final_f << ")\n";
+        }
+
+        out << "  )\n)\n";
+        return out.str();
     }
 };
 

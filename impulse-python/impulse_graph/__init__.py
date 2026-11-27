@@ -875,6 +875,118 @@ class Writer:
 
 from .traversal import Traversal  # noqa: E402
 
+
+class CompiledV11Program:
+    """Compiled ImpulseVM v0.11 program with typed parameter and DECIMAL64 output schema."""
+
+    def __init__(self, compiled_dict: dict):
+        self.impb_bytes: bytes = compiled_dict["impb_bytes"]
+        self.param_name_to_id: Dict[str, int] = dict(compiled_dict["param_name_to_id"])
+        self.param_schema: List[dict] = list(compiled_dict["param_schema"])
+        self.output_names: List[str] = list(compiled_dict["output_names"])
+        self.output_schema: List[dict] = list(compiled_dict["output_schema"])
+        self.impscm_source: Optional[str] = compiled_dict.get("impscm_source")
+
+    def execute(
+        self,
+        snapshot: Optional["Snapshot"] = None,
+        params: Optional[Dict[str, object]] = None,
+        scratch_bytes: int = 4 * 1024 * 1024,
+    ) -> Dict[str, object]:
+        """Execute this compiled v0.11 program with automatic Decimal64 param/output conversion."""
+        from . import _impulse_native
+
+        params = params or {}
+        native_snap = getattr(snapshot, "_native", snapshot) if snapshot is not None else None
+        bindings = []
+        for pm in self.param_schema:
+            name = pm["name"]
+            bare = name[1:] if name.startswith("$") else name
+            if name in params:
+                val = params[name]
+            elif bare in params:
+                val = params[bare]
+            else:
+                raise KeyError(f"Missing required query parameter '{name}'")
+
+            pid = pm["param_id"]
+            if pm["is_decimal"]:
+                if isinstance(val, Decimal64):
+                    scaled = val.mantissa
+                else:
+                    scaled = decimal_to_scaled_i64(
+                        val, scale=pm["scale"], precision=pm["precision"]
+                    )
+                bindings.append({"param_id": pid, "kind": 1, "scalar_i64": int(scaled)})
+            elif pm["type"] in ("ID", "U64"):
+                bindings.append({"param_id": pid, "kind": 2, "scalar_bits": int(val)})
+            elif pm["type"] == "I64":
+                bindings.append({"param_id": pid, "kind": 1, "scalar_i64": int(val)})
+            elif pm["type"] == "F64":
+                bindings.append({"param_id": pid, "kind": 3, "scalar_f64": float(val)})
+            elif pm["type"] == "BOOL":
+                bindings.append({"param_id": pid, "kind": 4, "scalar_bits": 1 if val else 0})
+            elif pm["type"] == "STR":
+                bindings.append({"param_id": pid, "kind": 5, "str_val": str(val)})
+            elif pm["type"] == "FRONTIER":
+                bindings.append(
+                    {
+                        "param_id": pid,
+                        "kind": 6,
+                        "domain_id": pm["domain_id"],
+                        "ids": [int(x) for x in val],
+                    }
+                )
+            else:
+                bindings.append({"param_id": pid, "kind": 1, "scalar_i64": int(val)})
+
+        with _impulse_native.VmWorkspace(scratch_bytes) as ws:
+            rc = ws.execute_params(self.impb_bytes, native_snap, bindings)
+            if rc != int(_impulse_native.VmStatus.OK):
+                raise RuntimeError(f"ImpulseVM v0.11 execution failed with status={rc}")
+            outputs: Dict[str, object] = {}
+            for slot, meta in enumerate(self.output_schema):
+                raw_out = ws.get_output(slot)
+                data = raw_out.get("data", [])
+                if meta["is_decimal"]:
+                    dec_vals = [scaled_i64_to_decimal(v, scale=meta["scale"]) for v in data]
+                    outputs[meta["name"]] = dec_vals[0] if len(dec_vals) == 1 else dec_vals
+                else:
+                    outputs[meta["name"]] = data[0] if len(data) == 1 else data
+            return outputs
+
+
+def compile_impscm(
+    source: str,
+    snapshot: Optional["Snapshot"] = None,
+    enable_optimizations: bool = True,
+) -> CompiledV11Program:
+    """Compile an ImpScheme v0.11 (query ...) program against a Snapshot."""
+    from . import _impulse_native
+
+    native_snap = getattr(snapshot, "_native", snapshot) if snapshot is not None else None
+    return CompiledV11Program(
+        _impulse_native.compile_impscm(source, native_snap, enable_optimizations)
+    )
+
+
+def compile_cypher(
+    cypher: str,
+    snapshot: Optional["Snapshot"] = None,
+    param_types: Optional[Dict[str, object]] = None,
+    enable_optimizations: bool = True,
+) -> CompiledV11Program:
+    """Compile an openCypher query (with DECIMAL64 literals, CAST, and typed $params) to ImpulseVM v0.11."""
+    from . import _impulse_native
+
+    native_snap = getattr(snapshot, "_native", snapshot) if snapshot is not None else None
+    return CompiledV11Program(
+        _impulse_native.compile_cypher(
+            cypher, native_snap, param_types or {}, enable_optimizations
+        )
+    )
+
+
 try:
     from importlib.metadata import version as _pkg_version
 
@@ -892,6 +1004,9 @@ __all__ = [
     "Decimal64",
     "decimal_to_scaled_i64",
     "scaled_i64_to_decimal",
+    "CompiledV11Program",
+    "compile_impscm",
+    "compile_cypher",
     "Snapshot",
     "DomainView",
     "Writer",

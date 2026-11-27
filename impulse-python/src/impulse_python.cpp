@@ -5,6 +5,8 @@
 #include "impulse_graph.h"
 #include "impulse_vm_v11.h"
 #include "vm/impulse_vm_isa.hpp"
+#include "vm/impulse_impscm.hpp"
+#include "impulse_cypher.hpp"
 #include "impulse_cel.h"
 #include "impulse_assert.h"
 #include <cstdlib>
@@ -533,6 +535,67 @@ public:
         return rc;
     }
 
+    uint32_t execute_params(
+        const py::bytes& impb_bytes,
+        const PyImpulseSnapshot* snapshot,
+        const py::list& bindings_list,
+        uint64_t gas_limit = UINT64_MAX
+    ) {
+        if (!ws_) throw std::runtime_error("VmWorkspace has been destroyed");
+        auto lease = snapshot ? snapshot->lease() : nullptr;
+        const impulse_snapshot_t* s_ptr = lease ? lease->handle : nullptr;
+        std::string prog = impb_bytes;
+
+        std::vector<impulse_vm_param_binding_v11_t> bindings;
+        std::vector<std::vector<uint64_t>> owned_u64_bufs;
+        std::vector<std::string> owned_str_bufs;
+        bindings.reserve(bindings_list.size());
+        owned_u64_bufs.reserve(bindings_list.size());
+        owned_str_bufs.reserve(bindings_list.size());
+
+        for (const auto& item : bindings_list) {
+            py::dict d = item.cast<py::dict>();
+            impulse_vm_param_binding_v11_t b{};
+            b.param_id = d["param_id"].cast<uint32_t>();
+            b.kind = d["kind"].cast<uint32_t>();
+            if (d.contains("domain_id")) b.domain_id = d["domain_id"].cast<uint16_t>();
+            if (b.kind == IMPULSE_VM_V11_PARAM_FRONTIER_IDS) {
+                owned_u64_bufs.push_back(d["ids"].cast<std::vector<uint64_t>>());
+                b.count = static_cast<uint32_t>(owned_u64_bufs.back().size());
+                b.data_ptr = owned_u64_bufs.back().data();
+            } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_STR) {
+                owned_str_bufs.push_back(d["str_val"].cast<std::string>());
+                b.count = static_cast<uint32_t>(owned_str_bufs.back().size());
+                b.data_ptr = owned_str_bufs.back().data();
+            } else if (d.contains("scalar_i64")) {
+                int64_t v = d["scalar_i64"].cast<int64_t>();
+                b.scalar_bits = static_cast<uint64_t>(v);
+            } else if (d.contains("scalar_f64")) {
+                double v = d["scalar_f64"].cast<double>();
+                uint64_t bits = 0;
+                std::memcpy(&bits, &v, sizeof(bits));
+                b.scalar_bits = bits;
+            } else if (d.contains("scalar_bits")) {
+                b.scalar_bits = d["scalar_bits"].cast<uint64_t>();
+            }
+            bindings.push_back(b);
+        }
+
+        impulse_vm_params_v11_t params{};
+        params.gas_limit = gas_limit;
+        params.bindings = bindings.empty() ? nullptr : bindings.data();
+        params.binding_count = static_cast<uint32_t>(bindings.size());
+
+        size_t out_bytes = 0;
+        impulse_vm_status_v11_t rc;
+        {
+            py::gil_scoped_release release;
+            rc = impulse_vm_execute_v11(
+                prog.data(), prog.size(), s_ptr, &params, ws_, nullptr, 0, &out_bytes);
+        }
+        return rc;
+    }
+
     uint32_t output_count() const {
         return ws_ ? impulse_vm_v11_get_output_count(ws_) : 0;
     }
@@ -702,6 +765,10 @@ PYBIND11_MODULE(_impulse_native, m) {
              py::arg("impb_bytes"), py::arg("snapshot") = nullptr,
              py::arg("seed_ids") = std::vector<uint64_t>{},
              py::arg("domain_id") = 0, py::arg("gas_limit") = UINT64_MAX)
+        .def("execute_params", &PyVmWorkspace::execute_params,
+             py::arg("impb_bytes"), py::arg("snapshot") = nullptr,
+             py::arg("bindings") = py::list(),
+             py::arg("gas_limit") = UINT64_MAX)
         .def("output_count", &PyVmWorkspace::output_count)
         .def("get_output", &PyVmWorkspace::get_output, py::arg("slot"))
         .def("compute_ictx_v2", &PyVmWorkspace::compute_ictx_v2);
@@ -797,4 +864,104 @@ PYBIND11_MODULE(_impulse_native, m) {
         auto optimized = impulse::cel::AstOptimizer::optimize(ast);
         return impulse::cel::CelCompiler::to_impscheme(optimized);
     }, py::arg("expression"), "Parse, optimize, and constant-fold a Google CEL expression into ImpScheme IR");
+
+    auto pack_compile_result = [](const impulse::compiler::v11::ImpScmV11CompileResult& res) -> py::dict {
+        py::dict out;
+        out["impb_bytes"] = py::bytes(
+            reinterpret_cast<const char*>(res.impb_bytes.data()),
+            res.impb_bytes.size()
+        );
+        out["param_name_to_id"] = res.param_name_to_id;
+        out["output_names"] = res.output_names;
+        py::list pschema;
+        for (const auto& pm : res.param_schema) {
+            py::dict d;
+            d["name"] = pm.name;
+            d["param_id"] = pm.param_id;
+            d["type"] = pm.type;
+            d["is_decimal"] = pm.is_decimal;
+            d["precision"] = pm.precision;
+            d["scale"] = pm.scale;
+            d["domain_id"] = pm.domain_id;
+            pschema.append(d);
+        }
+        out["param_schema"] = pschema;
+        py::list oschema;
+        for (const auto& om : res.output_schema) {
+            py::dict d;
+            d["name"] = om.name;
+            d["type"] = om.type;
+            d["is_decimal"] = om.is_decimal;
+            d["precision"] = om.precision;
+            d["scale"] = om.scale;
+            oschema.append(d);
+        }
+        out["output_schema"] = oschema;
+        return out;
+    };
+
+    m.def("compile_impscm", [pack_compile_result](
+        const std::string& source,
+        const PyImpulseSnapshot* snapshot,
+        bool enable_optimizations
+    ) -> py::dict {
+        const impulse_snapshot_t* s_ptr = snapshot ? snapshot->raw_handle() : nullptr;
+        auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(source, s_ptr, enable_optimizations);
+        return pack_compile_result(res);
+    }, py::arg("source"), py::arg("snapshot") = nullptr, py::arg("enable_optimizations") = true,
+       "Compile an ImpScheme v0.11 (query ...) program into validated .impb bytecode with schema metadata");
+
+    m.def("compile_cypher", [pack_compile_result](
+        const std::string& cypher,
+        const PyImpulseSnapshot* snapshot,
+        const py::dict& param_types,
+        bool enable_optimizations
+    ) -> py::dict {
+        std::unordered_map<std::string, impulse::compiler::CypherCompiler::ParamTypeSpec> pmap;
+        for (auto item : param_types) {
+            std::string key = py::str(item.first);
+            py::handle val = item.second;
+            impulse::compiler::CypherCompiler::ParamTypeSpec spec{};
+            if (py::isinstance<py::dict>(val)) {
+                py::dict vd = val.cast<py::dict>();
+                spec.type = vd["type"].cast<std::string>();
+                if (vd.contains("precision")) spec.precision = vd["precision"].cast<uint16_t>();
+                if (vd.contains("scale")) spec.scale = vd["scale"].cast<uint8_t>();
+                if (vd.contains("domain")) spec.domain_name = vd["domain"].cast<std::string>();
+            } else if (py::isinstance<py::tuple>(val) || py::isinstance<py::list>(val)) {
+                py::sequence seq = val.cast<py::sequence>();
+                if (py::len(seq) >= 1) spec.type = seq[0].cast<std::string>();
+                if (py::len(seq) >= 2 && spec.type == "DECIMAL") spec.precision = seq[1].cast<uint16_t>();
+                if (py::len(seq) >= 3 && spec.type == "DECIMAL") spec.scale = seq[2].cast<uint8_t>();
+                if (py::len(seq) >= 2 && (spec.type == "ID" || spec.type == "FRONTIER")) {
+                    spec.domain_name = seq[1].cast<std::string>();
+                }
+            } else if (py::isinstance<py::str>(val)) {
+                std::string s = val.cast<std::string>();
+                std::string upper = s;
+                std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                if (upper.rfind("DECIMAL(", 0) == 0 && !upper.empty() && upper.back() == ')') {
+                    std::string inner = upper.substr(8, upper.size() - 9);
+                    auto comma = inner.find(',');
+                    if (comma == std::string::npos) {
+                        throw std::invalid_argument("Invalid DECIMAL(P, S) spec: " + s);
+                    }
+                    spec.type = "DECIMAL";
+                    spec.precision = static_cast<uint16_t>(std::stoi(inner.substr(0, comma)));
+                    spec.scale = static_cast<uint8_t>(std::stoi(inner.substr(comma + 1)));
+                } else {
+                    spec.type = upper;
+                }
+            }
+            pmap[key] = std::move(spec);
+        }
+        std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm_v11(cypher, pmap);
+        const impulse_snapshot_t* s_ptr = snapshot ? snapshot->raw_handle() : nullptr;
+        auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(impscm_src, s_ptr, enable_optimizations);
+        py::dict out = pack_compile_result(res);
+        out["impscm_source"] = impscm_src;
+        return out;
+    }, py::arg("cypher"), py::arg("snapshot") = nullptr, py::arg("param_types") = py::dict(),
+       py::arg("enable_optimizations") = true,
+       "Lower openCypher (with DECIMAL64 literals, CAST, and typed $params) to ImpScheme v0.11 and compile to .impb");
 }
