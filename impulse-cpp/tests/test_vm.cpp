@@ -33,7 +33,15 @@ using namespace impulse::vm;
 static std::atomic<size_t> g_alloc_count{0};
 static std::atomic<bool>   g_track_allocs{false};
 
-#if !defined(__SANITIZE_THREAD__) && !(defined(__has_feature) && __has_feature(thread_sanitizer))
+#if defined(__SANITIZE_THREAD__)
+#define IMPULSE_TEST_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define IMPULSE_TEST_TSAN 1
+#endif
+#endif
+
+#if !defined(IMPULSE_TEST_TSAN)
 void* operator new(size_t sz) {
     if (g_track_allocs.load(std::memory_order_relaxed)) {
         g_alloc_count.fetch_add(1, std::memory_order_relaxed);
