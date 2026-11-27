@@ -603,6 +603,79 @@ void test_decimal64_zone_map_permutation_and_op_index_scan() {
     std::cout << "    DECIMAL64 (0x15) ZoneMap, Permutation & OP_INDEX_SCAN (=,<,<=,>,>=,BETWEEN) PASSED!" << std::endl;
 }
 
+void test_exact_i64_zone_map_interop_above_2pow53() {
+    std::cout << ">>> Testing Exact-I64 ZoneMap (payload_feature_mask=1) DECIMAL(18,2) > 2^53..." << std::endl;
+
+    // Construct a 3-page exact-i64 ZoneMap payload matching Java DefaultSnapshotBuilder.withDomainZoneMapIndex:
+    //   Page 0: [900719925474099300, 900719925474099301]  (> 2^53, indistinguishable in IEEE-754 double!)
+    //   Page 1: [900719925474099302, 900719925474099305]
+    //   Page 2: [INT64_MAX, INT64_MIN]  (empty / all-NULL page sentinel)
+    const uint64_t elem_count = 3072u;
+    const uint32_t page_size = 1024u;
+    const uint32_t page_count = 3u;
+    const uint8_t type_code = 0x15u;
+
+    std::vector<uint8_t> buf(24u + page_count * 16u, 0u);
+    std::memcpy(buf.data() + 0u, &elem_count, 8u);
+    std::memcpy(buf.data() + 8u, &page_size, 4u);
+    std::memcpy(buf.data() + 12u, &page_count, 4u);
+    buf[16] = type_code;
+
+    const int64_t ranges[3][2] = {
+        {900719925474099300LL, 900719925474099301LL},
+        {900719925474099302LL, 900719925474099305LL},
+        {std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min()},
+    };
+    for (uint32_t p = 0; p < page_count; ++p) {
+        std::memcpy(buf.data() + 24u + p * 16u, &ranges[p][0], 8u);
+        std::memcpy(buf.data() + 24u + p * 16u + 8u, &ranges[p][1], 8u);
+    }
+
+    // 1. Exact point query for 900719925474099302 -> MUST select ONLY page 1 (prunes page 0 & empty page 2!)
+    uint64_t mask = 0ULL;
+    size_t eligible = 0u;
+    TEST_CHECK(impulse_index_zone_map_filter_i64(
+        buf.data(), buf.size(), IMPULSE_ZONE_MAP_FEAT_EXACT_I64,
+        900719925474099302LL, 900719925474099302LL, &mask, 1u, &eligible) == IMPULSE_OK);
+    TEST_CHECK(eligible == 1u);
+    TEST_CHECK(mask == (1ULL << 1));
+
+    // 2. Exact point query for 900719925474099301 -> MUST select ONLY page 0
+    TEST_CHECK(impulse_index_zone_map_filter_i64(
+        buf.data(), buf.size(), IMPULSE_ZONE_MAP_FEAT_EXACT_I64,
+        900719925474099301LL, 900719925474099301LL, &mask, 1u, &eligible) == IMPULSE_OK);
+    TEST_CHECK(eligible == 1u);
+    TEST_CHECK(mask == (1ULL << 0));
+
+    // 3. Range spanning both pages -> selects pages 0 & 1, still prunes empty/all-NULL page 2
+    TEST_CHECK(impulse_index_zone_map_filter_i64(
+        buf.data(), buf.size(), IMPULSE_ZONE_MAP_FEAT_EXACT_I64,
+        900719925474099301LL, 900719925474099302LL, &mask, 1u, &eligible) == IMPULSE_OK);
+    TEST_CHECK(eligible == 2u);
+    TEST_CHECK(mask == ((1ULL << 0) | (1ULL << 1)));
+
+    // 4. Out-of-range query -> selects 0 pages
+    TEST_CHECK(impulse_index_zone_map_filter_i64(
+        buf.data(), buf.size(), IMPULSE_ZONE_MAP_FEAT_EXACT_I64,
+        900719925474099310LL, 900719925474099320LL, &mask, 1u, &eligible) == IMPULSE_OK);
+    TEST_CHECK(eligible == 0u && mask == 0ULL);
+
+    // 5. Legacy double ZoneMap payload (payload_feature_mask == 0) via impulse_index_zone_map_filter_i64
+    std::vector<int64_t> legacy_vals(2048u, 900719925474099301LL);
+    for (size_t i = 1024u; i < 2048u; ++i) legacy_vals[i] = 100LL;
+    void* leg_bytes = nullptr;
+    size_t leg_size = 0u;
+    TEST_CHECK(impulse_index_build_zone_map(
+        legacy_vals.data(), legacy_vals.size(), 0x15u, &leg_bytes, &leg_size) == IMPULSE_OK);
+    TEST_CHECK(impulse_index_zone_map_filter_i64(
+        leg_bytes, leg_size, 0ULL,
+        900719925474099301LL, 900719925474099301LL, &mask, 1u, &eligible) == IMPULSE_OK);
+    TEST_CHECK(eligible == 1u && mask == (1ULL << 0));
+    impulse_index_free(leg_bytes);
+
+    std::cout << "    Exact-I64 ZoneMap (payload_feature_mask=1) > 2^53 & empty-block pruning PASSED!" << std::endl;
+}
+
 int main() {
     std::cout << "\n=========================================================================" << std::endl;
     std::cout << "  IMPULSE GRAPH ENGINE - COMPLETE 7 SECONDARY INDEXES UNIT TEST SUITE    " << std::endl;
@@ -619,6 +692,7 @@ int main() {
     test_issue_137_permutation_nan_total_order();
     test_issue_143_zone_map_types_and_i64_precision();
     test_decimal64_zone_map_permutation_and_op_index_scan();
+    test_exact_i64_zone_map_interop_above_2pow53();
 
     std::cout << "=========================================================================" << std::endl;
     std::cout << "  ALL 7 SECONDARY INDEXES PASSED 100% CLEANLY!                           " << std::endl;

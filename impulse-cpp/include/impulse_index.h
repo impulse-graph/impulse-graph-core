@@ -42,6 +42,8 @@ IMPULSE_API impulse_status_t impulse_index_permutation_range_query(
 // INDEX 2: 2-TIER MIN-MAX ZONE MAP (0x02 - IMP_INDEX_ZONE_MAP)
 // =========================================================================
 
+#define IMPULSE_ZONE_MAP_FEAT_EXACT_I64 1ULL
+
 IMPULSE_API impulse_status_t impulse_index_build_zone_map(
     const void* attr_data,
     size_t element_count,
@@ -55,6 +57,24 @@ IMPULSE_API impulse_status_t impulse_index_zone_map_filter(
     size_t index_size,
     double min_val,
     double max_val,
+    uint64_t* out_page_bitmask,
+    size_t max_words,
+    size_t* out_eligible_pages
+);
+
+/**
+ * @brief Filters ZoneMap pages against an exact signed 64-bit integer range [min_val, max_val].
+ *
+ * Supports both exact-int64 ZoneMap payloads (payload_feature_mask & IMPULSE_ZONE_MAP_FEAT_EXACT_I64,
+ * as emitted by Java DefaultSnapshotBuilder for INT32/INT64/DECIMAL64) and legacy IEEE-754 double
+ * ZoneMap payloads (payload_feature_mask == 0).
+ */
+IMPULSE_API impulse_status_t impulse_index_zone_map_filter_i64(
+    const void* index_bytes,
+    size_t index_size,
+    uint64_t payload_feature_mask,
+    int64_t min_val,
+    int64_t max_val,
     uint64_t* out_page_bitmask,
     size_t max_words,
     size_t* out_eligible_pages
