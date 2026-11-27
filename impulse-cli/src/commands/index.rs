@@ -478,6 +478,13 @@ fn build_and_add_index(
 
     match index_type_str.as_str() {
         "permutation" | "0x01" | "1" => {
+            if (attr_info.type_code & IMPULSE_NULLABLE_FLAG) != 0 {
+                return Err(format!(
+                    "Permutation index does not yet support nullable attribute '{}.{}' (type_code 0x{:02X}): NULL placeholders would produce false-positive range matches",
+                    entity_name, attr_name, attr_info.type_code
+                )
+                .into());
+            }
             let elem_count = elem_row_count.min(get_element_count(&attr_info, attr_payload.len()));
             let mut out_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
             let mut out_size: usize = 0;
@@ -485,7 +492,7 @@ fn build_and_add_index(
                 impulse_index_build_permutation(
                     attr_payload.as_ptr() as *const std::ffi::c_void,
                     elem_count,
-                    attr_info.type_code,
+                    attr_info.type_code & IMPULSE_TYPE_MASK,
                     &mut out_ptr,
                     &mut out_size,
                 )
@@ -498,6 +505,13 @@ fn build_and_add_index(
             writer.add_index(domain_id, relation_id, attr_idx, IMP_INDEX_PERMUTATION, &idx_name, blob);
         }
         "zonemap" | "0x02" | "2" => {
+            if (attr_info.type_code & IMPULSE_NULLABLE_FLAG) != 0 {
+                return Err(format!(
+                    "ZoneMap index does not yet support nullable attribute '{}.{}' (type_code 0x{:02X}): bitmap-aware block pruning is not yet implemented",
+                    entity_name, attr_name, attr_info.type_code
+                )
+                .into());
+            }
             let elem_count = elem_row_count.min(get_element_count(&attr_info, attr_payload.len()));
             let mut out_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
             let mut out_size: usize = 0;
@@ -505,7 +519,7 @@ fn build_and_add_index(
                 impulse_index_build_zone_map(
                     attr_payload.as_ptr() as *const std::ffi::c_void,
                     elem_count,
-                    attr_info.type_code,
+                    attr_info.type_code & IMPULSE_TYPE_MASK,
                     &mut out_ptr,
                     &mut out_size,
                 )
