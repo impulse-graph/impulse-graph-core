@@ -7,6 +7,21 @@
 #include "impulse_graph.h"
 #include "impulse_vm_v11.h"
 #include "vm/impulse_vm_isa.hpp"
+
+extern "C" {
+struct impulse_stmt;
+typedef struct impulse_stmt impulse_stmt_t;
+impulse_status_t impulse_stmt_prepare(const impulse_snapshot_t* snapshot, const char* query_text, impulse_stmt_t** out_stmt);
+size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt);
+void impulse_stmt_finalize(impulse_stmt_t* stmt);
+impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id);
+impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val);
+impulse_status_t impulse_stmt_bind_float(impulse_stmt_t* stmt, const char* param, double val);
+impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const char* param, const char* str);
+impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size);
+size_t impulse_stmt_row_count(const impulse_stmt_t* stmt);
+const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx);
+}
 #include <cstdlib>
 #include "impulse_assert.h"
 
@@ -47,6 +62,7 @@ public:
             InstanceMethod("domainCount", &NodeSnapshot::DomainCount),
             InstanceMethod("relationCount", &NodeSnapshot::RelationCount),
             InstanceMethod("getRelationName", &NodeSnapshot::GetRelationName),
+            InstanceMethod("executeCypher", &NodeSnapshot::ExecuteCypher),
             InstanceMethod("close", &NodeSnapshot::Close)
         });
 
@@ -169,7 +185,69 @@ private:
         return env.Null();
     }
 
+    Napi::Value ExecuteCypher(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1 || !info[0].IsString()) {
+            Napi::TypeError::New(env, "Expected (cypherString[, paramsObject])").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        std::string query = info[0].As<Napi::String>().Utf8Value();
+        impulse_stmt_t* stmt = nullptr;
+        impulse_status_t st = impulse_stmt_prepare(snapshot_, query.c_str(), &stmt);
+        if (st != IMPULSE_OK || !stmt) {
+            Napi::Error::New(env, "impulse_stmt_prepare failed: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() >= 2 && info[1].IsObject() && !info[1].IsNull()) {
+            Napi::Object params = info[1].As<Napi::Object>();
+            Napi::Array keys = params.GetPropertyNames();
+            for (uint32_t i = 0; i < keys.Length(); ++i) {
+                std::string k = keys.Get(i).As<Napi::String>().Utf8Value();
+                Napi::Value v = params.Get(k);
+                if (v.IsNumber()) {
+                    double dv = v.As<Napi::Number>().DoubleValue();
+                    int64_t iv = static_cast<int64_t>(dv);
+                    if (static_cast<double>(iv) == dv) {
+                        impulse_stmt_bind_int(stmt, k.c_str(), iv);
+                        if (iv >= 0) impulse_stmt_bind_node(stmt, k.c_str(), static_cast<uint64_t>(iv));
+                    } else {
+                        impulse_stmt_bind_float(stmt, k.c_str(), dv);
+                    }
+                } else if (v.IsBigInt()) {
+                    bool lossless = false;
+                    uint64_t uv = v.As<Napi::BigInt>().Uint64Value(&lossless);
+                    impulse_stmt_bind_node(stmt, k.c_str(), uv);
+                } else if (v.IsString()) {
+                    std::string sv = v.As<Napi::String>().Utf8Value();
+                    impulse_stmt_bind_str(stmt, k.c_str(), sv.c_str());
+                }
+            }
+        }
+        size_t needed = impulse_stmt_buffer_size(stmt);
+        if (needed < 65536) needed = 65536;
+        if (stmt_buf_.size() < needed) stmt_buf_.resize(needed);
+        st = impulse_stmt_execute(stmt, stmt_buf_.data(), stmt_buf_.size());
+        if (st != IMPULSE_OK) {
+            impulse_stmt_finalize(stmt);
+            Napi::Error::New(env, "impulse_stmt_execute failed: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        size_t rows = impulse_stmt_row_count(stmt);
+        const uint64_t* ids = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
+        Napi::Array out = Napi::Array::New(env, rows);
+        for (size_t i = 0; i < rows; ++i) {
+            out.Set(static_cast<uint32_t>(i), Napi::Number::New(env, static_cast<double>(ids[i])));
+        }
+        impulse_stmt_finalize(stmt);
+        return out;
+    }
+
     impulse_snapshot_t* snapshot_ = nullptr;
+    std::vector<uint8_t> stmt_buf_;
 };
 
 // ============================================================================
@@ -334,6 +412,7 @@ public:
             InstanceMethod("destroy", &NodeVmWorkspace::Destroy),
             InstanceMethod("execute", &NodeVmWorkspace::Execute),
             InstanceMethod("outputCount", &NodeVmWorkspace::OutputCount),
+            InstanceMethod("getOutput", &NodeVmWorkspace::GetOutput),
             InstanceMethod("computeIctxV2", &NodeVmWorkspace::ComputeIctxV2),
         });
         exports.Set("VmWorkspace", func);
@@ -434,6 +513,36 @@ private:
 
     Napi::Value OutputCount(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), ws_ ? impulse_vm_v11_get_output_count(ws_) : 0);
+    }
+
+    Napi::Value GetOutput(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!ws_ || info.Length() < 1 || !info[0].IsNumber()) {
+            return env.Null();
+        }
+        uint16_t slot = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        impulse_vm_output_view_v11_t view{};
+        if (impulse_vm_v11_get_output(ws_, slot, &view) == 0) {
+            return env.Null();
+        }
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("slot", Napi::Number::New(env, view.slot));
+        obj.Set("elemTag", Napi::Number::New(env, view.elem_tag));
+        obj.Set("length", Napi::Number::New(env, static_cast<double>(view.length)));
+        if ((view.elem_tag == 0 || view.elem_tag == 1) && view.i64_data) {
+            Napi::Array arr = Napi::Array::New(env, view.length);
+            for (uint64_t i = 0; i < view.length; ++i) {
+                arr.Set(static_cast<uint32_t>(i), Napi::Number::New(env, static_cast<double>(view.i64_data[i])));
+            }
+            obj.Set("data", arr);
+        } else if (view.elem_tag == 4 && view.f64_data) {
+            Napi::Array arr = Napi::Array::New(env, view.length);
+            for (uint64_t i = 0; i < view.length; ++i) {
+                arr.Set(static_cast<uint32_t>(i), Napi::Number::New(env, view.f64_data[i]));
+            }
+            obj.Set("data", arr);
+        }
+        return obj;
     }
 
     Napi::Value ComputeIctxV2(const Napi::CallbackInfo& info) {

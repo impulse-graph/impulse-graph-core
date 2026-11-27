@@ -318,6 +318,7 @@ ImpulseCompiledProgram ImpulseBytecodeEmitter::emit(
         if (!frontier_initialized) {
             // Param 0 is the implicit input seed frontier
             b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, cur_f, 0, 0, 0, 0u, dom_id);
+            result.start_domain_id = dom_id;
             result.param_name_to_id["$seed"] = 0u;
             frontier_initialized = true;
             cur_dom = dom_id;

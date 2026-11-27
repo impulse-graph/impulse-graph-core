@@ -486,8 +486,8 @@ public:
     py::dict get_output(uint16_t slot) const {
         if (!ws_) throw std::runtime_error("VmWorkspace has been destroyed");
         impulse_vm_output_view_v11_t view{};
-        impulse_vm_status_v11_t rc = impulse_vm_v11_get_output(ws_, slot, &view);
-        if (rc != IMPULSE_VM_V11_OK) {
+        int rc = impulse_vm_v11_get_output(ws_, slot, &view);
+        if (rc == 0) {
             throw std::out_of_range("Output slot " + std::to_string(slot) + " unavailable");
         }
         py::dict res;
@@ -564,6 +564,13 @@ public:
 
     size_t row_count() const { return stmt_ ? impulse_stmt_row_count(stmt_) : 0; }
     uint32_t column_count() const { return stmt_ ? impulse_stmt_column_count(stmt_) : 0; }
+    std::vector<uint64_t> column_u64(uint32_t col_idx = 0) const {
+        if (!stmt_) return {};
+        size_t n = impulse_stmt_row_count(stmt_);
+        const uint64_t* ptr = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt_, col_idx));
+        if (!ptr || n == 0) return {};
+        return std::vector<uint64_t>(ptr, ptr + n);
+    }
 
 private:
     std::shared_ptr<SnapshotLease> lease_;
@@ -645,7 +652,8 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("bind_str", &PyStatement::bind_str, py::arg("name"), py::arg("val"))
         .def("execute", &PyStatement::execute)
         .def("row_count", &PyStatement::row_count)
-        .def("column_count", &PyStatement::column_count);
+        .def("column_count", &PyStatement::column_count)
+        .def("column_u64", &PyStatement::column_u64, py::arg("col_idx") = 0);
 
     py::class_<PySnapshotBufferView>(m, "_SnapshotBufferView", py::buffer_protocol())
         .def_buffer([](PySnapshotBufferView& v) -> py::buffer_info {
