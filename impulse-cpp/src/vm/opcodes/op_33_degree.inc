@@ -12,6 +12,7 @@ V11_OP_CASE(DEGREE) {
 
     switch (subop) {
         case 0: { // .sum_fwd_r
+            if (!rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* f_src = p3_get_f1bit(ws, s1);
             if (!f_src) break;
             if (f_src->domain_id != rel->src_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
@@ -28,17 +29,18 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 1: { // .sum_rev_r
+            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* f_tgt = p3_get_f1bit(ws, s1);
             if (!f_tgt) break;
             if (f_tgt->domain_id != rel->tgt_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
-            uint32_t n_tgt = 0u;
-            uint32_t* in_d = nullptr;
-            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n_tgt)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             const uint32_t* ids = nullptr; uint32_t n = 0u;
             if (!f_tgt->materialize_1bit(ws.arena, &ids, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
             uint64_t sum = 0ULL;
             for (uint32_t i = 0; i < n; ++i) {
-                if (ids[i] < n_tgt) sum += in_d[ids[i]];
+                uint32_t v = ids[i];
+                if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) {
+                    sum += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
+                }
             }
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), sum);
             p1_set_scalar_flags(ws, true, sum);
@@ -46,6 +48,7 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 2: { // .vec_fwd_v
+            if (!rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* fm = nullptr;
             if ((flags & FLAG_MASKED_S3) != 0u) {
                 fm = p3_get_f1bit(ws, s3);
@@ -74,15 +77,16 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 3: { // .vec_rev_v
+            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* fm = nullptr;
             if ((flags & FLAG_MASKED_S3) != 0u) {
                 fm = p3_get_f1bit(ws, s3);
                 if (!fm) break;
                 if (fm->domain_id != rel->tgt_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
             }
-            uint32_t n = 0u;
-            uint32_t* in_d = nullptr;
-            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            uint64_t n64 = (rel->tgt_dom < snap->domain_count) ? snap->domain_cards[rel->tgt_dom] : 0ULL;
+            if (n64 > UINT32_MAX) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
+            uint32_t n = static_cast<uint32_t>(n64);
             size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
             int64_t* vals = (n > 0u) ? ws.arena.alloc_array<int64_t>(n, 8) : nullptr;
             uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
@@ -91,7 +95,8 @@ V11_OP_CASE(DEGREE) {
             std::memset(valid, 0, vwords * sizeof(uint64_t));
             for (uint32_t v = 0; v < n; ++v) {
                 if (!fm || fm->contains_1bit(v)) {
-                    vals[v] = static_cast<int64_t>(in_d[v]);
+                    vals[v] = (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u)
+                        ? static_cast<int64_t>(rel->csc_row_off(v + 1u) - rel->csc_row_off(v)) : 0;
                     valid[v >> 6] |= (1ULL << (v & 63u));
                 }
             }
@@ -102,6 +107,7 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 4: { // .node_fwd_r
+            if (!rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             if (!ws.is_r_valid(s1)) { ws.write_r_null(dst); p1_set_scalar_flags(ws, false, 0ULL); ws.state.pc += 1u; break; }
             uint64_t u64 = ws.read_r_raw(s1);
             uint64_t dcard = (rel->src_dom < snap->domain_count) ? snap->domain_cards[rel->src_dom] : 0ULL;
@@ -114,14 +120,14 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 5: { // .node_rev_r
+            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             if (!ws.is_r_valid(s1)) { ws.write_r_null(dst); p1_set_scalar_flags(ws, false, 0ULL); ws.state.pc += 1u; break; }
             uint64_t v64 = ws.read_r_raw(s1);
             uint64_t dcard = (rel->tgt_dom < snap->domain_count) ? snap->domain_cards[rel->tgt_dom] : 0ULL;
             if (v64 >= dcard) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break; }
-            uint32_t n_tgt = 0u;
-            uint32_t* in_d = nullptr;
-            if (!p3_compute_in_degs(ws.arena, *snap, *rel, &in_d, &n_tgt)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; break; }
-            uint64_t deg = (v64 < n_tgt) ? static_cast<uint64_t>(in_d[static_cast<uint32_t>(v64)]) : 0ULL;
+            uint32_t v = static_cast<uint32_t>(v64);
+            uint64_t deg = (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u)
+                ? static_cast<uint64_t>(rel->csc_row_off(v + 1u) - rel->csc_row_off(v)) : 0ULL;
             ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_U64), deg);
             p1_set_scalar_flags(ws, true, deg);
             ws.state.pc += 1u;

@@ -41,6 +41,16 @@ pub fn run(
     )
 }
 
+struct SnapshotGuard(*mut impulse_snapshot_t);
+
+impl Drop for SnapshotGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { impulse_snapshot_close(self.0) };
+        }
+    }
+}
+
 pub fn run_with_options(
     snapshot_path: &Path,
     bytecode_path: &Path,
@@ -72,11 +82,11 @@ pub fn run_with_options(
     if snap.is_null() {
         return Err(format!("Failed to open snapshot: status code {}", status).into());
     }
+    let _snap_guard = SnapshotGuard(snap);
 
     let mut prog_bytes = Vec::new();
     File::open(bytecode_path)?.read_to_end(&mut prog_bytes)?;
     if prog_bytes.len() < 32 {
-        unsafe { impulse_snapshot_close(snap) };
         return Err("Bytecode file too small for IMPB v11 header".into());
     }
 
@@ -84,7 +94,6 @@ pub fn run_with_options(
         if opts.verify {
             let vr = impulse_vm_validate_v11(prog_bytes.as_ptr().cast(), prog_bytes.len());
             if vr.status != 0 {
-                impulse_snapshot_close(snap);
                 return Err(format!(
                     "Validation failed: status={} at pc={}",
                     vr.status, vr.bad_pc
@@ -104,7 +113,6 @@ pub fn run_with_options(
             &mut plan,
         );
         if prc != 0 {
-            impulse_snapshot_close(snap);
             return Err(format!("impulse_vm_plan_memory failed: {}", prc).into());
         }
 
@@ -112,7 +120,6 @@ pub fn run_with_options(
         let layout = Layout::from_size_align(scratch_len, 128)?;
         let raw_buf = alloc_zeroed(layout);
         if raw_buf.is_null() {
-            impulse_snapshot_close(snap);
             return Err("Failed to allocate aligned workspace buffer".into());
         }
 
@@ -120,7 +127,6 @@ pub fn run_with_options(
         let wrc = impulse_workspace_init(raw_buf.cast(), scratch_len, &mut ws);
         if wrc != 0 || ws.is_null() {
             dealloc(raw_buf, layout);
-            impulse_snapshot_close(snap);
             return Err(format!("impulse_workspace_init failed: {}", wrc).into());
         }
 
@@ -178,14 +184,13 @@ pub fn run_with_options(
             println!("Execution succeeded (IMPULSE_VM_OK, outputs={})", out_cnt);
             if out_cnt > 0 {
                 let mut ov = std::mem::zeroed::<impulse_vm_output_view_v11_t>();
-                if impulse_vm_v11_get_output(ws, 0, &mut ov) == 1 {
+                if impulse_vm_v11_get_output(ws, 0u32, &mut ov) == 1 {
                     println!("  slot[0]: elem_tag={}, length={}", ov.elem_tag, ov.length);
                 }
             }
         }
 
         dealloc(raw_buf, layout);
-        impulse_snapshot_close(snap);
 
         if rc != 0 {
             return Err(format!("ImpulseVM execution failed with status {}", rc).into());

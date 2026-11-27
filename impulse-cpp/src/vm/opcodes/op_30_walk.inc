@@ -26,7 +26,7 @@ V11_OP_CASE(WALK) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if (needs_rev && !rel->has_csc && rel->csc_row_off_raw == nullptr && (rel->csr_row_off_raw != nullptr || rel->has_coo)) {
+    if (needs_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
@@ -496,11 +496,6 @@ V11_OP_CASE(WALK) {
         }
     }
 
-    V11RevAdj rev_adj{};
-    if (subop == 1u || subop == 2u || subop == 5u || subop == 6u) {
-        if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-    }
-
     uint32_t* out_s = nullptr;
     uint32_t out_len = 0u;
     bool st_flag = ws.flag_st();
@@ -510,14 +505,14 @@ V11_OP_CASE(WALK) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
     } else if (subop == 1u) {
-        if (!p3_rev_step(ws.arena, rev_adj, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &out_s, &out_len)) {
+        if (!p3_rev_step(ws.arena, *rel, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &out_s, &out_len)) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
     } else if (subop == 2u) {
         uint32_t* f_p = nullptr; uint32_t f_n = 0u;
         uint32_t* r_p = nullptr; uint32_t r_n = 0u;
         if (!p3_fwd_step(ws.arena, *rel, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &f_p, &f_n) ||
-            !p3_rev_step(ws.arena, rev_adj, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &r_p, &r_n) ||
+            !p3_rev_step(ws.arena, *rel, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &r_p, &r_n) ||
             !p3_union_sorted(ws.arena, f_p, f_n, r_p, r_n, &out_s, &out_len)) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
@@ -526,7 +521,7 @@ V11_OP_CASE(WALK) {
         uint32_t* frontier = nullptr; uint32_t fr_len = 0u;
         bool ok = (subop == 3u)
             ? p3_fwd_step(ws.arena, *rel, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &frontier, &fr_len)
-            : p3_rev_step(ws.arena, rev_adj, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &frontier, &fr_len);
+            : p3_rev_step(ws.arena, *rel, s_src, s_src_len, s_excl, s_excl_len, nullptr, 0u, &frontier, &fr_len);
         if (!ok) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
         while (fr_len > 0u) {
             uint32_t* nv = nullptr; uint32_t nvl = 0u;
@@ -537,7 +532,7 @@ V11_OP_CASE(WALK) {
             uint32_t* nf = nullptr; uint32_t nfl = 0u;
             ok = (subop == 3u)
                 ? p3_fwd_step(ws.arena, *rel, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl)
-                : p3_rev_step(ws.arena, rev_adj, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl);
+                : p3_rev_step(ws.arena, *rel, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl);
             if (!ok) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
             frontier = nf; fr_len = nfl;
         }
@@ -554,7 +549,7 @@ V11_OP_CASE(WALK) {
             uint32_t* nf = nullptr; uint32_t nfl = 0u;
             bool ok = (subop == 4u)
                 ? p3_fwd_step(ws.arena, *rel, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl)
-                : p3_rev_step(ws.arena, rev_adj, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl);
+                : p3_rev_step(ws.arena, *rel, frontier, fr_len, s_excl, s_excl_len, visited, vis_len, &nf, &nfl);
             if (!ok) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
             if (nfl > 0u) {
                 uint32_t* nv = nullptr; uint32_t nvl = 0u;

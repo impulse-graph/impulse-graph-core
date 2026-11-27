@@ -16,9 +16,19 @@ V11_OP_CASE(LANE_WALK) {
 
     const bool endo = (rel->src_dom == rel->tgt_dom);
     const bool is_rev = (subop == 1u || subop == 5u || subop == 6u);
+    const bool needs_fwd = (subop == 0u || subop == 2u || subop == 3u || subop == 4u || subop == 7u || subop == 8u || subop == 9u);
+    const bool needs_rev = (subop == 1u || subop == 2u || subop == 5u || subop == 6u || subop == 8u || subop == 9u);
     const bool needs_endo = (subop >= 2u && subop != 7u);
     const uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     const uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
+    if (needs_fwd && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (needs_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
     if (needs_endo && !endo) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
     if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
@@ -91,15 +101,6 @@ V11_OP_CASE(LANE_WALK) {
         m_accum = p5_ml_view(*fd);
     }
 
-    V11RevAdj rev_adj{};
-    const V11RevAdj* rev_ptr = nullptr;
-    if (is_rev || subop == 2u || subop == 8u || subop == 9u) {
-        if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) {
-            ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
-        }
-        rev_ptr = &rev_adj;
-    }
-
     const V11MlMap m_src = p5_ml_view(*f_src);
     const uint8_t aw = f_src->alloc_width;
     const uint8_t ac = f_src->active_lane_count;
@@ -107,20 +108,20 @@ V11_OP_CASE(LANE_WALK) {
     V11MlMap out_m{};
     bool st_flag = ws.flag_st();
     if (subop == 0u || subop == 1u || subop == 2u || subop == 7u) {
-        if (!p5_lane_walk_step_once(ws.arena, subop, *rel, rev_ptr, edge_mask, m_src, m_excl, &out_m)) {
+        if (!p5_lane_walk_step_once(ws.arena, subop, *rel, edge_mask, m_src, m_excl, &out_m)) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
     } else if (subop == 3u || subop == 5u) { // fixpoint_plus
         V11MlMap visited{};
         V11MlMap frontier{};
-        if (!p5_lane_walk_step_once(ws.arena, subop, *rel, rev_ptr, edge_mask, m_src, m_excl, &frontier)) {
+        if (!p5_lane_walk_step_once(ws.arena, subop, *rel, edge_mask, m_src, m_excl, &frontier)) {
             ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
         }
         while (frontier.len > 0u) {
             V11MlMap next_vis{}, excl_u{}, next_fr{};
             if (!p5_ml_union(ws.arena, visited, frontier, &next_vis) ||
                 !p5_ml_union(ws.arena, m_excl, next_vis, &excl_u) ||
-                !p5_lane_walk_step_once(ws.arena, subop, *rel, rev_ptr, edge_mask, frontier, excl_u, &next_fr)) {
+                !p5_lane_walk_step_once(ws.arena, subop, *rel, edge_mask, frontier, excl_u, &next_fr)) {
                 ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
             }
             visited = next_vis;
@@ -137,7 +138,7 @@ V11_OP_CASE(LANE_WALK) {
         while (frontier.len > 0u) {
             V11MlMap excl_u{}, next_fr{}, next_vis{};
             if (!p5_ml_union(ws.arena, m_excl, visited, &excl_u) ||
-                !p5_lane_walk_step_once(ws.arena, subop, *rel, rev_ptr, edge_mask, frontier, excl_u, &next_fr) ||
+                !p5_lane_walk_step_once(ws.arena, subop, *rel, edge_mask, frontier, excl_u, &next_fr) ||
                 !p5_ml_union(ws.arena, visited, next_fr, &next_vis)) {
                 ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
             }

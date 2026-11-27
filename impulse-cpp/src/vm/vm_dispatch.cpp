@@ -990,11 +990,73 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
     std::lock_guard<std::mutex> lock(snapshot->v11_view_mutex);
     if (snapshot->v11_cached_view.load(std::memory_order_acquire) != nullptr) return IMPULSE_VM_V11_OK;
 
-    // Estimate backing bytes for view (checked against size_t overflow)
-    if (snapshot->file_size > ((std::numeric_limits<size_t>::max)() - 1024u * 1024u) / 3u) {
-        return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    // Compute exact O(domains + relations + attrs) metadata + decoded-attr backing size
+    auto safe_add = [](size_t& acc, size_t add) noexcept -> bool {
+        if (add > (std::numeric_limits<size_t>::max)() - acc) return false;
+        acc += add;
+        return true;
+    };
+    auto add_attr_bytes = [&](size_t& acc, const impulse_attribute_descriptor_t& desc, uint64_t row_count) noexcept -> bool {
+        if (row_count > static_cast<uint64_t>(UINT32_MAX)) return false;
+        const size_t n = static_cast<size_t>(row_count);
+        const uint8_t base_type = desc.type_code & 0x7Fu;
+        const size_t vwords = (n > 0u) ? ((n + 63u) >> 6) : 1u;
+        if (!safe_add(acc, vwords * sizeof(uint64_t) + 64u)) return false;
+        if (!safe_add(acc, sizeof(V11Vector) + 64u)) return false;
+        const uint32_t dim = (desc.dimension == 0u) ? 1u : desc.dimension;
+        if (base_type == 6u && dim > 1u) {
+            if (n > (std::numeric_limits<size_t>::max)() / dim) return false;
+            const size_t total = n * static_cast<size_t>(dim);
+            if (total > (std::numeric_limits<size_t>::max)() / sizeof(double)) return false;
+            if (!safe_add(acc, total * sizeof(double) + 64u)) return false;
+            if (n > (std::numeric_limits<size_t>::max)() / sizeof(double*)) return false;
+            if (!safe_add(acc, n * sizeof(double*) + 64u)) return false;
+        } else if ((base_type >= 1u && base_type <= 4u) || (base_type >= 6u && base_type <= 9u)) {
+            if (n > (std::numeric_limits<size_t>::max)() / 8u) return false;
+            if (!safe_add(acc, n * 8u + 64u)) return false;
+        }
+        return true;
+    };
+
+    size_t nd = snapshot->domains.size();
+    for (size_t i = 0; i < snapshot->domains.size(); ++i) {
+        if (snapshot->domains[i].domain_id + 1u > nd) nd = snapshot->domains[i].domain_id + 1u;
     }
-    size_t cap = snapshot->file_size * 3u + 1024u * 1024u;
+    for (size_t r = 0; r < snapshot->relations.size(); ++r) {
+        const auto& rd = snapshot->relations[r];
+        if (rd.src_domain_id + 1u > nd) nd = rd.src_domain_id + 1u;
+        if (rd.tgt_domain_id + 1u > nd) nd = rd.tgt_domain_id + 1u;
+    }
+    size_t cap = 4096u;
+    if (!safe_add(cap, nd * (sizeof(uint64_t) + sizeof(uint8_t)) + 256u)) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    const size_t nr = snapshot->relations.size();
+    if (!safe_add(cap, nr * sizeof(V11RelView) + 256u)) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    for (size_t r = 0; r < nr; ++r) {
+        if (r < snapshot->relation_attributes.size() && !snapshot->relation_attributes[r].empty()) {
+            const auto& attrs = snapshot->relation_attributes[r];
+            if (!safe_add(cap, attrs.size() * (sizeof(uint32_t) + sizeof(V11Vector*)) + 256u)) {
+                return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+            }
+            for (size_t a = 0; a < attrs.size(); ++a) {
+                if (!add_attr_bytes(cap, attrs[a], snapshot->relations[r].edge_count)) {
+                    return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                }
+            }
+        }
+    }
+    size_t total_na = 0u;
+    for (size_t d = 0; d < snapshot->domain_attributes.size() && d < snapshot->domains.size(); ++d) {
+        const auto& attrs = snapshot->domain_attributes[d];
+        total_na += attrs.size();
+        for (size_t a = 0; a < attrs.size(); ++a) {
+            if (!add_attr_bytes(cap, attrs[a], snapshot->domains[d].node_count)) {
+                return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+            }
+        }
+    }
+    if (!safe_add(cap, total_na * sizeof(V11DomAttrEntry) + 256u)) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    if (!safe_add(cap, snapshot->indexes.size() * sizeof(V11IndexEntry) + 256u)) return IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+    cap = (cap + 127u) & ~static_cast<size_t>(127u);
     void* raw = nullptr;
 #ifdef _WIN32
     raw = _aligned_malloc(cap, 128);

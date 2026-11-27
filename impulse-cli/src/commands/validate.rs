@@ -98,23 +98,28 @@ pub fn run_with_options(file: &Path, opts: &ValidateOptions<'_>) -> Result<(), B
         let digest = sha2::Sha256::digest(&file_data[..64]);
 
         let sig_path = Path::new(&format!("{}.sig", file.to_string_lossy())).to_path_buf();
-        if sig_path.exists() {
-            let raw_sig = fs::read(&sig_path)?;
-            let decoded_sig = crate::parquet_reader::decode_hex_or_uuid_bytes(
-                std::str::from_utf8(&raw_sig).unwrap_or(""),
-            );
-            let sig_slice: &[u8] = if decoded_sig.len() == 64 {
-                &decoded_sig
-            } else if raw_sig.len() >= 64 {
-                &raw_sig[..64]
-            } else {
-                return Err("Signature file must be 64 bytes (or 128 hex chars)".into());
-            };
-            let mut sig_arr = [0u8; 64];
-            sig_arr.copy_from_slice(&sig_slice[..64]);
-            let sig = Signature::from_bytes(&sig_arr);
-            pk.verify(&digest, &sig)?;
+        if !sig_path.exists() {
+            return Err(format!(
+                "Signature file {} not found (required when --public-key is provided)",
+                sig_path.display()
+            )
+            .into());
         }
+        let raw_sig = fs::read(&sig_path)?;
+        let decoded_sig = crate::parquet_reader::decode_hex_or_uuid_bytes(
+            std::str::from_utf8(&raw_sig).unwrap_or(""),
+        );
+        let sig_slice: &[u8] = if decoded_sig.len() == 64 {
+            &decoded_sig
+        } else if raw_sig.len() >= 64 {
+            &raw_sig[..64]
+        } else {
+            return Err("Signature file must be 64 bytes (or 128 hex chars)".into());
+        };
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(&sig_slice[..64]);
+        let sig = Signature::from_bytes(&sig_arr);
+        pk.verify(&digest, &sig)?;
 
         println!(
             "  [OK] Ed25519 signature verified with key {}",
@@ -179,13 +184,14 @@ pub fn validate_reader(
                     )
                     .into());
                 }
-                if attr.data_offset + attr.data_bytes > file_len {
+                if attr
+                    .data_offset
+                    .checked_add(attr.data_bytes)
+                    .map_or(true, |end| end > file_len)
+                {
                     return Err(format!(
-                        "Domain #{} Attr #{}: Data end 0x{:X} exceeds file length {}",
-                        dom.domain_id,
-                        a_idx,
-                        attr.data_offset + attr.data_bytes,
-                        file_len
+                        "Domain #{} Attr #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
+                        dom.domain_id, a_idx, attr.data_offset, attr.data_bytes, file_len
                     )
                     .into());
                 }
@@ -198,13 +204,14 @@ pub fn validate_reader(
                     )
                     .into());
                 }
-                if attr.offsets_offset + attr.offsets_bytes > file_len {
+                if attr
+                    .offsets_offset
+                    .checked_add(attr.offsets_bytes)
+                    .map_or(true, |end| end > file_len)
+                {
                     return Err(format!(
-                        "Domain #{} Attr #{}: Offsets end 0x{:X} exceeds file length {}",
-                        dom.domain_id,
-                        a_idx,
-                        attr.offsets_offset + attr.offsets_bytes,
-                        file_len
+                        "Domain #{} Attr #{}: Offsets range [0x{:X} + {}] overflows or exceeds file length {}",
+                        dom.domain_id, a_idx, attr.offsets_offset, attr.offsets_bytes, file_len
                     )
                     .into());
                 }
@@ -264,12 +271,14 @@ pub fn validate_reader(
                 )
                 .into());
             }
-            if rel.csr_col_idx_offset + rel.csr_col_idx_bytes > file_len {
+            if rel
+                .csr_col_idx_offset
+                .checked_add(rel.csr_col_idx_bytes)
+                .map_or(true, |end| end > file_len)
+            {
                 return Err(format!(
-                    "Relation #{}: CSR column indices end 0x{:X} exceeds file length {}",
-                    idx,
-                    rel.csr_col_idx_offset + rel.csr_col_idx_bytes,
-                    file_len
+                    "Relation #{}: CSR column indices range [0x{:X} + {}] overflows or exceeds file length {}",
+                    idx, rel.csr_col_idx_offset, rel.csr_col_idx_bytes, file_len
                 )
                 .into());
             }
@@ -284,12 +293,14 @@ pub fn validate_reader(
                 )
                 .into());
             }
-            if rel.csc_row_off_offset + rel.csc_row_off_bytes > file_len {
+            if rel
+                .csc_row_off_offset
+                .checked_add(rel.csc_row_off_bytes)
+                .map_or(true, |end| end > file_len)
+            {
                 return Err(format!(
-                    "Relation #{}: CSC row offsets end 0x{:X} exceeds file length {}",
-                    idx,
-                    rel.csc_row_off_offset + rel.csc_row_off_bytes,
-                    file_len
+                    "Relation #{}: CSC row offsets range [0x{:X} + {}] overflows or exceeds file length {}",
+                    idx, rel.csc_row_off_offset, rel.csc_row_off_bytes, file_len
                 )
                 .into());
             }
@@ -302,12 +313,14 @@ pub fn validate_reader(
                 )
                 .into());
             }
-            if rel.csc_col_idx_offset + rel.csc_col_idx_bytes > file_len {
+            if rel
+                .csc_col_idx_offset
+                .checked_add(rel.csc_col_idx_bytes)
+                .map_or(true, |end| end > file_len)
+            {
                 return Err(format!(
-                    "Relation #{}: CSC column indices end 0x{:X} exceeds file length {}",
-                    idx,
-                    rel.csc_col_idx_offset + rel.csc_col_idx_bytes,
-                    file_len
+                    "Relation #{}: CSC column indices range [0x{:X} + {}] overflows or exceeds file length {}",
+                    idx, rel.csc_col_idx_offset, rel.csc_col_idx_bytes, file_len
                 )
                 .into());
             }
@@ -323,13 +336,14 @@ pub fn validate_reader(
                     )
                     .into());
                 }
-                if attr.data_offset + attr.data_bytes > file_len {
+                if attr
+                    .data_offset
+                    .checked_add(attr.data_bytes)
+                    .map_or(true, |end| end > file_len)
+                {
                     return Err(format!(
-                        "Relation #{} Attr #{}: Data end 0x{:X} exceeds file length {}",
-                        idx,
-                        a_idx,
-                        attr.data_offset + attr.data_bytes,
-                        file_len
+                        "Relation #{} Attr #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
+                        idx, a_idx, attr.data_offset, attr.data_bytes, file_len
                     )
                     .into());
                 }
@@ -342,13 +356,14 @@ pub fn validate_reader(
                     )
                     .into());
                 }
-                if attr.offsets_offset + attr.offsets_bytes > file_len {
+                if attr
+                    .offsets_offset
+                    .checked_add(attr.offsets_bytes)
+                    .map_or(true, |end| end > file_len)
+                {
                     return Err(format!(
-                        "Relation #{} Attr #{}: Offsets end 0x{:X} exceeds file length {}",
-                        idx,
-                        a_idx,
-                        attr.offsets_offset + attr.offsets_bytes,
-                        file_len
+                        "Relation #{} Attr #{}: Offsets range [0x{:X} + {}] overflows or exceeds file length {}",
+                        idx, a_idx, attr.offsets_offset, attr.offsets_bytes, file_len
                     )
                     .into());
                 }
@@ -591,12 +606,14 @@ pub fn validate_reader(
                 )
                 .into());
             }
-            if idx_entry.data_offset + idx_entry.data_bytes > file_len {
+            if idx_entry
+                .data_offset
+                .checked_add(idx_entry.data_bytes)
+                .map_or(true, |end| end > file_len)
+            {
                 return Err(format!(
-                    "Index #{}: Data end 0x{:X} exceeds file length {}",
-                    idx_entry.index_id,
-                    idx_entry.data_offset + idx_entry.data_bytes,
-                    file_len
+                    "Index #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
+                    idx_entry.index_id, idx_entry.data_offset, idx_entry.data_bytes, file_len
                 )
                 .into());
             }

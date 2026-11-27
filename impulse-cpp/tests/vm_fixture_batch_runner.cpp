@@ -470,6 +470,7 @@ std::string run_fixture_json(const std::string& profile,
     std::map<uint16_t, uint64_t> dom_tbl;
     std::map<uint16_t, std::pair<uint16_t, uint16_t>> rel_meta;
     std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint64_t>>> rel_csr;
+    std::map<uint16_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> rel_csc;
     std::map<uint16_t, std::array<bool, 4>> rel_flags;
     struct CooFixtureData {
         std::vector<uint64_t> srcs;
@@ -512,6 +513,18 @@ std::string run_fixture_json(const std::string& profile,
                 rel_flags[rid][0] = true;
             } else if (kind == ".csc_inline" && kv) {
                 uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
+                std::vector<uint32_t> offs;
+                std::vector<uint32_t> srcs;
+                if (const JsonVal* o = kv->get("offsets"); o && o->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : o->arr) offs.push_back(static_cast<uint32_t>(as_i64(&x)));
+                }
+                const JsonVal* s = kv->get("sources") ? kv->get("sources") : kv->get("srcs");
+                if (s && s->kind == JsonVal::Kind::Array) {
+                    for (const auto& x : s->arr) srcs.push_back(static_cast<uint32_t>(as_i64(&x)));
+                }
+                if (!offs.empty()) {
+                    rel_csc[rid] = {std::move(offs), std::move(srcs)};
+                }
                 rel_flags[rid][1] = true;
             } else if (kind == ".coo_inline" && kv) {
                 uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
@@ -761,6 +774,8 @@ std::string run_fixture_json(const std::string& profile,
     std::vector<V11RelView> rel_views;
     std::vector<std::vector<uint32_t>> owned_row_offs;
     std::vector<std::vector<uint64_t>> owned_col_tgts;
+    std::vector<std::vector<uint32_t>> owned_csc_offs;
+    std::vector<std::vector<uint32_t>> owned_csc_srcs;
     std::vector<std::vector<uint32_t>> owned_ea_ids;
     std::vector<std::vector<V11Vector*>> owned_ea_vecs;
     if (preloaded_snap != nullptr) {
@@ -777,6 +792,8 @@ std::string run_fixture_json(const std::string& profile,
         rel_views.resize(n_rel);
         owned_row_offs.resize(n_rel);
         owned_col_tgts.resize(n_rel);
+        owned_csc_offs.resize(n_rel);
+        owned_csc_srcs.resize(n_rel);
         owned_ea_ids.resize(n_rel);
         owned_ea_vecs.resize(n_rel);
 
@@ -845,6 +862,40 @@ std::string run_fixture_json(const std::string& profile,
                 rv.coo_edge_ids = cit->second.edge_ids.empty() ? nullptr : cit->second.edge_ids.data();
                 rv.coo_edge_count = static_cast<uint32_t>(std::min(cit->second.srcs.size(), cit->second.tgts.size()));
                 rv.coo_order = cit->second.order;
+            }
+            if (fl[1]) {
+                uint32_t n_tgt = (td < dom_cards.size()) ? static_cast<uint32_t>(dom_cards[td]) : 0u;
+                if (auto cit = rel_csc.find(r16); cit != rel_csc.end()) {
+                    owned_csc_offs[rid] = cit->second.first;
+                    owned_csc_srcs[rid] = cit->second.second;
+                } else {
+                    owned_csc_offs[rid].assign(static_cast<size_t>(n_tgt) + 1u, 0u);
+                    uint32_t csr_rows = owned_row_offs[rid].empty() ? 0u : static_cast<uint32_t>(owned_row_offs[rid].size() - 1u);
+                    uint32_t total = 0u;
+                    for (uint32_t u = 0; u < csr_rows; ++u) {
+                        for (uint32_t e = owned_row_offs[rid][u]; e < owned_row_offs[rid][u + 1u]; ++e) {
+                            uint64_t v = owned_col_tgts[rid][e];
+                            if (v < n_tgt) {
+                                owned_csc_offs[rid][static_cast<size_t>(v) + 1u]++;
+                                ++total;
+                            }
+                        }
+                    }
+                    for (uint32_t v = 0; v < n_tgt; ++v) owned_csc_offs[rid][v + 1u] += owned_csc_offs[rid][v];
+                    owned_csc_srcs[rid].assign(total, 0u);
+                    std::vector<uint32_t> cur(owned_csc_offs[rid].begin(), owned_csc_offs[rid].begin() + n_tgt);
+                    for (uint32_t u = 0; u < csr_rows; ++u) {
+                        for (uint32_t e = owned_row_offs[rid][u]; e < owned_row_offs[rid][u + 1u]; ++e) {
+                            uint64_t v = owned_col_tgts[rid][e];
+                            if (v < n_tgt) {
+                                owned_csc_srcs[rid][cur[static_cast<size_t>(v)]++] = u;
+                            }
+                        }
+                    }
+                }
+                rv.csc_row_off_raw = owned_csc_offs[rid].empty() ? nullptr : reinterpret_cast<const uint8_t*>(owned_csc_offs[rid].data());
+                rv.csc_col_idx_raw = owned_csc_srcs[rid].empty() ? nullptr : reinterpret_cast<const uint8_t*>(owned_csc_srcs[rid].data());
+                rv.csc_row_off_len = static_cast<uint32_t>(owned_csc_offs[rid].size());
             }
             rv.has_csr = fl[0];
             rv.has_csc = fl[1];

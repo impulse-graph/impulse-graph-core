@@ -726,6 +726,11 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         if (!footer_payload.empty()) {
             ofs.write(reinterpret_cast<const char*>(footer_payload.data()), footer_payload.size());
         }
+        ofs.flush();
+        if (!ofs.good()) {
+            g_last_error = "Failed to write output snapshot file";
+            return IMPULSE_ERR_IO_FAILURE;
+        }
         return IMPULSE_OK;
     }
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
@@ -877,13 +882,17 @@ static void populate_writer_from_snapshot(
                     }
                 }
                 for (auto* dl : matching_deltas) {
-                    std::shared_lock<std::shared_mutex> lk(dl->mutex);
-                    auto it = dl->additions.find(u);
-                    if (it != dl->additions.end()) {
-                        for (uint64_t v : it->second) {
-                            if (!is_tomb(u, v)) {
-                                merged_cols.push_back(static_cast<uint32_t>(v));
-                            }
+                    std::vector<uint64_t> added_targets;
+                    {
+                        std::shared_lock<std::shared_mutex> lk(dl->mutex);
+                        auto it = dl->additions.find(u);
+                        if (it != dl->additions.end()) {
+                            added_targets = it->second;
+                        }
+                    }
+                    for (uint64_t v : added_targets) {
+                        if (!is_tomb(u, v)) {
+                            merged_cols.push_back(static_cast<uint32_t>(v));
                         }
                     }
                 }
