@@ -1020,6 +1020,16 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
     return IMPULSE_VM_V11_OK;
 }
 
+namespace impulse::vm {
+
+const V11SnapshotView* v11_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept {
+    if (!snapshot) return nullptr;
+    const void* cached_ptr = snapshot->v11_cached_view.load(std::memory_order_acquire);
+    return cached_ptr ? &static_cast<const V11CachedSnapshotView*>(cached_ptr)->view : nullptr;
+}
+
+} // namespace impulse::vm
+
 extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_execute_v11(
     const void* impb_bytes,
     size_t impb_len,

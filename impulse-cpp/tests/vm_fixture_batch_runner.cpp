@@ -7,6 +7,7 @@
  *   Input:  `<profile>\t<max_steps|->\t<fixture_json>\n`
  *   Output: `<result_json>\n`
  */
+#include "impulse_graph.h"
 #include "vm/vm_internal.hpp"
 
 #include <algorithm>
@@ -387,7 +388,8 @@ std::string run_fixture_json(const std::string& profile,
                              uint64_t max_steps_override,
                              const std::string& raw_json,
                              void* scratch_buf,
-                             size_t scratch_bytes) {
+                             size_t scratch_bytes,
+                             const impulse_snapshot_t* preloaded_snap = nullptr) {
     JsonVal root = MiniJsonParser(raw_json).parse();
 
     std::vector<uint64_t> words;
@@ -702,7 +704,9 @@ std::string run_fixture_json(const std::string& profile,
     std::vector<std::vector<uint64_t>> owned_col_tgts;
     std::vector<std::vector<uint32_t>> owned_ea_ids;
     std::vector<std::vector<V11Vector*>> owned_ea_vecs;
-    if (!dom_tbl.empty() || !rel_meta.empty()) {
+    if (preloaded_snap != nullptr) {
+        snap_ptr = v11_get_cached_snapshot_view(preloaded_snap);
+    } else if (!dom_tbl.empty() || !rel_meta.empty()) {
         int max_dom = -1;
         for (const auto& kv : dom_tbl) if (kv.first > max_dom) max_dom = kv.first;
         dom_cards.assign(static_cast<size_t>(max_dom + 1), 0ULL);
@@ -938,9 +942,30 @@ std::string run_fixture_json(const std::string& profile,
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
+
+    std::string snapshot_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--snapshot" && i + 1 < argc) {
+            snapshot_path = argv[++i];
+        } else if (arg.rfind("--snapshot=", 0) == 0) {
+            snapshot_path = arg.substr(11);
+        }
+    }
+
+    impulse_snapshot_t* opened_snap = nullptr;
+    if (!snapshot_path.empty()) {
+        impulse_status_t st = IMPULSE_OK;
+        opened_snap = impulse_snapshot_open(snapshot_path.c_str(), &st);
+        if (!opened_snap || st != IMPULSE_OK) {
+            std::cerr << "Failed to open snapshot: " << snapshot_path << " (status=" << st << ")\n";
+            return 2;
+        }
+        (void)impulse_vm_v11_prepare_snapshot(opened_snap);
+    }
 
     constexpr size_t kScratchSize = 64u * 1024u * 1024u; // 64 MB 128B-aligned caller buffer
     void* scratch_buf = nullptr;
@@ -948,6 +973,7 @@ int main() {
     scratch_buf = _aligned_malloc(kScratchSize, 128);
 #else
     if (posix_memalign(&scratch_buf, 128, kScratchSize) != 0) {
+        if (opened_snap) impulse_snapshot_close(opened_snap);
         return 1;
     }
 #endif
@@ -970,10 +996,13 @@ int main() {
         bool has_ms = (!ms_str.empty() && ms_str != "-");
         uint64_t ms_val = has_ms ? std::strtoull(ms_str.c_str(), nullptr, 10) : 0ULL;
 
-        std::string resp = run_fixture_json(profile, has_ms, ms_val, raw_json, scratch_buf, kScratchSize);
+        std::string resp = run_fixture_json(profile, has_ms, ms_val, raw_json, scratch_buf, kScratchSize, opened_snap);
         std::cout << resp << '\n' << std::flush;
     }
 
+    if (opened_snap) {
+        impulse_snapshot_close(opened_snap);
+    }
 #if defined(_WIN32)
     _aligned_free(scratch_buf);
 #else
