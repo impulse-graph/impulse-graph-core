@@ -382,8 +382,7 @@ impl SnapshotReader {
                         }
                         if attr_base == 0x15 {
                             if dim == 0
-                                || attr_precision < 1
-                                || attr_precision > 18
+                                || !(1..=18).contains(&attr_precision)
                                 || (attr_scale as u16) > attr_precision
                             {
                                 return Err(ImpulseError::InvalidArgument);
@@ -567,8 +566,7 @@ impl SnapshotReader {
                     }
                     if attr_base == 0x15 {
                         if dim == 0
-                            || attr_precision < 1
-                            || attr_precision > 18
+                            || !(1..=18).contains(&attr_precision)
                             || (attr_scale as u16) > attr_precision
                         {
                             return Err(ImpulseError::InvalidArgument);
