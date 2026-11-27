@@ -234,12 +234,20 @@ impulse_status_t impulse_stmt_bind_roaring(impulse_stmt_t* stmt, const char* par
 impulse_status_t impulse_stmt_bind_int(impulse_stmt_t* stmt, const char* param, int64_t val) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
     stmt->int_params[param] = val;
+    if (!stmt->has_seed_node && val >= 0) {
+        stmt->bound_seed_node = static_cast<uint64_t>(val);
+        stmt->has_seed_node = true;
+    }
     return IMPULSE_OK;
 }
 
 impulse_status_t impulse_stmt_bind_uint(impulse_stmt_t* stmt, const char* param, uint64_t val) {
     if (!stmt || !param) return IMPULSE_ERR_INVALID_ARGUMENT;
     stmt->uint_params[param] = val;
+    if (!stmt->has_seed_node) {
+        stmt->bound_seed_node = val;
+        stmt->has_seed_node = true;
+    }
     return IMPULSE_OK;
 }
 
@@ -276,15 +284,18 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
 
     uint8_t* raw_buf = static_cast<uint8_t*>(buffer);
     size_t scratch_size = stmt->scratch_bytes_needed;
-    uint8_t* return_area = raw_buf + scratch_size;
-    size_t avail_return_bytes = (buffer_size > scratch_size) ? (buffer_size - scratch_size) : 0;
-
     uintptr_t raw_addr = reinterpret_cast<uintptr_t>(raw_buf);
     uintptr_t aligned_addr = (raw_addr + 127u) & ~static_cast<uintptr_t>(127u);
     size_t pad = static_cast<size_t>(aligned_addr - raw_addr);
     if (pad >= scratch_size) {
         return IMPULSE_ERR_BUFFER_OVERFLOW;
     }
+
+    uintptr_t ret_raw = raw_addr + scratch_size;
+    uintptr_t ret_aligned = (ret_raw + 63u) & ~static_cast<uintptr_t>(63u);
+    uint8_t* return_area = reinterpret_cast<uint8_t*>(ret_aligned);
+    uintptr_t buf_end = raw_addr + buffer_size;
+    size_t avail_return_bytes = (buf_end > ret_aligned) ? static_cast<size_t>(buf_end - ret_aligned) : 0;
 
     impulse_vm_workspace_v11_t* ws = nullptr;
     if (impulse_workspace_init(reinterpret_cast<void*>(aligned_addr), scratch_size - pad, &ws) != IMPULSE_VM_V11_OK) {
