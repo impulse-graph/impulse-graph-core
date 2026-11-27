@@ -95,7 +95,7 @@ pub fn parse_decimal64_str(s: &str, precision: u16, scale: u8) -> Result<i64, St
     }
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Ok(0);
+        return Err("Empty decimal string".to_string());
     }
     let (neg, rest) = if let Some(r) = trimmed.strip_prefix('-') {
         (true, r)
@@ -283,6 +283,7 @@ pub fn read_parquet_column_data(
 
     struct Accumulator {
         requested_type_code: Option<u8>,
+        requested_decimal_ps: Option<(u16, u8)>,
         inferred_base_type: u8,
         dimension: u32,
         precision: u16,
@@ -297,10 +298,12 @@ pub fn read_parquet_column_data(
     for &(col_name, type_str_opt, dim_opt) in columns {
         let mut req_precision: u16 = 0;
         let mut req_scale: u8 = 0;
+        let mut req_dec_ps: Option<(u16, u8)> = None;
         if let Some(ts) = type_str_opt {
             if let Some((_, p, s)) = parse_decimal64_spec(ts)? {
                 req_precision = p;
                 req_scale = s;
+                req_dec_ps = Some((p, s));
             }
         }
         let req_tc = type_str_opt.map(parse_type_code);
@@ -308,6 +311,7 @@ pub fn read_parquet_column_data(
             col_name.to_string(),
             Accumulator {
                 requested_type_code: req_tc,
+                requested_decimal_ps: req_dec_ps,
                 inferred_base_type: req_tc.map(|c| c & 0x7F).unwrap_or(0x03),
                 dimension: dim_opt.unwrap_or(1),
                 precision: req_precision,
@@ -439,11 +443,33 @@ pub fn read_parquet_column_data(
                         )
                         .into());
                     }
+                    if let Some((rp, rs)) = acc.requested_decimal_ps {
+                        if (rp, rs) != (p, s as u8) {
+                            return Err(format!(
+                                "Manifest DECIMAL64({}, {}) does not match Parquet column '{}' DECIMAL({}, {})",
+                                rp, rs, col_name, p, s
+                            )
+                            .into());
+                        }
+                    }
+                    let max_abs = 10i128.pow(p as u32) - 1;
                     acc.inferred_base_type = 0x15;
                     acc.precision = p;
                     acc.scale = s as u8;
                     for i in 0..len {
-                        let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
+                        let v = if arr.is_null(i) {
+                            0i64
+                        } else {
+                            let raw = arr.value(i);
+                            if (raw as i128).abs() > max_abs {
+                                return Err(format!(
+                                    "Parquet DECIMAL64 value {} at row {} in '{}' exceeds precision {}",
+                                    raw, i, col_name, p
+                                )
+                                .into());
+                            }
+                            raw
+                        };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<Decimal128Array>() {
@@ -456,6 +482,16 @@ pub fn read_parquet_column_data(
                         )
                         .into());
                     }
+                    if let Some((rp, rs)) = acc.requested_decimal_ps {
+                        if (rp, rs) != (p, s as u8) {
+                            return Err(format!(
+                                "Manifest DECIMAL64({}, {}) does not match Parquet column '{}' DECIMAL({}, {})",
+                                rp, rs, col_name, p, s
+                            )
+                            .into());
+                        }
+                    }
+                    let max_abs = 10i128.pow(p as u32) - 1;
                     acc.inferred_base_type = 0x15;
                     acc.precision = p;
                     acc.scale = s as u8;
@@ -463,7 +499,15 @@ pub fn read_parquet_column_data(
                         let v: i64 = if arr.is_null(i) {
                             0i64
                         } else {
-                            i64::try_from(arr.value(i)).map_err(|_| {
+                            let raw = arr.value(i);
+                            if raw.abs() > max_abs {
+                                return Err(format!(
+                                    "Parquet DECIMAL value {} at row {} in '{}' exceeds precision {}",
+                                    raw, i, col_name, p
+                                )
+                                .into());
+                            }
+                            i64::try_from(raw).map_err(|_| {
                                 format!(
                                     "Parquet DECIMAL value at row {} in '{}' overflows i64",
                                     i, col_name
@@ -629,6 +673,14 @@ pub fn read_parquet_column_data(
             .requested_type_code
             .map(|tc| tc & 0x7F)
             .unwrap_or(acc.inferred_base_type);
+
+        if base_type == 0x15 && acc.inferred_base_type != 0x15 && !acc.is_valid.is_empty() {
+            return Err(format!(
+                "Parquet column '{}' requested as DECIMAL64 but source column is not a Parquet Decimal array (inferred base_type=0x{:02X})",
+                name, acc.inferred_base_type
+            )
+            .into());
+        }
 
         let final_type_code = if is_nullable {
             base_type | 0x80
@@ -1197,9 +1249,11 @@ mod decimal64_tests {
             parse_decimal64_str("-9999999999999999.99", 18, 2).unwrap(),
             -999_999_999_999_999_999i64
         );
-        // Reject overflow & excess scale
+        // Reject overflow, excess scale, and empty/whitespace strings
         assert!(parse_decimal64_str("123.456", 10, 2).is_err());
         assert!(parse_decimal64_str("100000000.00", 10, 2).is_err());
+        assert!(parse_decimal64_str("", 10, 2).is_err());
+        assert!(parse_decimal64_str("   ", 10, 2).is_err());
     }
 
     #[test]
@@ -1291,5 +1345,44 @@ mod decimal64_tests {
             assert_eq!(res.err(), Some(expected_err), "case {} should fail", label);
             let _ = std::fs::remove_file(&bad_path);
         }
+
+        // Regression #5: dimension == 0 rejected for DECIMAL64
+        let dim0_path = tmp.join("test_decimal64_dim0_m1.imps");
+        let mut w = SnapshotWriter::new(dim0_path.to_str().unwrap());
+        w.add_domain(0, KeyType::Int32, "Account");
+        w.set_domain_node_count(0, 3);
+        w.add_attribute_to_domain_with_meta(0, "bad_dim0", 0x15, 0, 10, 2, raw_bytes.clone(), None);
+        w.add_relation(0, 0, 3, 1, vec![0, 1, 1, 1], vec![1]);
+        w.finalize().expect("write dim0 snapshot");
+        assert_eq!(
+            SnapshotReader::open(&dim0_path).err(),
+            Some(ImpulseError::InvalidArgument)
+        );
+        let _ = std::fs::remove_file(&dim0_path);
+
+        // Regression #3: out-of-bounds relation attribute data_offset rejected on open
+        let rel_oob_path = tmp.join("test_decimal64_rel_oob_m1.imps");
+        let mut w = SnapshotWriter::new(rel_oob_path.to_str().unwrap());
+        w.add_domain(0, KeyType::Int32, "Account");
+        w.set_domain_node_count(0, 3);
+        w.add_relation(0, 0, 3, 1, vec![0, 1, 1, 1], vec![1]);
+        w.add_attribute_to_relation_with_meta(0, "fee", 0x15, 1, 10, 2, vec![0u8; 8], None);
+        w.finalize().expect("write rel snapshot");
+        let mut file_bytes = std::fs::read(&rel_oob_path).unwrap();
+        // Patch relation attribute descriptor's data_bytes to 0x7FFF_FFFF_FFFF_FFFF
+        // Find the 0x15 0x02 0x0A 0x00 0x01 0x00 0x00 0x00 pattern in Section 2 directory
+        let needle: [u8; 8] = [0x15, 0x02, 0x0A, 0x00, 0x01, 0x00, 0x00, 0x00];
+        let pos = file_bytes
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("locate rel attr descriptor");
+        // Layout: type_code(+0), scale(+1), precision(+2..4), dim(+4..8), data_offset(+8..16), data_bytes(+16..24)
+        file_bytes[pos + 16..pos + 24].copy_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&rel_oob_path, &file_bytes).unwrap();
+        assert_eq!(
+            SnapshotReader::open(&rel_oob_path).err(),
+            Some(ImpulseError::BufferOverflow)
+        );
+        let _ = std::fs::remove_file(&rel_oob_path);
     }
 }

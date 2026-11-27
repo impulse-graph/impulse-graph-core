@@ -376,8 +376,13 @@ impl SnapshotReader {
                             return Err(ImpulseError::BufferOverflow);
                         }
 
-                        if (attr_desc.type_code & IMPULSE_TYPE_MASK) == 0x15 {
-                            if attr_precision < 1
+                        let attr_base = attr_desc.type_code & IMPULSE_TYPE_MASK;
+                        if attr_base == 0x0F && dim == 0 {
+                            return Err(ImpulseError::InvalidArgument);
+                        }
+                        if attr_base == 0x15 {
+                            if dim == 0
+                                || attr_precision < 1
                                 || attr_precision > 18
                                 || (attr_scale as u16) > attr_precision
                             {
@@ -385,7 +390,7 @@ impl SnapshotReader {
                             }
                             let row_count = dom_entry.node_count();
                             if row_count > 0 {
-                                let dim_u64 = (dim.max(1)) as u64;
+                                let dim_u64 = dim as u64;
                                 let is_nullable =
                                     (attr_desc.type_code & IMPULSE_NULLABLE_FLAG) != 0;
                                 let padded_bm = if is_nullable {
@@ -541,8 +546,28 @@ impl SnapshotReader {
                         std::ptr::read_unaligned(std::ptr::addr_of!(attr_desc.offsets_bytes))
                     };
 
-                    if (attr_desc.type_code & IMPULSE_TYPE_MASK) == 0x15 {
-                        if attr_precision < 1
+                    if data_bytes > 0
+                        && data_off
+                            .checked_add(data_bytes)
+                            .is_none_or(|end| end > slice.len() as u64)
+                    {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+                    if offs_bytes > 0
+                        && offs_off
+                            .checked_add(offs_bytes)
+                            .is_none_or(|end| end > slice.len() as u64)
+                    {
+                        return Err(ImpulseError::BufferOverflow);
+                    }
+
+                    let attr_base = attr_desc.type_code & IMPULSE_TYPE_MASK;
+                    if attr_base == 0x0F && dim == 0 {
+                        return Err(ImpulseError::InvalidArgument);
+                    }
+                    if attr_base == 0x15 {
+                        if dim == 0
+                            || attr_precision < 1
                             || attr_precision > 18
                             || (attr_scale as u16) > attr_precision
                         {
@@ -550,7 +575,7 @@ impl SnapshotReader {
                         }
                         let row_count = rel_entry.edge_count;
                         if row_count > 0 {
-                            let dim_u64 = (dim.max(1)) as u64;
+                            let dim_u64 = dim as u64;
                             let is_nullable = (attr_desc.type_code & IMPULSE_NULLABLE_FLAG) != 0;
                             let padded_bm = if is_nullable {
                                 let words = row_count.div_ceil(64);

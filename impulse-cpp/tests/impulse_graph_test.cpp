@@ -272,8 +272,84 @@ static void test_decimal64_storage_and_validation() {
     ASSERT_TRUE(bad_snap == nullptr);
     ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
 
+    // Regression: valid relation DECIMAL64(10, 2) via impulse_writer_add_attribute_decimal64
+    const char* rel_ok_file = "__impulse_test_decimal64_rel_ok.imps";
+    impulse_writer_t* rw = impulse_writer_create(rel_ok_file, 0);
+    ASSERT_EQ(impulse_writer_add_domain(rw, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(rw, 0, 3), IMPULSE_OK);
+    uint32_t rel_rows[4] = {0, 2, 3, 3};
+    uint32_t rel_cols[3] = {1, 2, 0};
+    ASSERT_EQ(impulse_writer_add_relation(rw, 0, 0, 0, 3, 3, 0, rel_rows, sizeof(rel_rows), rel_cols, sizeof(rel_cols)),
+              IMPULSE_OK);
+    // Nullable relation DECIMAL64(10, 2): 128B validity bitmap + 24B payload = 152B
+    std::vector<uint8_t> nullable_rel_buf(128 + 24, 0);
+    nullable_rel_buf[0] = 0x05; // edges 0 and 2 valid
+    std::memcpy(nullable_rel_buf.data() + 128, vals, sizeof(vals));
+    ASSERT_EQ(impulse_writer_add_attribute_decimal64(rw, 0, "fee", 0x95, 1, 10, 2, nullable_rel_buf.data(), nullable_rel_buf.size()),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(rw), IMPULSE_OK);
+    impulse_writer_destroy(rw);
+
+    impulse_snapshot_t* rel_snap = impulse_snapshot_open(rel_ok_file, &st);
+    ASSERT_EQ(st, IMPULSE_OK);
+    ASSERT_TRUE(rel_snap != nullptr);
+    impulse_snapshot_close(rel_snap);
+
+    // Regression #1 (CRITICAL): nullable relation DECIMAL64 with truncated payload (bitmap present, payload only 16B < 24B)
+    const char* rel_trunc_file = "__impulse_test_decimal64_rel_trunc.imps";
+    impulse_writer_t* rtw = impulse_writer_create(rel_trunc_file, 0);
+    ASSERT_EQ(impulse_writer_add_domain(rtw, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(rtw, 0, 3), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_relation(rtw, 0, 0, 0, 3, 3, 0, rel_rows, sizeof(rel_rows), rel_cols, sizeof(rel_cols)),
+              IMPULSE_OK);
+    std::vector<uint8_t> trunc_rel_buf(128 + 16, 0);
+    ASSERT_EQ(impulse_writer_add_attribute_decimal64(rtw, 0, "fee", 0x95, 1, 10, 2, trunc_rel_buf.data(), trunc_rel_buf.size()),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(rtw), IMPULSE_OK);
+    impulse_writer_destroy(rtw);
+
+    impulse_snapshot_t* rel_trunc_snap = impulse_snapshot_open(rel_trunc_file, &st);
+    ASSERT_TRUE(rel_trunc_snap == nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_BUFFER_OVERFLOW);
+
+    // Regression #2 (HIGH): relation DECIMAL64 with empty payload (data_bytes == 0) when edge_count > 0
+    const char* rel_empty_file = "__impulse_test_decimal64_rel_empty.imps";
+    impulse_writer_t* rew = impulse_writer_create(rel_empty_file, 0);
+    ASSERT_EQ(impulse_writer_add_domain(rew, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(rew, 0, 3), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_relation(rew, 0, 0, 0, 3, 3, 0, rel_rows, sizeof(rel_rows), rel_cols, sizeof(rel_cols)),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_attribute_decimal64(rew, 0, "fee", 0x15, 1, 10, 2, nullptr, 0), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(rew), IMPULSE_OK);
+    impulse_writer_destroy(rew);
+
+    impulse_snapshot_t* rel_empty_snap = impulse_snapshot_open(rel_empty_file, &st);
+    ASSERT_TRUE(rel_empty_snap == nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_BUFFER_OVERFLOW);
+
+    // Regression #5 (MEDIUM): dimension == 0 rejected for DECIMAL64
+    ASSERT_EQ(impulse_writer_add_attribute_decimal64(nullptr, 0, "x", 0x15, 0, 10, 2, vals, sizeof(vals)),
+              IMPULSE_ERR_INVALID_ARGUMENT);
+    const char* dim0_file = "__impulse_test_decimal64_dim0.imps";
+    impulse_writer_t* d0w = impulse_writer_create(dim0_file, 0);
+    ASSERT_EQ(impulse_writer_add_domain(d0w, 0, 0x03, "Account"), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_set_domain_node_count(d0w, 0, 3), IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_domain_attribute_decimal64(d0w, 0, "d0", 0x15, 0, 10, 2, vals, sizeof(vals)),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_add_relation(d0w, 0, 0, 0, 3, 1, 0, row_offs, sizeof(row_offs), col_idx, sizeof(col_idx)),
+              IMPULSE_OK);
+    ASSERT_EQ(impulse_writer_finalize(d0w), IMPULSE_OK);
+    impulse_writer_destroy(d0w);
+    impulse_snapshot_t* dim0_snap = impulse_snapshot_open(dim0_file, &st);
+    ASSERT_TRUE(dim0_snap == nullptr);
+    ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+
     std::remove(dec_file);
     std::remove(bad_file);
+    std::remove(rel_ok_file);
+    std::remove(rel_trunc_file);
+    std::remove(rel_empty_file);
+    std::remove(dim0_file);
     std::printf("  PASS: test_decimal64_storage_and_validation\n");
 }
 
