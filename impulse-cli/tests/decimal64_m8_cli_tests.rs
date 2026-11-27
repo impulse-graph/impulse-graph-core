@@ -549,3 +549,105 @@ fn test_decimal64_index_export_validate_diff_merge() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_m8a_audit_regressions_exact_f64_dim0_varstr_and_nullable_index_rejection() {
+    let dir = make_temp_dir("audit_regressions");
+    let src = dir.join("audit_src.imps");
+
+    // Build snapshot with:
+    //  - f64 values testing > 2^53 scaling (900719925474099.0 -> decimal64(18, 3)),
+    //    exact tie without double-rounding (0.005 -> decimal64(10, 2)), and sci-notation (1e-5)
+    //  - VAR_STRING with dimension == 0
+    //  - Nullable DECIMAL64(10, 2) (0x95) for permutation/zonemap rejection
+    {
+        let mut w = SnapshotWriter::new(src.to_str().unwrap());
+        w.add_domain(0, impulse_graph::spec::KeyType::Int32, "Audit");
+        w.set_domain_node_count(0, 3);
+
+        w.add_attribute_to_domain(
+            0,
+            "big_f64",
+            0x07,
+            1,
+            pack_f64(&[900719925474099.0_f64, -900719925474099.0_f64, 1e-3_f64]),
+            None,
+        );
+        w.add_attribute_to_domain(
+            0,
+            "tie_f64",
+            0x07,
+            1,
+            pack_f64(&[0.005_f64, -0.005_f64, 0.015_f64]),
+            None,
+        );
+        let mut sdata = Vec::new();
+        let mut soffs = vec![0u32];
+        for s in ["12.34", "-0.50", "1e-2"] {
+            sdata.extend_from_slice(s.as_bytes());
+            soffs.push(sdata.len() as u32);
+        }
+        // dimension == 0 for VAR_STRING
+        w.add_attribute_to_domain(0, "dim0_str", 0x0B, 0, sdata, Some(soffs));
+
+        w.add_attribute_to_domain_with_meta(
+            0,
+            "null_dec",
+            0x15 | IMPULSE_NULLABLE_FLAG,
+            1,
+            10,
+            2,
+            pack_nullable_i64(&[Some(100), None, Some(200)]),
+            None,
+        );
+        w.finalize().unwrap();
+    }
+
+    // Regression #1a: 900719925474099.0_f64 -> decimal64(18, 3) yields exact 900719925474099000 (0 drift)
+    // and Regression #3: VAR_STRING with dimension == 0 casts cleanly to decimal64(10, 2)
+    let out_big = dir.join("out_big.imps");
+    let mut args_big = default_transmute_args(src.clone(), out_big.clone());
+    args_big.cast = vec![
+        "Audit.big_f64:decimal64(18,3)".to_string(),
+        "Audit.dim0_str:decimal64(10,2)".to_string(),
+    ];
+    commands::transmute::run(&args_big).expect("exact f64 & dim0 varstr cast failed");
+    let r_big = SnapshotReader::open(&out_big).unwrap();
+    assert_eq!(
+        unpack_i64(r_big.get_domain_attribute_data(0, "big_f64").unwrap()),
+        vec![900719925474099000i64, -900719925474099000i64, 1i64]
+    );
+    assert_eq!(
+        unpack_i64(r_big.get_domain_attribute_data(0, "dim0_str").unwrap()),
+        vec![1234i64, -50i64, 1i64]
+    );
+
+    // Regression #1b: 0.005_f64 -> decimal64(10, 2) has zero double-rounding across all 3 rounding modes
+    for (mode, expected) in [
+        ("half-up", vec![1i64, -1, 2]),
+        ("half-even", vec![0i64, 0, 2]),
+        ("trunc", vec![0i64, 0, 1]),
+    ] {
+        let out_tie = dir.join(format!("out_tie_{}.imps", mode));
+        let mut args_tie = default_transmute_args(src.clone(), out_tie.clone());
+        args_tie.cast = vec!["Audit.tie_f64:decimal64(10,2)".to_string()];
+        args_tie.rounding = mode.to_string();
+        commands::transmute::run(&args_tie).expect("tie f64 cast failed");
+        let r_tie = SnapshotReader::open(&out_tie).unwrap();
+        assert_eq!(
+            unpack_i64(r_tie.get_domain_attribute_data(0, "tie_f64").unwrap()),
+            expected,
+            "mismatch for rounding mode {}",
+            mode
+        );
+    }
+
+    // Regression #2: Nullable 0x95 DECIMAL64 rejected cleanly on permutation and zonemap index add
+    let out_idx = dir.join("out_idx_fail.imps");
+    assert!(
+        commands::index::add(&src, &out_idx, &["Audit.null_dec:permutation".to_string()]).is_err()
+    );
+    assert!(commands::index::add(&src, &out_idx, &["Audit.null_dec:zonemap".to_string()]).is_err());
+
+    let _ = fs::remove_dir_all(&dir);
+}

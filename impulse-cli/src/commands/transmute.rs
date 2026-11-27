@@ -283,8 +283,8 @@ fn rescale_decimal64(
     check_decimal64_bounds(rescaled, to_precision)
 }
 
-/// Exact base-10 string parser into `DECIMAL64(precision, scale)` with selectable rounding
-/// (zero floating-point arithmetic).
+/// Exact base-10 string parser (supporting optional scientific notation `e`/`E`) into
+/// `DECIMAL64(precision, scale)` with selectable rounding and zero floating-point arithmetic.
 fn parse_decimal64_str_rounded(
     s: &str,
     precision: u16,
@@ -302,14 +302,24 @@ fn parse_decimal64_str_rounded(
     } else {
         (false, trimmed)
     };
-    let (int_part, frac_part) = match rest.split_once('.') {
+    let (mantissa, sci_exp): (&str, i32) = match rest.find(['e', 'E']) {
+        Some(pos) => {
+            let exp_str = &rest[pos + 1..];
+            let exp_val: i32 = exp_str
+                .parse()
+                .map_err(|_| format!("Invalid decimal exponent in '{}'", s))?;
+            (&rest[..pos], exp_val)
+        }
+        None => (rest, 0),
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
         Some((i, f)) => {
             if f.contains('.') {
                 return Err(format!("Invalid decimal string '{}'", s));
             }
             (i, f)
         }
-        None => (rest, ""),
+        None => (mantissa, ""),
     };
     if int_part.is_empty() && frac_part.is_empty() {
         return Err(format!("Invalid decimal string '{}'", s));
@@ -320,45 +330,79 @@ fn parse_decimal64_str_rounded(
         return Err(format!("Invalid decimal string '{}'", s));
     }
 
-    let scale_usize = scale as usize;
-    let mut acc: i128 = 0;
-    for b in int_part.bytes() {
-        acc = acc
-            .checked_mul(10)
-            .and_then(|v| v.checked_add((b - b'0') as i128))
-            .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
-    }
-
-    let kept_frac_len = frac_part.len().min(scale_usize);
-    for b in frac_part.bytes().take(kept_frac_len) {
-        acc = acc
-            .checked_mul(10)
-            .and_then(|v| v.checked_add((b - b'0') as i128))
-            .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
-    }
-    for _ in kept_frac_len..scale_usize {
-        acc = acc
-            .checked_mul(10)
-            .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
-    }
-
-    if frac_part.len() > scale_usize {
-        let extra = &frac_part.as_bytes()[scale_usize..];
-        let first = extra[0] - b'0';
-        let has_nonzero_tail = extra[1..].iter().any(|&b| b != b'0');
-        let bump = match rounding {
-            RoundingMode::Trunc => false,
-            RoundingMode::HalfUp => first >= 5,
-            RoundingMode::HalfEven => {
-                first > 5 || (first == 5 && (has_nonzero_tail || (acc & 1) == 1))
-            }
-        };
-        if bump {
-            acc = acc
-                .checked_add(1)
-                .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
+    // Collect all significant digits (strip leading zeros)
+    let mut digits: Vec<u8> = Vec::with_capacity(int_part.len() + frac_part.len());
+    for b in int_part.bytes().chain(frac_part.bytes()) {
+        if !digits.is_empty() || b != b'0' {
+            digits.push(b);
         }
     }
+    if digits.is_empty() {
+        return Ok(0);
+    }
+
+    // Exact value is (-1)^neg * int(digits) * 10^(sci_exp - frac_part.len()).
+    // Target unscaled integer is (-1)^neg * int(digits) * 10^(sci_exp - frac_part.len() + scale).
+    let shift: i64 = (sci_exp as i64) - (frac_part.len() as i64) + (scale as i64);
+
+    let acc: i128 = if shift >= 0 {
+        if (digits.len() as i64) + shift > 19 {
+            return Err(format!(
+                "Decimal value '{}' overflows DECIMAL64({}, {})",
+                s, precision, scale
+            ));
+        }
+        let mut v: i128 = 0;
+        for &b in &digits {
+            v = v
+                .checked_mul(10)
+                .and_then(|x| x.checked_add((b - b'0') as i128))
+                .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
+        }
+        for _ in 0..shift {
+            v = v
+                .checked_mul(10)
+                .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
+        }
+        v
+    } else {
+        let drop_cnt = (-shift) as usize;
+        if drop_cnt > digits.len() {
+            // Magnitude < 0.1 ULP (or < 0.5 ULP since digits[0] != '0' and there is at least one leading zero)
+            // First dropped digit is 0, so all 3 rounding modes round to 0.
+            0
+        } else {
+            let keep_cnt = digits.len() - drop_cnt;
+            if keep_cnt > 19 {
+                return Err(format!(
+                    "Decimal value '{}' overflows DECIMAL64({}, {})",
+                    s, precision, scale
+                ));
+            }
+            let mut v: i128 = 0;
+            for &b in &digits[..keep_cnt] {
+                v = v
+                    .checked_mul(10)
+                    .and_then(|x| x.checked_add((b - b'0') as i128))
+                    .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
+            }
+            let first = digits[keep_cnt] - b'0';
+            let has_nonzero_tail = digits[keep_cnt + 1..].iter().any(|&b| b != b'0');
+            let bump = match rounding {
+                RoundingMode::Trunc => false,
+                RoundingMode::HalfUp => first >= 5,
+                RoundingMode::HalfEven => {
+                    first > 5 || (first == 5 && (has_nonzero_tail || (v & 1) == 1))
+                }
+            };
+            if bump {
+                v = v
+                    .checked_add(1)
+                    .ok_or_else(|| format!("Decimal string '{}' overflows i128", s))?;
+            }
+            v
+        }
+    };
 
     let signed = if neg { -acc } else { acc };
     check_decimal64_bounds(signed, precision)
@@ -382,7 +426,8 @@ fn round_f64_to_i128(val: f64, rounding: RoundingMode) -> Result<i128, String> {
 #[derive(Debug, Clone)]
 enum SrcValue<'a> {
     Int(i128),
-    Float(f64),
+    Float32(f32),
+    Float64(f64),
     Decimal(i64, u8),
     Str(&'a str),
 }
@@ -423,7 +468,7 @@ fn convert_to_decimal64(
                 Err(e) => handle_overflow(e, target_nullable, on_overflow),
             }
         }
-        SrcValue::Float(f) => {
+        SrcValue::Float32(f) => {
             if f.is_nan() {
                 if target_nullable {
                     return Ok(CastOutcome::Null);
@@ -440,10 +485,31 @@ fn convert_to_decimal64(
                     on_overflow,
                 );
             }
-            let scaled = f * 10f64.powi(scale as i32);
-            let res = round_f64_to_i128(scaled, rounding)
-                .and_then(|v| check_decimal64_bounds(v, precision));
-            match res {
+            let exact_dec = f.to_string();
+            match parse_decimal64_str_rounded(&exact_dec, precision, scale, rounding) {
+                Ok(out) => Ok(CastOutcome::Value(out)),
+                Err(e) => handle_overflow(e, target_nullable, on_overflow),
+            }
+        }
+        SrcValue::Float64(f) => {
+            if f.is_nan() {
+                if target_nullable {
+                    return Ok(CastOutcome::Null);
+                }
+                return Err("Cannot cast NaN to non-nullable DECIMAL64".to_string());
+            }
+            if !f.is_finite() {
+                return handle_overflow(
+                    format!(
+                        "Non-finite float {} overflows DECIMAL64({}, {})",
+                        f, precision, scale
+                    ),
+                    target_nullable,
+                    on_overflow,
+                );
+            }
+            let exact_dec = f.to_string();
+            match parse_decimal64_str_rounded(&exact_dec, precision, scale, rounding) {
                 Ok(out) => Ok(CastOutcome::Value(out)),
                 Err(e) => handle_overflow(e, target_nullable, on_overflow),
             }
@@ -469,7 +535,16 @@ fn convert_to_i128_bounded(
             let den = 10i128.pow(src_scale as u32);
             Ok(div_round_i128(v as i128, den, rounding))
         }
-        SrcValue::Float(f) => {
+        SrcValue::Float32(f) => {
+            if f.is_nan() {
+                if target_nullable {
+                    return Ok(CastOutcome::Null);
+                }
+                return Err("Cannot cast NaN to non-nullable integer".to_string());
+            }
+            round_f64_to_i128(f as f64, rounding)
+        }
+        SrcValue::Float64(f) => {
             if f.is_nan() {
                 if target_nullable {
                     return Ok(CastOutcome::Null);
@@ -503,7 +578,8 @@ fn convert_to_f64(
 ) -> Result<CastOutcome<f64>, String> {
     match *src {
         SrcValue::Int(v) => Ok(CastOutcome::Value(v as f64)),
-        SrcValue::Float(f) => Ok(CastOutcome::Value(f)),
+        SrcValue::Float32(f) => Ok(CastOutcome::Value(f as f64)),
+        SrcValue::Float64(f) => Ok(CastOutcome::Value(f)),
         SrcValue::Decimal(v, s) => {
             let formatted = format_decimal64(v, s);
             let f = formatted
@@ -525,7 +601,8 @@ fn convert_to_f64(
 fn convert_to_string(src: &SrcValue<'_>) -> String {
     match *src {
         SrcValue::Int(v) => v.to_string(),
-        SrcValue::Float(f) => f.to_string(),
+        SrcValue::Float32(f) => f.to_string(),
+        SrcValue::Float64(f) => f.to_string(),
         SrcValue::Decimal(v, s) => format_decimal64(v, s),
         SrcValue::Str(s) => s.to_string(),
     }
@@ -570,16 +647,15 @@ fn cast_attribute_column(
     rounding: RoundingMode,
     on_overflow: OverflowPolicy,
 ) -> Result<CastedAttribute, Box<dyn Error>> {
-    if attr.dimension != 1 {
+    let src_nullable = (attr.type_code & IMPULSE_NULLABLE_FLAG) != 0;
+    let src_base = attr.type_code & IMPULSE_TYPE_MASK;
+    if !(attr.dimension == 1 || (src_base == 0x0B && attr.dimension == 0)) {
         return Err(format!(
-            "Cannot --cast multi-dimensional attribute '{}' (dimension={}); only scalar attributes (dimension=1) are supported",
+            "Cannot --cast multi-dimensional attribute '{}' (dimension={}); only scalar attributes (dimension=1, or 0 for VAR_STRING) are supported",
             attr.name, attr.dimension
         )
         .into());
     }
-
-    let src_nullable = (attr.type_code & IMPULSE_NULLABLE_FLAG) != 0;
-    let src_base = attr.type_code & IMPULSE_TYPE_MASK;
     let target_nullable = src_nullable || target.explicit_nullable;
     let target_type_code = if target_nullable {
         target.base_type | IMPULSE_NULLABLE_FLAG
@@ -864,16 +940,25 @@ fn read_src_value<'a>(
         }
         0x02 => {
             let off = row * 2;
+            if off + 2 > payload.len() {
+                return Err("Source INT16 attribute truncated".into());
+            }
             let v = i16::from_le_bytes(payload[off..off + 2].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
         0x03 => {
             let off = row * 4;
+            if off + 4 > payload.len() {
+                return Err("Source INT32 attribute truncated".into());
+            }
             let v = i32::from_le_bytes(payload[off..off + 4].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
         0x04 | 0x08 | 0x09 => {
             let off = row * 8;
+            if off + 8 > payload.len() {
+                return Err("Source INT64 attribute truncated".into());
+            }
             let v = i64::from_le_bytes(payload[off..off + 8].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
@@ -885,31 +970,49 @@ fn read_src_value<'a>(
         }
         0x12 => {
             let off = row * 2;
+            if off + 2 > payload.len() {
+                return Err("Source UINT16 attribute truncated".into());
+            }
             let v = u16::from_le_bytes(payload[off..off + 2].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
         0x13 => {
             let off = row * 4;
+            if off + 4 > payload.len() {
+                return Err("Source UINT32 attribute truncated".into());
+            }
             let v = u32::from_le_bytes(payload[off..off + 4].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
         0x14 => {
             let off = row * 8;
+            if off + 8 > payload.len() {
+                return Err("Source UINT64 attribute truncated".into());
+            }
             let v = u64::from_le_bytes(payload[off..off + 8].try_into()?);
             Ok(SrcValue::Int(v as i128))
         }
         0x06 => {
             let off = row * 4;
+            if off + 4 > payload.len() {
+                return Err("Source FLOAT32 attribute truncated".into());
+            }
             let v = f32::from_le_bytes(payload[off..off + 4].try_into()?);
-            Ok(SrcValue::Float(v as f64))
+            Ok(SrcValue::Float32(v))
         }
         0x07 => {
             let off = row * 8;
+            if off + 8 > payload.len() {
+                return Err("Source FLOAT64 attribute truncated".into());
+            }
             let v = f64::from_le_bytes(payload[off..off + 8].try_into()?);
-            Ok(SrcValue::Float(v))
+            Ok(SrcValue::Float64(v))
         }
         0x15 => {
             let off = row * 8;
+            if off + 8 > payload.len() {
+                return Err("Source DECIMAL64 attribute truncated".into());
+            }
             let v = i64::from_le_bytes(payload[off..off + 8].try_into()?);
             Ok(SrcValue::Decimal(v, src_scale))
         }
@@ -1452,6 +1555,14 @@ pub fn run(args: &TransmuteArgs) -> Result<(), Box<dyn Error>> {
             )
             .into());
         }
+    }
+
+    // Warn if secondary indexes exist in the input snapshot (not preserved across schema transmute)
+    if !reader.index_entries().is_empty() {
+        eprintln!(
+            "  [WARN] Dropping {} secondary index(es) during transmute; rebuild with 'impulse-graph snapshot index add' if needed",
+            reader.index_entries().len()
+        );
     }
 
     // 6. Set Final Metadata & Finalize Snapshot
