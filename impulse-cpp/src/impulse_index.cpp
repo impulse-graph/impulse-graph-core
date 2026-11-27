@@ -122,7 +122,7 @@ impulse_status_t impulse_index_build_permutation(
     if (base_type == 0x03) {
         const int32_t* data = static_cast<const int32_t*>(attr_data);
         std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
-    } else if (base_type == 0x04) {
+    } else if (base_type == 0x04 || base_type == 0x15) {
         const int64_t* data = static_cast<const int64_t*>(attr_data);
         std::sort(perm.begin(), perm.end(), [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
     } else if (base_type == 0x06) {
@@ -175,7 +175,7 @@ impulse_status_t impulse_index_build_permutation(
         for (size_t i = 1; i < element_count; ++i) {
             IMPULSE_AUDIT_ASSERT(data[perm[i - 1]] <= data[perm[i]]);
         }
-    } else if (base_type == 0x04) {
+    } else if (base_type == 0x04 || base_type == 0x15) {
         const int64_t* data = static_cast<const int64_t*>(attr_data);
         for (size_t i = 1; i < element_count; ++i) {
             IMPULSE_AUDIT_ASSERT(data[perm[i - 1]] <= data[perm[i]]);
@@ -254,6 +254,47 @@ impulse_status_t impulse_index_permutation_range_query(
             if (matched < max_nodes) out_node_ids[matched] = node_id;
             matched++;
         }
+    } else if (base_type == 0x04 || base_type == 0x15) {
+        const int64_t* data = static_cast<const int64_t*>(attr_data);
+        constexpr double kMinI64 = -9223372036854775808.0; // exact -2^63
+        constexpr double kMaxI64Exclusive = 9223372036854775808.0; // exact 2^63
+        int64_t imin = (min_val <= kMinI64)
+            ? std::numeric_limits<int64_t>::min()
+            : ((min_val >= kMaxI64Exclusive) ? std::numeric_limits<int64_t>::max() : static_cast<int64_t>(std::ceil(min_val)));
+        int64_t imax = (max_val >= kMaxI64Exclusive)
+            ? std::numeric_limits<int64_t>::max()
+            : ((max_val < kMinI64) ? std::numeric_limits<int64_t>::min() : static_cast<int64_t>(std::floor(max_val)));
+
+        if (min_val < kMaxI64Exclusive && max_val >= kMinI64 && imin <= imax) {
+            auto low_it = std::lower_bound(perm, perm + hdr.count, imin, [data, count = hdr.count](uint32_t idx, int64_t val) {
+                if (idx >= count) return false;
+                return data[idx] < val;
+            });
+            for (auto it = low_it; it != perm + hdr.count; ++it) {
+                uint32_t node_id = *it;
+                if (node_id >= hdr.count) continue;
+                int64_t val = data[node_id];
+                if (val > imax) break;
+                if (matched < max_nodes) out_node_ids[matched] = node_id;
+                matched++;
+            }
+        }
+    } else if (base_type == 0x07) {
+        const double* data = static_cast<const double*>(attr_data);
+        auto low_it = std::lower_bound(perm, perm + hdr.count, min_val, [data, count = hdr.count](uint32_t idx, double val) {
+            if (idx >= count) return false;
+            double v = data[idx];
+            if (std::isnan(v)) return false;
+            return v < val;
+        });
+        for (auto it = low_it; it != perm + hdr.count; ++it) {
+            uint32_t node_id = *it;
+            if (node_id >= hdr.count) continue;
+            double val = data[node_id];
+            if (std::isnan(val) || val > max_val) break;
+            if (matched < max_nodes) out_node_ids[matched] = node_id;
+            matched++;
+        }
     } else {
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
@@ -277,7 +318,7 @@ impulse_status_t impulse_index_build_zone_map(
     try {
 
     uint8_t base_type = type_code & 0x7F;
-    if (base_type != 0x03 && base_type != 0x04 && base_type != 0x06 && base_type != 0x07) {
+    if (base_type != 0x03 && base_type != 0x04 && base_type != 0x06 && base_type != 0x07 && base_type != 0x15) {
         return IMPULSE_ERR_INVALID_ARGUMENT;
     }
 
@@ -290,7 +331,7 @@ impulse_status_t impulse_index_build_zone_map(
         size_t start = static_cast<size_t>(p) * PAGE_SIZE;
         size_t end = std::min(start + PAGE_SIZE, element_count);
 
-        if (base_type == 0x04) {
+        if (base_type == 0x04 || base_type == 0x15) {
             const int64_t* i64 = static_cast<const int64_t*>(attr_data);
             int64_t min_i64 = std::numeric_limits<int64_t>::max();
             int64_t max_i64 = std::numeric_limits<int64_t>::min();

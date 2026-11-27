@@ -160,6 +160,32 @@ pub fn parse_decimal64_str(s: &str, precision: u16, scale: u8) -> Result<i64, St
     i64::try_from(signed).map_err(|_| format!("Decimal value '{}' overflows i64", s))
 }
 
+/// Formats an unscaled signed `i64` for `DECIMAL64(_, scale)` as an exact base-10 string
+/// without going through floating-point arithmetic.
+pub fn format_decimal64(unscaled: i64, scale: u8) -> String {
+    let neg = unscaled < 0;
+    let abs_val: u128 = (unscaled as i128).unsigned_abs();
+    if scale == 0 {
+        if neg {
+            format!("-{}", abs_val)
+        } else {
+            abs_val.to_string()
+        }
+    } else {
+        let pow = 10u128.pow(scale as u32);
+        let int_part = abs_val / pow;
+        let frac_part = abs_val % pow;
+        let sign = if neg { "-" } else { "" };
+        format!(
+            "{}{}.{:0width$}",
+            sign,
+            int_part,
+            frac_part,
+            width = scale as usize
+        )
+    }
+}
+
 pub fn parse_type_code(s: &str) -> u8 {
     if let Ok(Some((is_nullable, _, _))) = parse_decimal64_spec(s) {
         return if is_nullable { 0x15 | 0x80 } else { 0x15 };

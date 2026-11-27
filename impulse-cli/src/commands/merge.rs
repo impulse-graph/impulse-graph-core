@@ -26,11 +26,13 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
             let offs = base_reader
                 .get_domain_attribute_offsets_by_index(d_idx, a_idx)?
                 .map(|o| o.to_vec());
-            writer.add_attribute_to_domain(
+            writer.add_attribute_to_domain_with_meta(
                 d.domain_id,
                 &a.name,
                 a.type_code,
                 a.dimension,
+                a.precision,
+                a.scale,
                 data,
                 offs,
             );
@@ -70,11 +72,13 @@ pub fn run(base: &Path, deltas: &[impl AsRef<Path>], output: &Path) -> Result<()
                     let offs = delta_reader
                         .get_domain_attribute_offsets_by_index(d_idx, a_idx)?
                         .map(|o| o.to_vec());
-                    writer.add_attribute_to_domain(
+                    writer.add_attribute_to_domain_with_meta(
                         id,
                         &a.name,
                         a.type_code,
                         a.dimension,
+                        a.precision,
+                        a.scale,
                         data,
                         offs,
                     );

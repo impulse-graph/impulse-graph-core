@@ -1,9 +1,9 @@
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use impulse_graph::spec::{
-    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMPULSE_VERSION_V090,
-    IMP_INDEX_VAMANA_ANN,
+    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_NULLABLE_FLAG, IMPULSE_TYPE_MASK,
+    IMPULSE_VERSION_PACKED, IMPULSE_VERSION_V090, IMP_INDEX_VAMANA_ANN,
 };
-use impulse_graph::SnapshotReader;
+use impulse_graph::{AttributeInfo, SnapshotReader};
 use sha2::Digest;
 use std::error::Error;
 use std::fs;
@@ -137,6 +137,70 @@ fn pub_key_slice_exact(slice: &[u8]) -> [u8; 32] {
     arr
 }
 
+fn validate_decimal64_attr(
+    owner: &str,
+    attr: &AttributeInfo,
+    row_count: u64,
+) -> Result<(), Box<dyn Error>> {
+    let base_type = attr.type_code & IMPULSE_TYPE_MASK;
+    if base_type != 0x15 {
+        return Ok(());
+    }
+    if !(1..=18).contains(&attr.precision) || (attr.scale as u16) > attr.precision {
+        return Err(format!(
+            "{} Attr '{}': invalid DECIMAL64(precision={}, scale={}); require 1 <= precision <= 18 and scale <= precision",
+            owner, attr.name, attr.precision, attr.scale
+        )
+        .into());
+    }
+    if attr.dimension == 0 {
+        return Err(format!(
+            "{} Attr '{}': invalid DECIMAL64 dimension 0 (must be >= 1)",
+            owner, attr.name
+        )
+        .into());
+    }
+    let payload_bytes = row_count
+        .checked_mul(attr.dimension as u64)
+        .and_then(|v| v.checked_mul(8))
+        .ok_or_else(|| {
+            format!(
+                "{} Attr '{}': DECIMAL64 payload size overflows u64",
+                owner, attr.name
+            )
+        })?;
+    let expected_bytes = if (attr.type_code & IMPULSE_NULLABLE_FLAG) != 0 {
+        let bm_bytes = row_count.div_ceil(64) * 8;
+        let padded_bm = if bm_bytes == 0 {
+            0
+        } else {
+            (bm_bytes + 127) & !127
+        };
+        padded_bm.checked_add(payload_bytes).ok_or_else(|| {
+            format!(
+                "{} Attr '{}': nullable DECIMAL64 byte size overflows u64",
+                owner, attr.name
+            )
+        })?
+    } else {
+        payload_bytes
+    };
+    if attr.data_bytes != expected_bytes {
+        return Err(format!(
+            "{} Attr '{}': DECIMAL64 data_bytes {} does not match expected {} (rows={}, dim={}, nullable={})",
+            owner,
+            attr.name,
+            attr.data_bytes,
+            expected_bytes,
+            row_count,
+            attr.dimension,
+            (attr.type_code & IMPULSE_NULLABLE_FLAG) != 0
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub fn validate_reader(
     reader: &SnapshotReader,
     file_len: u64,
@@ -216,6 +280,7 @@ pub fn validate_reader(
                     .into());
                 }
             }
+            validate_decimal64_attr(&format!("Domain #{}", dom.domain_id), attr, dom.node_count)?;
         }
     }
 
@@ -368,6 +433,7 @@ pub fn validate_reader(
                     .into());
                 }
             }
+            validate_decimal64_attr(&format!("Relation #{}", idx), attr, rel.edge_count)?;
         }
 
         let tgt_node_count = reader

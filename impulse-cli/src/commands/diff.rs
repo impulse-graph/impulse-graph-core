@@ -1,9 +1,54 @@
 use comfy_table::Table;
-use impulse_graph::SnapshotReader;
+use impulse_graph::spec::{IMPULSE_NULLABLE_FLAG, IMPULSE_TYPE_MASK};
+use impulse_graph::{AttributeInfo, SnapshotReader};
 use serde_json::json;
 use std::collections::HashSet;
 use std::error::Error;
 use std::path::Path;
+
+fn attr_element_width(type_code: u8) -> usize {
+    match type_code & IMPULSE_TYPE_MASK {
+        0x01 | 0x0A | 0x0F | 0x11 => 1,
+        0x02 | 0x05 | 0x12 => 2,
+        0x03 | 0x06 | 0x13 => 4,
+        0x04 | 0x07 | 0x08 | 0x09 | 0x0D | 0x14 | 0x15 => 8,
+        0x0E => 16,
+        _ => 0,
+    }
+}
+
+fn format_attr_schema(a: &AttributeInfo) -> String {
+    let base = a.type_code & IMPULSE_TYPE_MASK;
+    let nullable = if (a.type_code & IMPULSE_NULLABLE_FLAG) != 0 {
+        "?"
+    } else {
+        ""
+    };
+    let label = crate::commands::inspect::format_attr_type_label(base, a.precision, a.scale);
+    let width = attr_element_width(a.type_code);
+    if width > 0 {
+        format!("{}{} ({}B)", label, nullable, width)
+    } else {
+        format!("{}{}", label, nullable)
+    }
+}
+
+fn attr_meta_json(a: &AttributeInfo) -> serde_json::Value {
+    let base = a.type_code & IMPULSE_TYPE_MASK;
+    let mut obj = json!({
+        "name": a.name,
+        "type_code": a.type_code,
+        "type": crate::commands::inspect::format_attr_type_label(base, a.precision, a.scale),
+        "nullable": (a.type_code & IMPULSE_NULLABLE_FLAG) != 0,
+        "dimension": a.dimension,
+        "element_width": attr_element_width(a.type_code),
+    });
+    if base == 0x15 {
+        obj["precision"] = json!(a.precision);
+        obj["scale"] = json!(a.scale);
+    }
+    obj
+}
 
 pub fn run(base_path: &Path, target_path: &Path) -> Result<(), Box<dyn Error>> {
     run_with_format(base_path, target_path, "text")
@@ -57,6 +102,8 @@ pub fn run_with_format(
                 "in_target": t_d.is_some(),
                 "base_nodes": b_d.map(|d| d.node_count),
                 "target_nodes": t_d.map(|d| d.node_count),
+                "base_attributes": b_d.map(|d| d.attributes.iter().map(attr_meta_json).collect::<Vec<_>>()),
+                "target_attributes": t_d.map(|d| d.attributes.iter().map(attr_meta_json).collect::<Vec<_>>()),
             }));
         }
         diff_obj.insert("domains".into(), json!(domain_diffs));
@@ -81,6 +128,8 @@ pub fn run_with_format(
                 "target_edges": t_r.map(|r| r.edge_count),
                 "base_csc": b_r.map(|r| r.has_csc()),
                 "target_csc": t_r.map(|r| r.has_csc()),
+                "base_attributes": b_r.map(|r| r.attributes.iter().map(attr_meta_json).collect::<Vec<_>>()),
+                "target_attributes": t_r.map(|r| r.attributes.iter().map(attr_meta_json).collect::<Vec<_>>()),
             }));
         }
         diff_obj.insert("relations".into(), json!(rel_diffs));
@@ -273,6 +322,107 @@ pub fn run_with_format(
         ]);
     }
     println!("{}", rel_table);
+
+    // Attribute schema differences (domains & relations, including DECIMAL64 precision/scale)
+    let mut attr_table = Table::new();
+    attr_table.set_header(vec![
+        "Entity.Attr",
+        "BASE Schema",
+        "TARGET Schema",
+        "Status",
+    ]);
+    let mut attr_rows = 0usize;
+    for name in &dom_names {
+        let b_d = base.domains().iter().find(|d| d.name == *name);
+        let t_d = target.domains().iter().find(|d| d.name == *name);
+        let mut a_names: Vec<String> = b_d
+            .map(|d| d.attributes.iter().map(|a| a.name.clone()).collect())
+            .unwrap_or_default();
+        if let Some(td) = t_d {
+            for a in &td.attributes {
+                if !a_names.contains(&a.name) {
+                    a_names.push(a.name.clone());
+                }
+            }
+        }
+        for aname in &a_names {
+            let b_a = b_d.and_then(|d| d.attributes.iter().find(|a| a.name == *aname));
+            let t_a = t_d.and_then(|d| d.attributes.iter().find(|a| a.name == *aname));
+            let b_str = b_a.map(format_attr_schema).unwrap_or_else(|| "-".into());
+            let t_str = t_a.map(format_attr_schema).unwrap_or_else(|| "-".into());
+            let status = match (b_a, t_a) {
+                (Some(ba), Some(ta)) => {
+                    if ba.type_code == ta.type_code
+                        && ba.dimension == ta.dimension
+                        && ba.precision == ta.precision
+                        && ba.scale == ta.scale
+                    {
+                        "MATCH"
+                    } else {
+                        "CHANGED"
+                    }
+                }
+                (Some(_), None) => "REMOVED_IN_TARGET",
+                (None, Some(_)) => "ADDED_IN_TARGET",
+                (None, None) => "-",
+            };
+            attr_table.add_row(vec![
+                format!("{}.{}", name, aname),
+                b_str,
+                t_str,
+                status.into(),
+            ]);
+            attr_rows += 1;
+        }
+    }
+    for name in &rel_names {
+        let b_r = base.relations().iter().find(|r| r.name == *name);
+        let t_r = target.relations().iter().find(|r| r.name == *name);
+        let mut a_names: Vec<String> = b_r
+            .map(|r| r.attributes.iter().map(|a| a.name.clone()).collect())
+            .unwrap_or_default();
+        if let Some(tr) = t_r {
+            for a in &tr.attributes {
+                if !a_names.contains(&a.name) {
+                    a_names.push(a.name.clone());
+                }
+            }
+        }
+        for aname in &a_names {
+            let b_a = b_r.and_then(|r| r.attributes.iter().find(|a| a.name == *aname));
+            let t_a = t_r.and_then(|r| r.attributes.iter().find(|a| a.name == *aname));
+            let b_str = b_a.map(format_attr_schema).unwrap_or_else(|| "-".into());
+            let t_str = t_a.map(format_attr_schema).unwrap_or_else(|| "-".into());
+            let status = match (b_a, t_a) {
+                (Some(ba), Some(ta)) => {
+                    if ba.type_code == ta.type_code
+                        && ba.dimension == ta.dimension
+                        && ba.precision == ta.precision
+                        && ba.scale == ta.scale
+                    {
+                        "MATCH"
+                    } else {
+                        "CHANGED"
+                    }
+                }
+                (Some(_), None) => "REMOVED_IN_TARGET",
+                (None, Some(_)) => "ADDED_IN_TARGET",
+                (None, None) => "-",
+            };
+            attr_table.add_row(vec![
+                format!("{}.{}", name, aname),
+                b_str,
+                t_str,
+                status.into(),
+            ]);
+            attr_rows += 1;
+        }
+    }
+    if attr_rows > 0 {
+        println!();
+        println!("--- ATTRIBUTE SCHEMA DIFFERENCES ---");
+        println!("{}", attr_table);
+    }
 
     println!();
     println!("--- SECONDARY INDEX DIRECTORY DIFFERENCES ---");
