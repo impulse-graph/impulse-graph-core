@@ -11,6 +11,7 @@
 #include "v11_p2_helpers.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
