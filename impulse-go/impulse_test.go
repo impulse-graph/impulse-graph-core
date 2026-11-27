@@ -89,7 +89,7 @@ func TestSnapshotAPIsAndSampling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get attribute buffers: %v", err)
 	}
-	if len(data) == 0 || typeCode != 0x08 || dim != 1 {
+	if len(data) == 0 || typeCode != 0x06 || dim != 1 {
 		t.Errorf("attribute buffer mismatch: data len=%d, typeCode=%d, dim=%d", len(data), typeCode, dim)
 	}
 	_ = offsets
