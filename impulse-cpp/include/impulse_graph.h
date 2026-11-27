@@ -234,6 +234,16 @@ IMPULSE_API impulse_status_t impulse_writer_add_domain_attribute(
     const void* data, uint64_t data_bytes,
     const void* offsets, uint64_t offsets_bytes
 );
+IMPULSE_API impulse_status_t impulse_writer_add_domain_attribute_decimal64(
+    impulse_writer_t* writer,
+    uint16_t domain_index,
+    const char* name,
+    uint8_t type_code,
+    uint32_t dimension,
+    uint16_t precision,
+    uint8_t scale,
+    const void* data, uint64_t data_bytes
+);
 IMPULSE_API impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
     uint16_t src_domain_id,

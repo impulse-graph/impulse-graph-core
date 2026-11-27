@@ -96,13 +96,21 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                 } else {
                     a.name.clone()
                 };
-                dom_attrs.push(json!({
+                let base_type = a.type_code & 0x7F;
+                let mut attr_json = json!({
                     "name": a_name,
                     "type_code": a.type_code,
                     "dimension": a.dimension,
                     "data_offset": a.data_offset,
                     "data_bytes": a.data_bytes,
-                }));
+                });
+                if base_type == 0x15 {
+                    attr_json["type_name"] =
+                        json!(format_attr_type_label(base_type, a.precision, a.scale));
+                    attr_json["precision"] = json!(a.precision);
+                    attr_json["scale"] = json!(a.scale);
+                }
+                dom_attrs.push(attr_json);
             }
             domains.push(json!({
                 "domain_id": d.domain_id,
@@ -133,13 +141,21 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                 } else {
                     a.name.clone()
                 };
-                attrs.push(json!({
+                let base_type = a.type_code & 0x7F;
+                let mut attr_json = json!({
                     "name": a_name,
                     "type_code": a.type_code,
                     "dimension": a.dimension,
                     "data_offset": a.data_offset,
                     "data_bytes": a.data_bytes,
-                }));
+                });
+                if base_type == 0x15 {
+                    attr_json["type_name"] =
+                        json!(format_attr_type_label(base_type, a.precision, a.scale));
+                    attr_json["precision"] = json!(a.precision);
+                    attr_json["scale"] = json!(a.scale);
+                }
+                attrs.push(attr_json);
             }
 
             relations.push(json!({
@@ -552,10 +568,18 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                     "[Non-Null]"
                 };
                 let base_type = a.type_code & 0x7F;
-                println!(
-                    "    Node Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
-                    a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
-                );
+                let type_label = format_attr_type_label(base_type, a.precision, a.scale);
+                if base_type == 0x15 {
+                    println!(
+                        "    Node Attribute '{}': type={} (type_code=0x{:02X} {}, base_type=0x{:02X}), dim={}, data_offset=0x{:X} ({} B)",
+                        a_name, type_label, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                    );
+                } else {
+                    println!(
+                        "    Node Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
+                        a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                    );
+                }
             }
         }
         for (r_idx, r) in reader.relations().iter().enumerate() {
@@ -583,10 +607,18 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
                     "[Non-Null]"
                 };
                 let base_type = a.type_code & 0x7F;
-                println!(
-                    "    Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
-                    a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
-                );
+                let type_label = format_attr_type_label(base_type, a.precision, a.scale);
+                if base_type == 0x15 {
+                    println!(
+                        "    Attribute '{}': type={} (type_code=0x{:02X} {}, base_type=0x{:02X}), dim={}, data_offset=0x{:X} ({} B)",
+                        a_name, type_label, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                    );
+                } else {
+                    println!(
+                        "    Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
+                        a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                    );
+                }
             }
         }
 
@@ -601,6 +633,14 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     }
 
     Ok(())
+}
+
+pub fn format_attr_type_label(base_type: u8, precision: u16, scale: u8) -> String {
+    match base_type {
+        0x15 => format!("DECIMAL64({}, {})", precision, scale),
+        0x0F => "BOOL".to_string(),
+        _ => format!("0x{:02X}", base_type),
+    }
 }
 
 fn format_required_features(flags: u64) -> String {

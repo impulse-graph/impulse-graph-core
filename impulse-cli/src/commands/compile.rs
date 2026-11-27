@@ -131,6 +131,11 @@ fn base_type_element_size(base_type: u8, dimension: u32) -> usize {
         0x0A => 1,  // FIXED_BYTES
         0x0D => 8,  // INTERVAL_SEC_32 (u32 start_sec, u32 duration_sec)
         0x0E => 16, // INTERVAL_MS_64 (u64 start_ms, u64 duration_ms)
+        0x11 => 1,  // UINT8
+        0x12 => 2,  // UINT16
+        0x13 => 4,  // UINT32
+        0x14 => 8,  // UINT64
+        0x15 => 8,  // DECIMAL64 (i64 unscaled)
         _ => 4,
     };
     base_size * (dimension.max(1) as usize)
@@ -207,6 +212,8 @@ fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeCol
             name: col.name.clone(),
             type_code: col.type_code,
             dimension: col.dimension,
+            precision: col.precision,
+            scale: col.scale,
             data: final_data,
             offsets: Some(new_offsets),
             null_count: new_null_count,
@@ -239,6 +246,8 @@ fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeCol
             name: col.name.clone(),
             type_code: col.type_code,
             dimension: col.dimension,
+            precision: col.precision,
+            scale: col.scale,
             data: final_data,
             offsets: None,
             null_count: new_null_count,
@@ -761,11 +770,13 @@ pub fn run_with_options(
         }
 
         for attr in cr.attributes {
-            writer.add_attribute_to_relation(
+            writer.add_attribute_to_relation_with_meta(
                 rel_idx,
                 &attr.name,
                 attr.type_code,
                 attr.dimension,
+                attr.precision,
+                attr.scale,
                 attr.data,
                 attr.offsets,
             );
@@ -823,11 +834,13 @@ pub fn run_with_options(
 
         if let Some(domain_attrs) = compiled_domain_attributes.remove(&d.id) {
             for attr in domain_attrs {
-                writer.add_attribute_to_domain(
+                writer.add_attribute_to_domain_with_meta(
                     d.id,
                     &attr.name,
                     attr.type_code,
                     attr.dimension,
+                    attr.precision,
+                    attr.scale,
                     attr.data,
                     attr.offsets,
                 );

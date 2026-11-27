@@ -1,7 +1,7 @@
 use arrow_array::{
-    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeBinaryArray,
-    FixedSizeListArray, Float16Array, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, StringArray,
+    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, Decimal128Array, Decimal64Array,
+    FixedSizeBinaryArray, FixedSizeListArray, Float16Array, Float32Array, Float64Array, Int16Array,
+    Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeStringArray, StringArray,
     TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
     TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
@@ -17,13 +17,153 @@ pub struct NativeColumn {
     pub name: String,
     pub type_code: u8,
     pub dimension: u32,
+    pub precision: u16,
+    pub scale: u8,
     pub data: Vec<u8>,
     pub offsets: Option<Vec<u32>>,
     pub null_count: usize,
     pub row_count: usize,
 }
 
+/// Parses a `decimal64(P, S)` / `decimal(P, S)` / `dec64(P, S)` type spec (with optional
+/// `?` / `nullable_` / `opt_` nullability marker) and validates `1 <= P <= 18 && S <= P`.
+/// Returns `Ok(None)` if `s` is not a decimal type spec, `Ok(Some((is_nullable, precision, scale)))`
+/// if valid, or `Err(...)` if it is a decimal spec with invalid `(precision, scale)`.
+pub fn parse_decimal64_spec(s: &str) -> Result<Option<(bool, u16, u8)>, String> {
+    let s_clean = s.trim().to_lowercase();
+    let is_nullable =
+        s_clean.ends_with('?') || s_clean.starts_with("nullable_") || s_clean.starts_with("opt_");
+    let name = s_clean
+        .trim_end_matches('?')
+        .trim_start_matches("nullable_")
+        .trim_start_matches("opt_")
+        .trim();
+
+    let inner = if let Some(rest) = name.strip_prefix("decimal64") {
+        rest
+    } else if let Some(rest) = name.strip_prefix("decimal") {
+        rest
+    } else if let Some(rest) = name.strip_prefix("dec64") {
+        rest
+    } else {
+        return Ok(None);
+    };
+
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return Ok(Some((is_nullable, 18, 0)));
+    }
+    let body = inner
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .ok_or_else(|| {
+            format!(
+                "Invalid DECIMAL64 type spec '{}': expected decimal64(P, S)",
+                s
+            )
+        })?;
+    let parts: Vec<&str> = body.split(',').map(|p| p.trim()).collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid DECIMAL64 type spec '{}': expected 2 arguments (precision, scale)",
+            s
+        ));
+    }
+    let precision: u16 = parts[0]
+        .parse()
+        .map_err(|_| format!("Invalid DECIMAL64 precision '{}' in '{}'", parts[0], s))?;
+    let scale: u8 = parts[1]
+        .parse()
+        .map_err(|_| format!("Invalid DECIMAL64 scale '{}' in '{}'", parts[1], s))?;
+    if !(1..=18).contains(&precision) || (scale as u16) > precision {
+        return Err(format!(
+            "Invalid DECIMAL64({}, {}): require 1 <= precision <= 18 and 0 <= scale <= precision",
+            precision, scale
+        ));
+    }
+    Ok(Some((is_nullable, precision, scale)))
+}
+
+/// Parses an exact base-10 decimal string (e.g. `"-123.45"`) into a signed unscaled `i64`
+/// for `DECIMAL64(precision, scale)` without going through `f64`.
+pub fn parse_decimal64_str(s: &str, precision: u16, scale: u8) -> Result<i64, String> {
+    if !(1..=18).contains(&precision) || (scale as u16) > precision {
+        return Err(format!(
+            "Invalid DECIMAL64({}, {}): require 1 <= precision <= 18 and 0 <= scale <= precision",
+            precision, scale
+        ));
+    }
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    let (neg, rest) = if let Some(r) = trimmed.strip_prefix('-') {
+        (true, r)
+    } else if let Some(r) = trimmed.strip_prefix('+') {
+        (false, r)
+    } else {
+        (false, trimmed)
+    };
+    let (int_part, frac_part) = match rest.split_once('.') {
+        Some((i, f)) => {
+            if f.contains('.') {
+                return Err(format!("Invalid decimal string '{}'", s));
+            }
+            (i, f)
+        }
+        None => (rest, ""),
+    };
+    if int_part.is_empty() && frac_part.is_empty() {
+        return Err(format!("Invalid decimal string '{}'", s));
+    }
+    if !int_part.bytes().all(|b| b.is_ascii_digit())
+        || !frac_part.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(format!("Invalid decimal string '{}'", s));
+    }
+    if frac_part.len() > scale as usize {
+        return Err(format!(
+            "Decimal value '{}' has {} fractional digits exceeding scale {}",
+            s,
+            frac_part.len(),
+            scale
+        ));
+    }
+
+    let mut acc: i128 = 0;
+    for b in int_part.bytes() {
+        acc = acc
+            .checked_mul(10)
+            .and_then(|v| v.checked_add((b - b'0') as i128))
+            .ok_or_else(|| format!("Decimal value '{}' overflows i64", s))?;
+    }
+    for b in frac_part.bytes() {
+        acc = acc
+            .checked_mul(10)
+            .and_then(|v| v.checked_add((b - b'0') as i128))
+            .ok_or_else(|| format!("Decimal value '{}' overflows i64", s))?;
+    }
+    for _ in frac_part.len()..(scale as usize) {
+        acc = acc
+            .checked_mul(10)
+            .ok_or_else(|| format!("Decimal value '{}' overflows i64", s))?;
+    }
+
+    let max_abs = 10i128.pow(precision as u32) - 1;
+    if acc > max_abs {
+        return Err(format!(
+            "Decimal value '{}' exceeds DECIMAL64({}, {}) range",
+            s, precision, scale
+        ));
+    }
+    let signed = if neg { -acc } else { acc };
+    i64::try_from(signed).map_err(|_| format!("Decimal value '{}' overflows i64", s))
+}
+
 pub fn parse_type_code(s: &str) -> u8 {
+    if let Ok(Some((is_nullable, _, _))) = parse_decimal64_spec(s) {
+        return if is_nullable { 0x15 | 0x80 } else { 0x15 };
+    }
     let s_clean = s.trim().to_lowercase();
     let is_nullable =
         s_clean.ends_with('?') || s_clean.starts_with("nullable_") || s_clean.starts_with("opt_");
@@ -47,6 +187,7 @@ pub fn parse_type_code(s: &str) -> u8 {
         "var_bytes" | "blob" | "binary" => 0x0C,
         "interval_sec_32" | "interval_sec" => 0x0D,
         "interval_ms_64" | "interval_ms" => 0x0E,
+        "decimal64" | "dec64" => 0x15,
         _ => 0x03,
     };
 
@@ -144,6 +285,8 @@ pub fn read_parquet_column_data(
         requested_type_code: Option<u8>,
         inferred_base_type: u8,
         dimension: u32,
+        precision: u16,
+        scale: u8,
         is_valid: Vec<bool>,
         payload_bytes: Vec<u8>,
         string_offsets: Option<Vec<u32>>,
@@ -152,6 +295,14 @@ pub fn read_parquet_column_data(
 
     let mut accumulators: HashMap<String, Accumulator> = HashMap::new();
     for &(col_name, type_str_opt, dim_opt) in columns {
+        let mut req_precision: u16 = 0;
+        let mut req_scale: u8 = 0;
+        if let Some(ts) = type_str_opt {
+            if let Some((_, p, s)) = parse_decimal64_spec(ts)? {
+                req_precision = p;
+                req_scale = s;
+            }
+        }
         let req_tc = type_str_opt.map(parse_type_code);
         accumulators.insert(
             col_name.to_string(),
@@ -159,6 +310,8 @@ pub fn read_parquet_column_data(
                 requested_type_code: req_tc,
                 inferred_base_type: req_tc.map(|c| c & 0x7F).unwrap_or(0x03),
                 dimension: dim_opt.unwrap_or(1),
+                precision: req_precision,
+                scale: req_scale,
                 is_valid: Vec::new(),
                 payload_bytes: Vec::new(),
                 string_offsets: None,
@@ -274,6 +427,49 @@ pub fn read_parquet_column_data(
                     acc.inferred_base_type = 0x04;
                     for i in 0..len {
                         let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
+                        acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                } else if let Some(arr) = array.as_any().downcast_ref::<Decimal64Array>() {
+                    let p = arr.precision() as u16;
+                    let s = arr.scale();
+                    if !(1..=18).contains(&p) || s < 0 || (s as u16) > p {
+                        return Err(format!(
+                            "Parquet DECIMAL64 column '{}' has invalid precision/scale ({}, {})",
+                            col_name, p, s
+                        )
+                        .into());
+                    }
+                    acc.inferred_base_type = 0x15;
+                    acc.precision = p;
+                    acc.scale = s as u8;
+                    for i in 0..len {
+                        let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
+                        acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                } else if let Some(arr) = array.as_any().downcast_ref::<Decimal128Array>() {
+                    let p = arr.precision() as u16;
+                    let s = arr.scale();
+                    if !(1..=18).contains(&p) || s < 0 || (s as u16) > p {
+                        return Err(format!(
+                            "Parquet DECIMAL128 column '{}' with ({}, {}) cannot fit in DECIMAL64 (require 1 <= P <= 18 && 0 <= S <= P)",
+                            col_name, p, s
+                        )
+                        .into());
+                    }
+                    acc.inferred_base_type = 0x15;
+                    acc.precision = p;
+                    acc.scale = s as u8;
+                    for i in 0..len {
+                        let v: i64 = if arr.is_null(i) {
+                            0i64
+                        } else {
+                            i64::try_from(arr.value(i)).map_err(|_| {
+                                format!(
+                                    "Parquet DECIMAL value at row {} in '{}' overflows i64",
+                                    i, col_name
+                                )
+                            })?
+                        };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<TimestampMillisecondArray>()
@@ -456,6 +652,8 @@ pub fn read_parquet_column_data(
                 name,
                 type_code: final_type_code,
                 dimension: acc.dimension,
+                precision: acc.precision,
+                scale: acc.scale,
                 data: final_data,
                 offsets: acc.string_offsets,
                 null_count: acc.null_count,
@@ -551,6 +749,14 @@ pub fn read_text_column_data(
         let row_count = vals.len();
         let null_count = vals.iter().filter(|v| v.is_none()).count();
 
+        let mut dec_precision: u16 = 0;
+        let mut dec_scale: u8 = 0;
+        if let Some(ts) = req_type_str {
+            if let Some((_, p, s)) = parse_decimal64_spec(ts)? {
+                dec_precision = p;
+                dec_scale = s;
+            }
+        }
         let req_tc = req_type_str.map(parse_type_code);
         let is_nullable = req_tc.map(|tc| (tc & 0x80) != 0).unwrap_or(null_count > 0);
         let base_type = req_tc.map(|tc| tc & 0x7F).unwrap_or(0x03); // Default to INT32
@@ -680,6 +886,15 @@ pub fn read_text_column_data(
                     payload_bytes.extend_from_slice(&start_ms.to_le_bytes());
                     payload_bytes.extend_from_slice(&dur_ms.to_le_bytes());
                 }
+                0x15 => {
+                    // DECIMAL64(P, S): exact base-10 string -> signed unscaled i64 (zero f64 loss)
+                    let v = if val_opt.is_none() {
+                        0i64
+                    } else {
+                        parse_decimal64_str(s, dec_precision, dec_scale)?
+                    };
+                    payload_bytes.extend_from_slice(&v.to_le_bytes());
+                }
                 _ => {
                     let v: i32 = s.parse().unwrap_or(0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
@@ -706,6 +921,8 @@ pub fn read_text_column_data(
                 name: col_name.to_string(),
                 type_code: final_type_code,
                 dimension,
+                precision: dec_precision,
+                scale: dec_scale,
                 data: final_data,
                 offsets: string_offsets,
                 null_count,
@@ -933,4 +1150,146 @@ fn parse_u64_pair(s: &str) -> (u64, u64) {
         .and_then(|p| p.trim().parse::<u64>().ok())
         .unwrap_or(0);
     (a, b)
+}
+
+#[cfg(test)]
+mod decimal64_tests {
+    use super::*;
+    use crate::commands::inspect::format_attr_type_label;
+    use impulse_graph::spec::{BaseDataType, KeyType};
+    use impulse_graph::{ImpulseError, SnapshotReader, SnapshotWriter};
+
+    #[test]
+    fn test_parse_decimal64_spec_valid_and_invalid() {
+        assert_eq!(
+            parse_decimal64_spec("decimal64(10, 2)").unwrap(),
+            Some((false, 10, 2))
+        );
+        assert_eq!(
+            parse_decimal64_spec("decimal(18, 0)?").unwrap(),
+            Some((true, 18, 0))
+        );
+        assert_eq!(
+            parse_decimal64_spec("nullable_dec64(1, 1)").unwrap(),
+            Some((true, 1, 1))
+        );
+        assert_eq!(parse_decimal64_spec("int64").unwrap(), None);
+        assert_eq!(parse_type_code("decimal64(10, 2)"), 0x15);
+        assert_eq!(parse_type_code("decimal64(10, 2)?"), 0x95);
+
+        // Invalid (P, S)
+        assert!(parse_decimal64_spec("decimal64(0, 0)").is_err());
+        assert!(parse_decimal64_spec("decimal64(19, 2)").is_err());
+        assert!(parse_decimal64_spec("decimal64(5, 6)").is_err());
+    }
+
+    #[test]
+    fn test_parse_decimal64_str_exact_no_f64_loss() {
+        assert_eq!(parse_decimal64_str("123.45", 10, 2).unwrap(), 12345);
+        assert_eq!(parse_decimal64_str("-0.05", 10, 2).unwrap(), -5);
+        assert_eq!(parse_decimal64_str("42", 10, 2).unwrap(), 4200);
+        // 18 digits: f64 only has 53 bits (~15.95 decimal digits), so this proves exact integer parsing
+        assert_eq!(
+            parse_decimal64_str("9999999999999999.99", 18, 2).unwrap(),
+            999_999_999_999_999_999i64
+        );
+        assert_eq!(
+            parse_decimal64_str("-9999999999999999.99", 18, 2).unwrap(),
+            -999_999_999_999_999_999i64
+        );
+        // Reject overflow & excess scale
+        assert!(parse_decimal64_str("123.456", 10, 2).is_err());
+        assert!(parse_decimal64_str("100000000.00", 10, 2).is_err());
+    }
+
+    #[test]
+    fn test_decimal64_snapshot_roundtrip_inspect_and_invalid_rejection() {
+        let tmp = std::env::temp_dir();
+        let valid_path = tmp.join("test_decimal64_valid_m1.imps");
+
+        let values: [i64; 3] = [12345, -9999, 0];
+        let mut raw_bytes = Vec::with_capacity(24);
+        for v in values {
+            raw_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        let mut writer = SnapshotWriter::new(valid_path.to_str().unwrap());
+        writer.add_domain(0, KeyType::Int32, "Account");
+        writer.set_domain_node_count(0, 3);
+        writer.add_attribute_to_domain_with_meta(
+            0,
+            "balance",
+            0x15,
+            1,
+            10,
+            2,
+            raw_bytes.clone(),
+            None,
+        );
+        writer.add_relation(0, 0, 3, 1, vec![0, 1, 1, 1], vec![1]);
+        writer.finalize().expect("write valid decimal64 snapshot");
+
+        let reader = SnapshotReader::open(&valid_path).expect("open valid decimal64 snapshot");
+        let dom = &reader.domains()[0];
+        assert_eq!(dom.attributes.len(), 1);
+        let attr = &dom.attributes[0];
+        assert_eq!(attr.type_code, 0x15);
+        assert_eq!(attr.base_type(), Some(BaseDataType::Decimal64));
+        assert_eq!(attr.precision, 10);
+        assert_eq!(attr.scale, 2);
+        assert_eq!(
+            format_attr_type_label(attr.type_code & 0x7F, attr.precision, attr.scale),
+            "DECIMAL64(10, 2)"
+        );
+        let data = reader.get_domain_attribute_by_index(0, 0).unwrap();
+        assert_eq!(data.len(), 24);
+        assert_eq!(i64::from_le_bytes(data[0..8].try_into().unwrap()), 12345);
+        assert_eq!(i64::from_le_bytes(data[8..16].try_into().unwrap()), -9999);
+        let _ = std::fs::remove_file(&valid_path);
+
+        // Negative tests: P=0, P=19, S>P, truncated payload
+        let invalid_cases = [
+            (
+                "p0",
+                0u16,
+                0u8,
+                raw_bytes.clone(),
+                ImpulseError::InvalidArgument,
+            ),
+            (
+                "p19",
+                19u16,
+                2u8,
+                raw_bytes.clone(),
+                ImpulseError::InvalidArgument,
+            ),
+            (
+                "s_gt_p",
+                5u16,
+                6u8,
+                raw_bytes.clone(),
+                ImpulseError::InvalidArgument,
+            ),
+            (
+                "trunc",
+                10u16,
+                2u8,
+                vec![0u8; 16],
+                ImpulseError::BufferOverflow,
+            ),
+        ];
+        for (label, p, s, payload, expected_err) in invalid_cases {
+            let bad_path = tmp.join(format!("test_decimal64_bad_{}_m1.imps", label));
+            let mut w = SnapshotWriter::new(bad_path.to_str().unwrap());
+            w.add_domain(0, KeyType::Int32, "Account");
+            w.set_domain_node_count(0, 3);
+            w.add_attribute_to_domain_with_meta(0, "bad", 0x15, 1, p, s, payload, None);
+            w.add_relation(0, 0, 3, 1, vec![0, 1, 1, 1], vec![1]);
+            w.finalize().expect("write bad decimal64 snapshot");
+
+            let res = SnapshotReader::open(&bad_path);
+            assert_eq!(res.err(), Some(expected_err), "case {} should fail", label);
+            let _ = std::fs::remove_file(&bad_path);
+        }
+    }
 }

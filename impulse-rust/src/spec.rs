@@ -135,6 +135,12 @@ pub enum BaseDataType {
     VarBytes = 0x0C,
     IntervalSec32 = 0x0D,
     IntervalMs64 = 0x0E,
+    Bool = 0x0F,
+    Uint8 = 0x11,
+    Uint16 = 0x12,
+    Uint32 = 0x13,
+    Uint64 = 0x14,
+    Decimal64 = 0x15,
 }
 
 impl BaseDataType {
@@ -155,20 +161,28 @@ impl BaseDataType {
             0x0C => Some(BaseDataType::VarBytes),
             0x0D => Some(BaseDataType::IntervalSec32),
             0x0E => Some(BaseDataType::IntervalMs64),
+            0x0F => Some(BaseDataType::Bool),
+            0x11 => Some(BaseDataType::Uint8),
+            0x12 => Some(BaseDataType::Uint16),
+            0x13 => Some(BaseDataType::Uint32),
+            0x14 => Some(BaseDataType::Uint64),
+            0x15 => Some(BaseDataType::Decimal64),
             _ => None,
         }
     }
 
     pub fn element_byte_size(&self) -> usize {
         match self {
-            BaseDataType::Int8 => 1,
-            BaseDataType::Int16 | BaseDataType::Float16 => 2,
-            BaseDataType::Int32 | BaseDataType::Float32 => 4,
+            BaseDataType::Int8 | BaseDataType::Uint8 | BaseDataType::Bool => 1,
+            BaseDataType::Int16 | BaseDataType::Uint16 | BaseDataType::Float16 => 2,
+            BaseDataType::Int32 | BaseDataType::Uint32 | BaseDataType::Float32 => 4,
             BaseDataType::Int64
+            | BaseDataType::Uint64
             | BaseDataType::Float64
             | BaseDataType::TimestampMs
             | BaseDataType::TimestampNs
-            | BaseDataType::IntervalSec32 => 8,
+            | BaseDataType::IntervalSec32
+            | BaseDataType::Decimal64 => 8,
             BaseDataType::IntervalMs64 => 16,
             BaseDataType::FixedBytes => 1,
             BaseDataType::VarString | BaseDataType::VarBytes => 0,

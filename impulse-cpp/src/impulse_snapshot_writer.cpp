@@ -103,6 +103,44 @@ impulse_status_t impulse_writer_add_domain_attribute(
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
+impulse_status_t impulse_writer_add_domain_attribute_decimal64(
+    impulse_writer_t* writer,
+    uint16_t domain_index,
+    const char* name,
+    uint8_t type_code,
+    uint32_t dimension,
+    uint16_t precision,
+    uint8_t scale,
+    const void* data, uint64_t data_bytes
+) {
+    if (!writer || !name || domain_index >= writer->domains.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if ((type_code & 0x7Fu) != 0x15u) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (precision < 1u || precision > 18u || static_cast<uint16_t>(scale) > precision) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    try {
+        if (writer->domain_attributes.size() <= domain_index) {
+            writer->domain_attributes.resize(writer->domains.size());
+        }
+
+        impulse_writer_attr attr;
+        attr.name = name;
+        attr.type_code = type_code;
+        attr.reserved1 = scale;
+        attr.reserved2 = precision;
+        attr.dimension = dimension;
+
+        if (data && data_bytes > 0) {
+            attr.data.resize(data_bytes);
+            std::memcpy(attr.data.data(), data, data_bytes);
+        }
+
+        writer->domain_attributes[domain_index].push_back(std::move(attr));
+        writer->domains[domain_index].attr_count = static_cast<uint16_t>(writer->domain_attributes[domain_index].size());
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
+}
+
 impulse_status_t impulse_writer_add_relation(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
@@ -433,8 +471,8 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             impulse_attribute_descriptor_t desc{};
             desc.name_offset = ta.name_off;
             desc.type_code = attr.type_code;
-            desc.reserved1 = 0;
-            desc.reserved2 = 0;
+            desc.reserved1 = attr.reserved1;
+            desc.reserved2 = attr.reserved2;
             desc.dimension = attr.dimension;
             desc.data_offset = ta.data_off;
             desc.data_bytes = ta.data_bytes;
@@ -575,8 +613,8 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             impulse_attribute_descriptor_t desc{};
             desc.name_offset = ta.name_off;
             desc.type_code = attr.type_code;
-            desc.reserved1 = 0;
-            desc.reserved2 = 0;
+            desc.reserved1 = attr.reserved1;
+            desc.reserved2 = attr.reserved2;
             desc.dimension = attr.dimension;
             desc.data_offset = ta.data_off;
             desc.data_bytes = ta.data_bytes;
@@ -810,6 +848,10 @@ static void populate_writer_from_snapshot(
                     (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
                     attr.offsets_bytes
                 );
+                if (!writer->domain_attributes[i].empty()) {
+                    writer->domain_attributes[i].back().reserved1 = attr.reserved1;
+                    writer->domain_attributes[i].back().reserved2 = attr.reserved2;
+                }
             }
         }
     }
@@ -935,6 +977,10 @@ static void populate_writer_from_snapshot(
                     (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
                     attr.offsets_bytes
                 );
+                if (!writer->relations[r].attributes.empty()) {
+                    writer->relations[r].attributes.back().reserved1 = attr.reserved1;
+                    writer->relations[r].attributes.back().reserved2 = attr.reserved2;
+                }
             }
         }
     }
