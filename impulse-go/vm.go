@@ -67,9 +67,13 @@ const (
 	VmErrDomainMismatch   VmStatus = 10
 	VmErrBufferOverflow   VmStatus = 11
 	VmErrFloatingPoint    VmStatus = 12
-	VmErrGasExhausted     VmStatus = 13
-	VmErrTypeMismatch     VmStatus = 14
-	VmErrValidationFailed VmStatus = 15
+	VmErrGasExhausted          VmStatus = 13
+	VmErrTypeMismatch          VmStatus = 14
+	VmErrValidationFailed      VmStatus = 15
+	VmErrArithmeticOverflow    VmStatus = 16
+	VmErrDivByZero             VmStatus = 17
+	VmStatusArithmeticOverflow VmStatus = 16
+	VmStatusDivByZero          VmStatus = 17
 )
 
 // MemoryPlan holds static AOT scratch and result buffer bounds from impulse_vm_plan_memory.

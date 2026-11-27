@@ -344,6 +344,37 @@ public:
         }
     }
 
+    void set_domain_node_count(uint16_t domain_index, uint64_t node_count) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        impulse_status_t status = impulse_writer_set_domain_node_count(writer_, domain_index, node_count);
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to set domain node count: " + std::string(impulse_get_last_error()));
+        }
+    }
+
+    void add_domain_attribute_decimal64(
+        uint16_t domain_index,
+        const std::string& name,
+        uint8_t type_code,
+        uint32_t dimension,
+        uint16_t precision,
+        uint8_t scale,
+        py::object data
+    ) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        py::buffer_info data_info = py::buffer(data).request();
+        const void* data_ptr = data_info.ptr;
+        uint64_t data_bytes = static_cast<uint64_t>(data_info.size * data_info.itemsize);
+
+        impulse_status_t status = impulse_writer_add_domain_attribute_decimal64(
+            writer_, domain_index, name.c_str(), type_code, dimension,
+            precision, scale, data_ptr, data_bytes
+        );
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to add domain decimal64 attribute: " + std::string(impulse_get_last_error()));
+        }
+    }
+
     void add_relation(
         uint16_t src_domain_id,
         uint16_t tgt_domain_id,
@@ -394,6 +425,29 @@ public:
         );
         if (status != IMPULSE_OK) {
             throw std::runtime_error("Failed to add attribute: " + std::string(impulse_get_last_error()));
+        }
+    }
+
+    void add_attribute_decimal64(
+        uint16_t relation_index,
+        const std::string& name,
+        uint8_t type_code,
+        uint32_t dimension,
+        uint16_t precision,
+        uint8_t scale,
+        py::object data
+    ) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        py::buffer_info data_info = py::buffer(data).request();
+        const void* data_ptr = data_info.ptr;
+        uint64_t data_bytes = static_cast<uint64_t>(data_info.size * data_info.itemsize);
+
+        impulse_status_t status = impulse_writer_add_attribute_decimal64(
+            writer_, relation_index, name.c_str(), type_code, dimension,
+            precision, scale, data_ptr, data_bytes
+        );
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to add decimal64 attribute: " + std::string(impulse_get_last_error()));
         }
     }
 
@@ -607,7 +661,16 @@ PYBIND11_MODULE(_impulse_native, m) {
         .value("ERR_GAS_EXHAUSTED", impulse::vm::Status::IMPULSE_VM_ERR_GAS_EXHAUSTED)
         .value("ERR_TYPE_MISMATCH", impulse::vm::Status::IMPULSE_VM_ERR_TYPE_MISMATCH)
         .value("ERR_VALIDATION_FAILED", impulse::vm::Status::IMPULSE_VM_ERR_VALIDATION_FAILED)
+        .value("ERR_ARITHMETIC_OVERFLOW", impulse::vm::Status::IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW)
+        .value("ERR_DIV_BY_ZERO", impulse::vm::Status::IMPULSE_VM_ERR_DIV_BY_ZERO)
         .export_values();
+
+    m.attr("ATTR_TYPE_BOOL") = static_cast<uint8_t>(0x0F);
+    m.attr("ATTR_TYPE_DECIMAL64") = static_cast<uint8_t>(0x15);
+    m.attr("IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW") = static_cast<uint32_t>(IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW);
+    m.attr("IMPULSE_VM_ERR_DIV_BY_ZERO") = static_cast<uint32_t>(IMPULSE_VM_V11_ERR_DIV_BY_ZERO);
+    m.attr("OP_SCALAR_DECIMAL_ALU") = static_cast<uint8_t>(0x15);
+    m.attr("OP_VEC_DECIMAL_ALU") = static_cast<uint8_t>(0x58);
 
     m.def("validate_bytecode", [](const py::bytes& impb_bytes) {
         std::string prog = impb_bytes;
@@ -700,6 +763,10 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("__enter__", [](PyImpulseWriter& self) { return &self; })
         .def("__exit__", [](PyImpulseWriter& self, py::object, py::object, py::object) { self.destroy(); })
         .def("add_domain", &PyImpulseWriter::add_domain, py::arg("domain_id"), py::arg("key_type"), py::arg("name"))
+        .def("set_domain_node_count", &PyImpulseWriter::set_domain_node_count, py::arg("domain_index"), py::arg("node_count"))
+        .def("add_domain_attribute_decimal64", &PyImpulseWriter::add_domain_attribute_decimal64,
+             py::arg("domain_index"), py::arg("name"), py::arg("type_code"),
+             py::arg("dimension"), py::arg("precision"), py::arg("scale"), py::arg("data"))
         .def("add_relation", &PyImpulseWriter::add_relation,
              py::arg("src_domain_id"), py::arg("tgt_domain_id"), py::arg("encoding_type"),
              py::arg("node_count"), py::arg("edge_count"), py::arg("section_features"),
@@ -707,6 +774,9 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("add_attribute", &PyImpulseWriter::add_attribute,
              py::arg("relation_index"), py::arg("name"), py::arg("type_code"),
              py::arg("dimension"), py::arg("data"), py::arg("offsets") = py::none())
+        .def("add_attribute_decimal64", &PyImpulseWriter::add_attribute_decimal64,
+             py::arg("relation_index"), py::arg("name"), py::arg("type_code"),
+             py::arg("dimension"), py::arg("precision"), py::arg("scale"), py::arg("data"))
         .def("finalize", &PyImpulseWriter::finalize);
 
     m.def("parse_cel", [](const std::string& expr) -> std::string {

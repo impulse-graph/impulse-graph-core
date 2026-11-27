@@ -28,6 +28,12 @@ const (
 	EncZstd EncodingType = C.IMPULSE_ENC_ZSTD
 )
 
+// Attribute type codes (v0.11).
+const (
+	AttrTypeBool      uint8 = 0x0F
+	AttrTypeDecimal64 uint8 = 0x15
+)
+
 // Status represents C-ABI status/error return codes.
 type Status int32
 

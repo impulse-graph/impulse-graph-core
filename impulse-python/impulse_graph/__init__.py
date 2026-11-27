@@ -3,9 +3,90 @@ Impulse Graph Engine Python SDK & C++ Bytecode VM Binding
 Spec v0.9.0
 """
 
+from decimal import Decimal, ROUND_HALF_EVEN
 from typing import Dict, List, Optional, Union
 
 import numpy as np
+
+# Attribute type codes (v0.11)
+ATTR_TYPE_BOOL: int = 0x0F
+ATTR_TYPE_DECIMAL64: int = 0x15
+
+# ImpulseVM v0.11 Decimal64 status and opcode constants
+IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW: int = 16
+IMPULSE_VM_ERR_DIV_BY_ZERO: int = 17
+OP_SCALAR_DECIMAL_ALU: int = 0x15
+OP_VEC_DECIMAL_ALU: int = 0x58
+
+_INT64_MIN = -(1 << 63)
+_INT64_MAX = (1 << 63) - 1
+
+
+class Decimal64:
+    """Fixed-point DECIMAL64 (int64 mantissa with 1 <= precision <= 18, 0 <= scale <= precision)."""
+
+    __slots__ = ("mantissa", "scale", "precision")
+
+    def __init__(self, mantissa: int, scale: int = 2, precision: int = 18):
+        if precision < 1 or precision > 18:
+            raise ValueError(f"precision must be in [1, 18], got {precision}")
+        if scale < 0 or scale > precision:
+            raise ValueError(f"scale must be in [0, {precision}], got {scale}")
+        if mantissa < _INT64_MIN or mantissa > _INT64_MAX:
+            raise OverflowError(f"mantissa {mantissa} out of int64 range")
+        limit = 10**precision
+        if abs(mantissa) >= limit:
+            raise OverflowError(f"mantissa {mantissa} exceeds precision {precision}")
+        self.mantissa = int(mantissa)
+        self.scale = int(scale)
+        self.precision = int(precision)
+
+    @classmethod
+    def from_decimal(
+        cls,
+        value: Union[Decimal, int, str],
+        scale: int = 2,
+        precision: int = 18,
+        rounding=ROUND_HALF_EVEN,
+    ) -> "Decimal64":
+        dec = value if isinstance(value, Decimal) else Decimal(str(value))
+        quant = Decimal(1).scaleb(-scale)
+        scaled = dec.quantize(quant, rounding=rounding)
+        mantissa = int((scaled * (Decimal(10) ** scale)).to_integral_exact())
+        return cls(mantissa=mantissa, scale=scale, precision=precision)
+
+    def to_decimal(self) -> Decimal:
+        return Decimal(self.mantissa).scaleb(-self.scale)
+
+    def to_int64(self) -> int:
+        return self.mantissa
+
+    @classmethod
+    def from_int64(cls, mantissa: int, scale: int = 2, precision: int = 18) -> "Decimal64":
+        return cls(mantissa=mantissa, scale=scale, precision=precision)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Decimal64):
+            return self.to_decimal() == other.to_decimal()
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        return f"Decimal64({self.to_decimal()}, precision={self.precision}, scale={self.scale})"
+
+
+def decimal_to_scaled_i64(
+    value: Union[Decimal, int, str],
+    scale: int = 2,
+    precision: int = 18,
+    rounding=ROUND_HALF_EVEN,
+) -> int:
+    """Convert a Decimal/int/str into a scaled int64 mantissa for DECIMAL64 storage."""
+    return Decimal64.from_decimal(value, scale=scale, precision=precision, rounding=rounding).mantissa
+
+
+def scaled_i64_to_decimal(mantissa: int, scale: int = 2) -> Decimal:
+    """Convert a scaled int64 mantissa back to a Python decimal.Decimal."""
+    return Decimal(int(mantissa)).scaleb(-scale)
 
 try:
     from ._impulse_native import Snapshot as _NativeSnapshot
@@ -541,6 +622,29 @@ class Writer:
     def add_domain(self, domain_id: int, key_type: int, name: str):
         self._native.add_domain(domain_id, key_type, name)
 
+    def set_domain_node_count(self, domain_index: int, node_count: int):
+        self._native.set_domain_node_count(domain_index, node_count)
+
+    def add_domain_attribute_decimal64(
+        self,
+        domain_index: int,
+        name: str,
+        precision: int,
+        scale: int,
+        data: Union[bytes, bytearray, np.ndarray, List[int]],
+        dimension: int = 1,
+        type_code: int = ATTR_TYPE_DECIMAL64,
+    ):
+        if isinstance(data, np.ndarray):
+            data_bytes = np.ascontiguousarray(data, dtype=np.int64).tobytes()
+        elif isinstance(data, (bytes, bytearray)):
+            data_bytes = data
+        else:
+            data_bytes = np.asarray(data, dtype=np.int64).tobytes()
+        self._native.add_domain_attribute_decimal64(
+            domain_index, name, type_code, dimension, precision, scale, data_bytes
+        )
+
     def add_relation(
         self,
         src_domain_id: int,
@@ -580,6 +684,26 @@ class Writer:
         data_bytes = data.tobytes() if isinstance(data, np.ndarray) else data
         offsets_bytes = offsets.tobytes() if isinstance(offsets, np.ndarray) else offsets
         self._native.add_attribute(relation_index, name, type_code, dimension, data_bytes, offsets_bytes)
+
+    def add_attribute_decimal64(
+        self,
+        relation_index: int,
+        name: str,
+        precision: int,
+        scale: int,
+        data: Union[bytes, bytearray, np.ndarray, List[int]],
+        dimension: int = 1,
+        type_code: int = ATTR_TYPE_DECIMAL64,
+    ):
+        if isinstance(data, np.ndarray):
+            data_bytes = np.ascontiguousarray(data, dtype=np.int64).tobytes()
+        elif isinstance(data, (bytes, bytearray)):
+            data_bytes = data
+        else:
+            data_bytes = np.asarray(data, dtype=np.int64).tobytes()
+        self._native.add_attribute_decimal64(
+            relation_index, name, type_code, dimension, precision, scale, data_bytes
+        )
 
     def finalize(self):
         self._native.finalize()
@@ -758,4 +882,19 @@ try:
 except Exception:
     __version__ = "0.10.1"
 
-__all__ = ["Snapshot", "DomainView", "Writer", "Traversal", "vm"]
+__all__ = [
+    "ATTR_TYPE_BOOL",
+    "ATTR_TYPE_DECIMAL64",
+    "IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW",
+    "IMPULSE_VM_ERR_DIV_BY_ZERO",
+    "OP_SCALAR_DECIMAL_ALU",
+    "OP_VEC_DECIMAL_ALU",
+    "Decimal64",
+    "decimal_to_scaled_i64",
+    "scaled_i64_to_decimal",
+    "Snapshot",
+    "DomainView",
+    "Writer",
+    "Traversal",
+    "vm",
+]

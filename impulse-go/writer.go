@@ -155,6 +155,94 @@ func (w *Writer) AddAttribute(
 	return nil
 }
 
+// AddDomainAttributeDecimal64 adds a DECIMAL64 attribute column to a domain entry.
+func (w *Writer) AddDomainAttributeDecimal64(
+	domainIndex uint16,
+	name string,
+	typeCode uint8,
+	dimension uint32,
+	precision uint16,
+	scale uint8,
+	data []int64,
+) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	if typeCode == 0 {
+		typeCode = AttrTypeDecimal64
+	}
+
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	var dataPtr unsafe.Pointer
+	dataBytes := uint64(len(data) * 8)
+	if len(data) > 0 {
+		dataPtr = unsafe.Pointer(&data[0])
+	}
+
+	status := C.impulse_writer_add_domain_attribute_decimal64(
+		w.ptr,
+		C.uint16_t(domainIndex),
+		cName,
+		C.uint8_t(typeCode),
+		C.uint32_t(dimension),
+		C.uint16_t(precision),
+		C.uint8_t(scale),
+		dataPtr,
+		C.uint64_t(dataBytes),
+	)
+
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
+// AddAttributeDecimal64 adds a DECIMAL64 attribute column to a target relation entry.
+func (w *Writer) AddAttributeDecimal64(
+	relationIndex uint16,
+	name string,
+	typeCode uint8,
+	dimension uint32,
+	precision uint16,
+	scale uint8,
+	data []int64,
+) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	if typeCode == 0 {
+		typeCode = AttrTypeDecimal64
+	}
+
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	var dataPtr unsafe.Pointer
+	dataBytes := uint64(len(data) * 8)
+	if len(data) > 0 {
+		dataPtr = unsafe.Pointer(&data[0])
+	}
+
+	status := C.impulse_writer_add_attribute_decimal64(
+		w.ptr,
+		C.uint16_t(relationIndex),
+		cName,
+		C.uint8_t(typeCode),
+		C.uint32_t(dimension),
+		C.uint16_t(precision),
+		C.uint8_t(scale),
+		dataPtr,
+		C.uint64_t(dataBytes),
+	)
+
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
 // SetMetadata adds a custom key-value metadata entry to the snapshot metadata header block.
 func (w *Writer) SetMetadata(key, value string) error {
 	if w.ptr == nil {

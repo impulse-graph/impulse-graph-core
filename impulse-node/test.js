@@ -13,6 +13,13 @@ assert.strictEqual(typeof impulse.Writer, 'function', 'Writer class should be ex
 assert.strictEqual(typeof impulse.VmWorkspace, 'function', 'VmWorkspace class should be exported');
 assert.strictEqual(typeof impulse.Opcodes, 'object', 'Opcodes table should be exported');
 assert.strictEqual(typeof impulse.VmStatus, 'object', 'VmStatus enum should be exported');
+assert.strictEqual(typeof impulse.AttrType, 'object', 'AttrType enum should be exported');
+assert.strictEqual(impulse.Opcodes.SCALAR_DECIMAL_ALU, 0x15);
+assert.strictEqual(impulse.Opcodes.VEC_DECIMAL_ALU, 0x58);
+assert.strictEqual(impulse.VmStatus.ARITHMETIC_OVERFLOW, 16);
+assert.strictEqual(impulse.VmStatus.DIV_BY_ZERO, 17);
+assert.strictEqual(impulse.AttrType.DECIMAL64, 0x15);
+assert.strictEqual(impulse.AttrType.BOOL, 0x0f);
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'impulse-node-v11-'));
 const snapPath = path.join(tmpDir, 'test.imps');
