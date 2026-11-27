@@ -187,7 +187,7 @@ pub fn validate_reader(
                 if attr
                     .data_offset
                     .checked_add(attr.data_bytes)
-                    .map_or(true, |end| end > file_len)
+                    .is_none_or(|end| end > file_len)
                 {
                     return Err(format!(
                         "Domain #{} Attr #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -207,7 +207,7 @@ pub fn validate_reader(
                 if attr
                     .offsets_offset
                     .checked_add(attr.offsets_bytes)
-                    .map_or(true, |end| end > file_len)
+                    .is_none_or(|end| end > file_len)
                 {
                     return Err(format!(
                         "Domain #{} Attr #{}: Offsets range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -274,7 +274,7 @@ pub fn validate_reader(
             if rel
                 .csr_col_idx_offset
                 .checked_add(rel.csr_col_idx_bytes)
-                .map_or(true, |end| end > file_len)
+                .is_none_or(|end| end > file_len)
             {
                 return Err(format!(
                     "Relation #{}: CSR column indices range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -296,7 +296,7 @@ pub fn validate_reader(
             if rel
                 .csc_row_off_offset
                 .checked_add(rel.csc_row_off_bytes)
-                .map_or(true, |end| end > file_len)
+                .is_none_or(|end| end > file_len)
             {
                 return Err(format!(
                     "Relation #{}: CSC row offsets range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -316,7 +316,7 @@ pub fn validate_reader(
             if rel
                 .csc_col_idx_offset
                 .checked_add(rel.csc_col_idx_bytes)
-                .map_or(true, |end| end > file_len)
+                .is_none_or(|end| end > file_len)
             {
                 return Err(format!(
                     "Relation #{}: CSC column indices range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -339,7 +339,7 @@ pub fn validate_reader(
                 if attr
                     .data_offset
                     .checked_add(attr.data_bytes)
-                    .map_or(true, |end| end > file_len)
+                    .is_none_or(|end| end > file_len)
                 {
                     return Err(format!(
                         "Relation #{} Attr #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -359,7 +359,7 @@ pub fn validate_reader(
                 if attr
                     .offsets_offset
                     .checked_add(attr.offsets_bytes)
-                    .map_or(true, |end| end > file_len)
+                    .is_none_or(|end| end > file_len)
                 {
                     return Err(format!(
                         "Relation #{} Attr #{}: Offsets range [0x{:X} + {}] overflows or exceeds file length {}",
@@ -609,7 +609,7 @@ pub fn validate_reader(
             if idx_entry
                 .data_offset
                 .checked_add(idx_entry.data_bytes)
-                .map_or(true, |end| end > file_len)
+                .is_none_or(|end| end > file_len)
             {
                 return Err(format!(
                     "Index #{}: Data range [0x{:X} + {}] overflows or exceeds file length {}",
