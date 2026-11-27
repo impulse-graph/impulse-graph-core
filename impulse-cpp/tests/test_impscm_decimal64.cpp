@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -231,7 +232,8 @@ void test_coercion_matrix_and_casts() {
 }
 
 void test_e2e_financial_ledger_and_cypher_v11() {
-    const std::string snap_path = "/tmp/test_impscm_decimal64_ledger.imps";
+    const std::string snap_path =
+        (std::filesystem::temp_directory_path() / "test_impscm_decimal64_ledger.imps").string();
 
     // Build a 4-account financial ledger .imps snapshot with DECIMAL(18, 2) balances
     // Includes values > 2^53 to verify exact 64-bit integer min/max with zero f64 loss.
