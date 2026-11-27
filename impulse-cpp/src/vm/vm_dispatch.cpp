@@ -1022,7 +1022,8 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
             if (n > (std::numeric_limits<size_t>::max)() / sizeof(double*)) return false;
             if (!safe_add(acc, n * sizeof(double*) + 64u)) return false;
         } else if ((base_type >= 1u && base_type <= 4u) || (base_type >= 6u && base_type <= 9u) || base_type == 0x15u) {
-            if (base_type != 0x15u) {
+            const bool zero_copy_dec64 = (base_type == 0x15u) && ((desc.data_offset & 7u) == 0u);
+            if (!zero_copy_dec64) {
                 if (n > (std::numeric_limits<size_t>::max)() / 8u) return false;
                 if (!safe_add(acc, n * 8u + 64u)) return false;
             }

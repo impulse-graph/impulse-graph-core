@@ -22,7 +22,8 @@ V11_OP_CASE(WALK) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if (needs_fwd && rel->csr_row_off_raw == nullptr && rel->row_offsets == nullptr) {
+    if (needs_fwd && rel->row_offsets == nullptr &&
+        (rel->csr_row_off_raw == nullptr || (!rel->has_csr && (rel->has_csc || rel->has_coo)))) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
