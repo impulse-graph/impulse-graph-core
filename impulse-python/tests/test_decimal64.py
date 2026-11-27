@@ -19,6 +19,8 @@ from impulse_graph import (
     Decimal64,
     Snapshot,
     Writer,
+    compile_cypher,
+    compile_impscm,
     decimal_to_scaled_i64,
     scaled_i64_to_decimal,
 )
@@ -200,3 +202,65 @@ def test_vm_decimal64_scalar_and_vector_execution():
         rc_v = ws.execute(impb_vec, None)
         assert rc_v == int(VmStatus.OK)
         assert ws.get_output(0)["data"] == [350, 350, 350, 350]
+
+
+def test_e2e_python_cypher_and_impscm_decimal64_param():
+    if _impulse_native is None or not hasattr(_impulse_native, "compile_cypher"):
+        pytest.skip("_impulse_native compile_cypher / compile_impscm not built")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        snap_path = os.path.join(tmpdir, "ledger.imps")
+        balances = np.array(
+            [
+                decimal_to_scaled_i64("10.00", scale=2),
+                decimal_to_scaled_i64("19.99", scale=2),
+                decimal_to_scaled_i64("45.25", scale=2),
+            ],
+            dtype=np.int64,
+        )
+
+        with Writer(snap_path) as writer:
+            writer.add_domain(0, 1, "Account")
+            writer.set_domain_node_count(0, 3)
+            writer.add_domain_attribute_decimal64(
+                domain_index=0,
+                name="balance",
+                precision=18,
+                scale=2,
+                data=balances,
+            )
+            writer.finalize()
+
+        with Snapshot(snap_path) as snap:
+            # 1. openCypher with Decimal("19.99") parameter
+            prog = compile_cypher(
+                "MATCH (a:Account) WHERE a.balance >= $min_bal RETURN sum(a.balance)",
+                snapshot=snap,
+                param_types={"min_bal": "DECIMAL(18, 2)"},
+            )
+            assert prog.output_schema[0]["is_decimal"] is True
+            assert prog.output_schema[0]["scale"] == 2
+            res = prog.execute(snap, params={"min_bal": Decimal("19.99")})
+            assert res["result"] == Decimal("65.24")
+
+            # 2. openCypher with 19.99d literal + CAST(... AS DECIMAL(18, 2))
+            prog_lit = compile_cypher(
+                "MATCH (a:Account) WHERE a.balance >= 19.99d AND a.balance <= CAST(25.00 AS DECIMAL(18, 2)) RETURN count(a)",
+                snapshot=snap,
+            )
+            assert prog_lit.execute(snap)["count"] == 1
+
+            # 3. ImpScheme v0.11 with Decimal("19.99") parameter
+            scm_prog = compile_impscm(
+                '(query (param $min_bal (decimal 18 2)) '
+                '(let ((f (node-filter (domain-all "Account") "balance" >= $min_bal)) '
+                '      (b (load-node-attr "Account" "balance"))) '
+                '  (collect :scalar "total" (reduce :sum b :mask f))))',
+                snapshot=snap,
+            )
+            scm_res = scm_prog.execute(snap, params={"min_bal": Decimal("19.99")})
+            assert scm_res["total"] == Decimal("65.24")
+
+            # 4. Strict TYPE_MISMATCH rejection (DECIMAL + FLOAT forbidden)
+            with pytest.raises(RuntimeError, match="TYPE_MISMATCH"):
+                compile_impscm('(query (+ (dec "19.99" 10 2) 1.5))', snapshot=snap)

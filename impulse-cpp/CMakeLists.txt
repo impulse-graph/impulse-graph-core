@@ -207,6 +207,7 @@ if(IMPULSE_BUILD_TESTS)
         test_datalog_compiler
         test_c_statement_api
         test_impscm_mcdc_boundaries
+        test_impscm_decimal64
         test_imps_malicious_hardening
         test_property_snapshot
         test_vm
