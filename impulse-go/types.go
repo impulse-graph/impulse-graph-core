@@ -30,8 +30,9 @@ const (
 
 // Attribute type codes (v0.11).
 const (
-	AttrTypeBool      uint8 = 0x0F
-	AttrTypeDecimal64 uint8 = 0x15
+	AttrTypeBool              uint8 = 0x0F
+	AttrTypeDecimal64         uint8 = 0x15
+	AttrTypeDecimal64Nullable uint8 = 0x95
 )
 
 // Status represents C-ABI status/error return codes.

@@ -238,6 +238,58 @@ func (w *VmWorkspace) OutputScalarU64(slot uint32) (uint64, bool) {
 	return v, true
 }
 
+// OutputDecimal64Slice decodes a terminal OP_COLLECT DECIMAL64 output slot into []NullableDecimal64,
+// honoring the workspace validity bitmap when present.
+func (w *VmWorkspace) OutputDecimal64Slice(slot uint32, precision, scale uint8) ([]NullableDecimal64, error) {
+	if w.ws == nil {
+		return nil, errors.New("workspace closed")
+	}
+	if err := validateDecimal64PrecisionScale(precision, scale); err != nil {
+		return nil, err
+	}
+	var view C.impulse_vm_output_view_v11_t
+	if C.impulse_vm_v11_get_output(w.ws, C.uint32_t(slot), &view) == 0 {
+		runtime.KeepAlive(w)
+		return nil, fmt.Errorf("output slot %d not available", slot)
+	}
+	n := int(view.length)
+	out := make([]NullableDecimal64, n)
+	if n > 0 && view.i64_data != nil {
+		raw := unsafe.Slice((*int64)(unsafe.Pointer(view.i64_data)), n)
+		var validWords []uint64
+		if view.valid_bits != nil {
+			validWords = unsafe.Slice((*uint64)(unsafe.Pointer(view.valid_bits)), (n+63)/64)
+		}
+		for i := 0; i < n; i++ {
+			if validWords != nil && ((validWords[i>>6]>>uint(i&63))&1) == 0 {
+				out[i] = NullableDecimal64{Valid: false}
+				continue
+			}
+			dec, err := NewDecimal64(raw[i], precision, scale)
+			if err != nil {
+				runtime.KeepAlive(w)
+				return nil, err
+			}
+			out[i] = NullableDecimal64{Value: dec, Valid: true}
+		}
+	}
+	runtime.KeepAlive(w)
+	return out, nil
+}
+
+// OutputScalarDecimal64 reads the first DECIMAL64 value from an OP_COLLECT.scalar output slot.
+// Returns (value, valid, err) where valid is false for SQL NULL.
+func (w *VmWorkspace) OutputScalarDecimal64(slot uint32, precision, scale uint8) (Decimal64, bool, error) {
+	vals, err := w.OutputDecimal64Slice(slot, precision, scale)
+	if err != nil {
+		return Decimal64{}, false, err
+	}
+	if len(vals) == 0 {
+		return Decimal64{}, false, nil
+	}
+	return vals[0].Value, vals[0].Valid, nil
+}
+
 // EncodeV11Word packs a single 64-bit ImpulseVM v0.11 instruction word.
 func EncodeV11Word(op, subop, flags, dst, s1, s2, s3 uint8, imm32 uint32) uint64 {
 	return uint64(op) |

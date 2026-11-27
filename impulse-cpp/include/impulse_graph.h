@@ -456,6 +456,13 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_name(
     uint16_t attribute_index,
     const char** out_name
 );
+IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_decimal64_meta(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    uint16_t* out_precision,
+    uint8_t* out_scale
+);
 
 // Node Domain Attribute Accessors (Spec v0.10.0)
 IMPULSE_API uint16_t impulse_snapshot_get_domain_attribute_count(
@@ -482,6 +489,13 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_name(
     uint16_t domain_index,
     uint16_t attribute_index,
     const char** out_name
+);
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_decimal64_meta(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    uint16_t attribute_index,
+    uint16_t* out_precision,
+    uint8_t* out_scale
 );
 IMPULSE_API impulse_status_t impulse_snapshot_get_relation_name(
     const impulse_snapshot_t* snapshot,

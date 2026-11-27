@@ -1,5 +1,109 @@
+export class Decimal64 {
+  readonly unscaled: bigint;
+  readonly precision: number;
+  readonly scale: number;
+
+  constructor(unscaled: bigint | number, precision?: number, scale?: number);
+  static fromUnscaled(unscaled: bigint | number, precision?: number, scale?: number): Decimal64;
+  static fromString(str: string, precision?: number, scale?: number): Decimal64;
+  toString(): string;
+  toNumber(): number;
+  equals(other: unknown): boolean;
+}
+
+export interface AttributeInfo {
+  name: string | null;
+  typeCode: number;
+  baseTypeCode: number;
+  isNullable: boolean;
+  dimension: number;
+  dataBytes: number;
+  precision?: number;
+  scale?: number;
+}
+
+export interface RawDecimal64Column {
+  precision: number;
+  scale: number;
+  isNullable: boolean;
+  dimension: number;
+  rowCount: number;
+  unscaled: BigInt64Array;
+  validBits: BigUint64Array | null;
+}
+
+export interface Decimal64WriteOptions {
+  nullable?: boolean;
+  dimension?: number;
+}
+
+export interface V11ParamSchema {
+  name: string;
+  paramId: number;
+  type: string;
+  isDecimal: boolean;
+  precision: number;
+  scale: number;
+  domainId: number;
+}
+
+export interface V11OutputSchema {
+  name: string;
+  type: string;
+  isDecimal: boolean;
+  precision: number;
+  scale: number;
+}
+
+export class CompiledV11Program {
+  readonly impbBytes: Buffer;
+  readonly paramNameToId: Record<string, number>;
+  readonly paramSchema: V11ParamSchema[];
+  readonly outputNames: string[];
+  readonly outputSchema: V11OutputSchema[];
+  readonly impscmSource: string | null;
+
+  execute(
+    snapshot?: Snapshot | null,
+    params?: Record<string, unknown>,
+    scratchBytes?: number
+  ): Record<string, unknown>;
+}
+
+export type CypherParamTypeSpec =
+  | string
+  | {
+      type: string;
+      precision?: number;
+      scale?: number;
+      domain?: string;
+    };
+
+export function compileImpScm(
+  source: string,
+  snapshot?: Snapshot | null,
+  enableOptimizations?: boolean
+): CompiledV11Program;
+
+export function compileCypher(
+  cypher: string,
+  snapshot?: Snapshot | null,
+  paramTypes?: Record<string, CypherParamTypeSpec>,
+  enableOptimizations?: boolean
+): CompiledV11Program;
+
 export class Snapshot {
   constructor(path: string);
+  domainCount(): number;
+  relationCount(): number;
+  getRelationName(relationIndex: number): string | null;
+  getDomainAttributeCount(domainIndex: number): number;
+  getDomainAttributeInfo(domainIndex: number, attrIndex: number): AttributeInfo;
+  getAttributeInfo(relationIndex: number, attrIndex: number): AttributeInfo;
+  getDomainAttributeDecimal64(domainIndex: number, attrIndex: number): RawDecimal64Column;
+  getAttributeDecimal64(relationIndex: number, attrIndex: number): RawDecimal64Column;
+  getDomainDecimal64(domainIndex: number, attrIndex: number): Array<Decimal64 | null>;
+  getRelationDecimal64(relationIndex: number, attrIndex: number): Array<Decimal64 | null>;
   isReachable(
     relationIndex: number,
     srcId: number | bigint,
@@ -11,12 +115,31 @@ export class Snapshot {
     tgtDomain: number,
     tgtId: number | bigint
   ): boolean;
+  executeCypher(cypher: string, params?: Record<string, unknown>): number[];
   close(): void;
 }
 
 export class Writer {
   constructor(outputPath: string, globalFeatures?: number);
   addDomain(domainId: number, keyType: number, name: string): void;
+  setDomainNodeCount(domainIndex: number, nodeCount: number | bigint): void;
+  addDomainAttributeDecimal64(
+    domainIndex: number,
+    name: string,
+    precision: number,
+    scale: number,
+    data: Buffer | ArrayBufferView,
+    dimension?: number,
+    typeCode?: number
+  ): void;
+  addDomainDecimal64(
+    domainIndex: number,
+    name: string,
+    precision: number,
+    scale: number,
+    values: Array<Decimal64 | string | bigint | number | null> | Buffer | ArrayBufferView,
+    options?: Decimal64WriteOptions
+  ): void;
   addRelation(
     srcDomainId: number,
     tgtDomainId: number,
@@ -27,152 +150,60 @@ export class Writer {
     rowOffsets: Uint32Array,
     colIndicesBytes: Buffer | Uint32Array
   ): void;
+  addAttributeDecimal64(
+    relationIndex: number,
+    name: string,
+    precision: number,
+    scale: number,
+    data: Buffer | ArrayBufferView,
+    dimension?: number,
+    typeCode?: number
+  ): void;
+  addRelationDecimal64(
+    relationIndex: number,
+    name: string,
+    precision: number,
+    scale: number,
+    values: Array<Decimal64 | string | bigint | number | null> | Buffer | ArrayBufferView,
+    options?: Decimal64WriteOptions
+  ): void;
   finalize(): void;
 }
 
-export class VmContext {
-  constructor(snapshot?: Snapshot);
+export interface VmWorkspaceOutput {
+  slot: number;
+  elemTag: number;
+  length: number;
+  data?: Array<number | boolean | null>;
+  i64Data?: Array<bigint | null>;
+}
+
+export class VmWorkspace {
+  constructor(scratchBytes?: number);
   destroy(): void;
-  vectorSize(): number;
-  bitsetWordCount(): number;
-  acquireBitset(): number;
-  releaseBitset(handle: number): void;
-  bitsetAdd(handle: number, nodeId: number | bigint): void;
-  bitsetTest(handle: number, nodeId: number | bigint): boolean;
-  bitsetFill(handle: number, count: number | bigint): void;
-  bitsetGetWord(handle: number, wordIdx: number): bigint;
-  acquireFloatVector(): number;
-  releaseFloatVector(handle: number): void;
-  floatVectorSet(handle: number, index: number, val: number): void;
-  getFloatVector(handle: number): Float32Array;
-  acquireDoubleVector(): number;
-  releaseDoubleVector(handle: number): void;
-  doubleVectorSet(handle: number, index: number, val: number): void;
-  getDoubleVector(handle: number): Float64Array;
-  acquireNodeVector(): number;
-  releaseNodeVector(handle: number): void;
-  getNodeVector(handle: number): BigUint64Array;
-  acquireStringVector(): number;
-  releaseStringVector(handle: number): void;
-  stringVectorAdd(handle: number, str: string): void;
-  stringVectorSize(handle: number): number;
-  stringVectorGet(handle: number, index: number): string | null;
-  acquireValueMap(): number;
-  releaseValueMap(handle: number): void;
-  valueMapSize(handle: number): number;
-  valueMapGetKey(handle: number, index: number): string | null;
-  valueMapGetValue(handle: number, index: number): number;
+  execute(
+    impb: Buffer,
+    snapshot: Snapshot | null,
+    seedIds?: Array<number | bigint>,
+    domainId?: number
+  ): number;
+  executeParams(
+    impb: Buffer,
+    snapshot?: Snapshot | null,
+    bindings?: Array<Record<string, unknown>>,
+    gasLimit?: number | bigint
+  ): number;
+  outputCount(): number;
+  getOutput(slot: number): VmWorkspaceOutput | null;
+  computeIctxV2(): { logicalHash: bigint; physicalHash: bigint };
 }
-
-export class VmState {
-  constructor();
-  getRegister(reg: number): bigint;
-  setRegister(reg: number, val: number | bigint): void;
-  getRegisterType(reg: number): number;
-  getPc(): number;
-  getFlags(): bigint;
-}
-
-export class QueryResult {
-  readonly status: number;
-  readonly resultRegister: number;
-  readonly resultType: number;
-  readonly rawValue: bigint;
-  isOk(): boolean;
-  asInt(): bigint;
-  asFloat(): number;
-  asDouble(): number;
-  testBitset(ctx: VmContext, nodeId: number | bigint): boolean;
-}
-
-export class CompiledQuery {
-  execute(snapshot: Snapshot, inputParam?: number | bigint): QueryResult;
-  executeWithContext(ctx: VmContext, state: VmState, inputParam?: number | bigint): QueryResult;
-  instructionCount(): number;
-  resultRegister(): number;
-  bytecode(): Buffer;
-}
-
-export class QueryBuilder {
-  constructor(startRegister?: number);
-  inputNode(dstReg?: number): this;
-  inputSet(dstReg?: number): this;
-  loadConstInt(value: number | bigint, dstReg?: number): this;
-  loadConstFloat(value: number, dstReg?: number): this;
-  loadConstStrPrefix(prefix: string, dstReg?: number): this;
-  loadKeys(keys: string[], dstReg?: number): this;
-
-  walkEdge(relationId: number, flags?: number): this;
-  walkEdgeFiltered(relationId: number, filterId: number): this;
-  walkEdgePredicate(relationId: number, filterId: number): this;
-  walkDegree(relationId: number): this;
-  walkReduceSum(relationId: number, valReg: number): this;
-  walkCsc(relationId: number): this;
-  filterNode(filterId: number): this;
-  filterNodeStrPrefix(prefix: string): this;
-
-  unionWith(srcReg: number): this;
-  intersectWith(srcReg: number): this;
-  differenceWith(srcReg: number): this;
-  cardinality(): this;
-  vectorMulAttr(attrReg: number): this;
-  vectorReduceSum(): this;
-  vectorDiv(denomReg: number): this;
-  l1NormDiff(otherReg: number): this;
-
-  matrixVectorMul(matrixReg: number, semiringId?: number): this;
-  vectorMatrixMul(matrixReg: number, semiringId?: number): this;
-  ewiseAdd(otherReg: number, binaryOp?: number): this;
-  ewiseMult(otherReg: number, binaryOp?: number): this;
-  reduce(binaryOp?: number): this;
-
-  afforest(): this;
-  tcSweepBatch(): this;
-  brandesForward(): this;
-  brandesBackward(): this;
-  deltaStepRelax(weightReg: number): this;
-  sampleNeighbors(relationId: number, kSamples: number, seed?: number): this;
-  randomWalk(relationId: number, steps: number, seed?: number): this;
-  scatterGather(): this;
-  rebacCheck(permissionId: number): this;
-  roaringBitmapAnd(otherReg: number): this;
-  islandDetect(secondaryReg: number): this;
-  sparseMatVec(): this;
-  louvainModularity(): this;
-  kcoreDecomposition(): this;
-  motifMatch3(): this;
-  graphIsomorphism(): this;
-
-  mov(dstReg: number, srcReg: number): this;
-  clearReg(reg: number): this;
-  nop(): this;
-  jmp(instructionOffset: number): this;
-  jz(instructionOffset: number): this;
-  jnz(instructionOffset: number): this;
-
-  repeat(count: number, body: (builder: this) => void): this;
-  repeatUntilStable(body: (builder: this) => void): this;
-
-  collectBitset(): this;
-  collectArray(): this;
-  mapDenseToKeys(): this;
-  collectValueMap(): this;
-
-  compile(): CompiledQuery;
-}
-
-export function executeBytecode(
-  snapshot: Snapshot,
-  bytecode: Buffer | Uint8Array,
-  inputParam?: number | bigint
-): QueryResult;
 
 export const Opcodes: Record<string, number> & {
   SCALAR_DECIMAL_ALU: 0x15;
   VEC_DECIMAL_ALU: 0x58;
 };
-export const RegisterType: Record<string, number>;
 export const VmStatus: Record<string, number> & {
+  OK: 0;
   ARITHMETIC_OVERFLOW: 16;
   DIV_BY_ZERO: 17;
   ERR_ARITHMETIC_OVERFLOW: 16;
@@ -181,4 +212,5 @@ export const VmStatus: Record<string, number> & {
 export const AttrType: Record<string, number> & {
   BOOL: 0x0f;
   DECIMAL64: 0x15;
+  DECIMAL64_NULLABLE: 0x95;
 };

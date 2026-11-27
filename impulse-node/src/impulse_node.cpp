@@ -7,6 +7,8 @@
 #include "impulse_graph.h"
 #include "impulse_vm_v11.h"
 #include "vm/impulse_vm_isa.hpp"
+#include "vm/impulse_impscm.hpp"
+#include "impulse_cypher.hpp"
 
 extern "C" {
 struct impulse_stmt;
@@ -22,11 +24,14 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
 size_t impulse_stmt_row_count(const impulse_stmt_t* stmt);
 const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_idx);
 }
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include "impulse_assert.h"
 
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <deque>
 #include <memory>
@@ -62,6 +67,11 @@ public:
             InstanceMethod("domainCount", &NodeSnapshot::DomainCount),
             InstanceMethod("relationCount", &NodeSnapshot::RelationCount),
             InstanceMethod("getRelationName", &NodeSnapshot::GetRelationName),
+            InstanceMethod("getDomainAttributeCount", &NodeSnapshot::GetDomainAttributeCount),
+            InstanceMethod("getDomainAttributeInfo", &NodeSnapshot::GetDomainAttributeInfo),
+            InstanceMethod("getAttributeInfo", &NodeSnapshot::GetAttributeInfo),
+            InstanceMethod("getDomainAttributeDecimal64", &NodeSnapshot::GetDomainAttributeDecimal64),
+            InstanceMethod("getAttributeDecimal64", &NodeSnapshot::GetAttributeDecimal64),
             InstanceMethod("executeCypher", &NodeSnapshot::ExecuteCypher),
             InstanceMethod("close", &NodeSnapshot::Close)
         });
@@ -185,6 +195,235 @@ private:
         return env.Null();
     }
 
+    Napi::Value GetDomainAttributeCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_ || info.Length() < 1 || !info[0].IsNumber()) {
+            return Napi::Number::New(env, 0);
+        }
+        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        return Napi::Number::New(env, impulse_snapshot_get_domain_attribute_count(snapshot_, dom_idx));
+    }
+
+    Napi::Value BuildAttributeInfoObject(
+        Napi::Env env,
+        const char* name,
+        uint8_t type_code,
+        uint32_t dimension,
+        uint64_t data_bytes,
+        bool has_dec_meta,
+        uint16_t precision,
+        uint8_t scale
+    ) {
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("name", name ? Napi::String::New(env, name) : env.Null());
+        obj.Set("typeCode", Napi::Number::New(env, type_code));
+        obj.Set("baseTypeCode", Napi::Number::New(env, type_code & 0x7Fu));
+        obj.Set("isNullable", Napi::Boolean::New(env, (type_code & 0x80u) != 0));
+        obj.Set("dimension", Napi::Number::New(env, dimension));
+        obj.Set("dataBytes", Napi::Number::New(env, static_cast<double>(data_bytes)));
+        if (has_dec_meta) {
+            obj.Set("precision", Napi::Number::New(env, precision));
+            obj.Set("scale", Napi::Number::New(env, scale));
+        }
+        return obj;
+    }
+
+    Napi::Value GetDomainAttributeInfo(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+            Napi::TypeError::New(env, "Expected (domainIndex, attrIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        const void* offsets = nullptr;
+        uint64_t offsets_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_domain_attribute_buffers(
+            snapshot_, dom_idx, attr_idx, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read domain attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        const char* name = nullptr;
+        impulse_snapshot_get_domain_attribute_name(snapshot_, dom_idx, attr_idx, &name);
+        uint16_t precision = 0;
+        uint8_t scale = 0;
+        bool has_dec_meta = ((type_code & 0x7Fu) == 0x15u) &&
+            (impulse_snapshot_get_domain_attribute_decimal64_meta(snapshot_, dom_idx, attr_idx, &precision, &scale) == IMPULSE_OK);
+        return BuildAttributeInfoObject(env, name, type_code, dimension, data_bytes, has_dec_meta, precision, scale);
+    }
+
+    Napi::Value GetAttributeInfo(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+            Napi::TypeError::New(env, "Expected (relationIndex, attrIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t rel_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        const void* offsets = nullptr;
+        uint64_t offsets_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
+            snapshot_, rel_idx, attr_idx, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read relation attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        const char* name = nullptr;
+        impulse_snapshot_get_attribute_name(snapshot_, rel_idx, attr_idx, &name);
+        uint16_t precision = 0;
+        uint8_t scale = 0;
+        bool has_dec_meta = ((type_code & 0x7Fu) == 0x15u) &&
+            (impulse_snapshot_get_attribute_decimal64_meta(snapshot_, rel_idx, attr_idx, &precision, &scale) == IMPULSE_OK);
+        return BuildAttributeInfoObject(env, name, type_code, dimension, data_bytes, has_dec_meta, precision, scale);
+    }
+
+    Napi::Value DecodeDecimal64Buffer(
+        Napi::Env env,
+        const void* data,
+        uint64_t data_bytes,
+        uint8_t type_code,
+        uint32_t dimension,
+        uint16_t precision,
+        uint8_t scale,
+        uint64_t row_count
+    ) {
+        bool is_nullable = (type_code & 0x80u) != 0;
+        const uint8_t* raw = static_cast<const uint8_t*>(data);
+        Napi::Value valid_bits_val = env.Null();
+        const uint8_t* payload = raw;
+        uint64_t payload_bytes = data_bytes;
+
+        if (is_nullable && raw && row_count > 0) {
+            uint64_t words = (row_count + 63ULL) / 64ULL;
+            uint64_t raw_bm = words * 8ULL;
+            uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
+            if (data_bytes < padded_bm) {
+                Napi::Error::New(env, "Nullable DECIMAL64 buffer smaller than validity bitmap").ThrowAsJavaScriptException();
+                return env.Null();
+            }
+            Napi::BigUint64Array bm = Napi::BigUint64Array::New(env, static_cast<size_t>(words));
+            std::memcpy(bm.Data(), raw, static_cast<size_t>(raw_bm));
+            valid_bits_val = bm;
+            payload = raw + padded_bm;
+            payload_bytes = data_bytes - padded_bm;
+        }
+
+        size_t elem_count = static_cast<size_t>(payload_bytes / 8ULL);
+        Napi::BigInt64Array unscaled = Napi::BigInt64Array::New(env, elem_count);
+        if (elem_count > 0 && payload) {
+            std::memcpy(unscaled.Data(), payload, elem_count * sizeof(int64_t));
+        }
+
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("precision", Napi::Number::New(env, precision));
+        obj.Set("scale", Napi::Number::New(env, scale));
+        obj.Set("isNullable", Napi::Boolean::New(env, is_nullable));
+        obj.Set("dimension", Napi::Number::New(env, dimension));
+        obj.Set("rowCount", Napi::Number::New(env, static_cast<double>(row_count)));
+        obj.Set("unscaled", unscaled);
+        obj.Set("validBits", valid_bits_val);
+        return obj;
+    }
+
+    Napi::Value GetDomainAttributeDecimal64(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+            Napi::TypeError::New(env, "Expected (domainIndex, attrIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_domain_attribute_buffers(
+            snapshot_, dom_idx, attr_idx, &data, &data_bytes, nullptr, nullptr, &type_code, &dimension);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read domain attribute: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if ((type_code & 0x7Fu) != 0x15u) {
+            Napi::TypeError::New(env, "Attribute is not DECIMAL64").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t precision = 18;
+        uint8_t scale = 0;
+        st = impulse_snapshot_get_domain_attribute_decimal64_meta(snapshot_, dom_idx, attr_idx, &precision, &scale);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read domain DECIMAL64 metadata: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        impulse_domain_catalog_entry_t dom{};
+        uint64_t row_count = 0;
+        if (impulse_snapshot_get_domain_entry(snapshot_, dom_idx, &dom, nullptr) == IMPULSE_OK) {
+            row_count = dom.node_count;
+        }
+        return DecodeDecimal64Buffer(env, data, data_bytes, type_code, dimension, precision, scale, row_count);
+    }
+
+    Napi::Value GetAttributeDecimal64(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+            Napi::TypeError::New(env, "Expected (relationIndex, attrIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t rel_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        const void* data = nullptr;
+        uint64_t data_bytes = 0;
+        uint8_t type_code = 0;
+        uint32_t dimension = 0;
+        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
+            snapshot_, rel_idx, attr_idx, &data, &data_bytes, nullptr, nullptr, &type_code, &dimension);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read relation attribute: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if ((type_code & 0x7Fu) != 0x15u) {
+            Napi::TypeError::New(env, "Attribute is not DECIMAL64").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t precision = 18;
+        uint8_t scale = 0;
+        st = impulse_snapshot_get_attribute_decimal64_meta(snapshot_, rel_idx, attr_idx, &precision, &scale);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read relation DECIMAL64 metadata: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        impulse_relation_directory_entry_t rel{};
+        uint64_t row_count = 0;
+        if (impulse_snapshot_get_relation_entry(snapshot_, rel_idx, &rel) == IMPULSE_OK) {
+            row_count = rel.edge_count;
+        }
+        return DecodeDecimal64Buffer(env, data, data_bytes, type_code, dimension, precision, scale, row_count);
+    }
+
     Napi::Value ExecuteCypher(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
         if (!snapshot_) {
@@ -263,7 +502,10 @@ public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         Napi::Function func = DefineClass(env, "Writer", {
             InstanceMethod("addDomain", &NodeWriter::AddDomain),
+            InstanceMethod("setDomainNodeCount", &NodeWriter::SetDomainNodeCount),
+            InstanceMethod("addDomainAttributeDecimal64", &NodeWriter::AddDomainAttributeDecimal64),
             InstanceMethod("addRelation", &NodeWriter::AddRelation),
+            InstanceMethod("addAttributeDecimal64", &NodeWriter::AddAttributeDecimal64),
             InstanceMethod("finalize", &NodeWriter::DoFinalize)
         });
 
@@ -324,6 +566,112 @@ private:
             Napi::Error::New(env, "Failed to add domain: " + err).ThrowAsJavaScriptException();
         }
 
+        return env.Undefined();
+    }
+
+    Napi::Value SetDomainNodeCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!writer_) {
+            Napi::Error::New(env, "Writer is closed or uninitialized").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        if (info.Length() < 2) {
+            Napi::TypeError::New(env, "2 arguments required: domainIndex, nodeCount").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        uint16_t domain_index = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        uint64_t node_count = GetUint64(info[1]);
+        impulse_status_t status = impulse_writer_set_domain_node_count(writer_, domain_index, node_count);
+        if (status != IMPULSE_OK) {
+            std::string err = impulse_get_last_error();
+            Napi::Error::New(env, "Failed to set domain node count: " + err).ThrowAsJavaScriptException();
+        }
+        return env.Undefined();
+    }
+
+    static bool ExtractBytes(const Napi::Value& val, const uint8_t*& ptr, size_t& len) {
+        if (val.IsBuffer()) {
+            auto buf = val.As<Napi::Buffer<uint8_t>>();
+            ptr = buf.Data();
+            len = buf.Length();
+            return true;
+        }
+        if (val.IsTypedArray()) {
+            auto arr = val.As<Napi::TypedArray>();
+            ptr = reinterpret_cast<const uint8_t*>(arr.ArrayBuffer().Data()) + arr.ByteOffset();
+            len = arr.ByteLength();
+            return true;
+        }
+        return false;
+    }
+
+    Napi::Value AddDomainAttributeDecimal64(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!writer_) {
+            Napi::Error::New(env, "Writer is closed or uninitialized").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        if (info.Length() < 5) {
+            Napi::TypeError::New(env, "Expected (domainIndex, name, precision, scale, data[, dimension, typeCode])").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        uint16_t domain_index = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        std::string name = info[1].As<Napi::String>().Utf8Value();
+        uint16_t precision = static_cast<uint16_t>(info[2].As<Napi::Number>().Uint32Value());
+        uint8_t scale = static_cast<uint8_t>(info[3].As<Napi::Number>().Uint32Value());
+        const uint8_t* data_ptr = nullptr;
+        size_t data_bytes = 0;
+        if (!ExtractBytes(info[4], data_ptr, data_bytes)) {
+            Napi::TypeError::New(env, "data must be a Buffer or TypedArray (e.g. BigInt64Array)").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        uint32_t dimension = (info.Length() >= 6 && info[5].IsNumber())
+            ? info[5].As<Napi::Number>().Uint32Value() : 1u;
+        uint8_t type_code = (info.Length() >= 7 && info[6].IsNumber())
+            ? static_cast<uint8_t>(info[6].As<Napi::Number>().Uint32Value()) : 0x15u;
+
+        impulse_status_t status = impulse_writer_add_domain_attribute_decimal64(
+            writer_, domain_index, name.c_str(), type_code, dimension,
+            precision, scale, data_ptr, static_cast<uint64_t>(data_bytes));
+        if (status != IMPULSE_OK) {
+            std::string err = impulse_get_last_error();
+            Napi::Error::New(env, "Failed to add domain DECIMAL64 attribute: " + err).ThrowAsJavaScriptException();
+        }
+        return env.Undefined();
+    }
+
+    Napi::Value AddAttributeDecimal64(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!writer_) {
+            Napi::Error::New(env, "Writer is closed or uninitialized").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        if (info.Length() < 5) {
+            Napi::TypeError::New(env, "Expected (relationIndex, name, precision, scale, data[, dimension, typeCode])").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        uint16_t relation_index = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        std::string name = info[1].As<Napi::String>().Utf8Value();
+        uint16_t precision = static_cast<uint16_t>(info[2].As<Napi::Number>().Uint32Value());
+        uint8_t scale = static_cast<uint8_t>(info[3].As<Napi::Number>().Uint32Value());
+        const uint8_t* data_ptr = nullptr;
+        size_t data_bytes = 0;
+        if (!ExtractBytes(info[4], data_ptr, data_bytes)) {
+            Napi::TypeError::New(env, "data must be a Buffer or TypedArray (e.g. BigInt64Array)").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        uint32_t dimension = (info.Length() >= 6 && info[5].IsNumber())
+            ? info[5].As<Napi::Number>().Uint32Value() : 1u;
+        uint8_t type_code = (info.Length() >= 7 && info[6].IsNumber())
+            ? static_cast<uint8_t>(info[6].As<Napi::Number>().Uint32Value()) : 0x15u;
+
+        impulse_status_t status = impulse_writer_add_attribute_decimal64(
+            writer_, relation_index, name.c_str(), type_code, dimension,
+            precision, scale, data_ptr, static_cast<uint64_t>(data_bytes));
+        if (status != IMPULSE_OK) {
+            std::string err = impulse_get_last_error();
+            Napi::Error::New(env, "Failed to add relation DECIMAL64 attribute: " + err).ThrowAsJavaScriptException();
+        }
         return env.Undefined();
     }
 
@@ -421,6 +769,7 @@ public:
         Napi::Function func = DefineClass(env, "VmWorkspace", {
             InstanceMethod("destroy", &NodeVmWorkspace::Destroy),
             InstanceMethod("execute", &NodeVmWorkspace::Execute),
+            InstanceMethod("executeParams", &NodeVmWorkspace::ExecuteParams),
             InstanceMethod("outputCount", &NodeVmWorkspace::OutputCount),
             InstanceMethod("getOutput", &NodeVmWorkspace::GetOutput),
             InstanceMethod("computeIctxV2", &NodeVmWorkspace::ComputeIctxV2),
@@ -521,6 +870,78 @@ private:
         return Napi::Number::New(env, rc);
     }
 
+    Napi::Value ExecuteParams(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!ws_) {
+            Napi::Error::New(env, "VmWorkspace has been destroyed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1 || !info[0].IsBuffer()) {
+            Napi::TypeError::New(env, "Expected (impbBuffer[, snapshot, bindings, gasLimit])").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        auto buf = info[0].As<Napi::Buffer<uint8_t>>();
+        const impulse_snapshot_t* snap = nullptr;
+        if (info.Length() >= 2 && !info[1].IsNull() && !info[1].IsUndefined() && info[1].IsObject()) {
+            NodeSnapshot* ns = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[1].As<Napi::Object>());
+            if (ns) snap = ns->RawSnapshot();
+        }
+        std::vector<impulse_vm_param_binding_v11_t> c_bindings;
+        std::deque<std::vector<uint64_t>> id_storage;
+        std::deque<std::string> str_storage;
+
+        if (info.Length() >= 3 && info[2].IsArray()) {
+            Napi::Array arr = info[2].As<Napi::Array>();
+            c_bindings.reserve(arr.Length());
+            for (uint32_t i = 0; i < arr.Length(); ++i) {
+                Napi::Object item = arr.Get(i).As<Napi::Object>();
+                impulse_vm_param_binding_v11_t b{};
+                b.param_id = item.Get("paramId").As<Napi::Number>().Uint32Value();
+                b.kind = item.Get("kind").As<Napi::Number>().Uint32Value();
+                if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_NULL) {
+                    b.scalar_bits = 0;
+                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_I64) {
+                    int64_t v = GetInt64(item.Get("scalarI64"));
+                    std::memcpy(&b.scalar_bits, &v, sizeof(v));
+                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_U64 || b.kind == IMPULSE_VM_V11_PARAM_SCALAR_BOOL) {
+                    b.scalar_bits = GetUint64(item.Get("scalarBits"));
+                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_F64) {
+                    double dv = item.Get("scalarF64").As<Napi::Number>().DoubleValue();
+                    std::memcpy(&b.scalar_bits, &dv, sizeof(dv));
+                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_STR) {
+                    str_storage.push_back(item.Get("strVal").As<Napi::String>().Utf8Value());
+                    b.data_ptr = str_storage.back().data();
+                    b.count = static_cast<uint32_t>(str_storage.back().size());
+                } else if (b.kind == IMPULSE_VM_V11_PARAM_FRONTIER_IDS) {
+                    b.domain_id = item.Has("domainId")
+                        ? static_cast<uint16_t>(item.Get("domainId").As<Napi::Number>().Uint32Value()) : 0;
+                    Napi::Array ids = item.Get("ids").As<Napi::Array>();
+                    id_storage.emplace_back();
+                    auto& vec = id_storage.back();
+                    vec.reserve(ids.Length());
+                    for (uint32_t j = 0; j < ids.Length(); ++j) {
+                        vec.push_back(GetUint64(ids.Get(j)));
+                    }
+                    b.data_ptr = vec.empty() ? nullptr : vec.data();
+                    b.count = static_cast<uint32_t>(vec.size());
+                }
+                c_bindings.push_back(b);
+            }
+        }
+
+        impulse_vm_params_v11_t params{};
+        params.gas_limit = (info.Length() >= 4 && (info[3].IsNumber() || info[3].IsBigInt()))
+            ? GetUint64(info[3]) : UINT64_MAX;
+        if (!c_bindings.empty()) {
+            params.bindings = c_bindings.data();
+            params.binding_count = static_cast<uint32_t>(c_bindings.size());
+        }
+        size_t out_bytes = 0;
+        impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+            buf.Data(), buf.Length(), snap, &params, ws_, nullptr, 0, &out_bytes);
+        return Napi::Number::New(env, rc);
+    }
+
     Napi::Value OutputCount(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), ws_ ? impulse_vm_v11_get_output_count(ws_) : 0);
     }
@@ -535,20 +956,47 @@ private:
         if (impulse_vm_v11_get_output(ws_, slot, &view) == 0) {
             return env.Null();
         }
+        auto is_valid = [&](uint32_t i) -> bool {
+            if (!view.valid_bits) return true;
+            return ((view.valid_bits[i >> 6] >> (i & 63u)) & 1ULL) != 0ULL;
+        };
         Napi::Object obj = Napi::Object::New(env);
         obj.Set("slot", Napi::Number::New(env, view.slot));
         obj.Set("elemTag", Napi::Number::New(env, view.elem_tag));
         obj.Set("length", Napi::Number::New(env, static_cast<double>(view.length)));
         if ((view.elem_tag == 0 || view.elem_tag == 1) && view.i64_data) {
             Napi::Array arr = Napi::Array::New(env, view.length);
-            for (uint64_t i = 0; i < view.length; ++i) {
-                arr.Set(static_cast<uint32_t>(i), Napi::Number::New(env, static_cast<double>(view.i64_data[i])));
+            Napi::Array i64_arr = Napi::Array::New(env, view.length);
+            for (uint32_t i = 0; i < view.length; ++i) {
+                if (!is_valid(i)) {
+                    arr.Set(i, env.Null());
+                    i64_arr.Set(i, env.Null());
+                } else {
+                    arr.Set(i, Napi::Number::New(env, static_cast<double>(view.i64_data[i])));
+                    if (view.elem_tag == 1) {
+                        i64_arr.Set(i, Napi::BigInt::New(env, static_cast<uint64_t>(view.i64_data[i])));
+                    } else {
+                        i64_arr.Set(i, Napi::BigInt::New(env, view.i64_data[i]));
+                    }
+                }
             }
             obj.Set("data", arr);
+            obj.Set("i64Data", i64_arr);
         } else if (view.elem_tag == 4 && view.f64_data) {
             Napi::Array arr = Napi::Array::New(env, view.length);
-            for (uint64_t i = 0; i < view.length; ++i) {
-                arr.Set(static_cast<uint32_t>(i), Napi::Number::New(env, view.f64_data[i]));
+            for (uint32_t i = 0; i < view.length; ++i) {
+                arr.Set(i, is_valid(i) ? Napi::Number::New(env, view.f64_data[i]) : env.Null());
+            }
+            obj.Set("data", arr);
+        } else if (view.elem_tag == 6 && view.bool_data_bits) {
+            Napi::Array arr = Napi::Array::New(env, view.length);
+            for (uint32_t i = 0; i < view.length; ++i) {
+                if (!is_valid(i)) {
+                    arr.Set(i, env.Null());
+                } else {
+                    bool bv = ((view.bool_data_bits[i >> 6] >> (i & 63u)) & 1ULL) != 0ULL;
+                    arr.Set(i, Napi::Boolean::New(env, bv));
+                }
             }
             obj.Set("data", arr);
         }
@@ -606,7 +1054,139 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     Napi::Object attrType = Napi::Object::New(env);
     attrType.Set("BOOL", Napi::Number::New(env, 0x0F));
     attrType.Set("DECIMAL64", Napi::Number::New(env, 0x15));
+    attrType.Set("DECIMAL64_NULLABLE", Napi::Number::New(env, 0x95));
     exports.Set("AttrType", attrType);
+
+    auto pack_compile_result = [](Napi::Env e, const impulse::compiler::v11::ImpScmV11CompileResult& res) -> Napi::Object {
+        Napi::Object out = Napi::Object::New(e);
+        out.Set("impbBytes", Napi::Buffer<uint8_t>::Copy(e, res.impb_bytes.data(), res.impb_bytes.size()));
+
+        Napi::Object pmap = Napi::Object::New(e);
+        for (const auto& kv : res.param_name_to_id) {
+            pmap.Set(kv.first, Napi::Number::New(e, kv.second));
+        }
+        out.Set("paramNameToId", pmap);
+
+        Napi::Array onames = Napi::Array::New(e, res.output_names.size());
+        for (size_t i = 0; i < res.output_names.size(); ++i) {
+            onames.Set(static_cast<uint32_t>(i), Napi::String::New(e, res.output_names[i]));
+        }
+        out.Set("outputNames", onames);
+
+        Napi::Array pschema = Napi::Array::New(e, res.param_schema.size());
+        for (size_t i = 0; i < res.param_schema.size(); ++i) {
+            const auto& pm = res.param_schema[i];
+            Napi::Object d = Napi::Object::New(e);
+            d.Set("name", Napi::String::New(e, pm.name));
+            d.Set("paramId", Napi::Number::New(e, pm.param_id));
+            d.Set("type", Napi::String::New(e, pm.type));
+            d.Set("isDecimal", Napi::Boolean::New(e, pm.is_decimal));
+            d.Set("precision", Napi::Number::New(e, pm.precision));
+            d.Set("scale", Napi::Number::New(e, pm.scale));
+            d.Set("domainId", Napi::Number::New(e, pm.domain_id));
+            pschema.Set(static_cast<uint32_t>(i), d);
+        }
+        out.Set("paramSchema", pschema);
+
+        Napi::Array oschema = Napi::Array::New(e, res.output_schema.size());
+        for (size_t i = 0; i < res.output_schema.size(); ++i) {
+            const auto& om = res.output_schema[i];
+            Napi::Object d = Napi::Object::New(e);
+            d.Set("name", Napi::String::New(e, om.name));
+            d.Set("type", Napi::String::New(e, om.type));
+            d.Set("isDecimal", Napi::Boolean::New(e, om.is_decimal));
+            d.Set("precision", Napi::Number::New(e, om.precision));
+            d.Set("scale", Napi::Number::New(e, om.scale));
+            oschema.Set(static_cast<uint32_t>(i), d);
+        }
+        out.Set("outputSchema", oschema);
+        return out;
+    };
+
+    exports.Set("compileImpScm", Napi::Function::New(env, [pack_compile_result](const Napi::CallbackInfo& info) -> Napi::Value {
+        Napi::Env e = info.Env();
+        if (info.Length() < 1 || !info[0].IsString()) {
+            Napi::TypeError::New(e, "Expected (source[, snapshot, enableOptimizations])").ThrowAsJavaScriptException();
+            return e.Null();
+        }
+        std::string source = info[0].As<Napi::String>().Utf8Value();
+        const impulse_snapshot_t* snap = nullptr;
+        if (info.Length() >= 2 && !info[1].IsNull() && !info[1].IsUndefined() && info[1].IsObject()) {
+            NodeSnapshot* ns = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[1].As<Napi::Object>());
+            if (ns) snap = ns->RawSnapshot();
+        }
+        bool enable_opt = (info.Length() >= 3 && info[2].IsBoolean())
+            ? info[2].As<Napi::Boolean>().Value() : true;
+        try {
+            auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(source, snap, enable_opt);
+            return pack_compile_result(e, res);
+        } catch (const std::exception& ex) {
+            Napi::Error::New(e, ex.what()).ThrowAsJavaScriptException();
+            return e.Null();
+        }
+    }));
+
+    exports.Set("compileCypher", Napi::Function::New(env, [pack_compile_result](const Napi::CallbackInfo& info) -> Napi::Value {
+        Napi::Env e = info.Env();
+        if (info.Length() < 1 || !info[0].IsString()) {
+            Napi::TypeError::New(e, "Expected (cypher[, snapshot, paramTypes, enableOptimizations])").ThrowAsJavaScriptException();
+            return e.Null();
+        }
+        std::string cypher = info[0].As<Napi::String>().Utf8Value();
+        const impulse_snapshot_t* snap = nullptr;
+        if (info.Length() >= 2 && !info[1].IsNull() && !info[1].IsUndefined() && info[1].IsObject()) {
+            NodeSnapshot* ns = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[1].As<Napi::Object>());
+            if (ns) snap = ns->RawSnapshot();
+        }
+        std::unordered_map<std::string, impulse::compiler::CypherCompiler::ParamTypeSpec> pmap;
+        if (info.Length() >= 3 && info[2].IsObject() && !info[2].IsNull()) {
+            Napi::Object pt = info[2].As<Napi::Object>();
+            Napi::Array keys = pt.GetPropertyNames();
+            for (uint32_t i = 0; i < keys.Length(); ++i) {
+                std::string key = keys.Get(i).As<Napi::String>().Utf8Value();
+                Napi::Value val = pt.Get(key);
+                impulse::compiler::CypherCompiler::ParamTypeSpec spec{};
+                if (val.IsString()) {
+                    std::string s = val.As<Napi::String>().Utf8Value();
+                    std::string upper = s;
+                    std::transform(upper.begin(), upper.end(), upper.begin(),
+                                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                    if (upper.rfind("DECIMAL(", 0) == 0 && !upper.empty() && upper.back() == ')') {
+                        std::string inner = upper.substr(8, upper.size() - 9);
+                        auto comma = inner.find(',');
+                        if (comma == std::string::npos) {
+                            Napi::TypeError::New(e, "Invalid DECIMAL(P, S) spec: " + s).ThrowAsJavaScriptException();
+                            return e.Null();
+                        }
+                        spec.type = "DECIMAL";
+                        spec.precision = static_cast<uint16_t>(std::stoi(inner.substr(0, comma)));
+                        spec.scale = static_cast<uint8_t>(std::stoi(inner.substr(comma + 1)));
+                    } else {
+                        spec.type = upper;
+                    }
+                } else if (val.IsObject() && !val.IsNull()) {
+                    Napi::Object vd = val.As<Napi::Object>();
+                    if (vd.Has("type")) spec.type = vd.Get("type").As<Napi::String>().Utf8Value();
+                    if (vd.Has("precision")) spec.precision = static_cast<uint16_t>(vd.Get("precision").As<Napi::Number>().Uint32Value());
+                    if (vd.Has("scale")) spec.scale = static_cast<uint8_t>(vd.Get("scale").As<Napi::Number>().Uint32Value());
+                    if (vd.Has("domain")) spec.domain_name = vd.Get("domain").As<Napi::String>().Utf8Value();
+                }
+                pmap[key] = std::move(spec);
+            }
+        }
+        bool enable_opt = (info.Length() >= 4 && info[3].IsBoolean())
+            ? info[3].As<Napi::Boolean>().Value() : true;
+        try {
+            std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm_v11(cypher, pmap);
+            auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(impscm_src, snap, enable_opt);
+            Napi::Object out = pack_compile_result(e, res);
+            out.Set("impscmSource", Napi::String::New(e, impscm_src));
+            return out;
+        } catch (const std::exception& ex) {
+            Napi::Error::New(e, ex.what()).ThrowAsJavaScriptException();
+            return e.Null();
+        }
+    }));
 
     return exports;
 }

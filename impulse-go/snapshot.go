@@ -403,6 +403,172 @@ func (s *Snapshot) GetAttributeBuffers(relationIndex, attributeIndex uint16) (da
 	return data, offsets, typeCode, dimension, nil
 }
 
+// GetDomainAttributeCount returns the number of attributes attached to a domain.
+func (s *Snapshot) GetDomainAttributeCount(domainIndex uint16) uint16 {
+	if s.ptr == nil {
+		return 0
+	}
+	return uint16(C.impulse_snapshot_get_domain_attribute_count(s.ptr, C.uint16_t(domainIndex)))
+}
+
+// GetDomainAttributeBuffers returns safe Go copies of a domain attribute's raw data and offset buffers.
+func (s *Snapshot) GetDomainAttributeBuffers(domainIndex, attributeIndex uint16) (data []byte, offsets []uint32, typeCode uint8, dimension uint32, err error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return nil, nil, 0, 0, ErrInvalidArgument
+	}
+
+	var cData unsafe.Pointer
+	var cDataBytes C.uint64_t
+	var cOffsets unsafe.Pointer
+	var cOffsetsBytes C.uint64_t
+	var cTypeCode C.uint8_t
+	var cDimension C.uint32_t
+
+	status := C.impulse_snapshot_get_domain_attribute_buffers(
+		s.ptr,
+		C.uint16_t(domainIndex),
+		C.uint16_t(attributeIndex),
+		&cData,
+		&cDataBytes,
+		&cOffsets,
+		&cOffsetsBytes,
+		&cTypeCode,
+		&cDimension,
+	)
+
+	if status != C.IMPULSE_OK {
+		return nil, nil, 0, 0, Status(status)
+	}
+
+	typeCode = uint8(cTypeCode)
+	dimension = uint32(cDimension)
+
+	if cData != nil && cDataBytes > 0 {
+		rawData := unsafe.Slice((*byte)(cData), uint64(cDataBytes))
+		data = make([]byte, len(rawData))
+		copy(data, rawData)
+	}
+	if cOffsets != nil && cOffsetsBytes > 0 {
+		rawOffsets := unsafe.Slice((*uint32)(cOffsets), uint64(cOffsetsBytes)/4)
+		offsets = make([]uint32, len(rawOffsets))
+		copy(offsets, rawOffsets)
+	}
+
+	return data, offsets, typeCode, dimension, nil
+}
+
+// GetDomainAttributeDecimal64Meta retrieves the (precision, scale) metadata for a domain DECIMAL64 attribute.
+func (s *Snapshot) GetDomainAttributeDecimal64Meta(domainIndex, attributeIndex uint16) (precision uint16, scale uint8, err error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return 0, 0, ErrInvalidArgument
+	}
+	var cPrecision C.uint16_t
+	var cScale C.uint8_t
+	status := C.impulse_snapshot_get_domain_attribute_decimal64_meta(
+		s.ptr,
+		C.uint16_t(domainIndex),
+		C.uint16_t(attributeIndex),
+		&cPrecision,
+		&cScale,
+	)
+	if status != C.IMPULSE_OK {
+		return 0, 0, Status(status)
+	}
+	return uint16(cPrecision), uint8(cScale), nil
+}
+
+// GetAttributeDecimal64Meta retrieves the (precision, scale) metadata for a relation DECIMAL64 attribute.
+func (s *Snapshot) GetAttributeDecimal64Meta(relationIndex, attributeIndex uint16) (precision uint16, scale uint8, err error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return 0, 0, ErrInvalidArgument
+	}
+	var cPrecision C.uint16_t
+	var cScale C.uint8_t
+	status := C.impulse_snapshot_get_attribute_decimal64_meta(
+		s.ptr,
+		C.uint16_t(relationIndex),
+		C.uint16_t(attributeIndex),
+		&cPrecision,
+		&cScale,
+	)
+	if status != C.IMPULSE_OK {
+		return 0, 0, Status(status)
+	}
+	return uint16(cPrecision), uint8(cScale), nil
+}
+
+// GetDomainAttributeDecimal64 decodes a domain DECIMAL64 (0x15 or nullable 0x95) attribute column.
+func (s *Snapshot) GetDomainAttributeDecimal64(domainIndex, attributeIndex uint16) ([]NullableDecimal64, Decimal64Meta, error) {
+	data, _, typeCode, dim, err := s.GetDomainAttributeBuffers(domainIndex, attributeIndex)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+	precision, scale, err := s.GetDomainAttributeDecimal64Meta(domainIndex, attributeIndex)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+
+	var rowCount uint64
+	s.poolMu.RLock()
+	if !s.closed && s.ptr != nil {
+		var domEntry C.impulse_domain_catalog_entry_t
+		if C.impulse_snapshot_get_domain_entry(s.ptr, C.uint16_t(domainIndex), &domEntry, nil) == C.IMPULSE_OK {
+			rowCount = uint64(domEntry.node_count)
+		}
+	}
+	s.poolMu.RUnlock()
+	runtime.KeepAlive(s)
+
+	vals, err := decodeDecimal64Bytes(data, typeCode, precision, scale, rowCount)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+	meta := Decimal64Meta{
+		Precision:  precision,
+		Scale:      scale,
+		IsNullable: (typeCode & 0x80) != 0,
+		Dimension:  dim,
+	}
+	return vals, meta, nil
+}
+
+// GetAttributeDecimal64 decodes a relation DECIMAL64 (0x15 or nullable 0x95) attribute column.
+func (s *Snapshot) GetAttributeDecimal64(relationIndex, attributeIndex uint16) ([]NullableDecimal64, Decimal64Meta, error) {
+	data, _, typeCode, dim, err := s.GetAttributeBuffers(relationIndex, attributeIndex)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+	precision, scale, err := s.GetAttributeDecimal64Meta(relationIndex, attributeIndex)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+	relEntry, err := s.GetRelationEntry(relationIndex)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+
+	vals, err := decodeDecimal64Bytes(data, typeCode, precision, scale, relEntry.EdgeCount)
+	if err != nil {
+		return nil, Decimal64Meta{}, err
+	}
+	meta := Decimal64Meta{
+		Precision:  precision,
+		Scale:      scale,
+		IsNullable: (typeCode & 0x80) != 0,
+		Dimension:  dim,
+	}
+	return vals, meta, nil
+}
+
 // GetMetadata retrieves custom snapshot key-value metadata.
 func (s *Snapshot) GetMetadata(key string) (string, error) {
 	if s.ptr == nil {

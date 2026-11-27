@@ -6,11 +6,16 @@ const os = require('os');
 const path = require('path');
 const impulse = require('./index.js');
 
+const { Decimal64 } = impulse;
+
 console.log('=== Running Impulse Graph Engine Node.js v0.11 Native Binding Tests ===');
 
 assert.strictEqual(typeof impulse.Snapshot, 'function', 'Snapshot class should be exported');
 assert.strictEqual(typeof impulse.Writer, 'function', 'Writer class should be exported');
 assert.strictEqual(typeof impulse.VmWorkspace, 'function', 'VmWorkspace class should be exported');
+assert.strictEqual(typeof impulse.Decimal64, 'function', 'Decimal64 class should be exported');
+assert.strictEqual(typeof impulse.compileImpScm, 'function', 'compileImpScm should be exported');
+assert.strictEqual(typeof impulse.compileCypher, 'function', 'compileCypher should be exported');
 assert.strictEqual(typeof impulse.Opcodes, 'object', 'Opcodes table should be exported');
 assert.strictEqual(typeof impulse.VmStatus, 'object', 'VmStatus enum should be exported');
 assert.strictEqual(typeof impulse.AttrType, 'object', 'AttrType enum should be exported');
@@ -19,23 +24,173 @@ assert.strictEqual(impulse.Opcodes.VEC_DECIMAL_ALU, 0x58);
 assert.strictEqual(impulse.VmStatus.ARITHMETIC_OVERFLOW, 16);
 assert.strictEqual(impulse.VmStatus.DIV_BY_ZERO, 17);
 assert.strictEqual(impulse.AttrType.DECIMAL64, 0x15);
+assert.strictEqual(impulse.AttrType.DECIMAL64_NULLABLE, 0x95);
 assert.strictEqual(impulse.AttrType.BOOL, 0x0f);
 
+// ---------------------------------------------------------------------------
+// 1. Decimal64 value type unit tests (including > 2^53 BigInt precision)
+// ---------------------------------------------------------------------------
+{
+  const d1 = Decimal64.fromString('123.45', 10, 2);
+  assert.strictEqual(d1.unscaled, 12345n);
+  assert.strictEqual(d1.precision, 10);
+  assert.strictEqual(d1.scale, 2);
+  assert.strictEqual(d1.toString(), '123.45');
+  assert.strictEqual(d1.toNumber(), 123.45);
+  assert.strictEqual(Object.isFrozen(d1), true);
+
+  const d2 = Decimal64.fromUnscaled(1234500n, 10, 4);
+  assert.strictEqual(d2.toString(), '123.4500');
+  assert.strictEqual(d1.equals(d2), true, 'cross-scale equality should match');
+  assert.strictEqual(d2.equals(d1), true);
+  assert.strictEqual(d1.equals(Decimal64.fromString('123.46', 10, 2)), false);
+  assert.strictEqual(d1.equals('123.45'), false);
+
+  // Negative & sub-unit formatting
+  const neg = Decimal64.fromString('-0.0050', 18, 4);
+  assert.strictEqual(neg.unscaled, -50n);
+  assert.strictEqual(neg.toString(), '-0.0050');
+
+  const negZero = Decimal64.fromString('-0.00', 10, 2);
+  assert.strictEqual(negZero.unscaled, 0n);
+  assert.strictEqual(negZero.toString(), '0.00');
+
+  // Half-away-from-zero rounding on string parsing
+  assert.strictEqual(Decimal64.fromString('99.995', 10, 2).toString(), '100.00');
+  assert.strictEqual(Decimal64.fromString('99.994', 10, 2).toString(), '99.99');
+  assert.strictEqual(Decimal64.fromString('-1.235', 10, 2).toString(), '-1.24');
+  assert.strictEqual(Decimal64.fromString('-1.234', 10, 2).toString(), '-1.23');
+
+  // > 2^53 precision preservation via BigInt (9007199254740993 = 2^53 + 1)
+  const bigStr = '9007199254740993.01';
+  const bigDec = Decimal64.fromString(bigStr, 18, 2);
+  assert.strictEqual(bigDec.unscaled, 900719925474099301n);
+  assert.strictEqual(bigDec.toString(), bigStr);
+
+  const maxDec = Decimal64.fromUnscaled(999999999999999999n, 18, 0);
+  assert.strictEqual(maxDec.toString(), '999999999999999999');
+
+  const minDec = Decimal64.fromUnscaled(-999999999999999999n, 18, 0);
+  assert.strictEqual(minDec.toString(), '-999999999999999999');
+
+  // Validation errors
+  assert.throws(() => new Decimal64(1n, 0, 0), RangeError);
+  assert.throws(() => new Decimal64(1n, 19, 0), RangeError);
+  assert.throws(() => new Decimal64(1n, 4, 5), RangeError);
+  assert.throws(() => new Decimal64(1000n, 3, 0), RangeError);
+  assert.throws(() => new Decimal64(-1000n, 3, 0), RangeError);
+  assert.throws(() => Decimal64.fromString('1000', 3, 0), RangeError);
+  assert.throws(() => Decimal64.fromString('', 10, 2), SyntaxError);
+  assert.throws(() => Decimal64.fromString('1.2.3', 10, 2), SyntaxError);
+  assert.throws(() => Decimal64.fromString('12abc', 10, 2), SyntaxError);
+  assert.throws(() => new Decimal64(Number.MAX_SAFE_INTEGER + 1, 18, 0), RangeError);
+}
+
+// ---------------------------------------------------------------------------
+// 2. Snapshot roundtrip: non-null (0x15), nullable (0x95), > 2^53, VM & Cypher
+// ---------------------------------------------------------------------------
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'impulse-node-v11-'));
 const snapPath = path.join(tmpDir, 'test.imps');
 try {
   const writer = new impulse.Writer(snapPath, 1);
-  writer.addDomain(0, 5, 'Node');
+  writer.addDomain(0, 5, 'Account');
+  writer.setDomainNodeCount(0, 3);
+
+  // Non-null DECIMAL64 (0x15) with > 2^53 value
+  writer.addDomainDecimal64(0, 'balance', 18, 2, [
+    Decimal64.fromString('10.00', 18, 2),
+    Decimal64.fromString('19.99', 18, 2),
+    Decimal64.fromString('9007199254740993.01', 18, 2),
+  ]);
+
+  // Nullable DECIMAL64 (0x95) with null at index 1
+  writer.addDomainDecimal64(
+    0,
+    'credit_limit',
+    12,
+    2,
+    [Decimal64.fromString('500.00', 12, 2), null, Decimal64.fromString('1250.75', 12, 2)],
+    { nullable: true }
+  );
+
+  // Relation: 0 -> 1, 0 -> 2
   writer.addRelation(0, 0, 0, 3, 2, 0, new Uint32Array([0, 2, 2, 2]), new Uint32Array([1, 2]));
+
+  // Edge DECIMAL64 attribute (non-null) and nullable edge DECIMAL64 attribute
+  writer.addRelationDecimal64(0, 'amount', 18, 4, [
+    Decimal64.fromString('4.2500', 18, 4),
+    Decimal64.fromString('100.1234', 18, 4),
+  ]);
+  writer.addRelationDecimal64(
+    0,
+    'fee',
+    10,
+    2,
+    [null, Decimal64.fromString('1.50', 10, 2)],
+    { nullable: true }
+  );
+
   writer.finalize();
 
   const snap = new impulse.Snapshot(snapPath);
   assert.strictEqual(snap.domainCount(), 1);
   assert.strictEqual(snap.relationCount(), 1);
+  assert.strictEqual(snap.getDomainAttributeCount(0), 2);
   assert.strictEqual(snap.isReachable(0, 0n, 1n), true);
   assert.strictEqual(snap.isReachable(0, 0n, 2n), true);
   assert.strictEqual(snap.isReachable(0, 1n, 2n), false);
 
+  // Verify domain DECIMAL64 metadata & values
+  const balInfo = snap.getDomainAttributeInfo(0, 0);
+  assert.strictEqual(balInfo.name, 'balance');
+  assert.strictEqual(balInfo.typeCode, 0x15);
+  assert.strictEqual(balInfo.isNullable, false);
+  assert.strictEqual(balInfo.precision, 18);
+  assert.strictEqual(balInfo.scale, 2);
+
+  const balances = snap.getDomainDecimal64(0, 0);
+  assert.strictEqual(balances.length, 3);
+  assert.strictEqual(balances[0].toString(), '10.00');
+  assert.strictEqual(balances[1].toString(), '19.99');
+  assert.strictEqual(balances[2].unscaled, 900719925474099301n);
+  assert.strictEqual(balances[2].toString(), '9007199254740993.01');
+
+  // Verify nullable domain DECIMAL64 (0x95)
+  const limInfo = snap.getDomainAttributeInfo(0, 1);
+  assert.strictEqual(limInfo.name, 'credit_limit');
+  assert.strictEqual(limInfo.typeCode, 0x95);
+  assert.strictEqual(limInfo.isNullable, true);
+  assert.strictEqual(limInfo.precision, 12);
+  assert.strictEqual(limInfo.scale, 2);
+
+  const limits = snap.getDomainDecimal64(0, 1);
+  assert.strictEqual(limits.length, 3);
+  assert.strictEqual(limits[0].toString(), '500.00');
+  assert.strictEqual(limits[1], null);
+  assert.strictEqual(limits[2].toString(), '1250.75');
+
+  // Verify edge DECIMAL64 metadata & values (non-null and nullable)
+  const amtInfo = snap.getAttributeInfo(0, 0);
+  assert.strictEqual(amtInfo.name, 'amount');
+  assert.strictEqual(amtInfo.typeCode, 0x15);
+  assert.strictEqual(amtInfo.precision, 18);
+  assert.strictEqual(amtInfo.scale, 4);
+  const amounts = snap.getRelationDecimal64(0, 0);
+  assert.strictEqual(amounts.length, 2);
+  assert.strictEqual(amounts[0].toString(), '4.2500');
+  assert.strictEqual(amounts[1].toString(), '100.1234');
+
+  const feeInfo = snap.getAttributeInfo(0, 1);
+  assert.strictEqual(feeInfo.typeCode, 0x95);
+  assert.strictEqual(feeInfo.isNullable, true);
+  assert.strictEqual(feeInfo.precision, 10);
+  assert.strictEqual(feeInfo.scale, 2);
+  const fees = snap.getRelationDecimal64(0, 1);
+  assert.strictEqual(fees.length, 2);
+  assert.strictEqual(fees[0], null);
+  assert.strictEqual(fees[1].toString(), '1.50');
+
+  // Raw .impb v0.11 VM execution
   const enc = (op, sub, flg, dst, s1, s2, s3, imm) =>
     BigInt(op) |
     (BigInt(sub & 0xf) << 8n) |
@@ -64,8 +219,45 @@ try {
   assert.strictEqual(rc, impulse.VmStatus.OK, `expected OK (0), got ${rc}`);
   assert.strictEqual(ws.outputCount(), 1);
   ws.destroy();
+
+  // E2E openCypher DECIMAL64 with Decimal64 param and > 2^53 sum output
+  const cypherProg = impulse.compileCypher(
+    'MATCH (a:Account) WHERE a.balance >= $min_bal RETURN sum(a.balance)',
+    snap,
+    { min_bal: 'DECIMAL(18, 2)' }
+  );
+  assert.strictEqual(cypherProg.outputSchema[0].isDecimal, true);
+  assert.strictEqual(cypherProg.outputSchema[0].scale, 2);
+  const cypherRes = cypherProg.execute(snap, {
+    min_bal: Decimal64.fromString('19.99', 18, 2),
+  });
+  assert.ok(cypherRes.result instanceof Decimal64);
+  assert.strictEqual(cypherRes.result.unscaled, 900719925474101300n);
+  assert.strictEqual(cypherRes.result.toString(), '9007199254741013.00');
+
+  // E2E ImpScheme v0.11 DECIMAL64 query + NULL output from safe-div by zero
+  const scmProg = impulse.compileImpScm(
+    '(query (param $min_bal (decimal 18 2)) ' +
+      '(let ((f (node-filter (domain-all "Account") "balance" >= $min_bal)) ' +
+      '      (b (load-node-attr "Account" "balance"))) ' +
+      '  (collect :scalar "total" (reduce :sum b :mask f))))',
+    snap
+  );
+  const scmRes = scmProg.execute(snap, {
+    min_bal: Decimal64.fromString('19.99', 18, 2),
+  });
+  assert.ok(scmRes.total instanceof Decimal64);
+  assert.strictEqual(scmRes.total.toString(), '9007199254741013.00');
+
+  const nullDivProg = impulse.compileImpScm(
+    '(query (collect :scalar "q" (safe-div (dec "10.00" 10 2) (dec "0.00" 10 2))))',
+    snap
+  );
+  const nullDivRes = nullDivProg.execute(snap);
+  assert.strictEqual(nullDivRes.q, null);
+
   snap.close();
-  console.log('ALL NODE v0.11 TESTS PASSED!');
+  console.log('ALL NODE v0.11 + DECIMAL64 TESTS PASSED!');
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
