@@ -142,7 +142,6 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
     V11Arena& arena,
     uint8_t subop,
     const V11RelView& rel,
-    const V11RevAdj* rev_adj,
     const V11Vector* edge_mask,
     const V11MlMap& cur,
     const V11MlMap& excl,
@@ -161,12 +160,12 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
             }
         }
     }
-    if (do_rev && rev_adj) {
+    if (do_rev) {
         for (uint32_t i = 0; i < cur.len; ++i) {
             uint64_t v64 = cur.nodes[i];
-            if (v64 < rev_adj->n_tgt) {
+            if (rel.csc_row_off_len > 0u && v64 < rel.csc_row_off_len - 1u) {
                 uint32_t v = static_cast<uint32_t>(v64);
-                cap += (rev_adj->offsets[v + 1u] - rev_adj->offsets[v]);
+                cap += (rel.csc_row_off(v + 1u) - rel.csc_row_off(v));
             }
         }
     }
@@ -192,17 +191,16 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
             }
         }
     }
-    if (do_rev && rev_adj) {
+    if (do_rev) {
         for (uint32_t i = 0; i < cur.len; ++i) {
             uint64_t v64 = cur.nodes[i];
             uint64_t mask = cur.masks[i];
-            if (v64 < rev_adj->n_tgt) {
+            if (rel.csc_row_off_len > 0u && v64 < rel.csc_row_off_len - 1u) {
                 uint32_t v = static_cast<uint32_t>(v64);
-                for (uint32_t k = rev_adj->offsets[v]; k < rev_adj->offsets[v + 1u]; ++k) {
-                    uint64_t u = static_cast<uint64_t>(rev_adj->srcs[k]);
-                    uint32_t e = rev_adj->edges[k];
+                for (uint32_t p = rel.csc_row_off(v); p < rel.csc_row_off(v + 1u); ++p) {
+                    uint64_t u = rel.csc_col_src(p);
                     uint64_t ev = !edge_mask ? ~0ULL
-                        : ((e < edge_mask->length && edge_mask->is_valid_at(e)) ? static_cast<uint64_t>(edge_mask->i64_data[e]) : 0ULL);
+                        : ((p < edge_mask->length && edge_mask->is_valid_at(p)) ? static_cast<uint64_t>(edge_mask->i64_data[p]) : 0ULL);
                     uint64_t pass = mask & ev & ~excl.get(u);
                     if (pass != 0ULL) pairs[cnt++] = {u, pass};
                 }

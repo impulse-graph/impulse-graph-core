@@ -18,6 +18,14 @@ V11_OP_CASE(WALK_FILTERED) {
     uint8_t cmp_op = subop & 7u;
     uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
+    if (!is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
     if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
     const V11Vector* col = p3_find_edge_attr(*rel, attr_id);
@@ -60,16 +68,13 @@ V11_OP_CASE(WALK_FILTERED) {
                 }
             }
         } else {
-            V11RevAdj rev_adj{};
-            if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
             for (uint32_t i = 0; i < src_len; ++i) {
                 uint32_t v = src_ids[i];
-                if (v < rev_adj.n_tgt) {
-                    for (uint32_t k = rev_adj.offsets[v]; k < rev_adj.offsets[v + 1u]; ++k) {
-                        uint32_t u = rev_adj.srcs[k];
-                        uint32_t e = rev_adj.edges[k];
+                if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) {
+                    for (uint32_t p = rel->csc_row_off(v); p < rel->csc_row_off(v + 1u); ++p) {
+                        uint32_t u = static_cast<uint32_t>(rel->csc_col_src(p));
                         if (!p3_sorted_contains(s_excl, s_excl_len, u) &&
-                            p3_eval_edge_pred(*col, e, cmp_op, rhs_valid, rhs_bits, rhs_ty)) {
+                            p3_eval_edge_pred(*col, p, cmp_op, rhs_valid, rhs_bits, rhs_ty)) {
                             if (!out_acc.push(ws.arena, u)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
                         }
                     }

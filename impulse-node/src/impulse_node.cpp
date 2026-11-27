@@ -238,6 +238,11 @@ private:
         }
         size_t rows = impulse_stmt_row_count(stmt);
         const uint64_t* ids = static_cast<const uint64_t*>(impulse_stmt_column_data(stmt, 0));
+        if (rows > 0 && ids == nullptr) {
+            impulse_stmt_finalize(stmt);
+            Napi::Error::New(env, "impulse_stmt_column_data returned null for non-empty result").ThrowAsJavaScriptException();
+            return env.Null();
+        }
         Napi::Array out = Napi::Array::New(env, rows);
         for (size_t i = 0; i < rows; ++i) {
             out.Set(static_cast<uint32_t>(i), Napi::Number::New(env, static_cast<double>(ids[i])));
@@ -342,6 +347,10 @@ private:
         uint64_t section_features = GetUint64(info[5]);
 
         // Row offsets typed array
+        if (!info[6].IsTypedArray()) {
+            Napi::TypeError::New(env, "rowOffsets must be a TypedArray").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
         Napi::TypedArray row_array = info[6].As<Napi::TypedArray>();
         Napi::ArrayBuffer row_buf = row_array.ArrayBuffer();
         const uint8_t* row_bytes = reinterpret_cast<const uint8_t*>(row_buf.Data()) + row_array.ByteOffset();
@@ -388,6 +397,7 @@ private:
 
         IMPULSE_ASSERT(writer_ != nullptr);
         impulse_status_t status = impulse_writer_finalize(writer_);
+        impulse_writer_destroy(writer_);
         writer_ = nullptr;
 
         if (status != IMPULSE_OK) {

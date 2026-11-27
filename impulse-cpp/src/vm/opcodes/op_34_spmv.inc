@@ -17,6 +17,14 @@ V11_OP_CASE(SPMV) {
     bool is_rev = (subop == 1u || subop == 3u);
     uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
+    if (!is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
     if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
     const V11Frontier* tgt_mask = nullptr;
@@ -249,61 +257,7 @@ V11_OP_CASE(SPMV) {
         V11_DISPATCH();
     }
 
-    // Reverse SpMV path (is_rev)
-    struct SpmvEdge { uint32_t u; uint32_t v; uint32_t e; };
-    SpmvEdge* edges = nullptr;
-    uint32_t edge_cnt = 0u;
-    {
-        V11RevAdj rev_adj{};
-        if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        size_t cap = 0u;
-        for (uint32_t i = 0; i < src_len; ++i) {
-            uint32_t v = src_ids[i];
-            if (v < rev_adj.n_tgt) cap += (rev_adj.offsets[v + 1u] - rev_adj.offsets[v]);
-        }
-        if (cap > 0u) {
-            edges = ws.arena.alloc_array<SpmvEdge>(cap, 8);
-            if (!edges) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-            for (uint32_t i = 0; i < src_len; ++i) {
-                uint32_t v = src_ids[i];
-                if (v < rev_adj.n_tgt) {
-                    for (uint32_t k = rev_adj.offsets[v]; k < rev_adj.offsets[v + 1u]; ++k) {
-                        uint32_t u = rev_adj.srcs[k];
-                        if (!tgt_mask || tgt_mask->contains_1bit(u)) edges[edge_cnt++] = {v, u, rev_adj.edges[k]};
-                    }
-                }
-            }
-        }
-    }
-
-    if (subop == 7u) { // .fwd_first_src
-        int64_t* out = (n_out > 0u) ? ws.arena.alloc_array<int64_t>(n_out, 8) : nullptr;
-        uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-        auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-        if ((n_out > 0u && !out) || !valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        std::memset(valid, 0, vwords * sizeof(uint64_t));
-        uint32_t hits = 0u;
-        for (uint32_t i = 0; i < edge_cnt; ++i) {
-            uint32_t u = edges[i].u, v = edges[i].v;
-            if (v >= n_out) continue;
-            uint64_t u64 = static_cast<uint64_t>(u);
-            bool has = ((valid[v >> 6] >> (v & 63u)) & 1ULL) != 0ULL;
-            if (!has) {
-                out[v] = static_cast<int64_t>(u64);
-                valid[v >> 6] |= (1ULL << (v & 63u));
-                ++hits;
-            } else if (u64 < static_cast<uint64_t>(out[v])) {
-                out[v] = static_cast<int64_t>(u64);
-            }
-        }
-        new (ov) V11Vector();
-        ov->elem_tag = kVecTagU64; ov->length = n_out; ov->i64_data = out; ov->valid_bits = valid;
-        ws.v_regs[dst] = ov;
-        ws.set_zf(hits == 0u);
-        ws.state.pc += 1u;
-        V11_DISPATCH();
-    }
-
+    // Streaming reverse SpMV path (is_rev: subop == 1 rev_plus_times, subop == 3 rev_min_plus) directly over CSC
     bool scalar_rhs = (flags & FLAG_SCALAR_RHS) != 0u;
     bool scalar_valid = scalar_rhs && ws.is_r_valid(s2);
     double scalar_val = scalar_valid ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
@@ -328,44 +282,7 @@ V11_OP_CASE(SPMV) {
         }
     }
 
-    if (subop == 8u) { // .fwd_argmin_plus
-        double* best_cost = (n_out > 0u) ? ws.arena.alloc_array<double>(n_out, 8) : nullptr;
-        int64_t* best_src = (n_out > 0u) ? ws.arena.alloc_array<int64_t>(n_out, 8) : nullptr;
-        uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-        auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-        if ((n_out > 0u && (!best_cost || !best_src)) || !valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        std::memset(valid, 0, vwords * sizeof(uint64_t));
-        uint32_t hits = 0u;
-        for (uint32_t i = 0; i < edge_cnt; ++i) {
-            uint32_t u = edges[i].u, v = edges[i].v, e = edges[i].e;
-            if (v >= n_out) continue;
-            if (scalar_rhs ? !scalar_valid : (u >= n_in || !rhs_snap_valid[u])) continue;
-            double du = scalar_rhs ? scalar_val : rhs_snap[u];
-            if (weight_col && (e >= weight_col->length || !weight_col->is_valid_at(e))) continue;
-            double ew = weight_col ? p2_read_numeric_as_f64(*weight_col, e) : 1.0;
-            double c = du + ew;
-            if (std::isnan(c)) continue;
-            uint64_t u64 = static_cast<uint64_t>(u);
-            bool has = ((valid[v >> 6] >> (v & 63u)) & 1ULL) != 0ULL;
-            if (!has) {
-                best_cost[v] = c;
-                best_src[v] = static_cast<int64_t>(u64);
-                valid[v >> 6] |= (1ULL << (v & 63u));
-                ++hits;
-            } else if (c < best_cost[v] || (c == best_cost[v] && u64 < static_cast<uint64_t>(best_src[v]))) {
-                best_cost[v] = c;
-                best_src[v] = static_cast<int64_t>(u64);
-            }
-        }
-        new (ov) V11Vector();
-        ov->elem_tag = kVecTagU64; ov->length = n_out; ov->i64_data = best_src; ov->valid_bits = valid;
-        ws.v_regs[dst] = ov;
-        ws.set_zf(hits == 0u);
-        ws.state.pc += 1u;
-        V11_DISPATCH();
-    }
-
-    bool is_plus_times = (subop == 0u || subop == 1u);
+    bool is_plus_times = (subop == 1u);
     double* out = (n_out > 0u) ? ws.arena.alloc_array<double>(n_out, 8) : nullptr;
     uint64_t* out_valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
     auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
@@ -388,31 +305,30 @@ V11_OP_CASE(SPMV) {
     }
 
     uint32_t hits = 0u;
-    for (uint32_t i = 0; i < edge_cnt; ++i) {
-        uint32_t u = edges[i].u, v = edges[i].v, e = edges[i].e;
-        if (v >= n_out) continue;
-        if (scalar_rhs ? !scalar_valid : (u >= n_in || !rhs_snap_valid[u])) continue;
-        double ru = scalar_rhs ? scalar_val : rhs_snap[u];
-        if (weight_col && (e >= weight_col->length || !weight_col->is_valid_at(e))) continue;
-        double ew = weight_col ? p2_read_numeric_as_f64(*weight_col, e) : 1.0;
-        double contrib = ru;
-        if (subop == 0u || subop == 1u || subop == 5u) contrib = ru * ew;
-        else if (subop == 2u || subop == 3u || subop == 4u) contrib = ru + ew;
-        else if (subop == 6u) contrib = p1_ieee_max_f64(ru, ew);
-        if (std::isnan(contrib)) continue;
-        ++hits;
-        bool has = ((out_valid[v >> 6] >> (v & 63u)) & 1ULL) != 0ULL;
-        if (subop == 0u || subop == 1u) {
-            double prev = has ? out[v] : 0.0;
-            double sum = prev + contrib;
-            if (std::isnan(sum)) out_valid[v >> 6] &= ~(1ULL << (v & 63u));
-            else { out[v] = sum; out_valid[v >> 6] |= (1ULL << (v & 63u)); }
-        } else if (subop == 2u || subop == 3u || subop == 6u) {
-            out[v] = has ? p1_ieee_min_f64(out[v], contrib) : contrib;
-            out_valid[v >> 6] |= (1ULL << (v & 63u));
-        } else if (subop == 4u || subop == 5u) {
-            out[v] = has ? p1_ieee_max_f64(out[v], contrib) : contrib;
-            out_valid[v >> 6] |= (1ULL << (v & 63u));
+    const uint32_t csc_rows = rel->csc_row_off_len;
+    for (uint32_t i = 0; i < src_len; ++i) {
+        uint32_t v = src_ids[i];
+        if (csc_rows == 0u || v >= csc_rows - 1u) continue;
+        if (scalar_rhs ? !scalar_valid : (v >= n_in || !rhs_snap_valid[v])) continue;
+        double rv_val = scalar_rhs ? scalar_val : rhs_snap[v];
+        for (uint32_t p = rel->csc_row_off(v); p < rel->csc_row_off(v + 1u); ++p) {
+            uint32_t u = static_cast<uint32_t>(rel->csc_col_src(p));
+            if (u >= n_out || (tgt_mask && !tgt_mask->contains_1bit(u))) continue;
+            if (weight_col && (p >= weight_col->length || !weight_col->is_valid_at(p))) continue;
+            double ew = weight_col ? p2_read_numeric_as_f64(*weight_col, p) : 1.0;
+            double contrib = (subop == 1u) ? (rv_val * ew) : (rv_val + ew);
+            if (std::isnan(contrib)) continue;
+            ++hits;
+            bool has = ((out_valid[u >> 6] >> (u & 63u)) & 1ULL) != 0ULL;
+            if (subop == 1u) {
+                double prev = has ? out[u] : 0.0;
+                double sum = prev + contrib;
+                if (std::isnan(sum)) out_valid[u >> 6] &= ~(1ULL << (u & 63u));
+                else { out[u] = sum; out_valid[u >> 6] |= (1ULL << (u & 63u)); }
+            } else {
+                out[u] = has ? p1_ieee_min_f64(out[u], contrib) : contrib;
+                out_valid[u >> 6] |= (1ULL << (u & 63u));
+            }
         }
     }
 

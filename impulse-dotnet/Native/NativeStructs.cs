@@ -24,10 +24,10 @@ public struct ImpulseInstruction
 }
 
 /// <summary>
-/// Relation Directory Entry Descriptor (Fixed 128 Bytes).
-/// Maps to impulse_relation_directory_entry_v0_9_t in impulse_format_v0_9.h.
+/// Relation Directory Entry Descriptor (Fixed 192 Bytes).
+/// Maps to impulse_relation_directory_entry_v0_11_t in impulse_format_v0_11.h.
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 128)]
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 192)]
 public unsafe struct ImpulseRelationEntry
 {
     public ushort RelationId;
@@ -53,6 +53,15 @@ public unsafe struct ImpulseRelationEntry
     public ulong CscColIdxBytes;
     public ushort AttrCount;
     public fixed byte Reserved2[22];
+    // v0.11.0 COO Topology Extension Block (bytes 0x80..0xBF, 64 bytes)
+    public ulong CooSrcOffset;
+    public ulong CooSrcBytes;
+    public ulong CooTgtOffset;
+    public ulong CooTgtBytes;
+    public ulong CooEdgeIdOffset;
+    public ulong CooEdgeIdBytes;
+    public byte CooOrder;
+    public fixed byte Reserved3[15];
 }
 
 /// <summary>
