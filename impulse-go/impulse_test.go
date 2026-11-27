@@ -35,12 +35,14 @@ func TestSnapshotAPIsAndSampling(t *testing.T) {
 		t.Fatalf("failed to add relation: %v", err)
 	}
 
-	// Add float32 attribute (4 nodes * 4 bytes = 16 bytes, type_code 0x06 = FLOAT32)
+	// Add float32 edge attribute (6 edges * 4 bytes = 24 bytes, type_code 0x06 = FLOAT32)
 	attrData := []byte{
 		0, 0, 128, 63, // 1.0f
 		0, 0, 0, 64,   // 2.0f
 		0, 0, 64, 64,  // 3.0f
 		0, 0, 128, 64, // 4.0f
+		0, 0, 160, 64, // 5.0f
+		0, 0, 192, 64, // 6.0f
 	}
 	if err := writer.AddAttribute(0, "weights", 0x06, 1, attrData, nil); err != nil {
 		t.Fatalf("failed to add attribute: %v", err)
