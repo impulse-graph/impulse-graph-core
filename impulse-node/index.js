@@ -196,7 +196,7 @@ function packDecimal64Column(values, precision, scale, nullable = false) {
     }
     if (v instanceof Decimal64) {
       if (v.scale === scale) {
-        unscaled[i] = v.unscaled;
+        unscaled[i] = new Decimal64(v.unscaled, precision, scale).unscaled;
       } else {
         unscaled[i] = Decimal64.fromString(v.toString(), precision, scale).unscaled;
       }
@@ -205,7 +205,10 @@ function packDecimal64Column(values, precision, scale, nullable = false) {
     } else if (typeof v === 'bigint') {
       unscaled[i] = new Decimal64(v, precision, scale).unscaled;
     } else if (typeof v === 'number') {
-      unscaled[i] = new Decimal64(v, precision, scale).unscaled;
+      if (!Number.isFinite(v)) {
+        throw new RangeError(`Non-finite number ${v} at index ${i} cannot be converted to DECIMAL64`);
+      }
+      unscaled[i] = Decimal64.fromString(String(v), precision, scale).unscaled;
     } else {
       throw new TypeError(`Unsupported DECIMAL64 value at index ${i}`);
     }
@@ -324,12 +327,17 @@ class CompiledV11Program {
         if (val instanceof Decimal64) {
           scaled =
             val.scale === pm.scale
-              ? val.unscaled
+              ? new Decimal64(val.unscaled, pm.precision, pm.scale).unscaled
               : Decimal64.fromString(val.toString(), pm.precision, pm.scale).unscaled;
         } else if (typeof val === 'string') {
           scaled = Decimal64.fromString(val, pm.precision, pm.scale).unscaled;
         } else if (typeof val === 'bigint') {
           scaled = new Decimal64(val, pm.precision, pm.scale).unscaled;
+        } else if (typeof val === 'number') {
+          if (!Number.isFinite(val)) {
+            throw new RangeError(`Non-finite number ${val} cannot be bound to DECIMAL64 param '${name}'`);
+          }
+          scaled = Decimal64.fromString(String(val), pm.precision, pm.scale).unscaled;
         } else {
           scaled = Decimal64.fromString(String(val), pm.precision, pm.scale).unscaled;
         }

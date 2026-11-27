@@ -266,18 +266,28 @@ func decodeDecimal64Bytes(data []byte, typeCode uint8, precision uint16, scale u
 	var validWords []uint64
 	payload := data
 
-	if isNullable && rowCount > 0 {
-		words := (rowCount + 63) / 64
-		rawBm := words * 8
-		paddedBm := (rawBm + 127) &^ 127
-		if uint64(len(data)) < paddedBm {
-			return nil, ErrBufferOverflow
+	if isNullable {
+		if rowCount == 0 {
+			if len(data) > 0 {
+				return nil, ErrBufferOverflow
+			}
+		} else {
+			words := (rowCount + 63) / 64
+			rawBm := words * 8
+			paddedBm := (rawBm + 127) &^ 127
+			if uint64(len(data)) < paddedBm {
+				return nil, ErrBufferOverflow
+			}
+			validWords = make([]uint64, words)
+			for w := uint64(0); w < words; w++ {
+				validWords[w] = binary.LittleEndian.Uint64(data[w*8 : w*8+8])
+			}
+			payload = data[paddedBm:]
 		}
-		validWords = make([]uint64, words)
-		for w := uint64(0); w < words; w++ {
-			validWords[w] = binary.LittleEndian.Uint64(data[w*8 : w*8+8])
-		}
-		payload = data[paddedBm:]
+	}
+
+	if len(payload)%8 != 0 {
+		return nil, ErrBufferOverflow
 	}
 
 	count := len(payload) / 8

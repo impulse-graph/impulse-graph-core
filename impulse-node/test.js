@@ -215,10 +215,86 @@ try {
   words.forEach((w, i) => impb.writeBigUInt64LE(w, 32 + i * 8));
 
   const ws = new impulse.VmWorkspace(1024 * 1024);
-  const rc = ws.execute(impb, snap, [0n], 0, 0n);
+  const rc = ws.execute(impb, snap, [0n], 0);
   assert.strictEqual(rc, impulse.VmStatus.OK, `expected OK (0), got ${rc}`);
   assert.strictEqual(ws.outputCount(), 1);
+
+  // Audit regressions: out-of-range BigInt (1n << 80n) and malformed executeParams bindings
+  assert.throws(
+    () => ws.executeParams(impb, snap, [{ paramId: 0, kind: 1, scalarI64: 1n << 80n }]),
+    RangeError
+  );
+  assert.throws(
+    () => ws.executeParams(impb, snap, [{ paramId: 0, kind: 2, scalarBits: 1n << 80n }]),
+    RangeError
+  );
+  assert.throws(
+    () => ws.executeParams(impb, snap, [{ paramId: 'bad', kind: 1 }]),
+    TypeError
+  );
   ws.destroy();
+
+  // Audit regression: malformed DECIMAL(P, S) specs throw clean JS TypeError / RangeError
+  assert.throws(
+    () =>
+      impulse.compileCypher('MATCH (a:Account) WHERE a.balance >= $x RETURN count(a)', snap, {
+        x: 'DECIMAL(abc, 2)',
+      }),
+    TypeError
+  );
+  assert.throws(
+    () =>
+      impulse.compileCypher('MATCH (a:Account) WHERE a.balance >= $x RETURN count(a)', snap, {
+        x: 'DECIMAL(18x, 2)',
+      }),
+    TypeError
+  );
+  assert.throws(
+    () =>
+      impulse.compileCypher('MATCH (a:Account) WHERE a.balance >= $x RETURN count(a)', snap, {
+        x: 'DECIMAL(19, 2)',
+      }),
+    RangeError
+  );
+  assert.throws(
+    () =>
+      impulse.compileCypher('MATCH (a:Account) WHERE a.balance >= $x RETURN count(a)', snap, {
+        x: 'DECIMAL(4, 5)',
+      }),
+    RangeError
+  );
+
+  // Audit regression: wider-precision Decimal64 rejected on narrower column & param
+  const narrowPath = path.join(tmpDir, 'narrow.imps');
+  const narrowWriter = new impulse.Writer(narrowPath, 1);
+  narrowWriter.addDomain(0, 5, 'Narrow');
+  narrowWriter.setDomainNodeCount(0, 1);
+  assert.throws(
+    () => narrowWriter.addDomainDecimal64(0, 'small', 4, 2, [Decimal64.fromString('123.45', 10, 2)]),
+    RangeError
+  );
+  // JS number treated as scaled value (12.34 -> 1234n) consistently; NaN rejected
+  assert.throws(
+    () => narrowWriter.addDomainDecimal64(0, 'small', 4, 2, [Number.NaN]),
+    RangeError
+  );
+  narrowWriter.addDomainDecimal64(0, 'small', 4, 2, [12.34]);
+  narrowWriter.finalize();
+  const narrowSnap = new impulse.Snapshot(narrowPath);
+  const narrowVals = narrowSnap.getDomainDecimal64(0, 0);
+  assert.strictEqual(narrowVals[0].toString(), '12.34');
+  narrowSnap.close();
+
+  const narrowParamProg = impulse.compileCypher(
+    'MATCH (a:Account) WHERE a.balance >= $x RETURN count(a)',
+    snap,
+    { x: 'DECIMAL(4, 2)' }
+  );
+  assert.throws(
+    () => narrowParamProg.execute(snap, { x: Decimal64.fromString('123.45', 10, 2) }),
+    RangeError
+  );
+  assert.throws(() => narrowParamProg.execute(snap, { x: Number.POSITIVE_INFINITY }), RangeError);
 
   // E2E openCypher DECIMAL64 with Decimal64 param and > 2^53 sum output
   const cypherProg = impulse.compileCypher(
