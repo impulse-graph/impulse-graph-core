@@ -15,7 +15,7 @@ pub fn disassemble_bytes(buf: &[u8], _snapshot_path: Option<&Path>) -> Result<St
                 return Err("Truncated .impb container".to_string());
             }
             (&buf[32..end], ver)
-        } else if buf.len() % 8 == 0 {
+        } else if buf.len().is_multiple_of(8) {
             (buf, 11u16)
         } else {
             return Err("Invalid .impb file length (must be multiple of 8 bytes)".to_string());

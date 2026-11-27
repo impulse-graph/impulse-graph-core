@@ -130,8 +130,8 @@ pub fn run_with_options(
             let word_count =
                 u32::from_le_bytes(prog_bytes[8..12].try_into().unwrap_or([0; 4])) as usize;
             let code_end = (32 + word_count * 8).min(prog_bytes.len());
-            for chunk in prog_bytes[32..code_end].chunks_exact(8) {
-                let w = u64::from_le_bytes(chunk.try_into().unwrap());
+            for &chunk in prog_bytes[32..code_end].as_chunks::<8>().0 {
+                let w = u64::from_le_bytes(chunk);
                 let op = (w & 0xFF) as u8;
                 if op == 0x30 || op == 0x31 || op == 0x34 || op == 0x35 {
                     let rel_id = ((w >> 32) & 0xFFFF) as usize;

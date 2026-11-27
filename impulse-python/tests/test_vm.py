@@ -1,154 +1,72 @@
-import os
-import tempfile
+"""ImpulseVM v0.11 Python native binding tests (VmWorkspace, Statement, validate_bytecode, plan_memory)."""
 
-from impulse_graph import Snapshot, Writer, vm
-
-
-def test_vm_constants():
-    assert vm.opcodes.OP_NOP == 0x01
-    assert vm.opcodes.OP_INIT_INPUT_NODE == 0x02
-    assert vm.opcodes.OP_CSR_WALK == 0x10
-    assert vm.opcodes.OP_SET_UNION == 0x30
-    assert vm.opcodes.OP_HALT == 0x00
-
-    assert vm.RegisterType.TYPE_NULL == 0x00
-    assert vm.RegisterType.TYPE_INT64 == 0x01
-    assert vm.RegisterType.TYPE_BITSET_HANDLE == 0x04
-    assert vm.RegisterType.TYPE_FLOAT_VECTOR == 0x0C
-
-    assert vm.VmStatus.OK == 0
+import struct
+import pytest
+import impulse_graph
+from impulse_graph._impulse_native import (
+    Statement,
+    VmStatus,
+    VmWorkspace,
+    opcodes,
+    plan_memory,
+    validate_bytecode,
+)
 
 
-def test_query_builder_compilation():
-    builder = vm.QueryBuilder()
-    builder.input_node(0)
-    builder.load_const_int(42, 1)
-    builder.walk_edge(relation_id=0)
-    builder.collect_array()
-
-    compiled = builder.compile()
-    assert compiled.instruction_count() > 0
-    assert compiled.result_register() == builder.current_register
-
-    bytecode = compiled.bytecode()
-    assert len(bytecode) == compiled.instruction_count()
-    assert bytecode[0].opcode == vm.opcodes.OP_INIT_INPUT_NODE
-
-
-def test_query_builder_repeat_loop():
-    builder = vm.QueryBuilder()
-    builder.input_node(0)
-
-    # 3-hop graph traversal via repeat loop
-    builder.repeat(3, lambda b: b.walk_edge(0))
-    builder.collect_array()
-
-    compiled = builder.compile()
-    assert compiled.instruction_count() > 3
+def _build_impb(words):
+    hdr = struct.pack(
+        "<IHBBIIIHHQ",
+        0x494D5042,  # magic "IMPB"
+        0x000B,      # isa_version (11)
+        0,           # header_flags
+        1,           # max_call_depth
+        len(words),  # code_word_count
+        0,           # const_pool_bytes
+        0,           # entry_pc
+        0,           # required_domains
+        0,           # required_relations / reserved
+        0,           # program_xxh3_64
+    )
+    return hdr + b"".join(struct.pack("<Q", w) for w in words)
 
 
-def test_query_builder_analytics_opcodes():
-    builder = vm.QueryBuilder()
-    builder.input_node(0)
-    builder.afforest()
-    builder.brandes_forward()
-    builder.sample_neighbors(relation_id=0, k_samples=5, seed=1234)
-    builder.matrix_vector_mul(matrix_reg=1, semiring_id=0)
-    builder.collect_array()
-
-    compiled = builder.compile()
-    assert compiled.instruction_count() >= 5
+def _enc(op, flags=0, subop=0, dst=0, s1=0, s2=0, s3=0, imm32=0):
+    b0 = op & 0xFF
+    b1 = ((flags & 0xF) << 4) | (subop & 0xF)
+    b2 = ((dst & 0xF) << 4) | (s1 & 0xF)
+    b3 = ((s2 & 0xF) << 4) | (s3 & 0xF)
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | ((imm32 & 0xFFFFFFFF) << 32)
 
 
-def test_vm_context_handles():
-    with vm.VmContext() as ctx:
-        assert ctx.vector_size() == 0 or ctx.vector_size() > 0
-
-        # Bitset test
-        bs_handle = ctx.acquire_bitset()
-        assert bs_handle >= 0
-        ctx.bitset_add(bs_handle, 100)
-        assert ctx.bitset_test(bs_handle, 100) is True
-        assert ctx.bitset_test(bs_handle, 101) is False
-        ctx.release_bitset(bs_handle)
-
-        # Float Vector test
-        fv_handle = ctx.acquire_float_vector()
-        assert fv_handle >= 0
-        ctx.float_vector_set(fv_handle, 0, 3.14)
-        ctx.release_float_vector(fv_handle)
-
-        # String Vector test
-        sv_handle = ctx.acquire_string_vector()
-        assert sv_handle >= 0
-        ctx.string_vector_add(sv_handle, "hello_impulse")
-        assert ctx.string_vector_size(sv_handle) == 1
-        assert ctx.string_vector_get(sv_handle, 0) == "hello_impulse"
-        ctx.release_string_vector(sv_handle)
-
-        # Value Map test
-        vm_handle = ctx.acquire_value_map()
-        assert vm_handle >= 0
-        ctx.release_value_map(vm_handle)
+def test_vm_v11_opcodes_and_status():
+    assert opcodes.OP_HALT == 0x00
+    assert opcodes.OP_WALK == 0x30
+    assert opcodes.OP_WALK_MORSEL == 0x35
+    assert int(VmStatus.OK) == 0
 
 
-def test_vm_state_registers():
-    state = vm.VmState()
-    state.pc = 10
-    state.flags = 1
-    assert state.pc == 10
-    assert state.flags == 1
+def test_vm_v11_validate_plan_and_execute():
+    # LOAD_CONST.i64 R0, 42; COLLECT.scalar R0, slot=0; HALT
+    words = [
+        _enc(opcodes.OP_LOAD_CONST, subop=0, dst=0, imm32=42),
+        _enc(opcodes.OP_COLLECT, subop=3, s1=0, imm32=0),
+        _enc(opcodes.OP_HALT),
+    ]
+    impb = _build_impb(words)
+    status, bad_pc = validate_bytecode(impb)
+    assert status == int(VmStatus.OK)
+    assert bad_pc == 0
 
-    state.set_register(5, 9999)
-    state.set_register_type(5, vm.RegisterType.TYPE_INT64)
-    assert state.get_register(5) == 9999
-    assert state.get_register_type(5) == vm.RegisterType.TYPE_INT64
+    plan = plan_memory(impb, None, 1)
+    assert plan["min_scratch_bytes"] > 0
 
-
-def test_vm_query_execution_on_snapshot():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        snap_path = os.path.join(tmpdir, "test_vm_graph.imps")
-
-        # Build small binary snapshot
-        with Writer(snap_path) as w:
-            w.add_domain(domain_id=0, key_type=4, name="User")
-            w.add_relation(
-                src_domain_id=0,
-                tgt_domain_id=0,
-                encoding_type=0,
-                node_count=4,
-                edge_count=4,
-                section_features=0,
-                row_offsets=[0, 1, 2, 3, 4],
-                col_indices=[1, 2, 3, 0],
-            )
-            w.finalize()
-
-        # Open snapshot and execute VM query
-        with Snapshot(snap_path) as snap:
-            assert snap.domain_count() == 1
-            assert snap.relation_count() == 1
-
-            qb = vm.QueryBuilder()
-            qb.input_node(0)
-            qb.walk_edge(0)
-            qb.collect_array()
-            query = qb.compile()
-            result = snap.execute_query(query, input_param=0)
-            assert result.is_ok()
-            assert result.status == vm.VmStatus.OK
-
-            # Test Friendly Traversal API
-            traversal = snap.traverse(start_node=0).out(0)
-            targets = traversal.to_list()
-            assert targets == [1]
-            assert traversal.contains(1) is True
-            assert traversal.contains(2) is False
-            assert traversal.count() == 1
-
-            # Test Filtered Edge & Node Filter Traversals
-            t_edge_filtered = snap.traverse(start_node=0).out(0, filter_id=0)
-            assert t_edge_filtered.compile().instruction_count() > 0
-
-            t_node_filtered = snap.traverse(start_node=0).out(0).filter(prefix="USR-")
-            assert t_node_filtered.compile().instruction_count() > 0
+    with VmWorkspace(1024 * 1024) as ws:
+        rc = ws.execute(impb, None)
+        assert rc == int(VmStatus.OK)
+        assert ws.output_count() == 1
+        out = ws.get_output(0)
+        assert out["length"] == 1
+        assert out["data"] == [42]
+        logical, physical = ws.compute_ictx_v2()
+        assert logical != 0
+        assert physical != 0

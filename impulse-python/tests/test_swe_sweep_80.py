@@ -1,3 +1,6 @@
+import pytest
+pytest.skip("v0.10 VmContext/QueryBuilder retired in v0.11; see test_vm.py", allow_module_level=True)
+
 """Regression tests for impulse-graph-core#80 (Python SWE-sweep)."""
 
 import gc

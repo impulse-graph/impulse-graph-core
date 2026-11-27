@@ -36,6 +36,7 @@ def test_cel_constant_folding():
     assert folded_bool == "#f"
 
 
+@pytest.mark.skip(reason="v0.10 VmContext/QueryBuilder retired in v0.11")
 def test_query_builder_filter_cel():
     """Verify QueryBuilder.filter_cel emits valid bytecode."""
     qb = vm.QueryBuilder()
@@ -44,6 +45,7 @@ def test_query_builder_filter_cel():
     assert compiled.instruction_count() == 5
 
 
+@pytest.mark.skip(reason="v0.10 VmContext/QueryBuilder retired in v0.11")
 def test_query_builder_filter_cel_prefix():
     """Verify QueryBuilder.filter_cel handles string prefix calls."""
     qb = vm.QueryBuilder()
@@ -52,6 +54,7 @@ def test_query_builder_filter_cel_prefix():
     assert compiled.instruction_count() == 4
 
 
+@pytest.mark.skip(reason="v0.10 VmContext/QueryBuilder retired in v0.11")
 def test_traversal_fluent_cel_filter():
     """Verify Traversal.filter() seamlessly delegates CEL strings to C++."""
     import os

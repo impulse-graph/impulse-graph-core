@@ -1210,7 +1210,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                     uint64_t lm = static_cast<uint64_t>(lm_arr[i]);
                                     if (lm != 0ULL) {
                                         uint64_t tgt = static_cast<uint64_t>(id_arr[i]);
-                                        if (__builtin_expect(tgt < dcap, 1)) {
+                                        if (IMPULSE_V11_LIKELY(tgt < dcap)) {
                                             dense[tgt] |= lm;
                                         } else {
                                             can_rewind_chunks = false;
@@ -1264,13 +1264,13 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                                     uint32_t i = cm_ids[k];
                                     if (val_bits && (((val_bits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL)) continue;
                                     double v = val_arr[i];
-                                    if (__builtin_expect(!(v == v), 0)) continue;
+                                    if (IMPULSE_V11_UNLIKELY(!(v == v))) continue;
                                     uint64_t tgt64 = static_cast<uint64_t>(id_arr[i]);
-                                    if (__builtin_expect(tgt64 >= dst_len, 0)) {
+                                    if (IMPULSE_V11_UNLIKELY(tgt64 >= dst_len)) {
                                         ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break;
                                     }
                                     double sum = dst_arr[tgt64] + v;
-                                    if (__builtin_expect(sum == sum, 1)) {
+                                    if (IMPULSE_V11_LIKELY(sum == sum)) {
                                         dst_arr[tgt64] = sum;
                                     } else {
                                         can_rewind_chunks = false;
@@ -1424,7 +1424,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 if (acc_f_bits[d] && acc_f[d].len == 0u) {
                     size_t bw = (static_cast<size_t>(acc_f_bit_cap[d]) + 63u) >> 6;
                     uint32_t uniq = 0u;
-                    for (size_t wi = 0; wi < bw; ++wi) uniq += static_cast<uint32_t>(__builtin_popcountll(acc_f_bits[d][wi]));
+                    for (size_t wi = 0; wi < bw; ++wi) uniq += static_cast<uint32_t>(std::popcount(acc_f_bits[d][wi]));
                     uint32_t* out_ids = (uniq > 0u) ? ws.arena.alloc_array<uint32_t>(uniq, 8) : nullptr;
                     if (uniq > 0u && !out_ids) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
                     uint32_t k = 0u;
@@ -1432,7 +1432,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                         uint64_t word = acc_f_bits[d][wi];
                         uint32_t base = static_cast<uint32_t>(wi << 6);
                         while (word != 0ULL) {
-                            uint32_t b = static_cast<uint32_t>(__builtin_ctzll(word));
+                            uint32_t b = static_cast<uint32_t>(std::countr_zero(word));
                             out_ids[k++] = base + b;
                             word &= (word - 1ULL);
                         }
@@ -1454,7 +1454,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                             uint64_t word = acc_f_bits[d][wi];
                             uint32_t base = static_cast<uint32_t>(wi << 6);
                             while (word != 0ULL) {
-                                uint32_t b = static_cast<uint32_t>(__builtin_ctzll(word));
+                                uint32_t b = static_cast<uint32_t>(std::countr_zero(word));
                                 if (!acc_f[d].push(ws.arena, base + b)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
                                 word &= (word - 1ULL);
                             }
