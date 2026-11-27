@@ -153,24 +153,29 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
             let is_nullable = (a.type_code & 0x80) != 0;
             let base_type = a.type_code & IMPULSE_TYPE_MASK;
             let base_str = match base_type {
-                0x01 => "int8",
-                0x02 => "int16",
-                0x03 => "int32",
-                0x04 => "int64",
-                0x05 => "float16",
-                0x06 => "float32",
-                0x07 => "float64",
-                0x08 => "timestamp_ms",
-                0x09 => "timestamp_ns",
-                0x0A => "fixed_bytes",
-                0x0B => "string",
-                0x0C => "var_bytes",
-                _ => "int32",
+                0x01 => "int8".to_string(),
+                0x02 => "int16".to_string(),
+                0x03 => "int32".to_string(),
+                0x04 => "int64".to_string(),
+                0x05 => "float16".to_string(),
+                0x06 => "float32".to_string(),
+                0x07 => "float64".to_string(),
+                0x08 => "timestamp_ms".to_string(),
+                0x09 => "timestamp_ns".to_string(),
+                0x0A => "fixed_bytes".to_string(),
+                0x0B => "string".to_string(),
+                0x0C => "var_bytes".to_string(),
+                0x11 => "uint8".to_string(),
+                0x12 => "uint16".to_string(),
+                0x13 => "uint32".to_string(),
+                0x14 => "uint64".to_string(),
+                0x15 => format!("decimal64({}, {})", a.precision, a.scale),
+                _ => "int32".to_string(),
             };
             let type_str = if is_nullable {
                 format!("nullable_{}", base_str)
             } else {
-                base_str.to_string()
+                base_str
             };
             attr_defs.push(AttributeDefOutput {
                 name: a.name.clone(),
@@ -257,24 +262,29 @@ pub fn run(file: &Path, out_dir: &Path, format_str: &str) -> Result<(), Box<dyn 
             let is_nullable = (a.type_code & 0x80) != 0;
             let base_type = a.type_code & IMPULSE_TYPE_MASK;
             let base_str = match base_type {
-                0x01 => "int8",
-                0x02 => "int16",
-                0x03 => "int32",
-                0x04 => "int64",
-                0x05 => "float16",
-                0x06 => "float32",
-                0x07 => "float64",
-                0x08 => "timestamp_ms",
-                0x09 => "timestamp_ns",
-                0x0A => "fixed_bytes",
-                0x0B => "string",
-                0x0C => "var_bytes",
-                _ => "float32",
+                0x01 => "int8".to_string(),
+                0x02 => "int16".to_string(),
+                0x03 => "int32".to_string(),
+                0x04 => "int64".to_string(),
+                0x05 => "float16".to_string(),
+                0x06 => "float32".to_string(),
+                0x07 => "float64".to_string(),
+                0x08 => "timestamp_ms".to_string(),
+                0x09 => "timestamp_ns".to_string(),
+                0x0A => "fixed_bytes".to_string(),
+                0x0B => "string".to_string(),
+                0x0C => "var_bytes".to_string(),
+                0x11 => "uint8".to_string(),
+                0x12 => "uint16".to_string(),
+                0x13 => "uint32".to_string(),
+                0x14 => "uint64".to_string(),
+                0x15 => format!("decimal64({}, {})", a.precision, a.scale),
+                _ => "float32".to_string(),
             };
             let type_str = if is_nullable {
                 format!("nullable_{}", base_str)
             } else {
-                base_str.to_string()
+                base_str
             };
             attr_defs.push(AttributeDefOutput {
                 name: a.name.clone(),
@@ -582,6 +592,45 @@ fn extract_attribute_string_value(
             }
             Ok("".into())
         }
+        0x11 => {
+            if idx < actual_data.len() {
+                Ok(actual_data[idx].to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x12 => {
+            if (idx + 1) * 2 <= actual_data.len() {
+                let v = u16::from_le_bytes(actual_data[idx * 2..(idx + 1) * 2].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x13 => {
+            if (idx + 1) * 4 <= actual_data.len() {
+                let v = u32::from_le_bytes(actual_data[idx * 4..(idx + 1) * 4].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x14 => {
+            if (idx + 1) * 8 <= actual_data.len() {
+                let v = u64::from_le_bytes(actual_data[idx * 8..(idx + 1) * 8].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x15 => {
+            if (idx + 1) * 8 <= actual_data.len() {
+                let v = i64::from_le_bytes(actual_data[idx * 8..(idx + 1) * 8].try_into()?);
+                Ok(crate::parquet_reader::format_decimal64(v, a.scale))
+            } else {
+                Ok(crate::parquet_reader::format_decimal64(0, a.scale))
+            }
+        }
         _ => Ok("".into()),
     }
 }
@@ -710,6 +759,49 @@ fn extract_edge_attribute_string_value(
             }
             Ok("".into())
         }
+        0x11 => {
+            if edge_idx < actual_data.len() {
+                Ok(actual_data[edge_idx].to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x12 => {
+            if (edge_idx + 1) * 2 <= actual_data.len() {
+                let v =
+                    u16::from_le_bytes(actual_data[edge_idx * 2..(edge_idx + 1) * 2].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x13 => {
+            if (edge_idx + 1) * 4 <= actual_data.len() {
+                let v =
+                    u32::from_le_bytes(actual_data[edge_idx * 4..(edge_idx + 1) * 4].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x14 => {
+            if (edge_idx + 1) * 8 <= actual_data.len() {
+                let v =
+                    u64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
+                Ok(v.to_string())
+            } else {
+                Ok("0".into())
+            }
+        }
+        0x15 => {
+            if (edge_idx + 1) * 8 <= actual_data.len() {
+                let v =
+                    i64::from_le_bytes(actual_data[edge_idx * 8..(edge_idx + 1) * 8].try_into()?);
+                Ok(crate::parquet_reader::format_decimal64(v, a.scale))
+            } else {
+                Ok(crate::parquet_reader::format_decimal64(0, a.scale))
+            }
+        }
         _ => Ok("".into()),
     }
 }
@@ -747,6 +839,11 @@ fn export_domain_parquet(
             0x07 => DataType::Float64,
             0x08 | 0x09 => DataType::Int64,
             0x0B => DataType::Utf8,
+            0x11 => DataType::UInt8,
+            0x12 => DataType::UInt16,
+            0x13 => DataType::UInt32,
+            0x14 => DataType::UInt64,
+            0x15 => DataType::Decimal64(a.precision as u8, a.scale as i8),
             _ => DataType::Utf8,
         };
         fields.push(Field::new(&a.name, dt, is_nullable));
@@ -865,6 +962,26 @@ fn export_domain_parquet(
                 }
                 columns.push(Arc::new(b.finish()));
             }
+            0x15 => {
+                let raw = reader.get_domain_attribute_data(domain_id, &a.name)?;
+                let is_nullable = (a.type_code & 0x80) != 0;
+                let (bm, payload) = split_nullable_raw(raw, node_count, is_nullable);
+                let mut b = Decimal64Builder::with_capacity(node_count)
+                    .with_data_type(DataType::Decimal64(a.precision as u8, a.scale as i8));
+                for u in 0..node_count {
+                    let is_null =
+                        is_nullable && !bm.is_empty() && (bm[u / 8] & (1u8 << (u % 8))) == 0;
+                    if is_null {
+                        b.append_null();
+                    } else if (u + 1) * 8 <= payload.len() {
+                        let v = i64::from_le_bytes(payload[u * 8..(u + 1) * 8].try_into()?);
+                        b.append_value(v);
+                    } else {
+                        b.append_value(0);
+                    }
+                }
+                columns.push(Arc::new(b.finish()));
+            }
             _ => {
                 let mut b = StringBuilder::with_capacity(node_count, node_count * 16);
                 for u in 0..node_count {
@@ -908,6 +1025,7 @@ fn export_relation_parquet(
             0x04 => DataType::Int64,
             0x06 => DataType::Float32,
             0x07 => DataType::Float64,
+            0x15 => DataType::Decimal64(a.precision as u8, a.scale as i8),
             _ => DataType::Float32,
         };
         fields.push(Field::new(&a.name, dt, is_nullable));
@@ -985,6 +1103,26 @@ fn export_relation_parquet(
                 }
                 columns.push(Arc::new(b.finish()));
             }
+            0x15 => {
+                let raw = reader.get_attribute_data(rel_idx, a_idx)?;
+                let is_nullable = (a.type_code & 0x80) != 0;
+                let (bm, payload) = split_nullable_raw(raw, edge_count, is_nullable);
+                let mut b = Decimal64Builder::with_capacity(edge_count)
+                    .with_data_type(DataType::Decimal64(a.precision as u8, a.scale as i8));
+                for e in 0..edge_count {
+                    let is_null =
+                        is_nullable && !bm.is_empty() && (bm[e / 8] & (1u8 << (e % 8))) == 0;
+                    if is_null {
+                        b.append_null();
+                    } else if (e + 1) * 8 <= payload.len() {
+                        let v = i64::from_le_bytes(payload[e * 8..(e + 1) * 8].try_into()?);
+                        b.append_value(v);
+                    } else {
+                        b.append_value(0);
+                    }
+                }
+                columns.push(Arc::new(b.finish()));
+            }
             _ => {
                 let mut b = Float64Builder::with_capacity(edge_count);
                 for e in 0..edge_count {
@@ -1007,4 +1145,22 @@ fn export_relation_parquet(
     writer.write(&batch)?;
     writer.close()?;
     Ok(())
+}
+
+fn split_nullable_raw(raw: &[u8], row_count: usize, is_nullable: bool) -> (&[u8], &[u8]) {
+    if !is_nullable {
+        return (&[][..], raw);
+    }
+    let word_count = row_count.div_ceil(64);
+    let bitmap_bytes = word_count * 8;
+    let padded_bitmap_bytes = if bitmap_bytes == 0 {
+        0
+    } else {
+        (bitmap_bytes + 127) & !127
+    };
+    if raw.len() >= padded_bitmap_bytes {
+        (&raw[0..bitmap_bytes], &raw[padded_bitmap_bytes..])
+    } else {
+        (&[][..], raw)
+    }
 }

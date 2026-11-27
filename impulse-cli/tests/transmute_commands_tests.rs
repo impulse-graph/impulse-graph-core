@@ -89,6 +89,9 @@ fn test_transmute_compact_csc_meta_rename_virtual() {
         ]),
         delete_meta: None,
         clear_meta: false,
+        cast: vec![],
+        rounding: "half-up".to_string(),
+        on_overflow: "fail".to_string(),
     };
     commands::transmute::run(&t_args).expect("transmute failed");
 
