@@ -1038,14 +1038,19 @@ static void test_mcdc_validator_planner_and_cabi() {
 }
 
 #include "vm/impulse_bytecode_emitter.hpp"
+#include <filesystem>
 #undef OP_HALT
+
+static std::string v11_tmp_path(const char* name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
 
 static void test_v11_emitter_const_pool_params_and_collect_e2e() {
     using namespace impulse::compiler;
     using namespace impulse::compiler::v11;
 
     // 1. Build a 5-node chain snapshot (0->1->2->3->4) on disk via impulse_writer
-    const std::string path = "/tmp/test_v11_emitter_e2e.imps";
+    const std::string path = v11_tmp_path("test_v11_emitter_e2e.imps");
     impulse_writer_t* w = impulse_writer_create(path.c_str(), 0);
     CHECK(w != nullptr);
     CHECK(impulse_writer_add_domain(w, 0, 0, "Node") == IMPULSE_OK);
@@ -1150,7 +1155,8 @@ static void test_v11_emitter_const_pool_params_and_collect_e2e() {
 }
 
 static void test_v11_imps_coo_roundtrip_and_hardening() {
-    const char* out_path = "/tmp/v11_coo_cpp_roundtrip.imps";
+    const std::string out_path_str = v11_tmp_path("v11_coo_cpp_roundtrip.imps");
+    const char* out_path = out_path_str.c_str();
     impulse_writer_t* w = impulse_writer_create(out_path, IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED);
     CHECK(w != nullptr);
     CHECK(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "User") == IMPULSE_OK);
@@ -1245,7 +1251,8 @@ static void test_v11_imps_coo_roundtrip_and_hardening() {
 
     // Negative hardening: bad dense_id_width = 3, bad coo_order = 5
     {
-        impulse_writer_t* badw = impulse_writer_create("/tmp/v11_coo_bad_arg.imps", 0);
+        const std::string bad_path = v11_tmp_path("v11_coo_bad_arg.imps");
+        impulse_writer_t* badw = impulse_writer_create(bad_path.c_str(), 0);
         CHECK(impulse_writer_add_domain(badw, 0, IMPULSE_KEY_TYPE_INT32, "U") == IMPULSE_OK);
         CHECK(impulse_writer_set_domain_dense_id_width(badw, 0, 3) == IMPULSE_ERR_INVALID_ARGUMENT);
         CHECK(impulse_writer_add_relation_v11(
@@ -1256,7 +1263,8 @@ static void test_v11_imps_coo_roundtrip_and_hardening() {
     }
     // Negative hardening: non-virtual relation with edge_count > 0 and no CSR/CSC/COO -> rejected on open
     {
-        const char* empty_rel_path = "/tmp/v11_coo_no_layout.imps";
+        const std::string empty_rel_str = v11_tmp_path("v11_coo_no_layout.imps");
+        const char* empty_rel_path = empty_rel_str.c_str();
         impulse_writer_t* ew = impulse_writer_create(empty_rel_path, 0);
         CHECK(impulse_writer_add_domain(ew, 0, IMPULSE_KEY_TYPE_INT32, "U") == IMPULSE_OK);
         CHECK(impulse_writer_set_domain_node_count(ew, 0, 4) == IMPULSE_OK);
