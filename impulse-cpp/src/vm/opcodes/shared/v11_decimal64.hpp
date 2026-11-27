@@ -111,6 +111,11 @@ inline void dec_mul_u64_to_u128(uint64_t ua, uint64_t ub, uint64_t* out_hi, uint
 inline bool dec_div_rem_u128_by_u64(uint64_t hi, uint64_t lo, uint64_t ud,
                                     uint64_t* out_q, uint64_t* out_r) noexcept {
     if (hi >= ud) return false;
+    if (hi == 0ULL) {
+        *out_q = lo / ud;
+        *out_r = lo % ud;
+        return true;
+    }
 #if defined(__SIZEOF_INT128__)
     unsigned __int128 num = (static_cast<unsigned __int128>(hi) << 64) | static_cast<unsigned __int128>(lo);
     *out_q = static_cast<uint64_t>(num / ud);
