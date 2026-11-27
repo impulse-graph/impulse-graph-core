@@ -104,7 +104,7 @@ mod hex {
 
     pub fn decode(s: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let s = s.trim();
-        if !s.is_ascii() || s.len() % 2 != 0 {
+        if !s.is_ascii() || !s.len().is_multiple_of(2) {
             return Err("Invalid hex string: must be even-length ASCII".into());
         }
         (0..s.len())

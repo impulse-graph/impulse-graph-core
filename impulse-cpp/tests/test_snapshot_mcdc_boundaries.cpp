@@ -493,7 +493,7 @@ void test_mcdc_reachability_widths_and_sampler() {
     impulse_writer_add_relation(w, 0, 1, IMPULSE_ENC_RAW, 4, 4, 0, r_offs, sizeof(r_offs), c_idxs, sizeof(c_idxs));
 
     float weights[] = { 1.5f, 2.5f, 3.5f, 4.5f };
-    impulse_writer_add_attribute(w, 0, "weight", 0x08, 1, weights, sizeof(weights), nullptr, 0);
+    impulse_writer_add_attribute(w, 0, "weight", 0x06, 1, weights, sizeof(weights), nullptr, 0);
     impulse_writer_set_metadata(w, "version", "v0.9.0-test");
 
     impulse_status_t st = impulse_writer_finalize(w);
@@ -556,7 +556,7 @@ void test_mcdc_reachability_widths_and_sampler() {
     uint32_t dim = 0;
     st = impulse_snapshot_get_attribute_buffers(snap, 0, 0, &attr_data, &attr_bytes, nullptr, nullptr, &t_code, &dim);
     ASSERT_EQ(st, IMPULSE_OK);
-    ASSERT_EQ(t_code, 0x08);
+    ASSERT_EQ(t_code, 0x06);
     ASSERT_EQ(dim, 1u);
 
     // 6. Delta layer & Compaction
