@@ -421,12 +421,103 @@ impulse_status_t impulse_index_zone_map_filter(
     std::memset(out_page_bitmask, 0, req_words * sizeof(uint64_t));
     size_t eligible = 0;
 
-    for (uint32_t p = 0; p < hdr.page_count; ++p) {
-        if (blocks[p].max_val >= min_val && blocks[p].min_val <= max_val) {
-            size_t w_idx = p / 64;
-            size_t b_idx = p % 64;
-            out_page_bitmask[w_idx] |= (1ULL << b_idx);
-            eligible++;
+    if (!(min_val != min_val || max_val != max_val || min_val > max_val)) {
+        for (uint32_t p = 0; p < hdr.page_count; ++p) {
+            if (blocks[p].min_val <= blocks[p].max_val &&
+                blocks[p].max_val >= min_val &&
+                blocks[p].min_val <= max_val) {
+                size_t w_idx = p / 64;
+                size_t b_idx = p % 64;
+                out_page_bitmask[w_idx] |= (1ULL << b_idx);
+                eligible++;
+            }
+        }
+    }
+
+    *out_eligible_pages = eligible;
+    return IMPULSE_OK;
+}
+
+impulse_status_t impulse_index_zone_map_filter_i64(
+    const void* index_bytes,
+    size_t index_size,
+    uint64_t payload_feature_mask,
+    int64_t min_val,
+    int64_t max_val,
+    uint64_t* out_page_bitmask,
+    size_t max_words,
+    size_t* out_eligible_pages
+) {
+    if (!index_bytes || index_size < sizeof(ZoneMapHeader) || !out_page_bitmask || !out_eligible_pages) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+
+    const uint8_t* raw = static_cast<const uint8_t*>(index_bytes);
+    ZoneMapHeader hdr;
+    std::memcpy(&hdr, raw, sizeof(hdr));
+
+    if (hdr.page_count > (index_size - sizeof(ZoneMapHeader)) / 16u) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
+    size_t req_words = (static_cast<size_t>(hdr.page_count) + 63ULL) / 64ULL;
+    if (max_words < req_words) {
+        return IMPULSE_ERR_BUFFER_OVERFLOW;
+    }
+
+    std::memset(out_page_bitmask, 0, req_words * sizeof(uint64_t));
+    size_t eligible = 0;
+
+    if (min_val > max_val) {
+        *out_eligible_pages = 0;
+        return IMPULSE_OK;
+    }
+
+    const uint8_t* block_bytes = raw + sizeof(ZoneMapHeader);
+    const bool exact_i64 = (payload_feature_mask & IMPULSE_ZONE_MAP_FEAT_EXACT_I64) != 0ULL;
+
+    if (exact_i64) {
+        for (uint32_t p = 0; p < hdr.page_count; ++p) {
+            int64_t p_min = 0;
+            int64_t p_max = 0;
+            std::memcpy(&p_min, block_bytes + static_cast<size_t>(p) * 16u, sizeof(int64_t));
+            std::memcpy(&p_max, block_bytes + static_cast<size_t>(p) * 16u + 8u, sizeof(int64_t));
+            // Empty or all-NULL block uses sentinel p_min > p_max (INT64_MAX, INT64_MIN)
+            if (p_min > p_max) continue;
+            if (p_max >= min_val && p_min <= max_val) {
+                size_t w_idx = p / 64;
+                size_t b_idx = p % 64;
+                out_page_bitmask[w_idx] |= (1ULL << b_idx);
+                eligible++;
+            }
+        }
+    } else {
+        // Legacy IEEE-754 double block payload: widen [min_val, max_val] conservatively so values > 2^53 never false-prune
+        constexpr double kTwoPow63 = 9223372036854775808.0;
+        double dmin = static_cast<double>(min_val);
+        if (min_val != std::numeric_limits<int64_t>::min()) {
+            if (dmin >= kTwoPow63 || static_cast<int64_t>(dmin) > min_val) {
+                dmin = std::nextafter(dmin, -std::numeric_limits<double>::infinity());
+            }
+        }
+        double dmax = static_cast<double>(max_val);
+        if (max_val != std::numeric_limits<int64_t>::max()) {
+            if (dmax < kTwoPow63 && static_cast<int64_t>(dmax) < max_val) {
+                dmax = std::nextafter(dmax, std::numeric_limits<double>::infinity());
+            }
+        }
+        for (uint32_t p = 0; p < hdr.page_count; ++p) {
+            double p_min = 0.0;
+            double p_max = 0.0;
+            std::memcpy(&p_min, block_bytes + static_cast<size_t>(p) * 16u, sizeof(double));
+            std::memcpy(&p_max, block_bytes + static_cast<size_t>(p) * 16u + 8u, sizeof(double));
+            if (std::isnan(p_min) || std::isnan(p_max) || p_min > p_max) continue;
+            if (p_max >= dmin && p_min <= dmax) {
+                size_t w_idx = p / 64;
+                size_t b_idx = p % 64;
+                out_page_bitmask[w_idx] |= (1ULL << b_idx);
+                eligible++;
+            }
         }
     }
 
