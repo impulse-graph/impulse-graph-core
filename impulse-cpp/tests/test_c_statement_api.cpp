@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 #define TEST_ASSERT(cond) do { \
@@ -129,7 +131,8 @@ static void test_statement_null_and_boundaries(const impulse_snapshot_t* snap) {
 }
 
 int main() {
-    const char* path = "/tmp/impulse_test_stmt_v11.imps";
+    std::string path_str = (std::filesystem::temp_directory_path() / "impulse_test_stmt_v11.imps").string();
+    const char* path = path_str.c_str();
     impulse_snapshot_t* snap = build_test_snapshot(path);
     test_statement_lifecycle_cypher_and_reuse(snap);
     test_statement_lifecycle_datalog_and_exec(snap);
