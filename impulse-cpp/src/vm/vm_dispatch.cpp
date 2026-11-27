@@ -41,6 +41,9 @@
 
 namespace impulse::vm {
 
+#if defined(_MSC_VER)
+  #pragma optimize("g", off)
+#endif
 static impulse_vm_status_v11_t run_words_unlocked(
     const uint64_t* words,
     size_t word_count,
@@ -277,6 +280,10 @@ bool v11_exec_morsel_p4_op(
 #undef V11_OP_CASE
 #undef V11_DISPATCH
 }
+
+#if defined(_MSC_VER)
+  #pragma optimize("", on)
+#endif
 
 impulse_vm_status_v11_t execute_words_internal(
     const uint64_t* words,
