@@ -54,6 +54,29 @@ V11_OP_CASE(VEC_REDUCE) {
             ws.state.pc += 1u;
             break;
         }
+        case subop::kVEC_REDUCE_SUM_I64_CHK: {
+            if (v->elem_tag != kVecTagI64) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            V11Sum128 acc{};
+            for (uint32_t i = 0; i < n; ++i) {
+                if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
+                acc.add(v->i64_data[i]);
+            }
+            int64_t res = 0LL;
+            bool out_valid = false;
+            impulse_vm_status_v11_t st = acc.finalize(&res, &out_valid);
+            if (st != IMPULSE_VM_V11_OK) { ws.status = st; V11_DISPATCH(); }
+            if (!out_valid) {
+                ws.write_r_null(dst);
+                ws.set_zf(true);
+                ws.set_nf(true);
+            } else {
+                ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_I64), static_cast<uint64_t>(res));
+                ws.set_zf(res == 0LL);
+                ws.set_nf(false);
+            }
+            ws.state.pc += 1u;
+            break;
+        }
         case subop::kVEC_REDUCE_SUM:
         case subop::kVEC_REDUCE_MEAN: {
             if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }

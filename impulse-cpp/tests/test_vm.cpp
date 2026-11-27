@@ -1281,6 +1281,90 @@ static void test_v11_imps_coo_roundtrip_and_hardening() {
     std::printf("test_v11_imps_coo_roundtrip_and_hardening: PASS (0 allocs)\n");
 }
 
+static void test_v11_imps_decimal64_morsel_and_load_column() {
+    const std::string out_path_str = v11_tmp_path("v11_decimal64_e2e.imps");
+    const char* out_path = out_path_str.c_str();
+
+    impulse_writer_t* w = impulse_writer_create(out_path, 0);
+    CHECK(w != nullptr);
+    CHECK(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Account") == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_node_count(w, 0, 4) == IMPULSE_OK);
+
+    // Non-nullable DECIMAL64(18, 2) node attribute: [1000, 2000, 3000, 4000] (sum = 10000)
+    const int64_t node_bal[4] = {1000LL, 2000LL, 3000LL, 4000LL};
+    CHECK(impulse_writer_add_domain_attribute_decimal64(
+        w, 0, "balance", 0x15u, 1u, 18u, 2u, node_bal, sizeof(node_bal)) == IMPULSE_OK);
+
+    // CSR edges: 0->1 (e0), 0->2 (e1), 1->2 (e2), 2->3 (e3)
+    const uint32_t csr_ro[5] = {0, 2, 3, 4, 4};
+    const uint32_t csr_ct[4] = {1, 2, 2, 3};
+    CHECK(impulse_writer_add_relation_v11(
+        w, 0, 0, 0, 4, 4, 4, 4, 0,
+        csr_ro, sizeof(csr_ro), csr_ct, sizeof(csr_ct),
+        nullptr, 0, nullptr, 0,
+        nullptr, 0, nullptr, 0, nullptr, 0, 0) == IMPULSE_OK);
+
+    // Nullable DECIMAL64(18, 2) edge attribute (0x95): 128B-padded validity bitmap + 4 * int64_t
+    // Valid edges: e0=150, e1=NULL, e2=250, e3=350 (bitmap = 0b1101 = 0x0D)
+    alignas(128) uint8_t edge_buf[128 + 4 * sizeof(int64_t)]{};
+    edge_buf[0] = 0x0Du;
+    const int64_t edge_vals[4] = {150LL, 999999LL, 250LL, 350LL};
+    std::memcpy(edge_buf + 128, edge_vals, sizeof(edge_vals));
+    CHECK(impulse_writer_add_attribute_decimal64(
+        w, 0, "fee", 0x95u, 1u, 18u, 2u, edge_buf, sizeof(edge_buf)) == IMPULSE_OK);
+
+    CHECK(impulse_writer_finalize(w) == IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    impulse_status_t st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(out_path, &st);
+    CHECK(snap != nullptr && st == IMPULSE_OK);
+    CHECK(impulse_vm_v11_prepare_snapshot(snap) == IMPULSE_VM_V11_OK);
+
+    alignas(128) static uint8_t scratch[2 * 1024 * 1024];
+    impulse_vm_workspace_v11_t* ws = nullptr;
+    CHECK(impulse_workspace_init(scratch, sizeof(scratch), &ws) == IMPULSE_VM_V11_OK);
+
+    // Program:
+    //  1) OP_LOAD_COLUMN.node_attr(dom=0, attr=0) -> V0 (DECIMAL64 tagged I64)
+    //     R0 = VEC_REDUCE.sum_i64_chk(V0) == 10000
+    //  2) OP_WALK_MORSEL.fwd(F0=all(dom 0), rel=0):
+    //     M4 (V12) = GATHER_NODE_ATTR(M0=V8, dom=0, attr=0)  [src balance, 0x15 -> I64]
+    //     M5 (V13) = GATHER_EDGE_ATTR(M2=V10, rel=0, attr=0) [edge fee, 0x95 -> nullable I64]
+    //     M6 (V14) = VEC_DECIMAL_ALU.add_chk(V12, V13)       [e0:1150, e1:NULL, e2:2250, e3:3350]
+    //     MORSEL_COMMIT.scatter_add_chk(V1, M1=V9, M6=V14)   [node1+=1150, node2+=2250, node3+=3350]
+    //  3) R1 = VEC_REDUCE.sum_i64_chk(V1) == 6750
+    std::vector<uint64_t> prog = {
+        enc(0x40, 0, 0, 0, 0, 0, 0, 0),            // V0 = LOAD_COLUMN.node_attr(dom=0, attr=0)
+        enc(0x52, 0, 11, 0, 0, 0, 0, 0),           // R0 = VEC_REDUCE.sum_i64_chk(V0) == 10000
+        enc(0x21, 0, 0, 0, 0, 0, 0, 0),            // F0 = all(dom 0)
+        enc(0x50, 0, 8, 1, 0, 0, 0, 0),            // V1 = VEC_INIT.dom_i64(dom 0, 0)
+        enc(0x35, 0, 0, 0, 0, 0, 0, (5u << 16)),   // WALK_MORSEL.fwd(F0, rel=0, end_off=5)
+        enc(0x41, 0, 0, 12, 8, 0, 0, 0),           // V12 = GATHER_NODE_ATTR(V8, dom=0, attr=0)
+        enc(0x42, 0, 0, 13, 10, 0, 0, 0),          // V13 = GATHER_EDGE_ATTR(V10, rel=0, attr=0)
+        enc(0x58, 0, 0, 14, 12, 13, 0, 0),         // V14 = VEC_DECIMAL_ALU.add_chk(V12, V13)
+        enc(0x37, 0, 9, 1, 9, 14, 0, 0),           // MORSEL_COMMIT.scatter_add_chk(V1, V9, V14)
+        enc(0x38, 0, 0, 0, 0, 0, 0, (5u << 16)),   // MORSEL_END
+        enc(0x52, 0, 11, 1, 1, 0, 0, 0),           // R1 = VEC_REDUCE.sum_i64_chk(V1) == 6750
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),            // HALT
+    };
+    auto impb = build_impb(prog);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_track_allocs.store(true, std::memory_order_relaxed);
+    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(impb.data(), impb.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    g_track_allocs.store(false, std::memory_order_relaxed);
+    CHECK(rc == IMPULSE_VM_V11_OK);
+    CHECK(g_alloc_count.load(std::memory_order_relaxed) == 0u);
+    const auto* st_v11 = impulse_vm_v11_get_state(ws);
+    CHECK(static_cast<int64_t>(st_v11->r_regs[0]) == 10000LL);
+    CHECK(static_cast<int64_t>(st_v11->r_regs[1]) == 6750LL);
+
+    impulse_snapshot_close(snap);
+    std::remove(out_path);
+    std::printf("test_v11_imps_decimal64_morsel_and_load_column: PASS (0 allocs)\n");
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -1295,6 +1379,7 @@ int main() {
     test_mcdc_validator_planner_and_cabi();
     test_v11_emitter_const_pool_params_and_collect_e2e();
     test_v11_imps_coo_roundtrip_and_hardening();
+    test_v11_imps_decimal64_morsel_and_load_column();
     std::printf("test_vm: ALL PASSED\n");
     return 0;
 }

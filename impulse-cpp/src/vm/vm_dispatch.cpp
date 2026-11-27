@@ -11,6 +11,7 @@
 
 #include "vm_internal.hpp"
 #include "opcodes/shared/v11_p1_helpers.hpp"
+#include "opcodes/shared/v11_decimal64.hpp"
 #include "opcodes/shared/v11_p2_helpers.hpp"
 #include "opcodes/shared/v11_p3_helpers.hpp"
 #include "opcodes/shared/v11_p4_helpers.hpp"
@@ -170,6 +171,7 @@ static impulse_vm_status_v11_t run_words_unlocked(
     #include "opcodes/op_12_call.inc"
     #include "opcodes/op_13_ret.inc"
     #include "opcodes/op_14_set_max_dop.inc"
+    #include "opcodes/op_15_scalar_decimal_alu.inc"
 
     // --- Pillar 2: 3-Tier Adaptive Frontiers & Set Algebra (0x20..0x27) ---
     #include "opcodes/op_20_fseed.inc"
@@ -219,6 +221,7 @@ static impulse_vm_status_v11_t run_words_unlocked(
     #include "opcodes/op_55_map_keys_to_dense.inc"
     #include "opcodes/op_56_map_dense_to_keys.inc"
     #include "opcodes/op_57_collect.inc"
+    #include "opcodes/op_58_vec_decimal_alu.inc"
 
     // --- Pillar 5: Multi-Lane, Vector ANN/Rerank/Pool & MITra LANE_STATE (0x60..0x6F) ---
     #include "opcodes/op_60_lane_init_seeds.inc"
@@ -273,6 +276,7 @@ bool v11_exec_morsel_p4_op(
         #include "opcodes/op_4c_vec_int_bitwise.inc"
         #include "opcodes/op_4d_vec_ternary.inc"
         #include "opcodes/op_4e_vec_blend.inc"
+        #include "opcodes/op_58_vec_decimal_alu.inc"
         default:
             ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
             return false;
@@ -416,9 +420,15 @@ V11Vector* decode_imps_attr_to_vec(const uint8_t* raw,
         vec->emb_rows = rows;
         return vec;
     }
-    if (base_type >= 1u && base_type <= 4u) {
+    if ((base_type >= 1u && base_type <= 4u) || base_type == 0x15u) {
         const size_t elem_sz = (base_type == 1u) ? 1u : (base_type == 2u ? 2u : (base_type == 3u ? 4u : 8u));
         if (static_cast<size_t>(n) > payload_bytes / elem_sz) return nullptr;
+        if (base_type == 0x15u && (n == 0u || (reinterpret_cast<uintptr_t>(ptr) & 7u) == 0u)) {
+            // Zero-copy direct view into mmap'd 128B-aligned DECIMAL64 int64_t payload
+            vec->elem_tag = kVecTagI64;
+            vec->i64_data = (n > 0u) ? const_cast<int64_t*>(reinterpret_cast<const int64_t*>(ptr)) : nullptr;
+            return vec;
+        }
         int64_t* out = (n > 0u) ? arena.alloc_array<int64_t>(n, 8) : nullptr;
         if (n > 0u && !out) return nullptr;
         for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
@@ -1011,9 +1021,11 @@ extern "C" IMPULSE_API impulse_vm_status_v11_t impulse_vm_v11_prepare_snapshot(
             if (!safe_add(acc, total * sizeof(double) + 64u)) return false;
             if (n > (std::numeric_limits<size_t>::max)() / sizeof(double*)) return false;
             if (!safe_add(acc, n * sizeof(double*) + 64u)) return false;
-        } else if ((base_type >= 1u && base_type <= 4u) || (base_type >= 6u && base_type <= 9u)) {
-            if (n > (std::numeric_limits<size_t>::max)() / 8u) return false;
-            if (!safe_add(acc, n * 8u + 64u)) return false;
+        } else if ((base_type >= 1u && base_type <= 4u) || (base_type >= 6u && base_type <= 9u) || base_type == 0x15u) {
+            if (base_type != 0x15u) {
+                if (n > (std::numeric_limits<size_t>::max)() / 8u) return false;
+                if (!safe_add(acc, n * 8u + 64u)) return false;
+            }
         }
         return true;
     };

@@ -5,7 +5,7 @@
 
 pub const IMPB_MAGIC: u32 = 0x494D5042;
 pub const IMPB_VERSION: u16 = 11;
-pub const ACTIVE_OPCODE_COUNT: usize = 78;
+pub const ACTIVE_OPCODE_COUNT: usize = 80;
 
 pub const FLAG_MASKED_S3: u8 = 0x1;
 pub const FLAG_SCALAR_RHS: u8 = 0x2;
@@ -35,6 +35,8 @@ pub enum Status {
     ImpulseVmErrGasExhausted = 13,
     ImpulseVmErrTypeMismatch = 14,
     ImpulseVmErrValidationFailed = 15,
+    ImpulseVmErrArithmeticOverflow = 16,
+    ImpulseVmErrDivByZero = 17,
 }
 
 #[repr(u8)]
@@ -87,6 +89,7 @@ pub enum Opcode {
     OpCall = 0x12,
     OpRet = 0x13,
     OpSetMaxDop = 0x14,
+    OpScalarDecimalAlu = 0x15,
     OpFseed = 0x20,
     OpInitDomainSpan = 0x21,
     OpSetOp = 0x22,
@@ -130,6 +133,7 @@ pub enum Opcode {
     OpMapKeysToDense = 0x55,
     OpMapDenseToKeys = 0x56,
     OpCollect = 0x57,
+    OpVecDecimalAlu = 0x58,
     OpLaneInitSeeds = 0x60,
     OpLaneInitGroups = 0x61,
     OpLaneWalk = 0x63,
@@ -255,6 +259,22 @@ pub mod subop {
     pub const RET_RET: u8 = 0;
     pub const SET_MAX_DOP_IMM: u8 = 0;
     pub const SET_MAX_DOP_REG: u8 = 1;
+    pub const SCALAR_DECIMAL_ALU_ADD_CHK: u8 = 0;
+    pub const SCALAR_DECIMAL_ALU_SUB_CHK: u8 = 1;
+    pub const SCALAR_DECIMAL_ALU_MUL_CHK: u8 = 2;
+    pub const SCALAR_DECIMAL_ALU_MUL_DIV_ROUND: u8 = 3;
+    pub const SCALAR_DECIMAL_ALU_DIV_ROUND: u8 = 4;
+    pub const SCALAR_DECIMAL_ALU_RESCALE: u8 = 5;
+    pub const SCALAR_DECIMAL_ALU_BOUND_CHK: u8 = 6;
+    pub const SCALAR_DECIMAL_ALU_ABS_CHK: u8 = 7;
+    pub const SCALAR_DECIMAL_ALU_NEG_CHK: u8 = 8;
+    pub const SCALAR_DECIMAL_ALU_F64_TO_DEC: u8 = 9;
+    pub const SCALAR_DECIMAL_ALU_DEC_TO_F64: u8 = 10;
+    pub const SCALAR_DECIMAL_ALU_ROUND_SCALE: u8 = 11;
+    pub const SCALAR_DECIMAL_ALU_TRUNC_SCALE: u8 = 12;
+    pub const SCALAR_DECIMAL_ALU_FLOOR_SCALE: u8 = 13;
+    pub const SCALAR_DECIMAL_ALU_CEIL_SCALE: u8 = 14;
+    pub const SCALAR_DECIMAL_ALU_DIV_SAFE: u8 = 15;
     pub const FSEED_EMPTY: u8 = 0;
     pub const FSEED_SINGLE_IMM: u8 = 1;
     pub const FSEED_SINGLE_REG: u8 = 2;
@@ -334,6 +354,7 @@ pub mod subop {
     pub const MORSEL_COMMIT_SCATTER_ARGMIN: u8 = 6;
     pub const MORSEL_COMMIT_SCATTER_ARGMAX: u8 = 7;
     pub const MORSEL_COMMIT_COUNT_ADD_R: u8 = 8;
+    pub const MORSEL_COMMIT_SCATTER_ADD_CHK: u8 = 9;
     pub const MORSEL_END_END: u8 = 0;
     pub const SAMPLE_NEIGHBORS_FRONTIER_WOR: u8 = 0;
     pub const SAMPLE_NEIGHBORS_VEC_WR: u8 = 1;
@@ -509,6 +530,7 @@ pub mod subop {
     pub const VEC_REDUCE_ARGMAX: u8 = 8;
     pub const VEC_REDUCE_ANY_TRUE: u8 = 9;
     pub const VEC_REDUCE_ALL_TRUE: u8 = 10;
+    pub const VEC_REDUCE_SUM_I64_CHK: u8 = 11;
     pub const TOP_K_DESC_IDS: u8 = 0;
     pub const TOP_K_ASC_IDS: u8 = 1;
     pub const TOP_K_DESC_SCORES: u8 = 2;
@@ -533,6 +555,22 @@ pub mod subop {
     pub const COLLECT_VEC: u8 = 2;
     pub const COLLECT_SCALAR: u8 = 3;
     pub const COLLECT_TABLE_COL: u8 = 4;
+    pub const VEC_DECIMAL_ALU_ADD_CHK: u8 = 0;
+    pub const VEC_DECIMAL_ALU_SUB_CHK: u8 = 1;
+    pub const VEC_DECIMAL_ALU_MUL_CHK: u8 = 2;
+    pub const VEC_DECIMAL_ALU_MUL_DIV_R: u8 = 3;
+    pub const VEC_DECIMAL_ALU_MUL_DIV_V: u8 = 4;
+    pub const VEC_DECIMAL_ALU_DIV_ROUND: u8 = 5;
+    pub const VEC_DECIMAL_ALU_DIV_SAFE: u8 = 6;
+    pub const VEC_DECIMAL_ALU_RESCALE: u8 = 7;
+    pub const VEC_DECIMAL_ALU_BOUND_CHK: u8 = 8;
+    pub const VEC_DECIMAL_ALU_ABS_CHK: u8 = 9;
+    pub const VEC_DECIMAL_ALU_NEG_CHK: u8 = 10;
+    pub const VEC_DECIMAL_ALU_F64_TO_DEC: u8 = 11;
+    pub const VEC_DECIMAL_ALU_DEC_TO_F64: u8 = 12;
+    pub const VEC_DECIMAL_ALU_ROUND_SCALE: u8 = 13;
+    pub const VEC_DECIMAL_ALU_TRUNC_SCALE: u8 = 14;
+    pub const VEC_DECIMAL_ALU_MUL_DIV_SAFE_R: u8 = 15;
     pub const LANE_INIT_SEEDS_AUTO_WIDTH: u8 = 0;
     pub const LANE_INIT_SEEDS_FORCE_W64: u8 = 1;
     pub const LANE_INIT_GROUPS_GROUPS: u8 = 0;
@@ -827,6 +865,16 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
         name: "OP_SET_MAX_DOP",
         mnemonic: "SET_MAX_DOP",
     });
+    tbl[0x15] = Some(OpcodeMeta {
+        op: Opcode::OpScalarDecimalAlu,
+        code: 0x15,
+        pillar: 1,
+        allowed_flags: 0x0,
+        valid_subop_mask: 0xFFFF,
+        morsel_role: MorselRole::Forbidden,
+        name: "OP_SCALAR_DECIMAL_ALU",
+        mnemonic: "SCALAR_DECIMAL_ALU",
+    });
     tbl[0x20] = Some(OpcodeMeta {
         op: Opcode::OpFseed,
         code: 0x20,
@@ -972,7 +1020,7 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
         code: 0x37,
         pillar: 3,
         allowed_flags: 0x7,
-        valid_subop_mask: 0x01FF,
+        valid_subop_mask: 0x03FF,
         morsel_role: MorselRole::CommitOnly,
         name: "OP_MORSEL_COMMIT",
         mnemonic: "MORSEL_COMMIT",
@@ -1202,7 +1250,7 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
         code: 0x52,
         pillar: 4,
         allowed_flags: 0x1,
-        valid_subop_mask: 0x07FF,
+        valid_subop_mask: 0x0FFF,
         morsel_role: MorselRole::Forbidden,
         name: "OP_VEC_REDUCE",
         mnemonic: "VEC_REDUCE",
@@ -1256,6 +1304,16 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
         morsel_role: MorselRole::Forbidden,
         name: "OP_COLLECT",
         mnemonic: "COLLECT",
+    });
+    tbl[0x58] = Some(OpcodeMeta {
+        op: Opcode::OpVecDecimalAlu,
+        code: 0x58,
+        pillar: 4,
+        allowed_flags: 0x3,
+        valid_subop_mask: 0xFFFF,
+        morsel_role: MorselRole::BodyOk,
+        name: "OP_VEC_DECIMAL_ALU",
+        mnemonic: "VEC_DECIMAL_ALU",
     });
     tbl[0x60] = Some(OpcodeMeta {
         op: Opcode::OpLaneInitSeeds,
@@ -1411,7 +1469,6 @@ pub const OPCODE_META: [Option<OpcodeMeta>; 256] = {
 };
 
 #[inline]
-#[allow(clippy::too_many_arguments)]
 pub const fn encode_word(
     op: Opcode,
     flags: u8,

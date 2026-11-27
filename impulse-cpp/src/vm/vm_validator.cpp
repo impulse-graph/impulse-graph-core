@@ -117,6 +117,15 @@ impulse_vm_status_v11_t validate_word(uint64_t w) noexcept {
         case Opcode::OP_VEC_TERNARY:
             mbz_ok = (subop != 8) || !scalar;
             break;
+        case Opcode::OP_VEC_DECIMAL_ALU:
+            if (subop == 3u || subop == 4u || subop == 15u) {
+                mbz_ok = !mask;
+            } else if (subop >= 7u && subop <= 14u) {
+                mbz_ok = !scalar && (mask || s3 == 0);
+            } else {
+                mbz_ok = mask || s3 == 0;
+            }
+            break;
         case Opcode::OP_VEC_INIT:
             mbz_ok = (s1 == 0);
             break;
@@ -190,6 +199,7 @@ WriteBank writes_bank_inside_morsel(uint8_t op, uint8_t subop) noexcept {
         case Opcode::OP_COALESCE:
         case Opcode::OP_VEC_POINT:
         case Opcode::OP_VECTOR_RERANK:
+        case Opcode::OP_VEC_DECIMAL_ALU:
             return kWriteV;
         default:
             return kWriteNone;
@@ -242,6 +252,12 @@ bool has_uninitialized_morsel_v_read(uint8_t op, uint8_t subop, bool scalar,
             return check_uninit(s1, wv)
                 || (!scalar && check_uninit(s2, wv))
                 || ((subop == 0 || subop == 2 || subop == 4 || subop == 6) && check_uninit(s3, wv));
+        case Opcode::OP_VEC_DECIMAL_ALU: {
+            bool has_s2 = (subop <= 6u || subop == 15u);
+            return check_uninit(s1, wv)
+                || (has_s2 && !scalar && check_uninit(s2, wv))
+                || (subop == 4u && check_uninit(s3, wv));
+        }
         case Opcode::OP_VEC_BLEND:
             return check_uninit(s1, wv)
                 || (!scalar && check_uninit(s2, wv))
@@ -251,8 +267,8 @@ bool has_uninitialized_morsel_v_read(uint8_t op, uint8_t subop, bool scalar,
         case Opcode::OP_VEC_POINT:
             return subop == 2 && check_uninit(s1, wv);
         case Opcode::OP_MORSEL_COMMIT:
-            return (subop <= 7 && check_uninit(s1, wv))
-                || (subop >= 1 && subop <= 7 && !scalar && check_uninit(s2, wv));
+            return ((subop <= 7u || subop == 9u) && check_uninit(s1, wv))
+                || (((subop >= 1u && subop <= 7u) || subop == 9u) && !scalar && check_uninit(s2, wv));
         default:
             return false;
     }

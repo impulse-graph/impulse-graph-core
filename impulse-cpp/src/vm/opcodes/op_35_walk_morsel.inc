@@ -20,7 +20,7 @@ V11_OP_CASE(WALK_MORSEL) {
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
     if (is_coo && !rel->has_coo) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
     if (!is_coo && !is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-    if (!is_coo && is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
+    if (!is_coo && is_rev && rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
     if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
     const uint32_t* s_excl = nullptr; uint32_t s_excl_len = 0u;
