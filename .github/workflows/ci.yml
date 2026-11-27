@@ -80,6 +80,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check Core Engine Invariants (Zero-Synthesis / Zero-Heap-Alloc)
+        run: python3 scripts/check_engine_invariants.py --cpp-only --cpp-root impulse-cpp
+
       - name: Build C++20 Core Kernel
         run: |
           cmake -B build-cpp -S impulse-cpp -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DIMPULSE_BUILD_FUZZ=OFF

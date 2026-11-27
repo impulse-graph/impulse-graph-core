@@ -380,7 +380,7 @@ extern "C" {
     pub fn impulse_vm_v11_get_output_count(ws: *const impulse_vm_workspace_v11_t) -> u32;
     pub fn impulse_vm_v11_get_output(
         ws: *const impulse_vm_workspace_v11_t,
-        slot: u16,
+        index: u32,
         out_view: *mut impulse_vm_output_view_v11_t,
     ) -> i32;
 }

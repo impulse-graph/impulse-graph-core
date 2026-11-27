@@ -20,7 +20,7 @@ V11_OP_CASE(WALK_MORSEL) {
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
     if (is_coo && !rel->has_coo) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
     if (!is_coo && !is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-    if (!is_coo && is_rev && !rel->has_csc && rel->csc_row_off_raw == nullptr && (rel->csr_row_off_raw != nullptr || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
+    if (!is_coo && is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
     if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
     const uint32_t* s_excl = nullptr; uint32_t s_excl_len = 0u;
@@ -111,13 +111,13 @@ V11_OP_CASE(WALK_MORSEL) {
                 }
             }
         }
-    } else if (rel->has_csc && rel->csc_row_off_raw != nullptr) {
+    } else {
         if (f_src->multi_lane) {
             size_t cap = 0u;
             for (uint32_t k = 0; k < f_src->ml_count; ++k) {
                 if (f_src->ml_masks[k] == 0ULL) continue;
                 uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
-                if (v + 1u < rel->csc_row_off_len) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
+                if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
             }
             if (cap > 0u) {
                 items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
@@ -126,7 +126,7 @@ V11_OP_CASE(WALK_MORSEL) {
                     uint64_t lm = f_src->ml_masks[k];
                     if (lm == 0ULL) continue;
                     uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
-                    if (v + 1u < rel->csc_row_off_len) {
+                    if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) {
                         uint32_t e0 = rel->csc_row_off(v), e1 = rel->csc_row_off(v + 1u);
                         for (uint32_t p = e0; p < e1; ++p) {
                             uint64_t u = rel->csc_col_src(p);
@@ -143,70 +143,19 @@ V11_OP_CASE(WALK_MORSEL) {
             size_t cap = 0u;
             for (uint32_t i = 0; i < src_len; ++i) {
                 uint32_t v = src_ids[i];
-                if (v + 1u < rel->csc_row_off_len) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
+                if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
             }
             if (cap > 0u) {
                 items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
                 if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
                 for (uint32_t i = 0; i < src_len; ++i) {
                     uint32_t v = src_ids[i];
-                    if (v + 1u < rel->csc_row_off_len) {
+                    if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) {
                         uint32_t e0 = rel->csc_row_off(v), e1 = rel->csc_row_off(v + 1u);
                         for (uint32_t p = e0; p < e1; ++p) {
                             uint64_t u = rel->csc_col_src(p);
                             if (!p3_sorted_contains(s_excl, s_excl_len, static_cast<uint32_t>(u))) {
                                 items[item_cnt++] = {u, v, p, 1ULL};
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        V11RevAdj rev_adj{};
-        if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        if (f_src->multi_lane) {
-            size_t cap = 0u;
-            for (uint32_t k = 0; k < f_src->ml_count; ++k) {
-                if (f_src->ml_masks[k] == 0ULL) continue;
-                uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
-                if (v < rev_adj.n_tgt) cap += (rev_adj.offsets[v + 1u] - rev_adj.offsets[v]);
-            }
-            if (cap > 0u) {
-                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-                for (uint32_t k = 0; k < f_src->ml_count; ++k) {
-                    uint64_t lm = f_src->ml_masks[k];
-                    if (lm == 0ULL) continue;
-                    uint32_t v = static_cast<uint32_t>(f_src->ml_nodes[k]);
-                    if (v < rev_adj.n_tgt) {
-                        for (uint32_t p = rev_adj.offsets[v]; p < rev_adj.offsets[v + 1u]; ++p) {
-                            uint32_t u = rev_adj.srcs[p];
-                            if (!p3_sorted_contains(s_excl, s_excl_len, u)) {
-                                items[item_cnt++] = {u, v, rev_adj.edges[p], lm};
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-            size_t cap = 0u;
-            for (uint32_t i = 0; i < src_len; ++i) {
-                uint32_t v = src_ids[i];
-                if (v < rev_adj.n_tgt) cap += (rev_adj.offsets[v + 1u] - rev_adj.offsets[v]);
-            }
-            if (cap > 0u) {
-                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-                for (uint32_t i = 0; i < src_len; ++i) {
-                    uint32_t v = src_ids[i];
-                    if (v < rev_adj.n_tgt) {
-                        for (uint32_t k = rev_adj.offsets[v]; k < rev_adj.offsets[v + 1u]; ++k) {
-                            uint32_t u = rev_adj.srcs[k];
-                            if (!p3_sorted_contains(s_excl, s_excl_len, u)) {
-                                items[item_cnt++] = {u, v, rev_adj.edges[k], 1ULL};
                             }
                         }
                     }

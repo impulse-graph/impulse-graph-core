@@ -10,7 +10,7 @@ namespace ImpulseGraph.Vm;
 /// </summary>
 public sealed unsafe class VmContext : IDisposable
 {
-    private void* _rawBuf;
+    private nint _rawBuf;
     private nint _ws;
     public nint Handle => Volatile.Read(ref _ws);
 
@@ -23,15 +23,15 @@ public sealed unsafe class VmContext : IDisposable
         }
         nuint aligned = ((scratchBytes + 127) / 128) * 128;
         if (aligned < 65536) aligned = 65536;
-        _rawBuf = NativeMemory.AlignedAlloc(aligned, 128);
-        NativeMemory.Clear(_rawBuf, aligned);
-        uint rc = NativeMethods.impulse_workspace_init(_rawBuf, aligned, out _ws);
+        void* raw = NativeMemory.AlignedAlloc(aligned, 128);
+        NativeMemory.Clear(raw, aligned);
+        uint rc = NativeMethods.impulse_workspace_init(raw, aligned, out _ws);
         if (rc != 0 || _ws == nint.Zero)
         {
-            NativeMemory.AlignedFree(_rawBuf);
-            _rawBuf = null;
+            NativeMemory.AlignedFree(raw);
             throw new InvalidOperationException($"impulse_workspace_init failed: status={rc}");
         }
+        _rawBuf = (nint)raw;
     }
 
     ~VmContext() => Dispose(disposing: false);
@@ -45,10 +45,10 @@ public sealed unsafe class VmContext : IDisposable
     private void Dispose(bool disposing)
     {
         Interlocked.Exchange(ref _ws, nint.Zero);
-        if (_rawBuf != null)
+        nint raw = Interlocked.Exchange(ref _rawBuf, nint.Zero);
+        if (raw != nint.Zero)
         {
-            NativeMemory.AlignedFree(_rawBuf);
-            _rawBuf = null;
+            NativeMemory.AlignedFree((void*)raw);
         }
     }
 }

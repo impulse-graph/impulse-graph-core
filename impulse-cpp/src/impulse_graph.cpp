@@ -121,15 +121,12 @@ static impulse_status_t validate_attribute_payload(
     uint64_t payload_bytes = attr.data_bytes;
 
     if (is_v10 && is_nullable && attr.data_offset > 0 && row_count > 0) {
-        uint64_t bm_rows = is_domain_attr ? row_count : 1ULL;
         uint64_t padded_bm = 0;
-        if (!compute_padded_validity_bytes(bm_rows, nullptr, &padded_bm) || attr.data_bytes < padded_bm) {
+        if (!compute_padded_validity_bytes(row_count, nullptr, &padded_bm) || attr.data_bytes < padded_bm) {
             err_msg = "Nullable attribute data_bytes smaller than 128B-padded validity bitmap";
             return IMPULSE_ERR_BUFFER_OVERFLOW;
         }
-        if (is_domain_attr) {
-            payload_bytes = attr.data_bytes - padded_bm;
-        }
+        payload_bytes = attr.data_bytes - padded_bm;
     }
 
     if (base_type == 0x0B || base_type == 0x0C) {
@@ -174,14 +171,14 @@ static impulse_status_t validate_attribute_payload(
                 err_msg = "Variable-length attribute terminal offset exceeds payload byte size";
                 return IMPULSE_ERR_BUFFER_OVERFLOW;
             }
-        } else if (is_domain_attr && is_v10 && attr.data_offset > 0 && row_count > 0 && attr.dimension > 0) {
+        } else if (is_v10 && attr.data_offset > 0 && row_count > 0 && attr.dimension > 0) {
             uint64_t req_payload = 0;
             if (!safe_mul(row_count, static_cast<uint64_t>(attr.dimension), &req_payload) || payload_bytes < req_payload) {
                 err_msg = "Fixed-width string/bytes attribute payload smaller than row_count * dimension";
                 return IMPULSE_ERR_BUFFER_OVERFLOW;
             }
         }
-    } else if (is_domain_attr && is_v10 && attr.data_offset > 0 && row_count > 0) {
+    } else if (is_v10 && attr.data_offset > 0 && row_count > 0) {
         uint64_t type_w = fixed_attr_type_width(base_type);
         if (type_w == 0ULL) {
             err_msg = "Unsupported fixed-width attribute type_code";

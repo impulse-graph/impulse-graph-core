@@ -19,6 +19,14 @@ V11_OP_CASE(LANE_STATE_WALK) {
     const uint8_t semi = subop % 5u;
     const uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     const uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
+    if (!is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
+    if (is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        V11_DISPATCH();
+    }
     if (ls->ls_dom != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
 
     const bool scalar_w = (flags & FLAG_SCALAR_RHS) != 0u;
@@ -83,12 +91,11 @@ V11_OP_CASE(LANE_STATE_WALK) {
             }
         }
     } else {
-        V11RevAdj rev_adj{};
-        if (!p3_build_rev_adj(ws.arena, *snap, *rel, &rev_adj)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
         for (uint32_t v = 0; v < ls->length; ++v) {
-            if (v >= rev_adj.n_tgt) continue;
-            for (uint32_t idx = rev_adj.offsets[v]; idx < rev_adj.offsets[v + 1u]; ++idx) {
-                p5_relax_lane_edge(v, rev_adj.srcs[idx], rev_adj.edges[idx], k, semi, mask,
+            if (rel->csc_row_off_len == 0u || v >= rel->csc_row_off_len - 1u) continue;
+            for (uint32_t p = rel->csc_row_off(v); p < rel->csc_row_off(v + 1u); ++p) {
+                uint32_t u = static_cast<uint32_t>(rel->csc_col_src(p));
+                p5_relax_lane_edge(v, u, p, k, semi, mask,
                                    scalar_w, scalar_w_valid, scalar_w_val, weight_col,
                                    ls->ls_vals, ls->ls_valid, ov->ls_vals, ov->ls_valid,
                                    ov->ls_witness, ov->ls_witness_valid, n_out, hits);

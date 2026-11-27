@@ -82,6 +82,9 @@ pub fn verify(snapshot_path: &Path, key_path: &Path) -> Result<(), Box<dyn Error
     let signature = Signature::from_bytes(&sig_arr);
 
     let file_data = fs::read(snapshot_path)?;
+    if file_data.len() < 64 {
+        return Err("Snapshot file too small to verify (< 64 bytes)".into());
+    }
     let header_hash = Sha256::digest(&file_data[..64]);
 
     verifying_key.verify(&header_hash, &signature)?;
@@ -101,6 +104,9 @@ mod hex {
 
     pub fn decode(s: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let s = s.trim();
+        if !s.is_ascii() || s.len() % 2 != 0 {
+            return Err("Invalid hex string: must be even-length ASCII".into());
+        }
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| e.into()))

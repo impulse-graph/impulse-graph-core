@@ -68,111 +68,6 @@ inline bool p3_has_index(const V11SnapshotView* snap, uint16_t dom, uint16_t att
     return false;
 }
 
-/** Zero-malloc flat CSC reverse adjacency table built in caller arena. */
-struct V11RevAdj {
-    uint32_t  n_tgt   = 0;
-    uint32_t* offsets = nullptr; // [n_tgt + 1]
-    uint32_t* srcs    = nullptr; // [n_edges]
-    uint32_t* edges   = nullptr; // [n_edges] (canonical CSR edge idx)
-};
-
-IMPULSE_V11_NOINLINE inline bool p3_build_rev_adj(V11Arena& arena,
-                                                  const V11SnapshotView& snap,
-                                                  const V11RelView& rel,
-                                                  V11RevAdj* out) noexcept {
-    uint64_t n_tgt64 = (rel.tgt_dom < snap.domain_count) ? snap.domain_cards[rel.tgt_dom] : 0ULL;
-    if (n_tgt64 > UINT32_MAX) return false;
-    uint32_t n_tgt = static_cast<uint32_t>(n_tgt64);
-    uint32_t* offs = arena.alloc_array<uint32_t>(static_cast<size_t>(n_tgt) + 1u, 8);
-    if (!offs) return false;
-    std::memset(offs, 0, (static_cast<size_t>(n_tgt) + 1u) * sizeof(uint32_t));
-
-    if (rel.has_csc && rel.csc_row_off_raw != nullptr && rel.row_off_len == 0u) {
-        uint32_t csc_n = (rel.csc_row_off_len > 0u) ? (rel.csc_row_off_len - 1u) : 0u;
-        uint32_t lim = (csc_n < n_tgt) ? csc_n : n_tgt;
-        for (uint32_t v = 0; v <= lim; ++v) offs[v] = rel.csc_row_off(v);
-        for (uint32_t v = lim + 1u; v <= n_tgt; ++v) offs[v] = offs[lim];
-        uint32_t total = offs[n_tgt];
-        uint32_t* srcs  = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
-        uint32_t* edges = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
-        if (total > 0u && (!srcs || !edges)) return false;
-        for (uint32_t p = 0; p < total; ++p) {
-            srcs[p]  = static_cast<uint32_t>(rel.csc_col_src(p));
-            edges[p] = p;
-        }
-        out->n_tgt   = n_tgt;
-        out->offsets = offs;
-        out->srcs    = srcs;
-        out->edges   = edges;
-        return true;
-    }
-
-    uint32_t n_src = (rel.row_off_len > 0u) ? (rel.row_off_len - 1u) : 0u;
-    uint32_t total = 0u;
-    for (uint32_t u = 0; u < n_src; ++u) {
-        for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
-            uint64_t v = rel.csr_col_tgt(e);
-            if (v < n_tgt64) {
-                offs[static_cast<uint32_t>(v) + 1u]++;
-                total++;
-            }
-        }
-    }
-    for (uint32_t v = 0; v < n_tgt; ++v) offs[v + 1u] += offs[v];
-
-    uint32_t* srcs  = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
-    uint32_t* edges = (total > 0u) ? arena.alloc_array<uint32_t>(total, 8) : nullptr;
-    uint32_t* cur   = (n_tgt > 0u) ? arena.alloc_array<uint32_t>(n_tgt, 8) : nullptr;
-    if ((total > 0u && (!srcs || !edges)) || (n_tgt > 0u && !cur)) return false;
-    if (n_tgt > 0u) std::memcpy(cur, offs, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
-
-    for (uint32_t u = 0; u < n_src; ++u) {
-        for (uint32_t e = rel.csr_row_off(u); e < rel.csr_row_off(u + 1u); ++e) {
-            uint64_t v = rel.csr_col_tgt(e);
-            if (v < n_tgt64) {
-                uint32_t pos = cur[static_cast<uint32_t>(v)]++;
-                srcs[pos]  = u;
-                edges[pos] = e;
-            }
-        }
-    }
-    out->n_tgt   = n_tgt;
-    out->offsets = offs;
-    out->srcs    = srcs;
-    out->edges   = edges;
-    return true;
-}
-
-inline bool p3_compute_in_degs(V11Arena& arena,
-                               const V11SnapshotView& snap,
-                               const V11RelView& rel,
-                               uint32_t** out_deg,
-                               uint32_t* out_n_tgt) noexcept {
-    uint64_t n_tgt64 = (rel.tgt_dom < snap.domain_count) ? snap.domain_cards[rel.tgt_dom] : 0ULL;
-    if (n_tgt64 > UINT32_MAX) return false;
-    uint32_t n_tgt = static_cast<uint32_t>(n_tgt64);
-    *out_n_tgt = n_tgt;
-    if (n_tgt == 0u) { *out_deg = nullptr; return true; }
-    uint32_t* deg = arena.alloc_array<uint32_t>(n_tgt, 8);
-    if (!deg) return false;
-    std::memset(deg, 0, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
-    if (rel.has_csc && rel.csc_row_off_raw != nullptr) {
-        uint32_t csc_n = (rel.csc_row_off_len > 0u) ? (rel.csc_row_off_len - 1u) : 0u;
-        uint32_t lim = (csc_n < n_tgt) ? csc_n : n_tgt;
-        for (uint32_t v = 0; v < lim; ++v) {
-            deg[v] = rel.csc_row_off(v + 1u) - rel.csc_row_off(v);
-        }
-        *out_deg = deg;
-        return true;
-    }
-    for (uint32_t e = 0; e < rel.col_tgt_len; ++e) {
-        uint64_t v = rel.csr_col_tgt(e);
-        if (v < n_tgt64) deg[static_cast<uint32_t>(v)]++;
-    }
-    *out_deg = deg;
-    return true;
-}
-
 inline bool p3_sorted_contains(const uint32_t* arr, uint32_t len, uint32_t x) noexcept {
     return len > 0u && arr != nullptr && std::binary_search(arr, arr + len, x);
 }
@@ -209,7 +104,7 @@ inline bool p3_fwd_step(V11Arena& arena,
 }
 
 inline bool p3_rev_step(V11Arena& arena,
-                        const V11RevAdj& rev,
+                        const V11RelView& rel,
                         const uint32_t* tgt, uint32_t tgt_len,
                         const uint32_t* excl1, uint32_t excl1_len,
                         const uint32_t* excl2, uint32_t excl2_len,
@@ -217,7 +112,9 @@ inline bool p3_rev_step(V11Arena& arena,
     size_t cap = 0u;
     for (uint32_t i = 0; i < tgt_len; ++i) {
         uint32_t v = tgt[i];
-        if (v < rev.n_tgt) cap += (rev.offsets[v + 1u] - rev.offsets[v]);
+        if (rel.csc_row_off_len > 0u && v < rel.csc_row_off_len - 1u) {
+            cap += (rel.csc_row_off(v + 1u) - rel.csc_row_off(v));
+        }
     }
     if (cap == 0u) { *out_ptr = nullptr; *out_len = 0u; return true; }
     uint32_t* buf = arena.alloc_array<uint32_t>(cap, 8);
@@ -225,9 +122,9 @@ inline bool p3_rev_step(V11Arena& arena,
     uint32_t cnt = 0u;
     for (uint32_t i = 0; i < tgt_len; ++i) {
         uint32_t v = tgt[i];
-        if (v < rev.n_tgt) {
-            for (uint32_t e = rev.offsets[v]; e < rev.offsets[v + 1u]; ++e) {
-                uint32_t u = rev.srcs[e];
+        if (rel.csc_row_off_len > 0u && v < rel.csc_row_off_len - 1u) {
+            for (uint32_t p = rel.csc_row_off(v); p < rel.csc_row_off(v + 1u); ++p) {
+                uint32_t u = static_cast<uint32_t>(rel.csc_col_src(p));
                 if (!p3_sorted_contains(excl1, excl1_len, u) && !p3_sorted_contains(excl2, excl2_len, u)) {
                     buf[cnt++] = u;
                 }
