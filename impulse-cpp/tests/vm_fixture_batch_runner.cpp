@@ -9,8 +9,10 @@
  */
 #include "impulse_graph.h"
 #include "vm/vm_internal.hpp"
+#include "hwy/targets.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -28,6 +30,30 @@
 #include <vector>
 
 using namespace impulse::vm;
+
+static std::atomic<size_t> g_exec_allocs{0};
+static std::atomic<bool>   g_track_exec_allocs{false};
+
+#if defined(__SANITIZE_THREAD__)
+#define IMPULSE_RUNNER_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define IMPULSE_RUNNER_TSAN 1
+#endif
+#endif
+
+#if !defined(IMPULSE_RUNNER_TSAN)
+void* operator new(size_t sz) {
+    if (g_track_exec_allocs.load(std::memory_order_relaxed)) {
+        g_exec_allocs.fetch_add(1, std::memory_order_relaxed);
+    }
+    void* p = std::malloc(sz == 0 ? 1 : sz);
+    if (!p) throw std::bad_alloc();
+    return p;
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, size_t) noexcept { std::free(p); }
+#endif
 
 namespace {
 
@@ -404,8 +430,41 @@ std::string run_fixture_json(const std::string& profile,
         ? max_steps_override
         : (root.get("max_steps") ? static_cast<uint64_t>(as_i64(root.get("max_steps"), 100000)) : 100000ULL);
 
+    size_t eff_scratch = scratch_bytes;
+    if (const JsonVal* sb = root.get("scratch_bytes"); sb != nullptr) {
+        int64_t req = as_i64(sb, static_cast<int64_t>(scratch_bytes));
+        if (req >= 0 && static_cast<size_t>(req) < scratch_bytes) {
+            eff_scratch = static_cast<size_t>(req);
+        }
+    }
+    int repeat_runs = root.get("repeat_runs") ? static_cast<int>(as_i64(root.get("repeat_runs"), 1)) : 1;
+
+    uint64_t planned_scratch = 0ULL;
+    if (preloaded_snap != nullptr && !words.empty()) {
+        std::vector<uint8_t> impb(32u + words.size() * 8u, 0u);
+        impulse_impb_header_v11_t hdr{};
+        hdr.magic = 0x494D5042u; // 'IMPB'
+        hdr.isa_version = 11u;
+        hdr.max_call_depth = 16u;
+        hdr.code_word_count = static_cast<uint32_t>(words.size());
+        hdr.program_xxh3_64 = 0ULL;
+        std::memcpy(impb.data(), &hdr, sizeof(hdr));
+        std::memcpy(impb.data() + 32u, words.data(), words.size() * 8u);
+        impulse_vm_memory_plan_t plan{};
+        if (impulse_vm_plan_memory(impb.data(), impb.size(), preloaded_snap, 1u, &plan) == IMPULSE_VM_V11_OK) {
+            planned_scratch = plan.guaranteed_scratch_bytes;
+        }
+    }
+
     impulse_vm_workspace_v11_t* ws = nullptr;
-    impulse_workspace_init(scratch_buf, scratch_bytes, &ws);
+    impulse_vm_status_v11_t init_st = impulse_workspace_init(scratch_buf, eff_scratch, &ws);
+    if (init_st != IMPULSE_VM_V11_OK || !ws) {
+        std::ostringstream oss;
+        oss << "{\"status\":\"" << status_name(init_st) << "\",\"status_code\":" << init_st
+            << ",\"planned_scratch_bytes\":" << planned_scratch
+            << ",\"arena_peak_bytes\":0,\"exec_allocs\":0,\"outputs\":{}}";
+        return oss.str();
+    }
     ws->geometry = geometry_of_profile(profile);
 
     std::map<uint16_t, uint64_t> dom_tbl;
@@ -813,14 +872,41 @@ std::string run_fixture_json(const std::string& profile,
     // Set arena watermark after fixture bindings so execution preserves bindings
     ws->arena.mark = ws->arena.pos;
 
+    g_exec_allocs.store(0, std::memory_order_relaxed);
+    g_track_exec_allocs.store(true, std::memory_order_relaxed);
     execute_words_internal(words.data(), words.size(), snap_ptr, *ws, max_steps);
+    g_track_exec_allocs.store(false, std::memory_order_relaxed);
+    size_t exec1_allocs = g_exec_allocs.load(std::memory_order_relaxed);
+    size_t arena_peak = ws->arena.pos;
     impulse_vm_ictx_v2_t digest = impulse_vm_v11_compute_ictx_v2(ws);
+
+    bool repeat_hash_match = true;
+    size_t exec2_allocs = 0;
+    if (repeat_runs >= 2) {
+        ws->arena.reset_to_mark();
+        ws->reset_execution_state();
+        g_exec_allocs.store(0, std::memory_order_relaxed);
+        g_track_exec_allocs.store(true, std::memory_order_relaxed);
+        execute_words_internal(words.data(), words.size(), snap_ptr, *ws, max_steps);
+        g_track_exec_allocs.store(false, std::memory_order_relaxed);
+        exec2_allocs = g_exec_allocs.load(std::memory_order_relaxed);
+        impulse_vm_ictx_v2_t digest2 = impulse_vm_v11_compute_ictx_v2(ws);
+        repeat_hash_match = (digest.logical_hash == digest2.logical_hash &&
+                             digest.physical_hash == digest2.physical_hash);
+    }
 
     // Format JSON response matching V11FixtureBatchMain.java / impulse-ocaml
     std::ostringstream oss;
     oss << '{';
     oss << "\"status\":\"" << status_name(ws->status) << "\",";
     oss << "\"status_code\":" << ws->status << ',';
+    oss << "\"planned_scratch_bytes\":" << planned_scratch << ',';
+    oss << "\"arena_peak_bytes\":" << arena_peak << ',';
+    oss << "\"exec_allocs\":" << exec1_allocs << ',';
+    if (repeat_runs >= 2) {
+        oss << "\"repeat_hash_match\":" << (repeat_hash_match ? "true" : "false") << ',';
+        oss << "\"exec2_allocs\":" << exec2_allocs << ',';
+    }
     oss << "\"user_throw_code\":" << static_cast<uint64_t>(ws->user_throw_code) << ',';
     oss << "\"pc\":" << ws->state.pc << ',';
     oss << "\"max_dop\":" << ws->state.max_dop << ',';
@@ -953,6 +1039,8 @@ int main(int argc, char** argv) {
             snapshot_path = argv[++i];
         } else if (arg.rfind("--snapshot=", 0) == 0) {
             snapshot_path = arg.substr(11);
+        } else if (arg == "--scalar-simd") {
+            hwy::DisableTargets(~int64_t(HWY_SCALAR));
         }
     }
 
