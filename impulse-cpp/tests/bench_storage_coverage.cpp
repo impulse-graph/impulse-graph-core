@@ -236,8 +236,8 @@ int main(int argc, char** argv) {
     }
 
     const size_t ws_bytes = 64u * 1024u * 1024u;
-    void* raw = nullptr;
-    if (posix_memalign(&raw, 128, ws_bytes) != 0 || !raw) return 1;
+    std::vector<uint8_t> raw_buf(ws_bytes + 128u);
+    void* raw = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(raw_buf.data()) + 127u) & ~uintptr_t(127u));
     impulse_vm_workspace_v11_t* ws = nullptr;
     if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_V11_OK) return 1;
 
@@ -455,6 +455,5 @@ int main(int argc, char** argv) {
 
     std::printf("]}\n");
     impulse_snapshot_close(snap);
-    std::free(raw);
     return 0;
 }
