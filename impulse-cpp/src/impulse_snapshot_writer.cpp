@@ -284,6 +284,41 @@ impulse_status_t impulse_writer_add_attribute(
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
+impulse_status_t impulse_writer_add_attribute_decimal64(
+    impulse_writer_t* writer,
+    uint16_t relation_index,
+    const char* name,
+    uint8_t type_code,
+    uint32_t dimension,
+    uint16_t precision,
+    uint8_t scale,
+    const void* data, uint64_t data_bytes
+) {
+    if (!writer || !name || relation_index >= writer->relations.size()) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if ((type_code & 0x7Fu) != 0x15u || dimension == 0) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (precision < 1u || precision > 18u || static_cast<uint16_t>(scale) > precision) {
+        return IMPULSE_ERR_INVALID_ARGUMENT;
+    }
+    try {
+        auto& rel = writer->relations[relation_index];
+
+        impulse_writer_attr attr;
+        attr.name = name;
+        attr.type_code = type_code;
+        attr.reserved1 = scale;
+        attr.reserved2 = precision;
+        attr.dimension = dimension;
+
+        if (data && data_bytes > 0) {
+            attr.data.resize(data_bytes);
+            std::memcpy(attr.data.data(), data, data_bytes);
+        }
+
+        rel.attributes.push_back(std::move(attr));
+        return IMPULSE_OK;
+    } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
+}
+
 impulse_status_t impulse_writer_add_index(
     impulse_writer_t* writer,
     uint16_t domain_id,

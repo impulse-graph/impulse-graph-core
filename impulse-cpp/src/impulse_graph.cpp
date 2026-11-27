@@ -140,11 +140,16 @@ static impulse_status_t validate_attribute_payload(
     }
 
     if (base_type == 0x0F) {
-        if (is_domain_attr && is_v10 && attr.data_offset > 0 && row_count > 0) {
-            uint64_t dim = (attr.dimension == 0) ? 1ULL : static_cast<uint64_t>(attr.dimension);
+        if (attr.dimension == 0) {
+            err_msg = "BOOL attribute dimension must be >= 1";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+        if (is_v10 && row_count > 0 && (is_domain_attr || attr.data_offset > 0)) {
+            uint64_t dim = static_cast<uint64_t>(attr.dimension);
             uint64_t total_bits = 0;
             uint64_t plus7 = 0;
-            if (!safe_mul(row_count, dim, &total_bits) ||
+            if (attr.data_offset == 0 ||
+                !safe_mul(row_count, dim, &total_bits) ||
                 !safe_add(total_bits, 7ULL, &plus7) ||
                 payload_bytes < (plus7 >> 3)) {
                 err_msg = "BOOL attribute payload smaller than ceil(row_count * dim / 8)";
@@ -154,16 +159,22 @@ static impulse_status_t validate_attribute_payload(
         return IMPULSE_OK;
     }
 
-    if (base_type == 0x15 && row_count > 0 && (is_domain_attr || attr.data_offset > 0)) {
-        uint64_t dim = (attr.dimension == 0) ? 1ULL : static_cast<uint64_t>(attr.dimension);
-        uint64_t elem_bytes = 0;
-        uint64_t req_payload = 0;
-        if (attr.data_offset == 0 ||
-            !safe_mul(8ULL, dim, &elem_bytes) ||
-            !safe_mul(row_count, elem_bytes, &req_payload) ||
-            payload_bytes < req_payload) {
-            err_msg = "DECIMAL64 attribute payload smaller than row_count * dim * 8";
-            return IMPULSE_ERR_BUFFER_OVERFLOW;
+    if (base_type == 0x15) {
+        if (attr.dimension == 0) {
+            err_msg = "DECIMAL64 attribute dimension must be >= 1";
+            return IMPULSE_ERR_INVALID_ARGUMENT;
+        }
+        if (row_count > 0) {
+            uint64_t dim = static_cast<uint64_t>(attr.dimension);
+            uint64_t elem_bytes = 0;
+            uint64_t req_payload = 0;
+            if (attr.data_offset == 0 ||
+                !safe_mul(8ULL, dim, &elem_bytes) ||
+                !safe_mul(row_count, elem_bytes, &req_payload) ||
+                payload_bytes < req_payload) {
+                err_msg = "DECIMAL64 attribute payload smaller than row_count * dim * 8";
+                return IMPULSE_ERR_BUFFER_OVERFLOW;
+            }
         }
         return IMPULSE_OK;
     }
