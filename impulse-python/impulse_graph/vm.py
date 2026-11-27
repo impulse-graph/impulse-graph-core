@@ -39,6 +39,11 @@ except ImportError:
         plan_memory = None
         validate_bytecode = None
 
+IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW: int = 16
+IMPULSE_VM_ERR_DIV_BY_ZERO: int = 17
+OP_SCALAR_DECIMAL_ALU: int = 0x15
+OP_VEC_DECIMAL_ALU: int = 0x58
+
 _NativeQueryBuilder = None
 _NativeCompiledQuery = None
 _NativeQueryResult = None
@@ -567,6 +572,10 @@ def optimize_cel(expression: str) -> str:
 
 
 __all__ = [
+    "IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW",
+    "IMPULSE_VM_ERR_DIV_BY_ZERO",
+    "OP_SCALAR_DECIMAL_ALU",
+    "OP_VEC_DECIMAL_ALU",
     "VmContext",
     "VmState",
     "QueryResult",

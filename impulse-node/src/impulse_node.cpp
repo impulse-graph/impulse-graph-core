@@ -583,6 +583,8 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
             opcodes.Set(std::string(meta.name), Napi::Number::New(env, static_cast<uint32_t>(i)));
         }
     }
+    opcodes.Set("SCALAR_DECIMAL_ALU", Napi::Number::New(env, 0x15));
+    opcodes.Set("VEC_DECIMAL_ALU", Napi::Number::New(env, 0x58));
     exports.Set("Opcodes", opcodes);
 
     Napi::Object vmStatus = Napi::Object::New(env);
@@ -595,7 +597,16 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     vmStatus.Set("ERR_GAS_EXHAUSTED", Napi::Number::New(env, IMPULSE_VM_V11_ERR_GAS_EXHAUSTED));
     vmStatus.Set("ERR_TYPE_MISMATCH", Napi::Number::New(env, IMPULSE_VM_V11_ERR_TYPE_MISMATCH));
     vmStatus.Set("ERR_VALIDATION_FAILED", Napi::Number::New(env, IMPULSE_VM_V11_ERR_VALIDATION_FAILED));
+    vmStatus.Set("ERR_ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW));
+    vmStatus.Set("ERR_DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_V11_ERR_DIV_BY_ZERO));
+    vmStatus.Set("ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW));
+    vmStatus.Set("DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_V11_ERR_DIV_BY_ZERO));
     exports.Set("VmStatus", vmStatus);
+
+    Napi::Object attrType = Napi::Object::New(env);
+    attrType.Set("BOOL", Napi::Number::New(env, 0x0F));
+    attrType.Set("DECIMAL64", Napi::Number::New(env, 0x15));
+    exports.Set("AttrType", attrType);
 
     return exports;
 }

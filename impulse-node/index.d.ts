@@ -167,6 +167,18 @@ export function executeBytecode(
   inputParam?: number | bigint
 ): QueryResult;
 
-export const Opcodes: Record<string, number>;
+export const Opcodes: Record<string, number> & {
+  SCALAR_DECIMAL_ALU: 0x15;
+  VEC_DECIMAL_ALU: 0x58;
+};
 export const RegisterType: Record<string, number>;
-export const VmStatus: Record<string, number>;
+export const VmStatus: Record<string, number> & {
+  ARITHMETIC_OVERFLOW: 16;
+  DIV_BY_ZERO: 17;
+  ERR_ARITHMETIC_OVERFLOW: 16;
+  ERR_DIV_BY_ZERO: 17;
+};
+export const AttrType: Record<string, number> & {
+  BOOL: 0x0f;
+  DECIMAL64: 0x15;
+};

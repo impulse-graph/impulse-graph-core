@@ -107,7 +107,30 @@ native.Snapshot.prototype.traverse = function (startNode) {
   return new Traversal(this, startNode);
 };
 
+const Opcodes = {
+  ...(native.Opcodes || {}),
+  SCALAR_DECIMAL_ALU: 0x15,
+  VEC_DECIMAL_ALU: 0x58,
+};
+
+const VmStatus = {
+  ...(native.VmStatus || {}),
+  ARITHMETIC_OVERFLOW: 16,
+  DIV_BY_ZERO: 17,
+  ERR_ARITHMETIC_OVERFLOW: 16,
+  ERR_DIV_BY_ZERO: 17,
+};
+
+const AttrType = {
+  ...(native.AttrType || {}),
+  BOOL: 0x0f,
+  DECIMAL64: 0x15,
+};
+
 module.exports = {
   ...native,
+  Opcodes,
+  VmStatus,
+  AttrType,
   Traversal,
 };
