@@ -311,22 +311,43 @@ public sealed class Snapshot : IDisposable
         byte scale,
         ulong rowCount)
     {
+        if ((typeCode & 0x7F) != ImpulseAttrTypes.AttrTypeDecimal64)
+        {
+            throw new ArgumentException(
+                $"Type code 0x{typeCode:X2} is not DECIMAL64 (expected 0x15 or 0x95).", nameof(typeCode));
+        }
         Decimal64.ValidatePrecisionScale(precision, scale);
         bool isNullable = (typeCode & 0x80) != 0;
         ReadOnlySpan<ulong> validWords = ReadOnlySpan<ulong>.Empty;
         ReadOnlySpan<byte> payload = data;
 
-        if (isNullable && rowCount > 0)
+        if (isNullable)
         {
-            ulong words = (rowCount + 63UL) / 64UL;
-            ulong rawBm = words * 8UL;
-            ulong paddedBm = (rawBm + 127UL) & ~127UL;
-            if ((ulong)data.Length < paddedBm)
+            if (rowCount == 0)
             {
-                throw new InvalidDataException("Nullable DECIMAL64 buffer smaller than validity bitmap.");
+                if (!data.IsEmpty)
+                {
+                    throw new InvalidDataException(
+                        "Nullable DECIMAL64 buffer has non-zero payload with zero rowCount.");
+                }
             }
-            validWords = MemoryMarshal.Cast<byte, ulong>(data.Slice(0, checked((int)rawBm)));
-            payload = data.Slice(checked((int)paddedBm));
+            else
+            {
+                ulong words = (rowCount + 63UL) / 64UL;
+                ulong rawBm = words * 8UL;
+                ulong paddedBm = (rawBm + 127UL) & ~127UL;
+                if ((ulong)data.Length < paddedBm)
+                {
+                    throw new InvalidDataException("Nullable DECIMAL64 buffer smaller than validity bitmap.");
+                }
+                validWords = MemoryMarshal.Cast<byte, ulong>(data.Slice(0, checked((int)rawBm)));
+                payload = data.Slice(checked((int)paddedBm));
+            }
+        }
+
+        if ((payload.Length % 8) != 0)
+        {
+            throw new InvalidDataException("DECIMAL64 payload byte length is not a multiple of 8.");
         }
 
         ReadOnlySpan<long> unscaledSpan = MemoryMarshal.Cast<byte, long>(payload);

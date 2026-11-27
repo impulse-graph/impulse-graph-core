@@ -40,20 +40,57 @@ const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_id
 // ============================================================================
 // Helper Functions for BigInt / Number conversions
 // ============================================================================
-inline uint64_t GetUint64(const Napi::Value& val) {
+inline bool TryGetUint64(Napi::Env env, const Napi::Value& val, uint64_t& out) {
     if (val.IsBigInt()) {
         bool lossless = false;
-        return val.As<Napi::BigInt>().Uint64Value(&lossless);
+        out = val.As<Napi::BigInt>().Uint64Value(&lossless);
+        if (!lossless) {
+            Napi::RangeError::New(env, "BigInt value out of unsigned 64-bit integer range").ThrowAsJavaScriptException();
+            return false;
+        }
+        return true;
     }
-    return static_cast<uint64_t>(val.As<Napi::Number>().Int64Value());
+    if (val.IsNumber()) {
+        double dv = val.As<Napi::Number>().DoubleValue();
+        if (dv < 0.0) {
+            Napi::RangeError::New(env, "Negative number cannot be converted to uint64").ThrowAsJavaScriptException();
+            return false;
+        }
+        out = static_cast<uint64_t>(val.As<Napi::Number>().Int64Value());
+        return true;
+    }
+    Napi::TypeError::New(env, "Expected a BigInt or Number").ThrowAsJavaScriptException();
+    return false;
+}
+
+inline bool TryGetInt64(Napi::Env env, const Napi::Value& val, int64_t& out) {
+    if (val.IsBigInt()) {
+        bool lossless = false;
+        out = val.As<Napi::BigInt>().Int64Value(&lossless);
+        if (!lossless) {
+            Napi::RangeError::New(env, "BigInt value out of signed 64-bit integer range").ThrowAsJavaScriptException();
+            return false;
+        }
+        return true;
+    }
+    if (val.IsNumber()) {
+        out = val.As<Napi::Number>().Int64Value();
+        return true;
+    }
+    Napi::TypeError::New(env, "Expected a BigInt or Number").ThrowAsJavaScriptException();
+    return false;
+}
+
+inline uint64_t GetUint64(const Napi::Value& val) {
+    uint64_t out = 0;
+    TryGetUint64(val.Env(), val, out);
+    return out;
 }
 
 inline int64_t GetInt64(const Napi::Value& val) {
-    if (val.IsBigInt()) {
-        bool lossless = false;
-        return val.As<Napi::BigInt>().Int64Value(&lossless);
-    }
-    return val.As<Napi::Number>().Int64Value();
+    int64_t out = 0;
+    TryGetInt64(val.Env(), val, out);
+    return out;
 }
 
 // ============================================================================
@@ -310,19 +347,31 @@ private:
         const uint8_t* payload = raw;
         uint64_t payload_bytes = data_bytes;
 
-        if (is_nullable && raw && row_count > 0) {
-            uint64_t words = (row_count + 63ULL) / 64ULL;
-            uint64_t raw_bm = words * 8ULL;
-            uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
-            if (data_bytes < padded_bm) {
-                Napi::Error::New(env, "Nullable DECIMAL64 buffer smaller than validity bitmap").ThrowAsJavaScriptException();
-                return env.Null();
+        if (is_nullable) {
+            if (row_count == 0) {
+                if (data_bytes > 0) {
+                    Napi::Error::New(env, "Nullable DECIMAL64 buffer has non-zero payload with zero rowCount").ThrowAsJavaScriptException();
+                    return env.Null();
+                }
+            } else if (raw) {
+                uint64_t words = (row_count + 63ULL) / 64ULL;
+                uint64_t raw_bm = words * 8ULL;
+                uint64_t padded_bm = (raw_bm + 127ULL) & ~127ULL;
+                if (data_bytes < padded_bm) {
+                    Napi::Error::New(env, "Nullable DECIMAL64 buffer smaller than validity bitmap").ThrowAsJavaScriptException();
+                    return env.Null();
+                }
+                Napi::BigUint64Array bm = Napi::BigUint64Array::New(env, static_cast<size_t>(words));
+                std::memcpy(bm.Data(), raw, static_cast<size_t>(raw_bm));
+                valid_bits_val = bm;
+                payload = raw + padded_bm;
+                payload_bytes = data_bytes - padded_bm;
             }
-            Napi::BigUint64Array bm = Napi::BigUint64Array::New(env, static_cast<size_t>(words));
-            std::memcpy(bm.Data(), raw, static_cast<size_t>(raw_bm));
-            valid_bits_val = bm;
-            payload = raw + padded_bm;
-            payload_bytes = data_bytes - padded_bm;
+        }
+
+        if ((payload_bytes % 8ULL) != 0ULL) {
+            Napi::Error::New(env, "DECIMAL64 payload byte length is not a multiple of 8").ThrowAsJavaScriptException();
+            return env.Null();
         }
 
         size_t elem_count = static_cast<size_t>(payload_bytes / 8ULL);
@@ -459,6 +508,11 @@ private:
                 } else if (v.IsBigInt()) {
                     bool lossless = false;
                     uint64_t uv = v.As<Napi::BigInt>().Uint64Value(&lossless);
+                    if (!lossless) {
+                        impulse_stmt_finalize(stmt);
+                        Napi::RangeError::New(env, "BigInt parameter '" + k + "' out of uint64 range").ThrowAsJavaScriptException();
+                        return env.Null();
+                    }
                     impulse_stmt_bind_node(stmt, k.c_str(), uv);
                 } else if (v.IsString()) {
                     std::string sv = v.As<Napi::String>().Utf8Value();
@@ -894,33 +948,70 @@ private:
             Napi::Array arr = info[2].As<Napi::Array>();
             c_bindings.reserve(arr.Length());
             for (uint32_t i = 0; i < arr.Length(); ++i) {
-                Napi::Object item = arr.Get(i).As<Napi::Object>();
+                Napi::Value elem = arr.Get(i);
+                if (!elem.IsObject() || elem.IsNull()) {
+                    Napi::TypeError::New(env, "Each binding entry must be an object").ThrowAsJavaScriptException();
+                    return env.Null();
+                }
+                Napi::Object item = elem.As<Napi::Object>();
+                Napi::Value pidVal = item.Get("paramId");
+                Napi::Value kindVal = item.Get("kind");
+                if (!pidVal.IsNumber() || !kindVal.IsNumber()) {
+                    Napi::TypeError::New(env, "Binding requires numeric 'paramId' and 'kind'").ThrowAsJavaScriptException();
+                    return env.Null();
+                }
                 impulse_vm_param_binding_v11_t b{};
-                b.param_id = item.Get("paramId").As<Napi::Number>().Uint32Value();
-                b.kind = item.Get("kind").As<Napi::Number>().Uint32Value();
+                b.param_id = pidVal.As<Napi::Number>().Uint32Value();
+                b.kind = kindVal.As<Napi::Number>().Uint32Value();
                 if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_NULL) {
                     b.scalar_bits = 0;
                 } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_I64) {
-                    int64_t v = GetInt64(item.Get("scalarI64"));
+                    int64_t v = 0;
+                    if (!TryGetInt64(env, item.Get("scalarI64"), v)) return env.Null();
                     std::memcpy(&b.scalar_bits, &v, sizeof(v));
                 } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_U64 || b.kind == IMPULSE_VM_V11_PARAM_SCALAR_BOOL) {
-                    b.scalar_bits = GetUint64(item.Get("scalarBits"));
+                    uint64_t uv = 0;
+                    if (!TryGetUint64(env, item.Get("scalarBits"), uv)) return env.Null();
+                    b.scalar_bits = uv;
                 } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_F64) {
-                    double dv = item.Get("scalarF64").As<Napi::Number>().DoubleValue();
+                    Napi::Value fv = item.Get("scalarF64");
+                    if (!fv.IsNumber()) {
+                        Napi::TypeError::New(env, "SCALAR_F64 binding requires numeric 'scalarF64'").ThrowAsJavaScriptException();
+                        return env.Null();
+                    }
+                    double dv = fv.As<Napi::Number>().DoubleValue();
                     std::memcpy(&b.scalar_bits, &dv, sizeof(dv));
                 } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_STR) {
-                    str_storage.push_back(item.Get("strVal").As<Napi::String>().Utf8Value());
+                    Napi::Value sv = item.Get("strVal");
+                    if (!sv.IsString()) {
+                        Napi::TypeError::New(env, "SCALAR_STR binding requires string 'strVal'").ThrowAsJavaScriptException();
+                        return env.Null();
+                    }
+                    str_storage.push_back(sv.As<Napi::String>().Utf8Value());
                     b.data_ptr = str_storage.back().data();
                     b.count = static_cast<uint32_t>(str_storage.back().size());
                 } else if (b.kind == IMPULSE_VM_V11_PARAM_FRONTIER_IDS) {
-                    b.domain_id = item.Has("domainId")
-                        ? static_cast<uint16_t>(item.Get("domainId").As<Napi::Number>().Uint32Value()) : 0;
-                    Napi::Array ids = item.Get("ids").As<Napi::Array>();
+                    if (item.Has("domainId")) {
+                        Napi::Value domVal = item.Get("domainId");
+                        if (!domVal.IsNumber()) {
+                            Napi::TypeError::New(env, "FRONTIER_IDS 'domainId' must be a number").ThrowAsJavaScriptException();
+                            return env.Null();
+                        }
+                        b.domain_id = static_cast<uint16_t>(domVal.As<Napi::Number>().Uint32Value());
+                    }
+                    Napi::Value idsVal = item.Get("ids");
+                    if (!idsVal.IsArray()) {
+                        Napi::TypeError::New(env, "FRONTIER_IDS binding requires array 'ids'").ThrowAsJavaScriptException();
+                        return env.Null();
+                    }
+                    Napi::Array ids = idsVal.As<Napi::Array>();
                     id_storage.emplace_back();
                     auto& vec = id_storage.back();
                     vec.reserve(ids.Length());
                     for (uint32_t j = 0; j < ids.Length(); ++j) {
-                        vec.push_back(GetUint64(ids.Get(j)));
+                        uint64_t id_u64 = 0;
+                        if (!TryGetUint64(env, ids.Get(j), id_u64)) return env.Null();
+                        vec.push_back(id_u64);
                     }
                     b.data_ptr = vec.empty() ? nullptr : vec.data();
                     b.count = static_cast<uint32_t>(vec.size());
@@ -930,8 +1021,13 @@ private:
         }
 
         impulse_vm_params_v11_t params{};
-        params.gas_limit = (info.Length() >= 4 && (info[3].IsNumber() || info[3].IsBigInt()))
-            ? GetUint64(info[3]) : UINT64_MAX;
+        if (info.Length() >= 4 && !info[3].IsNull() && !info[3].IsUndefined()) {
+            uint64_t gl = 0;
+            if (!TryGetUint64(env, info[3], gl)) return env.Null();
+            params.gas_limit = gl;
+        } else {
+            params.gas_limit = UINT64_MAX;
+        }
         if (!c_bindings.empty()) {
             params.bindings = c_bindings.data();
             params.binding_count = static_cast<uint32_t>(c_bindings.size());
@@ -1138,6 +1234,24 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
             NodeSnapshot* ns = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[1].As<Napi::Object>());
             if (ns) snap = ns->RawSnapshot();
         }
+        auto parse_strict_int = [](const std::string& raw, int& out) -> bool {
+            size_t start = 0;
+            while (start < raw.size() && std::isspace(static_cast<unsigned char>(raw[start]))) start++;
+            size_t end = raw.size();
+            while (end > start && std::isspace(static_cast<unsigned char>(raw[end - 1]))) end--;
+            if (start >= end) return false;
+            std::string trimmed = raw.substr(start, end - start);
+            try {
+                size_t pos = 0;
+                int v = std::stoi(trimmed, &pos, 10);
+                if (pos != trimmed.size()) return false;
+                out = v;
+                return true;
+            } catch (...) {
+                return false;
+            }
+        };
+
         std::unordered_map<std::string, impulse::compiler::CypherCompiler::ParamTypeSpec> pmap;
         if (info.Length() >= 3 && info[2].IsObject() && !info[2].IsNull()) {
             Napi::Object pt = info[2].As<Napi::Object>();
@@ -1158,18 +1272,51 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
                             Napi::TypeError::New(e, "Invalid DECIMAL(P, S) spec: " + s).ThrowAsJavaScriptException();
                             return e.Null();
                         }
+                        int p_int = 0;
+                        int s_int = 0;
+                        if (!parse_strict_int(inner.substr(0, comma), p_int) ||
+                            !parse_strict_int(inner.substr(comma + 1), s_int)) {
+                            Napi::TypeError::New(e, "Invalid DECIMAL(P, S) integer components: " + s).ThrowAsJavaScriptException();
+                            return e.Null();
+                        }
+                        if (p_int < 1 || p_int > 18 || s_int < 0 || s_int > p_int) {
+                            Napi::RangeError::New(e, "DECIMAL(P, S) out of range (require 1 <= P <= 18 and 0 <= S <= P): " + s).ThrowAsJavaScriptException();
+                            return e.Null();
+                        }
                         spec.type = "DECIMAL";
-                        spec.precision = static_cast<uint16_t>(std::stoi(inner.substr(0, comma)));
-                        spec.scale = static_cast<uint8_t>(std::stoi(inner.substr(comma + 1)));
+                        spec.precision = static_cast<uint16_t>(p_int);
+                        spec.scale = static_cast<uint8_t>(s_int);
                     } else {
                         spec.type = upper;
                     }
                 } else if (val.IsObject() && !val.IsNull()) {
                     Napi::Object vd = val.As<Napi::Object>();
-                    if (vd.Has("type")) spec.type = vd.Get("type").As<Napi::String>().Utf8Value();
-                    if (vd.Has("precision")) spec.precision = static_cast<uint16_t>(vd.Get("precision").As<Napi::Number>().Uint32Value());
-                    if (vd.Has("scale")) spec.scale = static_cast<uint8_t>(vd.Get("scale").As<Napi::Number>().Uint32Value());
-                    if (vd.Has("domain")) spec.domain_name = vd.Get("domain").As<Napi::String>().Utf8Value();
+                    if (vd.Has("type") && vd.Get("type").IsString()) {
+                        spec.type = vd.Get("type").As<Napi::String>().Utf8Value();
+                    }
+                    if (vd.Has("precision") && vd.Get("precision").IsNumber()) {
+                        int p_int = vd.Get("precision").As<Napi::Number>().Int32Value();
+                        if (p_int < 1 || p_int > 18) {
+                            Napi::RangeError::New(e, "DECIMAL precision must be in [1, 18]").ThrowAsJavaScriptException();
+                            return e.Null();
+                        }
+                        spec.precision = static_cast<uint16_t>(p_int);
+                    }
+                    if (vd.Has("scale") && vd.Get("scale").IsNumber()) {
+                        int s_int = vd.Get("scale").As<Napi::Number>().Int32Value();
+                        if (s_int < 0 || s_int > 18) {
+                            Napi::RangeError::New(e, "DECIMAL scale must be in [0, 18]").ThrowAsJavaScriptException();
+                            return e.Null();
+                        }
+                        spec.scale = static_cast<uint8_t>(s_int);
+                    }
+                    if (spec.type == "DECIMAL" && (spec.precision < 1 || spec.precision > 18 || spec.scale > spec.precision)) {
+                        Napi::RangeError::New(e, "DECIMAL(P, S) out of range (require 1 <= P <= 18 and 0 <= S <= P)").ThrowAsJavaScriptException();
+                        return e.Null();
+                    }
+                    if (vd.Has("domain") && vd.Get("domain").IsString()) {
+                        spec.domain_name = vd.Get("domain").As<Napi::String>().Utf8Value();
+                    }
                 }
                 pmap[key] = std::move(spec);
             }

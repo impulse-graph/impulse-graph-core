@@ -126,5 +126,18 @@ public class Decimal64Tests
         Assert.False(decoded[1].HasValue);
         Assert.True(decoded[2].HasValue);
         Assert.Equal(1250.75m, decoded[2]!.Value.ToDecimal());
+
+        // Non-DECIMAL64 typeCode rejected
+        Assert.Throws<ArgumentException>(() =>
+            Snapshot.DecodeDecimal64Buffer(buf, ImpulseAttrTypes.AttrTypeBool, 12, 2, 3));
+
+        // Nullable with rowCount=0 and non-empty data rejected
+        Assert.Throws<InvalidDataException>(() =>
+            Snapshot.DecodeDecimal64Buffer(buf, ImpulseAttrTypes.AttrTypeDecimal64Nullable, 12, 2, 0));
+
+        // Truncated payload (not a multiple of 8 bytes) rejected
+        byte[] truncated = new byte[7];
+        Assert.Throws<InvalidDataException>(() =>
+            Snapshot.DecodeDecimal64Buffer(truncated, ImpulseAttrTypes.AttrTypeDecimal64, 12, 2, 1));
     }
 }
