@@ -329,9 +329,9 @@ struct TypedVal {
         return {ValBank::VecDecimal, reg, dom_id, precision, scale, false, 0};
     }
 
-    OutputColumnMeta to_output_meta(const std::string& name) const {
+    OutputColumnMeta to_output_meta(const std::string& name, const std::string& collect_kind) const {
         if (is_decimal_bank(bank)) {
-            return {name, "DECIMAL", true, precision, scale};
+            return {name, "DECIMAL", collect_kind, true, precision, scale};
         }
         std::string ty = "UNKNOWN";
         switch (bank) {
@@ -348,7 +348,7 @@ struct TypedVal {
             case ValBank::Frontier: ty = "FRONTIER"; break;
             default: break;
         }
-        return {name, ty, false, 0, 0};
+        return {name, ty, collect_kind, false, 0, 0};
     }
 };
 
@@ -384,12 +384,13 @@ struct MorselScope {
     std::string edge_var;
     int pred_reg = -1;
     uint8_t next_morsel_v = 12; // V8=src, V9=tgt, V10=edge, V11=pred, V12..V15=temps
+    V11ProgramBuilder* hoisted_b = nullptr; // Points to outer builder before OP_WALK_MORSEL
 
     uint8_t alloc_temp_v(uint32_t pinned_v_mask) {
         for (int attempt = 0; attempt < 4; ++attempt) {
             uint8_t r = next_morsel_v++;
             if (next_morsel_v > 15u) next_morsel_v = 12u;
-            if (static_cast<int>(r) == pred_reg || (pinned_v_mask & (1u << r)) != 0u) {
+            if ((pinned_v_mask & (1u << r)) != 0u) {
                 continue;
             }
             return r;
@@ -475,6 +476,37 @@ struct CompilerCtx {
     std::vector<OutputColumnMeta> output_schema;
     std::unique_ptr<MorselScope> morsel;
 
+    V11ProgramBuilder& const_builder() noexcept {
+        return (morsel && morsel->hoisted_b) ? *morsel->hoisted_b : b;
+    }
+
+    void emit_const_i64(uint8_t dst, int64_t val) {
+        if (morsel && morsel->hoisted_b) {
+            pinned_r_mask |= (1u << dst);
+            morsel->hoisted_b->emit_load_const_i64(dst, val);
+        } else {
+            b.emit_load_const_i64(dst, val);
+        }
+    }
+
+    void emit_const_f64(uint8_t dst, double val) {
+        if (morsel && morsel->hoisted_b) {
+            pinned_r_mask |= (1u << dst);
+            morsel->hoisted_b->emit_load_const_f64(dst, val);
+        } else {
+            b.emit_load_const_f64(dst, val);
+        }
+    }
+
+    void emit_const_null(uint8_t dst) {
+        if (morsel && morsel->hoisted_b) {
+            pinned_r_mask |= (1u << dst);
+            morsel->hoisted_b->emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, dst, 0, 0, 0, 0);
+        } else {
+            b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, dst, 0, 0, 0, 0);
+        }
+    }
+
     uint32_t live_r_mask() const noexcept {
         uint32_t mask = pinned_r_mask;
         for (const auto& kv : env) {
@@ -551,7 +583,23 @@ struct CompilerCtx {
     }
 
     uint8_t alloc_dst_v(const TypedVal* t1, const TypedVal* t2) {
-        if (morsel) return morsel->alloc_temp_v(pinned_v_mask);
+        if (morsel) {
+            for (int attempt = 0; attempt < 4; ++attempt) {
+                uint8_t r = morsel->next_morsel_v++;
+                if (morsel->next_morsel_v > 15u) morsel->next_morsel_v = 12u;
+                if ((pinned_v_mask & (1u << r)) != 0u) {
+                    continue;
+                }
+                return r;
+            }
+            if (t1 && is_vec_bank(t1->bank) && t1->reg >= 12u && t1->reg <= 15u && !is_vec_in_env(t1->reg)) {
+                return t1->reg;
+            }
+            if (t2 && is_vec_bank(t2->bank) && t2->reg >= 12u && t2->reg <= 15u && !is_vec_in_env(t2->reg)) {
+                return t2->reg;
+            }
+            throw std::runtime_error("REGISTER_EXHAUSTION: morsel V12..V15");
+        }
         if (next_v < 8u) return next_v++;
         uint32_t live = live_v_mask();
         for (uint8_t v = 0; v < 8u; ++v) {
@@ -730,15 +778,28 @@ struct CompilerCtx {
         }
         uint16_t out_dom = l_vec ? lhs.dom_id : (r_vec ? rhs.dom_id : 0xFFFFu);
 
+        auto unpin_if_dead_v = [&](uint8_t reg, uint8_t keep1, uint8_t keep2) noexcept {
+            if (reg < 16u && reg != keep1 && reg != keep2 &&
+                (pg.saved_v & (1u << reg)) == 0u && !is_vec_in_env(reg)) {
+                pinned_v_mask &= ~(1u << reg);
+            }
+        };
+
         if (head == "+" || head == "-") {
             uint8_t s = std::max(lhs.scale, rhs.scale);
             int int_digits = std::max(static_cast<int>(lhs.precision) - lhs.scale,
                                       static_cast<int>(rhs.precision) - rhs.scale);
             uint16_t p = static_cast<uint16_t>(std::min(18, int_digits + static_cast<int>(s) + 1));
             TypedVal a = rescale_decimal_up(lhs, s);
+            if (l_vec && a.reg != lhs.reg) {
+                unpin_if_dead_v(lhs.reg, a.reg, r_vec ? rhs.reg : 0xFFu);
+            }
             pin_r(a);
             pin_v(a);
             TypedVal bv = rescale_decimal_up(rhs, s);
+            if (r_vec && bv.reg != rhs.reg) {
+                unpin_if_dead_v(rhs.reg, bv.reg, l_vec ? a.reg : 0xFFu);
+            }
             pin_r(bv);
             pin_v(bv);
 
@@ -808,7 +869,7 @@ struct CompilerCtx {
                        flags, dst, v_op.reg, other.reg, 0, 0);
             } else {
                 uint8_t r_div = alloc_r();
-                b.emit_load_const_i64(r_div, kDecimalPow10[static_cast<size_t>(div_pow)]);
+                emit_const_i64(r_div, kDecimalPow10[static_cast<size_t>(div_pow)]);
                 b.emit(Opcode::OP_VEC_DECIMAL_ALU, subop::kVEC_DECIMAL_ALU_MUL_DIV_R,
                        flags, dst, v_op.reg, other.reg, r_div, 0);
             }
@@ -839,13 +900,16 @@ struct CompilerCtx {
                 b.emit(Opcode::OP_SCALAR_DECIMAL_ALU, subop::kSCALAR_DECIMAL_ALU_DIV_SAFE,
                        0, dst, lhs.reg, rhs.reg, 0, 0);
             } else {
-                // Safe-div with 128-bit scaling: check rhs == 0 BEFORE any k > 18 pre-rescale!
+                // Safe-div with 128-bit scaling: check rhs IS NULL or rhs == 0 BEFORE any k > 18 pre-rescale!
                 uint8_t r_zero = alloc_pinned_r();
-                uint8_t r_is_zero = alloc_pinned_r();
+                uint8_t r_is_bad = alloc_pinned_r();
+                b.emit(Opcode::OP_SCALAR_3VL, subop::kSCALAR_3VL_IS_NULL, 0,
+                       r_is_bad, rhs.reg, 0, 0, 0);
+                size_t jcc_null_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_bad, 0, 0, 0);
                 b.emit_load_const_i64(r_zero, 0LL);
                 b.emit(Opcode::OP_SCALAR_3VL, subop::kSCALAR_3VL_CMP_EQ_I64, 0,
-                       r_is_zero, rhs.reg, r_zero, 0, 0);
-                size_t jcc_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_zero, 0, 0, 0);
+                       r_is_bad, rhs.reg, r_zero, 0, 0);
+                size_t jcc_zero_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_bad, 0, 0, 0);
                 TypedVal num = lhs;
                 int k = raw_k;
                 if (k > 18) {
@@ -859,7 +923,8 @@ struct CompilerCtx {
                        0, dst, num.reg, r_mul, rhs.reg, 0);
                 size_t jmp_end_pc = b.emit(Opcode::OP_JMP, 0, 0, 0, 0, 0, 0, 0);
                 size_t null_pc = b.pc();
-                b.patch_imm32(jcc_pc, static_cast<uint32_t>(null_pc - jcc_pc));
+                b.patch_imm32(jcc_null_pc, static_cast<uint32_t>(null_pc - jcc_null_pc));
+                b.patch_imm32(jcc_zero_pc, static_cast<uint32_t>(null_pc - jcc_zero_pc));
                 b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, dst, 0, 0, 0, 0);
                 size_t end_pc = b.pc();
                 b.patch_imm32(jmp_end_pc, static_cast<uint32_t>(end_pc - jmp_end_pc));
@@ -880,11 +945,14 @@ struct CompilerCtx {
             if (is_safe && k > 18) {
                 uint8_t dst = alloc_pinned_v();
                 uint8_t r_zero = alloc_pinned_r();
-                uint8_t r_is_zero = alloc_pinned_r();
+                uint8_t r_is_bad = alloc_pinned_r();
+                b.emit(Opcode::OP_SCALAR_3VL, subop::kSCALAR_3VL_IS_NULL, 0,
+                       r_is_bad, rhs.reg, 0, 0, 0);
+                size_t jcc_null_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_bad, 0, 0, 0);
                 b.emit_load_const_i64(r_zero, 0LL);
                 b.emit(Opcode::OP_SCALAR_3VL, subop::kSCALAR_3VL_CMP_EQ_I64, 0,
-                       r_is_zero, rhs.reg, r_zero, 0, 0);
-                size_t jcc_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_zero, 0, 0, 0);
+                       r_is_bad, rhs.reg, r_zero, 0, 0);
+                size_t jcc_zero_pc = b.emit(Opcode::OP_JCC, 6u, 0, 0, r_is_bad, 0, 0, 0);
                 TypedVal pre_num = rescale_decimal_up(num, static_cast<uint8_t>(num.scale + (k - 18)));
                 pin_v(pre_num);
                 uint8_t r_mul = alloc_r();
@@ -893,7 +961,8 @@ struct CompilerCtx {
                        FLAG_SCALAR_RHS, dst, pre_num.reg, r_mul, rhs.reg, 0);
                 size_t jmp_end_pc = b.emit(Opcode::OP_JMP, 0, 0, 0, 0, 0, 0, 0);
                 size_t null_pc = b.pc();
-                b.patch_imm32(jcc_pc, static_cast<uint32_t>(null_pc - jcc_pc));
+                b.patch_imm32(jcc_null_pc, static_cast<uint32_t>(null_pc - jcc_null_pc));
+                b.patch_imm32(jcc_zero_pc, static_cast<uint32_t>(null_pc - jcc_zero_pc));
                 uint8_t r_null = alloc_r();
                 b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, r_null, 0, 0, 0, 0);
                 b.emit_u16(Opcode::OP_VEC_INIT, subop::kVEC_INIT_DOM_I64, FLAG_SCALAR_RHS,
@@ -903,13 +972,15 @@ struct CompilerCtx {
                 return TypedVal::vec_decimal(dst, out_dom, p, s);
             }
             if (k > 18) {
-                num = rescale_decimal_up(num, static_cast<uint8_t>(num.scale + (k - 18)));
+                TypedVal scaled_num = rescale_decimal_up(num, static_cast<uint8_t>(num.scale + (k - 18)));
+                if (scaled_num.reg != num.reg) unpin_if_dead_v(num.reg, scaled_num.reg, 0xFFu);
+                num = scaled_num;
                 pin_v(num);
                 k = 18;
             }
-            uint8_t dst = alloc_v();
+            uint8_t dst = alloc_dst_v(&num, nullptr);
             uint8_t r_mul = alloc_r();
-            b.emit_load_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
+            emit_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
             uint8_t sub = is_safe ? subop::kVEC_DECIMAL_ALU_MUL_DIV_SAFE_R
                                   : subop::kVEC_DECIMAL_ALU_MUL_DIV_R;
             b.emit(Opcode::OP_VEC_DECIMAL_ALU, sub, FLAG_SCALAR_RHS, dst, num.reg, r_mul, rhs.reg, 0);
@@ -920,28 +991,35 @@ struct CompilerCtx {
         if (is_safe) {
             uint8_t r_zero = alloc_pinned_r();
             uint8_t r_null = alloc_pinned_r();
-            b.emit_load_const_i64(r_zero, 0LL);
-            b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, r_null, 0, 0, 0, 0);
+            emit_const_i64(r_zero, 0LL);
+            emit_const_null(r_null);
             uint8_t v_non_zero = alloc_pinned_v();
             b.emit(Opcode::OP_VEC_CMP, subop::kVEC_CMP_NE, FLAG_SCALAR_RHS,
                    v_non_zero, rhs.reg, r_zero, 0, 0);
             uint8_t v_safe_rhs = alloc_pinned_v();
             b.emit(Opcode::OP_VEC_BLEND, subop::kVEC_BLEND_KLEENE_VR, 0,
                    v_safe_rhs, v_non_zero, rhs.reg, r_null, 0);
+            unpin_if_dead_v(rhs.reg, v_safe_rhs, num.reg);
             int k = raw_k;
             if (k > 18) {
                 uint8_t v_safe_num = alloc_pinned_v();
                 b.emit(Opcode::OP_VEC_BLEND, subop::kVEC_BLEND_KLEENE_VR, 0,
                        v_safe_num, v_non_zero, num.reg, r_null, 0);
+                unpin_if_dead_v(v_non_zero, v_safe_rhs, v_safe_num);
+                unpin_if_dead_v(num.reg, v_safe_rhs, v_safe_num);
                 num = rescale_decimal_up(
                     TypedVal::vec_decimal(v_safe_num, out_dom, num.precision, num.scale),
                     static_cast<uint8_t>(num.scale + (k - 18)));
+                if (num.reg != v_safe_num) unpin_if_dead_v(v_safe_num, v_safe_rhs, num.reg);
                 pin_v(num);
                 k = 18;
+            } else {
+                unpin_if_dead_v(v_non_zero, v_safe_rhs, num.reg);
             }
             uint8_t r_mul = alloc_r();
-            b.emit_load_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
-            uint8_t dst = alloc_v();
+            emit_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
+            TypedVal safe_rhs_tv = TypedVal::vec_decimal(v_safe_rhs, out_dom, rhs.precision, rhs.scale);
+            uint8_t dst = alloc_dst_v(&num, &safe_rhs_tv);
             b.emit(Opcode::OP_VEC_DECIMAL_ALU, subop::kVEC_DECIMAL_ALU_MUL_DIV_V,
                    FLAG_SCALAR_RHS, dst, num.reg, r_mul, v_safe_rhs, 0);
             return TypedVal::vec_decimal(dst, out_dom, p, s);
@@ -949,13 +1027,15 @@ struct CompilerCtx {
 
         int k = raw_k;
         if (k > 18) {
-            num = rescale_decimal_up(num, static_cast<uint8_t>(num.scale + (k - 18)));
+            TypedVal scaled_num = rescale_decimal_up(num, static_cast<uint8_t>(num.scale + (k - 18)));
+            if (scaled_num.reg != num.reg) unpin_if_dead_v(num.reg, scaled_num.reg, rhs.reg);
+            num = scaled_num;
             pin_v(num);
             k = 18;
         }
-        uint8_t dst = alloc_v();
+        uint8_t dst = alloc_dst_v(&num, &rhs);
         uint8_t r_mul = alloc_r();
-        b.emit_load_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
+        emit_const_i64(r_mul, kDecimalPow10[static_cast<size_t>(k)]);
         b.emit(Opcode::OP_VEC_DECIMAL_ALU, subop::kVEC_DECIMAL_ALU_MUL_DIV_V,
                FLAG_SCALAR_RHS, dst, num.reg, r_mul, rhs.reg, 0);
         return TypedVal::vec_decimal(dst, out_dom, p, s);
@@ -1157,7 +1237,7 @@ struct CompilerCtx {
             op, vec_dec.precision, vec_dec.scale, const_lit.const_val, const_lit.scale);
         if (fc.kind == DecimalFoldKind::COMPARE) {
             uint8_t r_thresh = alloc_r();
-            b.emit_load_const_i64(r_thresh, fc.threshold_unscaled);
+            emit_const_i64(r_thresh, fc.threshold_unscaled);
             uint8_t dst = alloc_v();
             b.emit(Opcode::OP_VEC_CMP, cmp_op_to_vec_cmp_subop(fc.op), FLAG_SCALAR_RHS,
                    dst, vec_dec.reg, r_thresh, 0, 0);
@@ -1380,14 +1460,20 @@ struct CompilerCtx {
         std::string edge_var = params[2]->text;
 
         uint8_t w_sub = (dir == ":rev") ? subop::kWALK_MORSEL_REV : subop::kWALK_MORSEL_FWD;
-        size_t start_pc = b.emit_u16(Opcode::OP_WALK_MORSEL, w_sub, 0, 0, src_f.reg, 0, 0, rel.rel_id, 0);
+
+        // Buffer morsel body words separately so any scalar OP_LOAD_CONST inside the body
+        // is hoisted cleanly BEFORE OP_WALK_MORSEL (OP_LOAD_CONST is MorselRole::Forbidden).
+        V11ProgramBuilder outer_b = std::move(b);
+        b = V11ProgramBuilder();
 
         auto prev_morsel = std::move(morsel);
+        uint32_t saved_pin_r = pinned_r_mask;
         morsel = std::make_unique<MorselScope>();
         morsel->rel = rel;
         morsel->src_var = src_var;
         morsel->tgt_var = tgt_var;
         morsel->edge_var = edge_var;
+        morsel->hoisted_b = &outer_b;
 
         TypedVal result = src_f;
         try {
@@ -1402,7 +1488,9 @@ struct CompilerCtx {
                     if (pred.bank != ValBank::VecBool) {
                         throw std::runtime_error("TYPE_MISMATCH: where requires bool vector predicate");
                     }
-                    morsel->pred_reg = pred.reg;
+                    // Convert V-bank bool vector into F11 morsel mask frontier (FLAG_MASKED_S3 reads F-bank)
+                    b.emit(Opcode::OP_SET_CONVERT, 2u, 0, 11u, pred.reg, 0, 0, 0);
+                    morsel->pred_reg = 11;
                 } else if (sh == "scatter-add") {
                     TypedVal out_vec = eval_expr(stmt->elems[1]);
                     const std::string& idx_sym = stmt->elems[2]->text;
@@ -1448,14 +1536,19 @@ struct CompilerCtx {
                 }
             }
         } catch (...) {
+            b = std::move(outer_b);
+            pinned_r_mask = saved_pin_r;
             morsel = std::move(prev_morsel);
             throw;
         }
+        std::vector<uint64_t> body_words = b.words();
+        b = std::move(outer_b);
+        pinned_r_mask = saved_pin_r;
         morsel = std::move(prev_morsel);
 
-        size_t end_pc = b.pc();
-        uint16_t body_len = static_cast<uint16_t>(end_pc - start_pc);
-        b.patch_imm16_hi(start_pc, body_len);
+        uint16_t body_len = static_cast<uint16_t>(1u + body_words.size());
+        b.emit_u16(Opcode::OP_WALK_MORSEL, w_sub, 0, 0, src_f.reg, 0, 0, rel.rel_id, body_len);
+        b.append_words(body_words);
         b.emit_u16(Opcode::OP_MORSEL_END, 0, 0, 0, 0, 0, 0, rel.rel_id, body_len);
         return result;
     }
@@ -1463,28 +1556,30 @@ struct CompilerCtx {
     TypedVal eval_expr(const SExprPtr& e) {
         if (e->kind == SExprKind::Int) {
             uint8_t r = alloc_r();
-            b.emit_load_const_i64(r, e->i_val);
+            emit_const_i64(r, e->i_val);
             return TypedVal::const_int(r, e->i_val);
         }
         if (e->kind == SExprKind::Float) {
             uint8_t r = alloc_r();
-            b.emit_load_const_f64(r, e->f_val);
+            emit_const_f64(r, e->f_val);
             return TypedVal::scalar(ValBank::ScalarF64, r);
         }
         if (e->kind == SExprKind::Bool) {
             uint8_t r = alloc_r();
-            b.emit_load_const_i64(r, e->b_val ? 1LL : 0LL);
+            emit_const_i64(r, e->b_val ? 1LL : 0LL);
             return TypedVal::scalar(ValBank::ScalarBool, r);
         }
         if (e->kind == SExprKind::String) {
             uint8_t r = alloc_r();
-            uint32_t cp_id = b.add_const_pool_str(e->text);
-            b.emit(Opcode::OP_LOAD_CONST_POOL, subop::kLOAD_CONST_POOL_STR, 0, r, 0, 0, 0, cp_id);
+            auto& cb = const_builder();
+            uint32_t cp_id = cb.add_const_pool_str(e->text);
+            if (morsel && morsel->hoisted_b) pinned_r_mask |= (1u << r);
+            cb.emit(Opcode::OP_LOAD_CONST_POOL, subop::kLOAD_CONST_POOL_STR, 0, r, 0, 0, 0, cp_id);
             return TypedVal::scalar(ValBank::ScalarStr, r);
         }
         if (e->kind == SExprKind::Null) {
             uint8_t r = alloc_r();
-            b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_NULL, 0, r, 0, 0, 0, 0);
+            emit_const_null(r);
             return TypedVal::scalar(ValBank::ScalarI64, r);
         }
         if (e->kind == SExprKind::Symbol || e->kind == SExprKind::Param) {
@@ -1515,7 +1610,7 @@ struct CompilerCtx {
             uint8_t s = static_cast<uint8_t>(s_raw);
             int64_t unscaled = parse_decimal_unscaled_exact(e->elems[1]->text, p, s);
             uint8_t r = alloc_r();
-            b.emit_load_const_i64(r, unscaled);
+            emit_const_i64(r, unscaled);
             return TypedVal::const_decimal(r, p, s, unscaled);
         }
 
@@ -1700,6 +1795,14 @@ struct CompilerCtx {
                     b.emit_u16(Opcode::OP_VEC_INIT, sub, FLAG_SCALAR_RHS, dst_v, 0, cast_val.reg, 0, dom, 0);
                 }
                 return TypedVal::vec_decimal(dst_v, dom, ts.precision, ts.scale);
+            }
+            if (!is_scalar_bank(init_val.bank)) {
+                throw std::runtime_error("TYPE_MISMATCH: vec-fill requires scalar initial value");
+            }
+            if ((ts.scalar_bank == ValBank::ScalarF64 && !is_float_bank(init_val.bank)) ||
+                ((ts.scalar_bank == ValBank::ScalarI64 || ts.scalar_bank == ValBank::ScalarU64) && !is_int_bank(init_val.bank)) ||
+                (ts.scalar_bank == ValBank::ScalarBool && !is_bool_bank(init_val.bank))) {
+                throw std::runtime_error("TYPE_MISMATCH: vec-fill initial value type mismatch");
             }
             b.emit_u16(Opcode::OP_VEC_INIT, sub, FLAG_SCALAR_RHS, dst_v, 0, init_val.reg, 0, dom, 0);
             ValBank vb = ValBank::VecI64;
@@ -1978,15 +2081,42 @@ struct CompilerCtx {
                 b.emit(Opcode::OP_SCALAR_FP_ALU, fsub, 0, dst, lhs.reg, rhs.reg, 0, 0);
                 return TypedVal::scalar(ValBank::ScalarF64, dst);
             }
-            uint16_t out_dom = is_vec_bank(lhs.bank) ? lhs.dom_id : rhs.dom_id;
+            bool l_vec = is_vec_bank(lhs.bank);
+            bool r_vec = is_vec_bank(rhs.bank);
+            if (l_vec && r_vec && lhs.dom_id != rhs.dom_id) {
+                throw std::runtime_error("DOMAIN_MISMATCH: vector arithmetic domain mismatch");
+            }
+            uint16_t out_dom = l_vec ? lhs.dom_id : rhs.dom_id;
             uint8_t msub = subop::kVEC_MATH_ARITH_ADD;
             if (head == "-") msub = subop::kVEC_MATH_ARITH_SUB;
             else if (head == "*") msub = subop::kVEC_MATH_ARITH_MUL;
             else if (head == "/" || head == "safe-div") msub = subop::kVEC_MATH_ARITH_DIV;
-            uint8_t flags = (!is_vec_bank(rhs.bank)) ? FLAG_SCALAR_RHS : 0u;
-            uint8_t dst = alloc_v();
-            b.emit(Opcode::OP_VEC_MATH_ARITH, msub, flags, dst, lhs.reg, rhs.reg, 0, 0);
-            return TypedVal::vec(lf ? ValBank::VecF64 : ValBank::VecI64, dst, out_dom);
+            ValBank out_bank = (lf || rf) ? ValBank::VecF64 : ValBank::VecI64;
+            if (l_vec && r_vec) {
+                uint8_t dst = alloc_dst_v(&lhs, &rhs);
+                b.emit(Opcode::OP_VEC_MATH_ARITH, msub, 0, dst, lhs.reg, rhs.reg, 0, 0);
+                return TypedVal::vec(out_bank, dst, out_dom);
+            }
+            if (l_vec) {
+                uint8_t dst = alloc_dst_v(&lhs, nullptr);
+                b.emit(Opcode::OP_VEC_MATH_ARITH, msub, FLAG_SCALAR_RHS, dst, lhs.reg, rhs.reg, 0, 0);
+                return TypedVal::vec(out_bank, dst, out_dom);
+            }
+            // scalar <op> vec
+            if (head == "+" || head == "*") {
+                uint8_t dst = alloc_dst_v(&rhs, nullptr);
+                b.emit(Opcode::OP_VEC_MATH_ARITH, msub, FLAG_SCALAR_RHS, dst, rhs.reg, lhs.reg, 0, 0);
+                return TypedVal::vec(out_bank, dst, out_dom);
+            }
+            // Non-commutative scalar - vec or scalar / vec: broadcast scalar into domain vector
+            PinGuard pg_bcast(pinned_r_mask, pinned_v_mask);
+            pin_v(rhs);
+            uint8_t v_lhs = alloc_pinned_v();
+            uint8_t init_sub = (out_bank == ValBank::VecF64) ? subop::kVEC_INIT_DOM_F64 : subop::kVEC_INIT_DOM_I64;
+            b.emit_u16(Opcode::OP_VEC_INIT, init_sub, FLAG_SCALAR_RHS, v_lhs, 0, lhs.reg, 0, out_dom, 0);
+            uint8_t dst = alloc_dst_v(&rhs, nullptr);
+            b.emit(Opcode::OP_VEC_MATH_ARITH, msub, 0, dst, v_lhs, rhs.reg, 0, 0);
+            return TypedVal::vec(out_bank, dst, out_dom);
         }
 
         if (head == "=" || head == "!=" || head == "<" || head == "<=" || head == ">" || head == ">=") {
@@ -2017,7 +2147,8 @@ struct CompilerCtx {
             TypedVal v = eval_expr(e->elems[3]);
             uint16_t slot = output_slot++;
             output_names.push_back(cname);
-            output_schema.push_back(v.to_output_meta(cname));
+            std::string ckind = (!kind.empty() && kind[0] == ':') ? kind.substr(1) : kind;
+            output_schema.push_back(v.to_output_meta(cname, ckind));
             uint8_t flags = 0;
             uint8_t mask_f = 0;
             if (e->elems.size() >= 6 && e->elems[4]->text == ":mask") {

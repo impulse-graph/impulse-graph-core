@@ -264,3 +264,68 @@ def test_e2e_python_cypher_and_impscm_decimal64_param():
             # 4. Strict TYPE_MISMATCH rejection (DECIMAL + FLOAT forbidden)
             with pytest.raises(RuntimeError, match="TYPE_MISMATCH"):
                 compile_impscm('(query (+ (dec "19.99" 10 2) 1.5))', snapshot=snap)
+
+            # 5. Audit regression #1: NULL decimal output -> None (never Decimal("0.00")),
+            #    BOOL_3VL -> True/False/None, STR -> str
+            null_div = compile_impscm(
+                '(query (collect :scalar "q" (safe-div (dec "10.00" 10 2) (dec "0.00" 10 2))))',
+                snapshot=snap,
+            )
+            assert null_div.execute(snap)["q"] is None
+
+            bool_prog = compile_impscm(
+                '(query (collect :scalar "b" (> (dec "20.00" 10 2) (dec "10.00" 10 2))))',
+                snapshot=snap,
+            )
+            assert bool_prog.execute(snap)["b"] is True
+
+            bool_vec_prog = compile_impscm(
+                '(query (let ((b (load-node-attr "Account" "balance"))) '
+                '  (collect :vec "flags" (>= b (dec "19.99" 10 2)))))',
+                snapshot=snap,
+            )
+            assert bool_vec_prog.execute(snap)["flags"] == [False, True, True]
+
+            str_prog = compile_impscm(
+                '(query (collect :scalar "s" "hello"))',
+                snapshot=snap,
+            )
+            assert str_prog.execute(snap)["s"] == "hello"
+
+            # 6. Audit regression #3: None param -> SCALAR_NULL; scale-4 Decimal64 rescaled to scale-2 param
+            null_param_prog = compile_impscm(
+                '(query (param $d (decimal 18 2)) '
+                '  (collect :scalar "q" (safe-div (dec "10.00" 18 2) $d)))',
+                snapshot=snap,
+            )
+            assert null_param_prog.execute(snap, params={"d": None})["q"] is None
+
+            d4 = Decimal64.from_decimal(Decimal("19.9900"), scale=4, precision=18)
+            assert prog.execute(snap, params={"min_bal": d4})["result"] == Decimal("65.24")
+
+            # 7. Audit regression #9: param_types precision/scale validation & lowercase tuple
+            with pytest.raises(ValueError):
+                compile_cypher(
+                    "MATCH (a:Account) WHERE a.balance >= $min_bal RETURN count(a)",
+                    snapshot=snap,
+                    param_types={"min_bal": "DECIMAL(19, 2)"},
+                )
+            with pytest.raises(ValueError):
+                compile_cypher(
+                    "MATCH (a:Account) WHERE a.balance >= $min_bal RETURN count(a)",
+                    snapshot=snap,
+                    param_types={"min_bal": ("decimal", 5, 6)},
+                )
+            prog_lower = compile_cypher(
+                "MATCH (a:Account) WHERE a.balance >= $min_bal RETURN count(a)",
+                snapshot=snap,
+                param_types={"min_bal": ("decimal", 18, 2)},
+            )
+            assert prog_lower.execute(snap, params={"min_bal": Decimal("19.99")})["count"] == 2
+
+            # 8. Audit regression #10: 1-element frontier-ids & vec stay list, never unwrapped
+            one_node = compile_cypher(
+                "MATCH (a:Account) WHERE a.balance >= 40.00d RETURN a",
+                snapshot=snap,
+            )
+            assert one_node.execute(snap)["result"] == [2]

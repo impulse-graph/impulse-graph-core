@@ -86,6 +86,9 @@ static std::vector<int64_t> exec_vec_i64(
     impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
         compiled.impb_bytes.data(), compiled.impb_bytes.size(),
         snap, &params, aw.ws, nullptr, 0, &out_bytes);
+    if (rc != IMPULSE_VM_V11_OK) {
+        std::cerr << "exec_vec_i64 failed: rc=" << rc << "\n";
+    }
     CHECK(rc == IMPULSE_VM_V11_OK);
     impulse_vm_output_view_v11_t view{};
     CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
@@ -323,6 +326,114 @@ void test_e2e_financial_ledger_and_cypher_v11() {
         auto compiled = ImpScmV11Compiler::compile(scm, snap, true);
         CHECK(compiled.output_schema[0].is_decimal && compiled.output_schema[0].scale == 2);
         CHECK(exec_scalar_i64(compiled, snap) == 2550LL);
+    }
+
+    // 5. Audit regression #2: Cypher string escaping
+    {
+        std::string scm = CypherCompiler::lower_to_impscm_v11(
+            "MATCH (a:Account) WHERE a.tag = 'foo\"bar\\baz' RETURN count(a)");
+        CHECK(scm.find("\"foo\\\"bar\\\\baz\"") != std::string::npos);
+    }
+
+    // 6. Audit regression #4: mixed-scale +/- inside filtered edge-stream (morsel V12..V15 reuse)
+    //    and safe-div vec/vec inside edge-stream
+    {
+        auto r_ms = ImpScmV11Compiler::compile(
+            "(query (let ((acc (vec-fill \"Account\" (decimal 18 4) 0)) "
+            "             (f (domain-all \"Account\"))) "
+            "  (edge-stream :fwd \"TRANSFER\" f (lambda (u v e) "
+            "    (where (> (edge-attr e \"amount\") (dec \"1.00\" 10 2))) "
+            "    (scatter-add acc v (+ (edge-attr e \"amount\") (cast (attr u \"balance\") (decimal 18 4)))))) "
+            "  (collect :vec \"inflow\" acc)))",
+            snap, true);
+        auto res_ms = exec_vec_i64(r_ms, snap);
+        CHECK(res_ms.size() == 4);
+
+        auto r_sdiv_morsel = ImpScmV11Compiler::compile(
+            "(query (let ((acc (vec-fill \"Account\" (decimal 18 6) 0)) "
+            "             (f (domain-all \"Account\"))) "
+            "  (edge-stream :fwd \"TRANSFER\" f (lambda (u v e) "
+            "    (where (> (edge-attr e \"amount\") (dec \"1.00\" 10 2))) "
+            "    (scatter-add acc v (safe-div (edge-attr e \"amount\") (attr u \"balance\"))))) "
+            "  (collect :vec \"ratio\" acc)))",
+            snap, true);
+        auto res_sd = exec_vec_i64(r_sdiv_morsel, snap);
+        CHECK(res_sd.size() == 4);
+    }
+
+    // 7. Audit regression #5 & #7: unary '-' in CAST and rounding CAST(19.995d AS DECIMAL(10, 2))
+    {
+        std::unordered_map<std::string, CypherCompiler::ParamTypeSpec> ptypes;
+        ptypes["p"] = {"DECIMAL", 18, 2, ""};
+        std::string scm_neg = CypherCompiler::lower_to_impscm_v11(
+            "MATCH (a:Account) WHERE a.balance >= CAST(-$p AS DECIMAL(18, 2)) RETURN count(a)", ptypes);
+        CHECK(scm_neg.find("(cast (- 0 $p) (decimal 18 2))") != std::string::npos);
+
+        bool threw_neg_str = false;
+        try {
+            (void)CypherCompiler::lower_to_impscm_v11(
+                "MATCH (a:Account) WHERE a.balance >= CAST(-'19.99' AS DECIMAL(18, 2)) RETURN count(a)");
+        } catch (const std::exception&) {
+            threw_neg_str = true;
+        }
+        CHECK(threw_neg_str);
+
+        std::string scm_round = CypherCompiler::lower_to_impscm_v11(
+            "MATCH (a:Account) WHERE a.balance >= CAST(19.995d AS DECIMAL(10, 2)) RETURN count(a)");
+        CHECK(scm_round.find("(cast (dec \"19.995\" 5 3) (decimal 10 2))") != std::string::npos);
+        auto comp_round = ImpScmV11Compiler::compile(scm_round, snap, true);
+        CHECK(exec_scalar_i64(comp_round, snap) == 3LL);
+    }
+
+    // 8. Audit regression #6: scalar NULL divisor in safe-div with raw_k > 18 must return NULL without overflow
+    {
+        auto r_null_div = ImpScmV11Compiler::compile(
+            "(query (param $d (decimal 18 16)) "
+            "  (collect :scalar \"q\" (safe-div (dec \"9999999999999999.00\" 18 2) $d)))",
+            snap, true);
+        AlignedWorkspace aw;
+        impulse_vm_param_binding_v11_t pb{};
+        pb.param_id = 0;
+        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_NULL;
+        impulse_vm_params_v11_t params{};
+        params.gas_limit = UINT64_MAX;
+        params.bindings = &pb;
+        params.binding_count = 1;
+        size_t out_bytes = 0;
+        CHECK(impulse_vm_execute_v11(
+            r_null_div.impb_bytes.data(), r_null_div.impb_bytes.size(),
+            snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_V11_OK);
+        impulse_vm_output_view_v11_t view{};
+        CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+        CHECK(view.valid_bits != nullptr && (view.valid_bits[0] & 1ULL) == 0ULL);
+    }
+
+    // 9. Audit regression #8 & #11: non-decimal scalar - vec, scalar + vec, and vec-fill type mismatch
+    {
+        auto exec_vec_f64 = [&](const ImpScmV11CompileResult& compiled) -> std::vector<double> {
+            AlignedWorkspace aw;
+            impulse_vm_params_v11_t params{};
+            params.gas_limit = UINT64_MAX;
+            size_t out_bytes = 0;
+            CHECK(impulse_vm_execute_v11(
+                compiled.impb_bytes.data(), compiled.impb_bytes.size(),
+                snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_V11_OK);
+            impulse_vm_output_view_v11_t view{};
+            CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+            CHECK(view.length > 0 && view.f64_data != nullptr);
+            return std::vector<double>(view.f64_data, view.f64_data + view.length);
+        };
+        auto r_sub = ImpScmV11Compiler::compile(
+            "(query (collect :vec \"v\" (- 100.0 (vec-fill \"Account\" f64 30.0))))", snap, true);
+        auto v_sub = exec_vec_f64(r_sub);
+        CHECK(v_sub.size() == 4 && v_sub[0] == 70.0 && v_sub[3] == 70.0);
+
+        auto r_add = ImpScmV11Compiler::compile(
+            "(query (collect :vec \"v\" (+ 10.0 (vec-fill \"Account\" f64 30.0))))", snap, true);
+        auto v_add = exec_vec_f64(r_add);
+        CHECK(v_add.size() == 4 && v_add[0] == 40.0);
+
+        assert_compile_error("(query (vec-fill \"Account\" f64 10))", snap, "TYPE_MISMATCH");
     }
 
     impulse_snapshot_close(snap);

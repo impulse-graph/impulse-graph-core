@@ -9,6 +9,8 @@
 #include "impulse_cypher.hpp"
 #include "impulse_cel.h"
 #include "impulse_assert.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -607,15 +609,59 @@ public:
         if (rc == 0) {
             throw std::out_of_range("Output slot " + std::to_string(slot) + " unavailable");
         }
+        auto is_lane_valid = [&](uint32_t i) -> bool {
+            if (!view.valid_bits) return true;
+            return ((view.valid_bits[i >> 6] >> (i & 63u)) & 1ULL) != 0ULL;
+        };
         py::dict res;
         res["slot"] = view.slot;
         res["elem_tag"] = view.elem_tag;
         res["length"] = view.length;
         if ((view.elem_tag == 0 || view.elem_tag == 1) && view.i64_data) {
-            std::vector<int64_t> vals(view.i64_data, view.i64_data + view.length);
+            py::list vals;
+            for (uint32_t i = 0; i < view.length; ++i) {
+                if (!is_lane_valid(i)) {
+                    vals.append(py::none());
+                } else if (view.elem_tag == 1) {
+                    vals.append(py::int_(static_cast<uint64_t>(view.i64_data[i])));
+                } else {
+                    vals.append(py::int_(view.i64_data[i]));
+                }
+            }
             res["data"] = vals;
         } else if (view.elem_tag == 4 && view.f64_data) {
-            std::vector<double> vals(view.f64_data, view.f64_data + view.length);
+            py::list vals;
+            for (uint32_t i = 0; i < view.length; ++i) {
+                if (!is_lane_valid(i)) {
+                    vals.append(py::none());
+                } else {
+                    vals.append(py::float_(view.f64_data[i]));
+                }
+            }
+            res["data"] = vals;
+        } else if (view.elem_tag == 6 && view.bool_data_bits) {
+            py::list vals;
+            for (uint32_t i = 0; i < view.length; ++i) {
+                if (!is_lane_valid(i)) {
+                    vals.append(py::none());
+                } else {
+                    bool b = ((view.bool_data_bits[i >> 6] >> (i & 63u)) & 1ULL) != 0ULL;
+                    vals.append(py::bool_(b));
+                }
+            }
+            res["data"] = vals;
+        } else if (view.elem_tag == 7) {
+            py::list vals;
+            for (uint32_t i = 0; i < view.length; ++i) {
+                const char* ptr = nullptr;
+                uint32_t len = 0;
+                int valid = 0;
+                if (impulse_vm_v11_get_output_str(ws_, slot, i, &ptr, &len, &valid) != 0 && valid && ptr) {
+                    vals.append(py::str(ptr, len));
+                } else {
+                    vals.append(py::none());
+                }
+            }
             res["data"] = vals;
         }
         return res;
@@ -891,6 +937,7 @@ PYBIND11_MODULE(_impulse_native, m) {
             py::dict d;
             d["name"] = om.name;
             d["type"] = om.type;
+            d["collect_kind"] = om.collect_kind;
             d["is_decimal"] = om.is_decimal;
             d["precision"] = om.precision;
             d["scale"] = om.scale;
@@ -917,6 +964,18 @@ PYBIND11_MODULE(_impulse_native, m) {
         const py::dict& param_types,
         bool enable_optimizations
     ) -> py::dict {
+        auto to_upper_ascii = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            return s;
+        };
+        auto validate_ps = [](int p, int s) {
+            if (p < 1 || p > 18 || s < 0 || s > p) {
+                throw std::invalid_argument(
+                    "Invalid DECIMAL(" + std::to_string(p) + ", " + std::to_string(s) +
+                    "): require 1 <= P <= 18 and 0 <= S <= P");
+            }
+        };
         std::unordered_map<std::string, impulse::compiler::CypherCompiler::ParamTypeSpec> pmap;
         for (auto item : param_types) {
             std::string key = py::str(item.first);
@@ -924,31 +983,42 @@ PYBIND11_MODULE(_impulse_native, m) {
             impulse::compiler::CypherCompiler::ParamTypeSpec spec{};
             if (py::isinstance<py::dict>(val)) {
                 py::dict vd = val.cast<py::dict>();
-                spec.type = vd["type"].cast<std::string>();
-                if (vd.contains("precision")) spec.precision = vd["precision"].cast<uint16_t>();
-                if (vd.contains("scale")) spec.scale = vd["scale"].cast<uint8_t>();
+                spec.type = to_upper_ascii(vd["type"].cast<std::string>());
+                if (spec.type == "DECIMAL") {
+                    int p = vd.contains("precision") ? vd["precision"].cast<int>() : 18;
+                    int s = vd.contains("scale") ? vd["scale"].cast<int>() : 0;
+                    validate_ps(p, s);
+                    spec.precision = static_cast<uint16_t>(p);
+                    spec.scale = static_cast<uint8_t>(s);
+                }
                 if (vd.contains("domain")) spec.domain_name = vd["domain"].cast<std::string>();
             } else if (py::isinstance<py::tuple>(val) || py::isinstance<py::list>(val)) {
                 py::sequence seq = val.cast<py::sequence>();
-                if (py::len(seq) >= 1) spec.type = seq[0].cast<std::string>();
-                if (py::len(seq) >= 2 && spec.type == "DECIMAL") spec.precision = seq[1].cast<uint16_t>();
-                if (py::len(seq) >= 3 && spec.type == "DECIMAL") spec.scale = seq[2].cast<uint8_t>();
-                if (py::len(seq) >= 2 && (spec.type == "ID" || spec.type == "FRONTIER")) {
+                if (py::len(seq) >= 1) spec.type = to_upper_ascii(seq[0].cast<std::string>());
+                if (spec.type == "DECIMAL") {
+                    int p = (py::len(seq) >= 2) ? seq[1].cast<int>() : 18;
+                    int s = (py::len(seq) >= 3) ? seq[2].cast<int>() : 0;
+                    validate_ps(p, s);
+                    spec.precision = static_cast<uint16_t>(p);
+                    spec.scale = static_cast<uint8_t>(s);
+                } else if (py::len(seq) >= 2 && (spec.type == "ID" || spec.type == "FRONTIER")) {
                     spec.domain_name = seq[1].cast<std::string>();
                 }
             } else if (py::isinstance<py::str>(val)) {
                 std::string s = val.cast<std::string>();
-                std::string upper = s;
-                std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                std::string upper = to_upper_ascii(s);
                 if (upper.rfind("DECIMAL(", 0) == 0 && !upper.empty() && upper.back() == ')') {
                     std::string inner = upper.substr(8, upper.size() - 9);
                     auto comma = inner.find(',');
                     if (comma == std::string::npos) {
                         throw std::invalid_argument("Invalid DECIMAL(P, S) spec: " + s);
                     }
+                    int p = std::stoi(inner.substr(0, comma));
+                    int sc = std::stoi(inner.substr(comma + 1));
+                    validate_ps(p, sc);
                     spec.type = "DECIMAL";
-                    spec.precision = static_cast<uint16_t>(std::stoi(inner.substr(0, comma)));
-                    spec.scale = static_cast<uint8_t>(std::stoi(inner.substr(comma + 1)));
+                    spec.precision = static_cast<uint16_t>(p);
+                    spec.scale = static_cast<uint8_t>(sc);
                 } else {
                     spec.type = upper;
                 }

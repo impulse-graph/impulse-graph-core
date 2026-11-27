@@ -202,6 +202,10 @@ public:
     const std::vector<uint64_t>& words() const noexcept { return words_; }
     const std::vector<V11ConstPoolDef>& const_pool() const noexcept { return const_pool_; }
 
+    void append_words(const std::vector<uint64_t>& extra) {
+        words_.insert(words_.end(), extra.begin(), extra.end());
+    }
+
     /** Serializes words + const_pool into a checksummed .impb v0.11 container. */
     std::vector<uint8_t> build_impb(
         uint8_t max_call_depth = 0,

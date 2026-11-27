@@ -324,6 +324,7 @@ struct CypherWherePredicate {
     uint8_t cast_scale{0};
     bool is_string_literal{false};
     bool is_param{false};
+    bool is_negated{false};
 };
 
 struct CypherReturnProjection {
@@ -715,10 +716,19 @@ private:
                 advance();
                 consume(CypherTokenType::LPAREN, "Expected '(' after CAST");
                 bool inner_neg = match(CypherTokenType::DASH);
-                if (inner_neg && (curr_.type == CypherTokenType::NUMBER_LITERAL || curr_.type == CypherTokenType::DECIMAL_LITERAL)) {
-                    pred.value_or_param = "-" + curr_.lexeme;
-                    pred.is_decimal_literal = (curr_.type == CypherTokenType::DECIMAL_LITERAL);
-                    advance();
+                if (inner_neg) {
+                    if (curr_.type == CypherTokenType::NUMBER_LITERAL || curr_.type == CypherTokenType::DECIMAL_LITERAL) {
+                        pred.value_or_param = "-" + curr_.lexeme;
+                        pred.is_decimal_literal = (curr_.type == CypherTokenType::DECIMAL_LITERAL);
+                        advance();
+                    } else if (curr_.type == CypherTokenType::PARAM) {
+                        pred.value_or_param = curr_.lexeme;
+                        pred.is_param = true;
+                        pred.is_negated = true;
+                        advance();
+                    } else {
+                        throw std::runtime_error("PARSE_ERROR: unary '-' inside CAST(...) requires a numeric literal or $param, got: " + curr_.lexeme);
+                    }
                 } else if (curr_.type == CypherTokenType::PARAM) {
                     pred.value_or_param = curr_.lexeme;
                     pred.is_param = true;
@@ -1117,14 +1127,31 @@ public:
         return op;
     }
 
+    static std::string escape_impscm_string(const std::string& s) {
+        std::string out;
+        out.reserve(s.size() + 4);
+        for (char c : s) {
+            switch (c) {
+                case '\\': out += "\\\\"; break;
+                case '"':  out += "\\\""; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:   out.push_back(c); break;
+            }
+        }
+        return out;
+    }
+
     static std::string format_param_type_scm(const ParamTypeSpec& spec) {
         std::string upper = spec.type;
-        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         if (upper == "DECIMAL") {
             return "(decimal " + std::to_string(spec.precision) + " " + std::to_string(spec.scale) + ")";
         }
-        if (upper == "ID") return "(id \"" + spec.domain_name + "\")";
-        if (upper == "FRONTIER") return "(frontier \"" + spec.domain_name + "\")";
+        if (upper == "ID") return "(id \"" + escape_impscm_string(spec.domain_name) + "\")";
+        if (upper == "FRONTIER") return "(frontier \"" + escape_impscm_string(spec.domain_name) + "\")";
         if (upper == "U64" || upper == "U32") return "u64";
         if (upper == "F64" || upper == "F32" || upper == "FLOAT" || upper == "DOUBLE") return "f64";
         if (upper == "BOOL") return "bool";
@@ -1190,7 +1217,7 @@ public:
             if (it != param_types.end()) {
                 out << "  (param " << pname << " " << format_param_type_scm(it->second) << ")\n";
             } else if (seed_id_pred && seed_id_pred->value_or_param == pname) {
-                out << "  (param " << pname << " (id \"" << start_dom << "\"))\n";
+                out << "  (param " << pname << " (id \"" << escape_impscm_string(start_dom) << "\"))\n";
             } else {
                 out << "  (param " << pname << " i64)\n";
             }
@@ -1200,25 +1227,35 @@ public:
             if (pred.is_cast) {
                 if (pred.cast_target_type == "DECIMAL") {
                     if (!pred.is_param) {
-                        // Constant literal cast to DECIMAL(P, S): emit exact (dec "..." P S) so boundary folding applies
-                        return "(dec \"" + pred.value_or_param + "\" " +
+                        auto [lit_p, lit_s] = infer_decimal_ps(pred.value_or_param);
+                        if (lit_s > pred.cast_scale || lit_p > pred.cast_precision) {
+                            return "(cast (dec \"" + escape_impscm_string(pred.value_or_param) + "\" " +
+                                   std::to_string(lit_p) + " " + std::to_string(lit_s) + ") (decimal " +
+                                   std::to_string(pred.cast_precision) + " " +
+                                   std::to_string(pred.cast_scale) + "))";
+                        }
+                        return "(dec \"" + escape_impscm_string(pred.value_or_param) + "\" " +
                                std::to_string(pred.cast_precision) + " " +
                                std::to_string(pred.cast_scale) + ")";
                     }
-                    return "(cast " + pred.value_or_param + " (decimal " +
+                    std::string inner_p = pred.is_negated ? ("(- 0 " + pred.value_or_param + ")") : pred.value_or_param;
+                    return "(cast " + inner_p + " (decimal " +
                            std::to_string(pred.cast_precision) + " " +
                            std::to_string(pred.cast_scale) + "))";
                 }
-                std::string inner = pred.is_string_literal ? ("\"" + pred.value_or_param + "\"") : pred.value_or_param;
+                std::string inner = pred.is_string_literal
+                    ? ("\"" + escape_impscm_string(pred.value_or_param) + "\"")
+                    : (pred.is_negated ? ("(- 0 " + pred.value_or_param + ")") : pred.value_or_param);
                 std::string tname = (pred.cast_target_type == "F64") ? "f64" : "i64";
                 return "(cast " + inner + " " + tname + ")";
             }
             if (pred.is_decimal_literal) {
                 auto [p, s] = infer_decimal_ps(pred.value_or_param);
-                return "(dec \"" + pred.value_or_param + "\" " + std::to_string(p) + " " + std::to_string(s) + ")";
+                return "(dec \"" + escape_impscm_string(pred.value_or_param) + "\" " +
+                       std::to_string(p) + " " + std::to_string(s) + ")";
             }
             if (pred.is_string_literal) {
-                return "\"" + pred.value_or_param + "\"";
+                return "\"" + escape_impscm_string(pred.value_or_param) + "\"";
             }
             return pred.value_or_param;
         };
@@ -1228,9 +1265,9 @@ public:
         int f_idx = 0;
         auto cur_f_name = [&]() { return "f" + std::to_string(f_idx); };
         if (seed_id_pred) {
-            out << "(f0 (seed \"" << start_dom << "\" " << seed_id_pred->value_or_param << "))";
+            out << "(f0 (seed \"" << escape_impscm_string(start_dom) << "\" " << seed_id_pred->value_or_param << "))";
         } else {
-            out << "(f0 (domain-all \"" << start_dom << "\"))";
+            out << "(f0 (domain-all \"" << escape_impscm_string(start_dom) << "\"))";
         }
 
         auto emit_filters_for_var = [&](const std::string& var_name) {
@@ -1241,7 +1278,7 @@ public:
                 std::string prev = cur_f_name();
                 ++f_idx;
                 out << "\n        (" << cur_f_name() << " (node-filter " << prev << " \""
-                    << pred.field << "\" " << normalize_cmp_op(pred.op) << " "
+                    << escape_impscm_string(pred.field) << "\" " << normalize_cmp_op(pred.op) << " "
                     << format_rhs_expr(pred) << "))";
             }
         };
@@ -1256,7 +1293,8 @@ public:
             std::string prev = cur_f_name();
             ++f_idx;
             if (edge.is_unbounded) {
-                out << "\n        (" << cur_f_name() << " (walk " << dir << " \"" << edge.relation_name
+                out << "\n        (" << cur_f_name() << " (walk " << dir << " \""
+                    << escape_impscm_string(edge.relation_name)
                     << "\" " << prev << " :transitive+))";
             } else {
                 int hops = std::max(1, edge.max_hops);
@@ -1265,7 +1303,8 @@ public:
                         prev = cur_f_name();
                         ++f_idx;
                     }
-                    out << "\n        (" << cur_f_name() << " (walk " << dir << " \"" << edge.relation_name
+                    out << "\n        (" << cur_f_name() << " (walk " << dir << " \""
+                        << escape_impscm_string(edge.relation_name)
                         << "\" " << prev << "))";
                 }
             }
@@ -1292,10 +1331,12 @@ public:
             if (query.projection.agg_op == CypherReturnProjection::AggOp::MIN) rkind = ":min";
             else if (query.projection.agg_op == CypherReturnProjection::AggOp::MAX) rkind = ":max";
             else if (query.projection.agg_op == CypherReturnProjection::AggOp::AVG) rkind = ":avg";
-            out << "    (let ((col (load-node-attr \"" << ret_dom << "\" \"" << query.projection.attr_name << "\")))\n"
+            out << "    (let ((col (load-node-attr \"" << escape_impscm_string(ret_dom) << "\" \""
+                << escape_impscm_string(query.projection.attr_name) << "\")))\n"
                 << "      (collect :scalar \"result\" (reduce " << rkind << " col :mask " << final_f << ")))\n";
         } else if (query.projection.is_attr) {
-            out << "    (let ((col (load-node-attr \"" << ret_dom << "\" \"" << query.projection.attr_name << "\")))\n"
+            out << "    (let ((col (load-node-attr \"" << escape_impscm_string(ret_dom) << "\" \""
+                << escape_impscm_string(query.projection.attr_name) << "\")))\n"
                 << "      (collect :vec \"result\" col :mask " << final_f << "))\n";
         } else {
             out << "    (collect :frontier-ids \"result\" " << final_f << ")\n";

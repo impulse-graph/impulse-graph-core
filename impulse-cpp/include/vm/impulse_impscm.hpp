@@ -91,6 +91,7 @@ std::pair<uint16_t, uint8_t> infer_decimal_precision_scale(const std::string& te
 struct OutputColumnMeta {
     std::string name;
     std::string type; // "I64", "U64", "F64", "BOOL", "STR", "FRONTIER", "DECIMAL", "UNKNOWN"
+    std::string collect_kind; // "scalar", "vec", "frontier-ids", "frontier-bitset"
     bool is_decimal = false;
     uint16_t precision = 0;
     uint8_t scale = 0;
