@@ -156,6 +156,15 @@ inline bool p3_compute_in_degs(V11Arena& arena,
     uint32_t* deg = arena.alloc_array<uint32_t>(n_tgt, 8);
     if (!deg) return false;
     std::memset(deg, 0, static_cast<size_t>(n_tgt) * sizeof(uint32_t));
+    if (rel.has_csc && rel.csc_row_off_raw != nullptr) {
+        uint32_t csc_n = (rel.csc_row_off_len > 0u) ? (rel.csc_row_off_len - 1u) : 0u;
+        uint32_t lim = (csc_n < n_tgt) ? csc_n : n_tgt;
+        for (uint32_t v = 0; v < lim; ++v) {
+            deg[v] = rel.csc_row_off(v + 1u) - rel.csc_row_off(v);
+        }
+        *out_deg = deg;
+        return true;
+    }
     for (uint32_t e = 0; e < rel.col_tgt_len; ++e) {
         uint64_t v = rel.csr_col_tgt(e);
         if (v < n_tgt64) deg[static_cast<uint32_t>(v)]++;
