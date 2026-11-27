@@ -22,11 +22,11 @@ V11_OP_CASE(WALK) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if (needs_fwd && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
+    if (needs_fwd && rel->csr_row_off_raw == nullptr && rel->row_offsets == nullptr) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if (needs_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+    if (needs_rev && rel->csc_row_off_raw == nullptr) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
@@ -417,7 +417,7 @@ V11_OP_CASE(WALK) {
     }
 
     // Fast dense bitset path for reverse 1-hop walk (subop 1) directly over off-heap CSC
-    if (subop == 1u && rel->has_csc && rel->csc_row_off_raw != nullptr &&
+    if (subop == 1u && rel->csc_row_off_raw != nullptr &&
         out_card > 0ULL && out_card <= (1ULL << 22)) {
         const uint32_t n_out = static_cast<uint32_t>(out_card);
         const size_t n_words = (static_cast<size_t>(n_out) + 63u) >> 6;

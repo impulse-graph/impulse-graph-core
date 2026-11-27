@@ -86,7 +86,8 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x11, LOOP_DECR)       \
     X(0x12, CALL)            \
     X(0x13, RET)             \
-    X(0x14, SET_MAX_DOP)
+    X(0x14, SET_MAX_DOP)     \
+    X(0x15, SCALAR_DECIMAL_ALU)
 
 #define V11_IMPLEMENTED_PILLAR2_OPS(X) \
     X(0x20, FSEED)            \
@@ -135,7 +136,8 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x54, INDEX_SCAN)        \
     X(0x55, MAP_KEYS_TO_DENSE) \
     X(0x56, MAP_DENSE_TO_KEYS) \
-    X(0x57, COLLECT)
+    X(0x57, COLLECT)           \
+    X(0x58, VEC_DECIMAL_ALU)
 
 #define V11_IMPLEMENTED_PILLAR5_OPS(X) \
     X(0x60, LANE_INIT_SEEDS)    \

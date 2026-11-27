@@ -7,7 +7,7 @@
  */
 #pragma once
 #include "vm_simd_kernels.hpp"
-
+#include "v11_decimal64.hpp"
 #include "v11_p2_helpers.hpp"
 
 #include <algorithm>
@@ -316,18 +316,24 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
     uint8_t*  acc_vu64_valid[8]{};
     uint32_t  acc_vu64_len[8]{};
     bool      has_vu64[8]{};
+    int64_t*  acc_vi64[8]{};
+    uint8_t*  acc_vi64_valid[8]{};
+    uint32_t  acc_vi64_len[8]{};
+    bool      has_vi64[8]{};
     uint64_t  acc_rcnt[8]{};
 
     int32_t committed_f_dom[8];
     int32_t committed_ml_dom[8];
     bool    committed_vf64[8]{};
     bool    committed_vu64[8]{};
+    bool    committed_vi64[8]{};
     bool    committed_rcnt[8]{};
     bool    need_f_accum[8]{};
     bool    need_ml_accum[8]{};
     bool    need_vf64_accum[8]{};
     bool    need_vf64_zero[8]{};
     bool    need_vu64_accum[8]{};
+    bool    need_vi64_accum[8]{};
     bool    need_rcnt_accum[8]{};
     for (int d = 0; d < 8; ++d) {
         committed_f_dom[d]  = -1;
@@ -336,6 +342,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
         need_ml_accum[d]    = true;
         need_vf64_accum[d]  = true;
         need_vu64_accum[d]  = true;
+        need_vi64_accum[d]  = true;
         need_rcnt_accum[d]  = true;
     }
 
@@ -380,6 +387,10 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 case 8:
                     committed_rcnt[c_dst] = true;
                     if (!c_accum) need_rcnt_accum[c_dst] = false;
+                    break;
+                case 9:
+                    committed_vi64[c_dst] = true;
+                    if (!c_accum) need_vi64_accum[c_dst] = false;
                     break;
                 default: break;
             }
@@ -486,6 +497,22 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 } else {
                     std::memset(acc_vu64[d], 0, static_cast<size_t>(vd->length) * sizeof(int64_t));
                     std::memset(acc_vu64_valid[d], 0, vd->length);
+                }
+            }
+        }
+        if (committed_vi64[d] && vd && vd->elem_tag == kVecTagI64) {
+            has_vi64[d] = true;
+            acc_vi64_len[d] = vd->length;
+            if (vd->length > 0u) {
+                acc_vi64[d] = ws.arena.alloc_array<int64_t>(vd->length, 8);
+                acc_vi64_valid[d] = ws.arena.alloc_array<uint8_t>(vd->length, 8);
+                if (!acc_vi64[d] || !acc_vi64_valid[d]) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
+                if (need_vi64_accum[d]) {
+                    std::memcpy(acc_vi64[d], vd->i64_data, static_cast<size_t>(vd->length) * sizeof(int64_t));
+                    for (uint32_t i = 0; i < vd->length; ++i) acc_vi64_valid[d][i] = vd->is_valid_at(i) ? 1u : 0u;
+                } else {
+                    std::memset(acc_vi64[d], 0, static_cast<size_t>(vd->length) * sizeof(int64_t));
+                    std::memset(acc_vi64_valid[d], 1, vd->length);
                 }
             }
         }
@@ -1292,6 +1319,36 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                             acc_rcnt[dst] += static_cast<uint64_t>(cm_len);
                             ws.state.pc += 1u;
                             break;
+                        case 9: { // .scatter_add_chk
+                            const V11Vector* ids = ws.v_regs[s1];
+                            const V11Vector* vals = scalar ? nullptr : ws.v_regs[s2];
+                            if (!ids || ids->elem_tag != kVecTagU64 || !has_vi64[dst] ||
+                                (!scalar && (!vals || vals->elem_tag != kVecTagI64))) {
+                                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; break;
+                            }
+                            const bool r_ok = scalar && ws.is_r_valid(s2);
+                            const int64_t r_val = r_ok ? static_cast<int64_t>(ws.read_r_raw(s2)) : 0LL;
+                            for (uint32_t k = 0; k < cm_len; ++k) {
+                                uint32_t i = cm_ids[k];
+                                if (i >= ids->length || !ids->is_valid_at(i)) continue;
+                                bool has_v = scalar ? r_ok : (i < vals->length && vals->is_valid_at(i));
+                                if (!has_v) continue;
+                                int64_t v = scalar ? r_val : vals->i64_data[i];
+                                int64_t tgt_s = ids->i64_data[i];
+                                if (tgt_s < 0 || static_cast<uint64_t>(tgt_s) >= acc_vi64_len[dst]) {
+                                    ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; break;
+                                }
+                                uint32_t ti = static_cast<uint32_t>(tgt_s);
+                                int64_t prev = acc_vi64_valid[dst][ti] ? acc_vi64[dst][ti] : 0LL;
+                                int64_t sum = 0LL;
+                                impulse_vm_status_v11_t st = dec_add_chk(prev, v, &sum);
+                                if (st != IMPULSE_VM_V11_OK) { ws.status = st; break; }
+                                acc_vi64[dst][ti] = sum;
+                                acc_vi64_valid[dst][ti] = 1u;
+                            }
+                            if (ws.status == IMPULSE_VM_V11_OK) ws.state.pc += 1u;
+                            break;
+                        }
                         default:
                             ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
                             break;
@@ -1307,6 +1364,7 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 case Opcode::OP_VEC_INT_BITWISE:
                 case Opcode::OP_VEC_TERNARY:
                 case Opcode::OP_VEC_BLEND:
+                case Opcode::OP_VEC_DECIMAL_ALU:
                     v11_exec_morsel_p4_op(ws, &view, bw);
                     break;
                 default:
@@ -1492,6 +1550,24 @@ IMPULSE_V11_NOINLINE inline void p3_run_morsel_block(
                 }
                 new (ov) V11Vector();
                 ov->elem_tag = kVecTagU64; ov->length = n; ov->i64_data = acc_vu64[d]; ov->valid_bits = vbits;
+                staged_v[d] = ov;
+                staged_v_set[d] = true;
+            }
+            if (committed_vi64[d] && has_vi64[d]) {
+                uint32_t n = acc_vi64_len[d];
+                size_t vwords = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
+                uint64_t* vbits = ws.arena.alloc_array<uint64_t>(vwords, 8);
+                auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+                if (!vbits || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; return; }
+                std::memset(vbits, 0, vwords * sizeof(uint64_t));
+                for (uint32_t i = 0; i < n; ++i) {
+                    if (acc_vi64_valid[d][i]) {
+                        vbits[i >> 6] |= (1ULL << (i & 63u));
+                        if (acc_vi64[d][i] != 0LL) any_non_empty = true;
+                    }
+                }
+                new (ov) V11Vector();
+                ov->elem_tag = kVecTagI64; ov->length = n; ov->i64_data = acc_vi64[d]; ov->valid_bits = vbits;
                 staged_v[d] = ov;
                 staged_v_set[d] = true;
             }

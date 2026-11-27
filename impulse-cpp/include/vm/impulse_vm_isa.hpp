@@ -32,6 +32,7 @@
   X(OP_CALL, 0x12, CALL, 1, 0x0, 0x0003, Forbidden) \
   X(OP_RET, 0x13, RET, 1, 0x0, 0x0001, Forbidden) \
   X(OP_SET_MAX_DOP, 0x14, SET_MAX_DOP, 1, 0x0, 0x0003, Forbidden) \
+  X(OP_SCALAR_DECIMAL_ALU, 0x15, SCALAR_DECIMAL_ALU, 1, 0x0, 0xFFFF, Forbidden) \
   X(OP_FSEED, 0x20, FSEED, 2, 0x4, 0x001F, Forbidden) \
   X(OP_INIT_DOMAIN_SPAN, 0x21, INIT_DOMAIN_SPAN, 2, 0x0, 0x0001, Forbidden) \
   X(OP_SET_OP, 0x22, SET_OP, 2, 0x0, 0x000F, BodyOk) \
@@ -46,7 +47,7 @@
   X(OP_SPMV, 0x34, SPMV, 3, 0x7, 0x01FF, Forbidden) \
   X(OP_WALK_MORSEL, 0x35, WALK_MORSEL, 3, 0x1, 0x000F, Header) \
   X(OP_FILTER_MORSEL, 0x36, FILTER_MORSEL, 3, 0x0, 0x0001, Header) \
-  X(OP_MORSEL_COMMIT, 0x37, MORSEL_COMMIT, 3, 0x7, 0x01FF, CommitOnly) \
+  X(OP_MORSEL_COMMIT, 0x37, MORSEL_COMMIT, 3, 0x7, 0x03FF, CommitOnly) \
   X(OP_MORSEL_END, 0x38, MORSEL_END, 3, 0x0, 0x0001, EndOnly) \
   X(OP_SAMPLE_NEIGHBORS, 0x39, SAMPLE_NEIGHBORS, 3, 0x0, 0x000F, Forbidden) \
   X(OP_HAS_TOPOLOGY, 0x3A, HAS_TOPOLOGY, 3, 0x0, 0x03FF, Forbidden) \
@@ -69,12 +70,13 @@
   X(OP_COALESCE, 0x4F, COALESCE, 4, 0x3, 0x0001, BodyOk) \
   X(OP_VEC_INIT, 0x50, VEC_INIT, 4, 0x2, 0x7F7F, Forbidden) \
   X(OP_VEC_POINT, 0x51, VEC_POINT, 4, 0x0, 0x000F, BodyCastOnly) \
-  X(OP_VEC_REDUCE, 0x52, VEC_REDUCE, 4, 0x1, 0x07FF, Forbidden) \
+  X(OP_VEC_REDUCE, 0x52, VEC_REDUCE, 4, 0x1, 0x0FFF, Forbidden) \
   X(OP_TOP_K, 0x53, TOP_K, 4, 0x3, 0x000F, Forbidden) \
   X(OP_INDEX_SCAN, 0x54, INDEX_SCAN, 4, 0x4, 0x007F, Forbidden) \
   X(OP_MAP_KEYS_TO_DENSE, 0x55, MAP_KEYS_TO_DENSE, 4, 0x4, 0x001F, Forbidden) \
   X(OP_MAP_DENSE_TO_KEYS, 0x56, MAP_DENSE_TO_KEYS, 4, 0x0, 0x0007, Forbidden) \
   X(OP_COLLECT, 0x57, COLLECT, 4, 0x1, 0x001F, Forbidden) \
+  X(OP_VEC_DECIMAL_ALU, 0x58, VEC_DECIMAL_ALU, 4, 0x3, 0xFFFF, BodyOk) \
   X(OP_LANE_INIT_SEEDS, 0x60, LANE_INIT_SEEDS, 5, 0x0, 0x0003, Forbidden) \
   X(OP_LANE_INIT_GROUPS, 0x61, LANE_INIT_GROUPS, 5, 0x4, 0x0001, Forbidden) \
   X(OP_LANE_WALK, 0x63, LANE_WALK, 5, 0x5, 0x03FF, Forbidden) \
@@ -112,7 +114,7 @@ namespace impulse::vm {
 
 inline constexpr uint32_t kImpbMagic = 0x494D5042u;
 inline constexpr uint16_t kImpbVersion = 11u;
-inline constexpr std::size_t kActiveOpcodeCount = 78u;
+inline constexpr std::size_t kActiveOpcodeCount = 80u;
 
 enum ModifierFlag : uint8_t {
   FLAG_MASKED_S3  = 0x1u,
@@ -144,6 +146,8 @@ enum class Status : uint32_t {
   IMPULSE_VM_ERR_GAS_EXHAUSTED = 13u,
   IMPULSE_VM_ERR_TYPE_MISMATCH = 14u,
   IMPULSE_VM_ERR_VALIDATION_FAILED = 15u,
+  IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW = 16u,
+  IMPULSE_VM_ERR_DIV_BY_ZERO = 17u,
 };
 
 enum class ScalarType : uint8_t {
@@ -282,6 +286,22 @@ inline constexpr uint8_t kCALL_FULL16 = 1u;
 inline constexpr uint8_t kRET_RET = 0u;
 inline constexpr uint8_t kSET_MAX_DOP_IMM = 0u;
 inline constexpr uint8_t kSET_MAX_DOP_REG = 1u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_ADD_CHK = 0u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_SUB_CHK = 1u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_MUL_CHK = 2u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_MUL_DIV_ROUND = 3u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_DIV_ROUND = 4u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_RESCALE = 5u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_BOUND_CHK = 6u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_ABS_CHK = 7u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_NEG_CHK = 8u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_F64_TO_DEC = 9u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_DEC_TO_F64 = 10u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_ROUND_SCALE = 11u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_TRUNC_SCALE = 12u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_FLOOR_SCALE = 13u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_CEIL_SCALE = 14u;
+inline constexpr uint8_t kSCALAR_DECIMAL_ALU_DIV_SAFE = 15u;
 inline constexpr uint8_t kFSEED_EMPTY = 0u;
 inline constexpr uint8_t kFSEED_SINGLE_IMM = 1u;
 inline constexpr uint8_t kFSEED_SINGLE_REG = 2u;
@@ -361,6 +381,7 @@ inline constexpr uint8_t kMORSEL_COMMIT_SCATTER_MIN_SRC = 5u;
 inline constexpr uint8_t kMORSEL_COMMIT_SCATTER_ARGMIN = 6u;
 inline constexpr uint8_t kMORSEL_COMMIT_SCATTER_ARGMAX = 7u;
 inline constexpr uint8_t kMORSEL_COMMIT_COUNT_ADD_R = 8u;
+inline constexpr uint8_t kMORSEL_COMMIT_SCATTER_ADD_CHK = 9u;
 inline constexpr uint8_t kMORSEL_END_END = 0u;
 inline constexpr uint8_t kSAMPLE_NEIGHBORS_FRONTIER_WOR = 0u;
 inline constexpr uint8_t kSAMPLE_NEIGHBORS_VEC_WR = 1u;
@@ -536,6 +557,7 @@ inline constexpr uint8_t kVEC_REDUCE_ARGMIN = 7u;
 inline constexpr uint8_t kVEC_REDUCE_ARGMAX = 8u;
 inline constexpr uint8_t kVEC_REDUCE_ANY_TRUE = 9u;
 inline constexpr uint8_t kVEC_REDUCE_ALL_TRUE = 10u;
+inline constexpr uint8_t kVEC_REDUCE_SUM_I64_CHK = 11u;
 inline constexpr uint8_t kTOP_K_DESC_IDS = 0u;
 inline constexpr uint8_t kTOP_K_ASC_IDS = 1u;
 inline constexpr uint8_t kTOP_K_DESC_SCORES = 2u;
@@ -560,6 +582,22 @@ inline constexpr uint8_t kCOLLECT_FRONTIER_IDS = 1u;
 inline constexpr uint8_t kCOLLECT_VEC = 2u;
 inline constexpr uint8_t kCOLLECT_SCALAR = 3u;
 inline constexpr uint8_t kCOLLECT_TABLE_COL = 4u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_ADD_CHK = 0u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_SUB_CHK = 1u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_MUL_CHK = 2u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_MUL_DIV_R = 3u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_MUL_DIV_V = 4u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_DIV_ROUND = 5u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_DIV_SAFE = 6u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_RESCALE = 7u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_BOUND_CHK = 8u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_ABS_CHK = 9u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_NEG_CHK = 10u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_F64_TO_DEC = 11u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_DEC_TO_F64 = 12u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_ROUND_SCALE = 13u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_TRUNC_SCALE = 14u;
+inline constexpr uint8_t kVEC_DECIMAL_ALU_MUL_DIV_SAFE_R = 15u;
 inline constexpr uint8_t kLANE_INIT_SEEDS_AUTO_WIDTH = 0u;
 inline constexpr uint8_t kLANE_INIT_SEEDS_FORCE_W64 = 1u;
 inline constexpr uint8_t kLANE_INIT_GROUPS_GROUPS = 0u;

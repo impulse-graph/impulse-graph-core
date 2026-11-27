@@ -23,7 +23,7 @@ V11_OP_CASE(LANE_STATE_WALK) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }
-    if (is_rev && (!rel->has_csc || rel->csc_row_off_raw == nullptr)) {
+    if (is_rev && rel->csc_row_off_raw == nullptr) {
         ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
         V11_DISPATCH();
     }

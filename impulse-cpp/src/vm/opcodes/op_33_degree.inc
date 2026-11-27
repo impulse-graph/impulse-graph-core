@@ -29,7 +29,7 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 1: { // .sum_rev_r
-            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
+            if (rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* f_tgt = p3_get_f1bit(ws, s1);
             if (!f_tgt) break;
             if (f_tgt->domain_id != rel->tgt_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; break; }
@@ -77,7 +77,7 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 3: { // .vec_rev_v
-            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
+            if (rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             const V11Frontier* fm = nullptr;
             if ((flags & FLAG_MASKED_S3) != 0u) {
                 fm = p3_get_f1bit(ws, s3);
@@ -120,7 +120,7 @@ V11_OP_CASE(DEGREE) {
             break;
         }
         case 5: { // .node_rev_r
-            if (!rel->has_csc || rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
+            if (rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; break; }
             if (!ws.is_r_valid(s1)) { ws.write_r_null(dst); p1_set_scalar_flags(ws, false, 0ULL); ws.state.pc += 1u; break; }
             uint64_t v64 = ws.read_r_raw(s1);
             uint64_t dcard = (rel->tgt_dom < snap->domain_count) ? snap->domain_cards[rel->tgt_dom] : 0ULL;

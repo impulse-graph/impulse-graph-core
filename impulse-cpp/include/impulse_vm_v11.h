@@ -45,6 +45,8 @@ typedef uint32_t impulse_vm_status_v11_t;
 #define IMPULSE_VM_V11_ERR_GAS_EXHAUSTED      13u
 #define IMPULSE_VM_V11_ERR_TYPE_MISMATCH      14u
 #define IMPULSE_VM_V11_ERR_VALIDATION_FAILED  15u
+#define IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW 16u
+#define IMPULSE_VM_V11_ERR_DIV_BY_ZERO        17u
 
 /**
  * Hot Execution State Frame (VM_ARCHITECTURE_v0_11.md §4.1).

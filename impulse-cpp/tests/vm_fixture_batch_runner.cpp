@@ -367,6 +367,8 @@ const char* status_name(impulse_vm_status_v11_t st) {
         case IMPULSE_VM_V11_ERR_GAS_EXHAUSTED:     return "IMPULSE_VM_ERR_GAS_EXHAUSTED";
         case IMPULSE_VM_V11_ERR_TYPE_MISMATCH:     return "IMPULSE_VM_ERR_TYPE_MISMATCH";
         case IMPULSE_VM_V11_ERR_VALIDATION_FAILED: return "IMPULSE_VM_ERR_VALIDATION_FAILED";
+        case IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW: return "IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW";
+        case IMPULSE_VM_V11_ERR_DIV_BY_ZERO:       return "IMPULSE_VM_ERR_DIV_BY_ZERO";
         default:                                   return "IMPULSE_VM_ERR_UNKNOWN";
     }
 }
@@ -863,7 +865,7 @@ std::string run_fixture_json(const std::string& profile,
                 rv.coo_edge_count = static_cast<uint32_t>(std::min(cit->second.srcs.size(), cit->second.tgts.size()));
                 rv.coo_order = cit->second.order;
             }
-            if (fl[1]) {
+            if (fl[0] || fl[1] || fl[2] || fl[3]) {
                 uint32_t n_tgt = (td < dom_cards.size()) ? static_cast<uint32_t>(dom_cards[td]) : 0u;
                 if (auto cit = rel_csc.find(r16); cit != rel_csc.end()) {
                     owned_csc_offs[rid] = cit->second.first;
