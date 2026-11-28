@@ -276,6 +276,10 @@ class Snapshot:
         self._check_open()
         return self._native.metadata()
 
+    def metadata_count(self) -> int:
+        self._check_open()
+        return self._native.metadata_count()
+
     def get_metadata(self, key: str, default: Optional[str] = None) -> Optional[str]:
         self._check_open()
         val = self._native.get_metadata(key)
@@ -285,6 +289,8 @@ class Snapshot:
         self, name_or_id: Union[str, int], catalog: Optional[Union[str, Dict[str, int]]] = None
     ) -> DomainView:
         self._check_open()
+        if isinstance(name_or_id, bool):
+            raise TypeError("domain() argument must be str or int, got bool")
         effective_catalog = catalog if catalog is not None else self._catalog
         if isinstance(name_or_id, int):
             count = self.domain_count()
@@ -327,6 +333,24 @@ class Snapshot:
     def relations(self) -> List[dict]:
         self._check_open()
         return [self._native.get_relation(i) for i in range(self._native.relation_count())]
+
+    def relation(self, name_or_id: Union[str, int]) -> dict:
+        self._check_open()
+        if isinstance(name_or_id, bool):
+            raise TypeError("relation() argument must be str or int, got bool")
+        if isinstance(name_or_id, int):
+            for i in range(self._native.relation_count()):
+                rel = self._native.get_relation(i)
+                if rel["relation_id"] == name_or_id:
+                    return rel
+            raise KeyError(f"Relation ID {name_or_id} not found in snapshot catalog.")
+        if isinstance(name_or_id, str):
+            for i in range(self._native.relation_count()):
+                rel = self._native.get_relation(i)
+                if rel["name"] == name_or_id:
+                    return rel
+            raise KeyError(f"Relation '{name_or_id}' not found in snapshot catalog.")
+        raise TypeError(f"relation() argument must be str or int, got {type(name_or_id).__name__}")
 
     def is_reachable(self, relation_index: int, src_id: int, tgt_id: int) -> bool:
         self._check_open()

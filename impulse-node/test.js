@@ -368,9 +368,27 @@ try {
   const rel0 = snap.getRelation(0);
   assert.strictEqual(rel0.relationId, 0);
   assert.strictEqual(rel0.isVirtual, false);
+  assert.strictEqual(rel0.hasCsr, true);
+  assert.strictEqual(rel0.isFlatForward, false);
+  assert.strictEqual(rel0.srcNodeIdWidth, 4);
+  assert.strictEqual(rel0.tgtNodeIdWidth, 4);
   assert.deepStrictEqual(rel0.virtualComponentIds, []);
   assert.strictEqual(typeof rel0.csrRowOffOffset, 'bigint');
   assert.strictEqual(typeof rel0.cooSrcOffset, 'bigint');
+  assert.strictEqual(typeof snap.getRelationName(0), 'string');
+
+  // Prototype list & lookup helpers
+  assert.strictEqual(snap.domains().length, snap.domainCount());
+  assert.strictEqual(snap.domain(0).domainId, 0);
+  assert.strictEqual(snap.domain(dom0.name).domainId, 0);
+  assert.strictEqual(snap.domain('__missing__'), null);
+  assert.throws(() => snap.domain(true), TypeError);
+  assert.strictEqual(snap.relations().length, snap.relationCount());
+  assert.strictEqual(snap.relation(0).relationId, 0);
+  assert.strictEqual(snap.relation('__missing__'), null);
+  assert.throws(() => snap.relation(false), TypeError);
+  assert.deepStrictEqual(snap.indices(), []);
+  assert.strictEqual(snap.metadataCount(), 0);
 
   const da0 = snap.getDomainAttributeInfo(0, 0);
   assert.ok(da0.dataOffset >= 4096n);
@@ -385,7 +403,13 @@ try {
   for (const badIdx of [-1, -65536, 65536, NaN, Infinity, 0.5]) {
     assert.throws(() => snap.getDomain(badIdx), RangeError);
     assert.throws(() => snap.getRelation(badIdx), RangeError);
+    assert.throws(() => snap.getRelationName(badIdx), RangeError);
+    assert.throws(() => snap.getIndex(badIdx), RangeError);
+    assert.throws(() => snap.getDomainAttributeCount(badIdx), RangeError);
     assert.throws(() => snap.getDomainAttributeInfo(badIdx, 0), RangeError);
+    assert.throws(() => snap.getAttributeInfo(badIdx, 0), RangeError);
+    assert.throws(() => snap.getDomainAttributeDecimal64(badIdx, 0), RangeError);
+    assert.throws(() => snap.getAttributeDecimal64(badIdx, 0), RangeError);
   }
   assert.throws(() => snap.getDomainAttributeInfo(0, 99), RangeError);
   assert.throws(() => snap.getAttributeInfo(0, 99), RangeError);
@@ -393,7 +417,16 @@ try {
   snap.close();
   assert.throws(() => snap.header(), /closed/i);
   assert.throws(() => snap.fileSize(), /closed/i);
+  assert.throws(() => snap.sha256(), /closed/i);
+  assert.throws(() => snap.domainCount(), /closed/i);
+  assert.throws(() => snap.relationCount(), /closed/i);
   assert.throws(() => snap.indexCount(), /closed/i);
+  assert.throws(() => snap.domains(), /closed/i);
+  assert.throws(() => snap.relations(), /closed/i);
+  assert.throws(() => snap.indices(), /closed/i);
+  assert.throws(() => snap.metadataCount(), /closed/i);
+  assert.throws(() => snap.getMetadata('k'), /closed/i);
+  assert.throws(() => snap.getAllMetadata(), /closed/i);
   console.log('ALL NODE v0.11 + DECIMAL64 + INTROSPECTION TESTS PASSED!');
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });

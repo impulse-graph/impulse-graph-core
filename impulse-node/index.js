@@ -513,6 +513,69 @@ native.Snapshot.prototype.traverse = function (startNode) {
   return new Traversal(this, startNode);
 };
 
+native.Snapshot.prototype.domains = function () {
+  const n = this.domainCount();
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(this.getDomain(i));
+  return out;
+};
+
+native.Snapshot.prototype.domain = function (nameOrId) {
+  const n = this.domainCount();
+  if (typeof nameOrId === 'number' && Number.isInteger(nameOrId)) {
+    for (let i = 0; i < n; i++) {
+      const d = this.getDomain(i);
+      if (d.domainId === nameOrId) return d;
+    }
+    return null;
+  }
+  if (typeof nameOrId === 'string') {
+    for (let i = 0; i < n; i++) {
+      const d = this.getDomain(i);
+      if (d.name === nameOrId) return d;
+    }
+    return null;
+  }
+  throw new TypeError(`domain() expects a string or integer, got ${typeof nameOrId}`);
+};
+
+native.Snapshot.prototype.relations = function () {
+  const n = this.relationCount();
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(this.getRelation(i));
+  return out;
+};
+
+native.Snapshot.prototype.relation = function (nameOrId) {
+  const n = this.relationCount();
+  if (typeof nameOrId === 'number' && Number.isInteger(nameOrId)) {
+    for (let i = 0; i < n; i++) {
+      const r = this.getRelation(i);
+      if (r.relationId === nameOrId) return r;
+    }
+    return null;
+  }
+  if (typeof nameOrId === 'string') {
+    for (let i = 0; i < n; i++) {
+      const r = this.getRelation(i);
+      if (r.name === nameOrId) return r;
+    }
+    return null;
+  }
+  throw new TypeError(`relation() expects a string or integer, got ${typeof nameOrId}`);
+};
+
+native.Snapshot.prototype.indices = function () {
+  const n = this.indexCount();
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(this.getIndex(i));
+  return out;
+};
+
+native.Snapshot.prototype.metadataCount = function () {
+  return Object.keys(this.getAllMetadata()).length;
+};
+
 const Opcodes = {
   ...(native.Opcodes || {}),
   SCALAR_DECIMAL_ALU: 0x15,

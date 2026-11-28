@@ -10,9 +10,24 @@ namespace ImpulseGraph.Vm;
 /// </summary>
 public sealed unsafe class VmContext : IDisposable
 {
+    private readonly object _sync = new();
     private nint _rawBuf;
     private nint _ws;
     public nint Handle => Volatile.Read(ref _ws);
+
+    internal nint EnterWorkspaceLock()
+    {
+        Monitor.Enter(_sync);
+        var ws = Volatile.Read(ref _ws);
+        if (ws == nint.Zero)
+        {
+            Monitor.Exit(_sync);
+            throw new ObjectDisposedException(nameof(VmContext), "VM workspace has been disposed.");
+        }
+        return ws;
+    }
+
+    internal void ExitWorkspaceLock() => Monitor.Exit(_sync);
 
     public VmContext(Snapshot snapshot, nuint scratchBytes = 4 * 1024 * 1024)
     {
@@ -44,11 +59,26 @@ public sealed unsafe class VmContext : IDisposable
 
     private void Dispose(bool disposing)
     {
-        Interlocked.Exchange(ref _ws, nint.Zero);
-        nint raw = Interlocked.Exchange(ref _rawBuf, nint.Zero);
-        if (raw != nint.Zero)
+        if (disposing)
         {
-            NativeMemory.AlignedFree((void*)raw);
+            lock (_sync)
+            {
+                Interlocked.Exchange(ref _ws, nint.Zero);
+                nint raw = Interlocked.Exchange(ref _rawBuf, nint.Zero);
+                if (raw != nint.Zero)
+                {
+                    NativeMemory.AlignedFree((void*)raw);
+                }
+            }
+        }
+        else
+        {
+            Interlocked.Exchange(ref _ws, nint.Zero);
+            nint raw = Interlocked.Exchange(ref _rawBuf, nint.Zero);
+            if (raw != nint.Zero)
+            {
+                NativeMemory.AlignedFree((void*)raw);
+            }
         }
     }
 }

@@ -63,8 +63,13 @@ export interface RelationInfo {
   cooTgtBytes: bigint;
   cooEdgeIdOffset: bigint;
   cooEdgeIdBytes: bigint;
+  srcNodeIdWidth: number;
+  tgtNodeIdWidth: number;
+  hasCsr: boolean;
   hasCsc: boolean;
   hasCoo: boolean;
+  isFlatForward: boolean;
+  isFlatReverse: boolean;
   cooOrder: number;
   isVirtual: boolean;
   virtualComponentIds: number[];
@@ -199,6 +204,12 @@ export class Snapshot {
     tgtId: number | bigint
   ): boolean;
   executeCypher(cypher: string, params?: Record<string, unknown>): number[];
+  domains(): DomainInfo[];
+  domain(nameOrId: string | number): DomainInfo | null;
+  relations(): RelationInfo[];
+  relation(nameOrId: string | number): RelationInfo | null;
+  indices(): IndexInfo[];
+  metadataCount(): number;
   close(): void;
 }
 

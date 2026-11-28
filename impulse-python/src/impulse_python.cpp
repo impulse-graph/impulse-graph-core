@@ -136,7 +136,8 @@ public:
 
     uint16_t domain_count() const {
         auto lease = lease_;
-        return (lease && lease->handle) ? impulse_snapshot_domain_count(lease->handle) : 0;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_domain_count(lease->handle);
     }
 
     py::dict get_domain(uint16_t index) const {
@@ -163,6 +164,9 @@ public:
     uint16_t get_domain_attribute_count(uint16_t domain_index) const {
         auto lease = lease_;
         if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        if (domain_index >= impulse_snapshot_domain_count(lease->handle)) {
+            throw std::out_of_range("Invalid domain index: " + std::to_string(domain_index));
+        }
         return impulse_snapshot_get_domain_attribute_count(lease->handle, domain_index);
     }
 
@@ -201,7 +205,8 @@ public:
 
     uint16_t relation_count() const {
         auto lease = lease_;
-        return (lease && lease->handle) ? impulse_snapshot_relation_count(lease->handle) : 0;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_relation_count(lease->handle);
     }
 
     py::dict get_relation(uint16_t index) const {
@@ -233,10 +238,39 @@ public:
         res["csc_row_off_bytes"] = entry.csc_row_off_bytes;
         res["csc_col_idx_offset"] = entry.csc_col_idx_offset;
         res["csc_col_idx_bytes"] = entry.csc_col_idx_bytes;
-        res["has_csc"] = ((entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) != 0) ||
-                         entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0;
-        res["has_coo"] = ((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0) ||
-                         (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0);
+        uint16_t snap_ver = impulse_snapshot_version(lease->handle);
+        bool is_virt = (snap_ver >= 10) && ((entry.section_features & IMP_REL_FEATURE_VIRTUAL) != 0);
+        res["is_virtual"] = is_virt;
+        res["has_csr"] = !is_virt && (entry.csr_row_off_bytes > 0 || entry.csr_col_idx_bytes > 0);
+        res["has_csc"] = !is_virt && (entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0);
+        res["has_coo"] = !is_virt && (((snap_ver >= 11) && ((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0)) ||
+                         (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0));
+        res["is_flat_forward"] = !is_virt && entry.encoding_id != 3 &&
+                                 entry.csr_row_off_bytes == 0 && entry.csr_col_idx_bytes > 0;
+        res["is_flat_reverse"] = !is_virt && entry.encoding_id != 3 &&
+                                 entry.csc_row_off_bytes == 0 && entry.csc_col_idx_bytes > 0;
+        auto norm_w = [](uint8_t w) -> uint8_t {
+            if (w == 16 || w == 2) return 2;
+            if (w == 64 || w == 8) return 8;
+            return 4;
+        };
+        uint8_t fallback_w = entry.node_id_width > 0 ? norm_w(entry.node_id_width) : 4;
+        uint8_t src_w = fallback_w;
+        uint8_t tgt_w = fallback_w;
+        uint16_t dcnt = impulse_snapshot_domain_count(lease->handle);
+        for (uint16_t di = 0; di < dcnt; ++di) {
+            impulse_domain_catalog_entry_t de{};
+            if (impulse_snapshot_get_domain_entry(lease->handle, di, &de, nullptr) == IMPULSE_OK) {
+                if (de.domain_id == entry.src_domain_id && de.dense_id_width > 0) {
+                    src_w = norm_w(de.dense_id_width);
+                }
+                if (de.domain_id == entry.tgt_domain_id && de.dense_id_width > 0) {
+                    tgt_w = norm_w(de.dense_id_width);
+                }
+            }
+        }
+        res["src_node_id_width"] = src_w;
+        res["tgt_node_id_width"] = tgt_w;
         res["coo_src_offset"] = entry.coo_src_offset;
         res["coo_src_bytes"] = entry.coo_src_bytes;
         res["coo_tgt_offset"] = entry.coo_tgt_offset;
@@ -244,8 +278,6 @@ public:
         res["coo_edge_id_offset"] = entry.coo_edge_id_offset;
         res["coo_edge_id_bytes"] = entry.coo_edge_id_bytes;
         res["coo_order"] = entry.coo_order;
-        bool is_virt = (entry.section_features & IMP_REL_FEATURE_VIRTUAL) != 0;
-        res["is_virtual"] = is_virt;
         py::list vcomps;
         if (is_virt) {
             uint16_t vcnt = 0;
@@ -268,7 +300,14 @@ public:
 
     uint16_t index_count() const {
         auto lease = lease_;
-        return (lease && lease->handle) ? impulse_snapshot_get_index_count(lease->handle) : 0;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_get_index_count(lease->handle);
+    }
+
+    uint32_t metadata_count() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_get_metadata_count(lease->handle);
     }
 
     py::dict get_index(uint16_t index_idx) const {
@@ -1076,6 +1115,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("relation_count", &PyImpulseSnapshot::relation_count)
         .def("get_relation", &PyImpulseSnapshot::get_relation, py::arg("index"))
         .def("index_count", &PyImpulseSnapshot::index_count)
+        .def("metadata_count", &PyImpulseSnapshot::metadata_count)
         .def("get_index", &PyImpulseSnapshot::get_index, py::arg("index"))
         .def("metadata", &PyImpulseSnapshot::metadata)
         .def("get_metadata", &PyImpulseSnapshot::get_metadata, py::arg("key"))

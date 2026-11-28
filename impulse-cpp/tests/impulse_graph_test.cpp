@@ -1199,8 +1199,241 @@ static void test_phase0_coverage_matrix() {
         ASSERT_EQ(impulse_snapshot_get_relation_csc_raw_buffers(snap, 0, &rcsc_o, &rcsc_t, nullptr, nullptr, &nw, &ew), IMPULSE_OK);
         ASSERT_EQ(nw, 2);
         ASSERT_EQ(ew, 4);
+        // v0.11 dense_id_width=2 with rel.node_id_width=0 in is_reachable & sample_neighbors
+        ASSERT_TRUE(impulse_snapshot_is_reachable(snap, 0, 0, 1));
+        ASSERT_TRUE(impulse_snapshot_is_reachable(snap, 0, 1, 0));
+        ASSERT_TRUE(!impulse_snapshot_is_reachable(snap, 0, 0, 0));
+        uint64_t seed_nodes[2] = { 0, 1 };
+        uint64_t sampled_src[2] = { 99, 99 };
+        uint64_t sampled_tgt[2] = { 99, 99 };
+        size_t sampled_cnt = 0;
+        ASSERT_EQ(impulse_snapshot_sample_neighbors(snap, 0, seed_nodes, 2, 1, 42, sampled_src, sampled_tgt, 2, &sampled_cnt), IMPULSE_OK);
+        ASSERT_EQ(sampled_cnt, 2u);
+        ASSERT_EQ(sampled_src[0], 0u);
+        ASSERT_EQ(sampled_tgt[0], 1u);
+        ASSERT_EQ(sampled_src[1], 1u);
+        ASSERT_EQ(sampled_tgt[1], 0u);
         impulse_snapshot_close(snap);
         std::remove(csc16_file);
+    }
+
+    // 6b. v0.10 non-zero reserved byte 0x03 in domain catalog MUST be zeroed on open
+    const char* v10_res_file = "__impulse_test_phase0_v10_reserved.imps";
+    {
+        const size_t dir_off = 4096;
+        const size_t dom_off = dir_off + 128;
+        const size_t total_size = dom_off + 128;
+        std::vector<uint8_t> buf(total_size, 0);
+        impulse_snapshot_header_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = 10;
+        hdr.data_offset = static_cast<uint32_t>(dir_off);
+        hdr.domain_count = 1;
+        hdr.relation_count = 0;
+        hdr.header_checksum = compute_test_hdr_crc16(&hdr);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+        uint32_t sp_len = 1;
+        std::memcpy(buf.data() + dir_off, &sp_len, 4);
+        impulse_domain_catalog_entry_t dom{};
+        dom.domain_id = 0;
+        dom.key_type = IMPULSE_KEY_TYPE_INT32;
+        dom.dense_id_width = 0xAB; // non-zero reserved byte 0x03 in v0.10
+        dom.node_count = 5;
+        dom.key_attr_index = 0xFFFF;
+        std::memcpy(buf.data() + dom_off, &dom, sizeof(dom));
+        std::FILE* f = std::fopen(v10_res_file, "wb");
+        ASSERT_TRUE(f != nullptr);
+        ASSERT_EQ(std::fwrite(buf.data(), 1, buf.size(), f), buf.size());
+        std::fclose(f);
+
+        impulse_snapshot_t* snap = impulse_snapshot_open(v10_res_file, &st);
+        ASSERT_EQ(st, IMPULSE_OK);
+        ASSERT_TRUE(snap != nullptr);
+        impulse_domain_catalog_entry_t got{};
+        ASSERT_EQ(impulse_snapshot_get_domain_entry(snap, 0, &got, nullptr), IMPULSE_OK);
+        ASSERT_EQ(got.dense_id_width, 0);
+        impulse_snapshot_close(snap);
+        std::remove(v10_res_file);
+    }
+
+    // 7. Virtual super-relation cycle and bottom-up max-depth (>16) rejection
+    auto build_virtual_graph_file = [](const char* path, const std::vector<std::vector<uint16_t>>& children) {
+        const uint16_t rel_cnt = static_cast<uint16_t>(children.size());
+        const size_t dir_off = 4096;
+        const size_t dom_off = dir_off + 128;
+        const size_t rel_off = dom_off + 128;
+        const size_t rel_bytes = static_cast<size_t>(rel_cnt) * sizeof(impulse_relation_directory_entry_t);
+        const size_t total_size = ((rel_off + rel_bytes + 127) / 128) * 128;
+        std::vector<uint8_t> buf(total_size, 0);
+        impulse_snapshot_header_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = 11;
+        hdr.data_offset = static_cast<uint32_t>(dir_off);
+        hdr.domain_count = 1;
+        hdr.relation_count = rel_cnt;
+        hdr.header_checksum = compute_test_hdr_crc16(&hdr);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+        uint32_t sp_len = 1;
+        std::memcpy(buf.data() + dir_off, &sp_len, 4);
+        impulse_domain_catalog_entry_t dom{};
+        dom.domain_id = 0;
+        dom.key_type = IMPULSE_KEY_TYPE_INT32;
+        dom.dense_id_width = 4;
+        dom.node_count = 2;
+        dom.key_attr_index = 0xFFFF;
+        std::memcpy(buf.data() + dom_off, &dom, sizeof(dom));
+        size_t cur = rel_off;
+        for (uint16_t r = 0; r < rel_cnt; ++r) {
+            impulse_relation_directory_entry_t re{};
+            re.relation_id = r;
+            re.node_id_width = 4;
+            re.edge_index_width = 4;
+            re.node_count = 2;
+            if (!children[r].empty()) {
+                re.section_features = IMP_REL_FEATURE_VIRTUAL;
+                uint16_t cnt = static_cast<uint16_t>(children[r].size());
+                std::memcpy(&re.reserved2[0], &cnt, 2);
+                for (size_t j = 0; j < children[r].size(); ++j) {
+                    uint16_t cid = children[r][j];
+                    std::memcpy(&re.reserved2[2 + j * 2], &cid, 2);
+                }
+            }
+            std::memcpy(buf.data() + cur, &re, sizeof(re));
+            cur += sizeof(re);
+        }
+        std::FILE* f = std::fopen(path, "wb");
+        ASSERT_TRUE(f != nullptr);
+        ASSERT_EQ(std::fwrite(buf.data(), 1, buf.size(), f), buf.size());
+        std::fclose(f);
+    };
+
+    const char* vdepth_file = "__impulse_test_phase0_vdepth.imps";
+    {
+        // Bottom-up chain: r0 physical, r1 -> {r0}, ..., r18 -> {r17} (depth 17 > 16)
+        std::vector<std::vector<uint16_t>> ch(19);
+        for (uint16_t k = 1; k <= 18; ++k) ch[k] = { static_cast<uint16_t>(k - 1) };
+        build_virtual_graph_file(vdepth_file, ch);
+        impulse_snapshot_t* snap = impulse_snapshot_open(vdepth_file, &st);
+        ASSERT_TRUE(snap == nullptr);
+        ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+        std::remove(vdepth_file);
+    }
+
+    const char* vdepth_top_file = "__impulse_test_phase0_vdepth_top.imps";
+    {
+        // Top-down chain: r0 -> {r1}, r1 -> {r2}, ..., r17 -> {r18}, r18 physical (depth 17 > 16)
+        std::vector<std::vector<uint16_t>> ch(19);
+        for (uint16_t k = 0; k < 18; ++k) ch[k] = { static_cast<uint16_t>(k + 1) };
+        build_virtual_graph_file(vdepth_top_file, ch);
+        impulse_snapshot_t* snap = impulse_snapshot_open(vdepth_top_file, &st);
+        ASSERT_TRUE(snap == nullptr);
+        ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+        std::remove(vdepth_top_file);
+    }
+
+    const char* vcycle_file = "__impulse_test_phase0_vcycle.imps";
+    {
+        // Mutual cycle: r0 -> {r1}, r1 -> {r0}
+        std::vector<std::vector<uint16_t>> ch = { { 1 }, { 0 } };
+        build_virtual_graph_file(vcycle_file, ch);
+        impulse_snapshot_t* snap = impulse_snapshot_open(vcycle_file, &st);
+        ASSERT_TRUE(snap == nullptr);
+        ASSERT_EQ(st, IMPULSE_ERR_INVALID_ARGUMENT);
+        std::remove(vcycle_file);
+    }
+
+    // 8. dir_offset < 4096 rejected with BUFFER_OVERFLOW
+    const char* bad_dir_file = "__impulse_test_phase0_bad_dir.imps";
+    {
+        std::vector<uint8_t> buf(4096, 0);
+        impulse_snapshot_header_t hdr{};
+        hdr.magic = IMPULSE_MAGIC;
+        hdr.version = 11;
+        hdr.data_offset = 128; // inside Page 0!
+        hdr.header_checksum = compute_test_hdr_crc16(&hdr);
+        std::memcpy(buf.data(), &hdr, sizeof(hdr));
+        std::FILE* f = std::fopen(bad_dir_file, "wb");
+        ASSERT_TRUE(f != nullptr);
+        ASSERT_EQ(std::fwrite(buf.data(), 1, buf.size(), f), buf.size());
+        std::fclose(f);
+        impulse_snapshot_t* snap = impulse_snapshot_open(bad_dir_file, &st);
+        ASSERT_TRUE(snap == nullptr);
+        ASSERT_EQ(st, IMPULSE_ERR_BUFFER_OVERFLOW);
+        std::remove(bad_dir_file);
+    }
+
+    // 9. Flat M:1 relation is_reachable & sample_neighbors
+    const char* flat_m1_file = "__impulse_test_phase0_flat_m1.imps";
+    {
+        const uint32_t flat_targets[3] = { 2, 0xFFFFFFFFu, 0 };
+        impulse_writer_t* w = impulse_writer_create(flat_m1_file, IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED);
+        ASSERT_EQ(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Node"), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 3), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_add_relation_v11(
+            w, 0, 0, IMPULSE_ENC_RAW, 4, 4, 3, 2, (1ULL << 3), // M:1 flat forward
+            nullptr, 0, flat_targets, sizeof(flat_targets),
+            nullptr, 0, nullptr, 0,
+            nullptr, 0, nullptr, 0, nullptr, 0, 0
+        ), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_finalize(w), IMPULSE_OK);
+        impulse_writer_destroy(w);
+
+        impulse_snapshot_t* snap = impulse_snapshot_open(flat_m1_file, &st);
+        ASSERT_EQ(st, IMPULSE_OK);
+        ASSERT_TRUE(impulse_snapshot_is_reachable(snap, 0, 0, 2));
+        ASSERT_TRUE(!impulse_snapshot_is_reachable(snap, 0, 1, 0xFFFFFFFFu));
+        ASSERT_TRUE(impulse_snapshot_is_reachable(snap, 0, 2, 0));
+        uint64_t seeds[3] = { 0, 1, 2 };
+        uint64_t out_s[3] = { 0 }, out_t[3] = { 0 };
+        size_t cnt = 0;
+        ASSERT_EQ(impulse_snapshot_sample_neighbors(snap, 0, seeds, 3, 1, 7, out_s, out_t, 3, &cnt), IMPULSE_OK);
+        ASSERT_EQ(cnt, 2u);
+        ASSERT_EQ(out_s[0], 0u);
+        ASSERT_EQ(out_t[0], 2u);
+        ASSERT_EQ(out_s[1], 2u);
+        ASSERT_EQ(out_t[1], 0u);
+        impulse_snapshot_close(snap);
+        std::remove(flat_m1_file);
+    }
+
+    // 10. Delta compaction tombstoning all edges on v0.11 dense_id_width=2 relation
+    const char* comp_base = "__impulse_test_phase0_comp_base.imps";
+    const char* comp_out = "__impulse_test_phase0_comp_out.imps";
+    {
+        const uint32_t rows[] = { 0, 1, 1 };
+        const uint16_t cols16[] = { 1 };
+        impulse_writer_t* w = impulse_writer_create(comp_base, IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED);
+        ASSERT_EQ(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Small"), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 2), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_set_domain_dense_id_width(w, 0, 2), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_add_relation_v11(
+            w, 0, 0, IMPULSE_ENC_RAW, 2, 4, 2, 1, 0,
+            rows, sizeof(rows), cols16, sizeof(cols16),
+            nullptr, 0, nullptr, 0,
+            nullptr, 0, nullptr, 0, nullptr, 0, 0
+        ), IMPULSE_OK);
+        ASSERT_EQ(impulse_writer_finalize(w), IMPULSE_OK);
+        impulse_writer_destroy(w);
+
+        impulse_snapshot_t* base = impulse_snapshot_open(comp_base, &st);
+        ASSERT_EQ(st, IMPULSE_OK);
+        impulse_delta_layer_t* dl = impulse_delta_layer_create(0, 0, "");
+        ASSERT_EQ(impulse_delta_layer_tombstone_edge(dl, 0, 1), IMPULSE_OK);
+        ASSERT_EQ(impulse_snapshot_compact_to_file(base, &dl, 1, comp_out), IMPULSE_OK);
+        impulse_delta_layer_destroy(dl);
+        impulse_snapshot_close(base);
+
+        impulse_snapshot_t* compacted = impulse_snapshot_open(comp_out, &st);
+        ASSERT_EQ(st, IMPULSE_OK);
+        impulse_domain_catalog_entry_t d0{};
+        ASSERT_EQ(impulse_snapshot_get_domain_entry(compacted, 0, &d0, nullptr), IMPULSE_OK);
+        ASSERT_EQ(d0.dense_id_width, 2);
+        impulse_relation_directory_entry_t r0{};
+        ASSERT_EQ(impulse_snapshot_get_relation_entry(compacted, 0, &r0), IMPULSE_OK);
+        ASSERT_EQ(r0.edge_count, 0u);
+        impulse_snapshot_close(compacted);
+        std::remove(comp_base);
+        std::remove(comp_out);
     }
 
     std::printf("  PASS: test_phase0_coverage_matrix\n");

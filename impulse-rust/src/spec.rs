@@ -290,6 +290,23 @@ impl SnapshotHeader {
     pub fn header_checksum(&self) -> u16 {
         unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.header_checksum)) }
     }
+    pub fn timestamp_ms(&self) -> u64 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.timestamp_ms)) }
+    }
+    pub fn index_count(&self) -> u16 {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.index_count)) }
+    }
+    pub fn snapshot_uuid(&self) -> [u8; 16] {
+        unsafe { std::ptr::read_unaligned(std::ptr::addr_of!(self.snapshot_uuid)) }
+    }
+    pub fn snapshot_uuid_hex(&self) -> String {
+        let mut s = String::with_capacity(32);
+        for b in self.snapshot_uuid() {
+            use std::fmt::Write;
+            let _ = write!(&mut s, "{:02x}", b);
+        }
+        s
+    }
 }
 
 const_assert_eq!(std::mem::size_of::<SnapshotHeader>(), 4096);

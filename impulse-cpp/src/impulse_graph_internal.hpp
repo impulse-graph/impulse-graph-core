@@ -275,6 +275,8 @@ struct impulse_writer_relation {
     std::vector<uint8_t> coo_tgt;
     std::vector<uint8_t> coo_edge_ids;
     uint8_t coo_order = 0;
+    std::string name;
+    uint8_t reserved2[22] = {0};
     std::vector<impulse_writer_attr> attributes;
 };
 

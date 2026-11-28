@@ -108,6 +108,7 @@ def test_python_phase1_metadata_introspection():
             assert idxs[0]["payload_feature_mask"] == 0xCAFEBABE
 
             meta = snap.metadata()
+            assert snap.metadata_count() == len(meta)
             assert meta["a_key"] == "first"
             assert meta["z_key"] == "last"
             assert meta["🚀_emoji"] == "rocket"
@@ -119,6 +120,24 @@ def test_python_phase1_metadata_introspection():
             assert snap.get_metadata("missing") is None
             assert snap.get_metadata("missing", "fallback") == "fallback"
 
+            # relation(name_or_id) & domain(bool) TypeError & width/derived flags
+            r0 = snap.relation(0)
+            assert r0["relation_id"] == 0
+            assert r0["src_node_id_width"] == 4
+            assert r0["tgt_node_id_width"] == 4
+            assert r0["has_csr"] is True
+            assert r0["is_flat_forward"] is False
+            with pytest.raises(KeyError):
+                snap.relation(99)
+            with pytest.raises(KeyError):
+                snap.relation("__missing__")
+            with pytest.raises(TypeError):
+                snap.relation(True)
+            with pytest.raises(TypeError):
+                snap.domain(False)
+
+            with pytest.raises(IndexError):
+                snap.get_domain_attribute_count(99)
             with pytest.raises(IndexError):
                 snap.get_domain_attribute_info(0, 99)
             with pytest.raises(IndexError):
@@ -134,6 +153,18 @@ def test_python_phase1_metadata_introspection():
         with pytest.raises(RuntimeError):
             snap.header()
         with pytest.raises(RuntimeError):
+            snap.file_size()
+        with pytest.raises(RuntimeError):
             snap.sha256()
+        with pytest.raises(RuntimeError):
+            snap.domains()
+        with pytest.raises(RuntimeError):
+            snap.relations()
+        with pytest.raises(RuntimeError):
+            snap.indices()
+        with pytest.raises(RuntimeError):
+            snap.metadata()
+        with pytest.raises(RuntimeError):
+            snap.metadata_count()
         with pytest.raises(RuntimeError):
             snap.get_metadata("missing")

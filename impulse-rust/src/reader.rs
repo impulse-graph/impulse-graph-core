@@ -47,6 +47,10 @@ pub struct RelationInfo {
 }
 
 impl RelationInfo {
+    pub fn has_csr(&self) -> bool {
+        !self.is_virtual() && (self.csr_row_off_bytes > 0 || self.csr_col_idx_bytes > 0)
+    }
+
     pub fn has_csc(&self) -> bool {
         (self.section_features & crate::spec::IMPULSE_SECTION_FEAT_INCLUDE_CSC) != 0
             || self.csc_row_off_bytes > 0
@@ -101,6 +105,17 @@ impl AttributeInfo {
 
     pub fn is_nullable(&self) -> bool {
         (self.type_code & IMPULSE_NULLABLE_FLAG) != 0
+    }
+
+    /// Returns `(validity_offset, validity_bytes)` for nullable attributes (128B aligned),
+    /// or `(0, 0)` for non-nullable / empty attributes.
+    pub fn validity_range(&self, elem_count: u64) -> (u64, u64) {
+        if !self.is_nullable() || elem_count == 0 || self.data_bytes == 0 {
+            return (0, 0);
+        }
+        let raw_bits_bytes = elem_count.saturating_add(7) / 8;
+        let aligned = raw_bits_bytes.saturating_add(127) / 128 * 128;
+        (self.data_offset, aligned.min(self.data_bytes))
     }
 }
 
@@ -844,12 +859,34 @@ impl SnapshotReader {
         self.mmap.as_slice()
     }
 
+    pub fn file_size_bytes(&self) -> u64 {
+        self.mmap.as_slice().len() as u64
+    }
+
+    pub fn sha256_bytes(&self) -> [u8; 32] {
+        compute_sha256_bytes(self.mmap.as_slice())
+    }
+
+    pub fn sha256_hex(&self) -> String {
+        let digest = self.sha256_bytes();
+        let mut s = String::with_capacity(64);
+        for b in digest {
+            use std::fmt::Write;
+            let _ = write!(&mut s, "{:02x}", b);
+        }
+        s
+    }
+
     pub fn header(&self) -> &SnapshotHeader {
         &self.header
     }
 
     pub fn index_entries(&self) -> &[IndexEntryInfo] {
         &self.index_entries
+    }
+
+    pub fn index_count(&self) -> usize {
+        self.index_entries.len()
     }
 
     pub fn domain_count(&self) -> u16 {
@@ -864,8 +901,50 @@ impl SnapshotReader {
         &self.domains
     }
 
+    pub fn domain_by_id(&self, domain_id: u16) -> Option<&DomainInfo> {
+        self.domains.iter().find(|d| d.domain_id == domain_id)
+    }
+
+    pub fn domain_by_name(&self, name: &str) -> Option<&DomainInfo> {
+        self.domains.iter().find(|d| d.name == name)
+    }
+
     pub fn relations(&self) -> &[RelationInfo] {
         &self.relations
+    }
+
+    pub fn relation_by_id(&self, relation_id: u16) -> Option<&RelationInfo> {
+        self.relations.iter().find(|r| r.relation_id == relation_id)
+    }
+
+    pub fn relation_by_name(&self, name: &str) -> Option<&RelationInfo> {
+        self.relations.iter().find(|r| r.name == name)
+    }
+
+    pub fn relation_src_node_id_width(&self, rel: &RelationInfo) -> u8 {
+        self.resolve_domain_width(rel.src_domain_id, rel.node_id_width)
+    }
+
+    pub fn relation_tgt_node_id_width(&self, rel: &RelationInfo) -> u8 {
+        self.resolve_domain_width(rel.tgt_domain_id, rel.node_id_width)
+    }
+
+    fn resolve_domain_width(&self, domain_id: u16, fallback: u8) -> u8 {
+        match self.domain_by_id(domain_id) {
+            Some(d) if d.dense_id_width > 0 => match d.dense_id_width {
+                16 | 2 => 2,
+                32 | 4 => 4,
+                64 | 8 => 8,
+                other => other,
+            },
+            _ => {
+                if fallback > 0 {
+                    fallback
+                } else {
+                    4
+                }
+            }
+        }
     }
 
     pub fn metadata_offset(&self) -> u64 {
@@ -874,6 +953,14 @@ impl SnapshotReader {
 
     pub fn metadata_bytes(&self) -> u64 {
         self.metadata_bytes
+    }
+
+    pub fn metadata_count(&self) -> Result<usize, ImpulseError> {
+        Ok(self.get_metadata()?.len())
+    }
+
+    pub fn metadata_get(&self, key: &str) -> Result<Option<String>, ImpulseError> {
+        Ok(self.get_metadata()?.remove(key))
     }
 
     pub fn get_relation_entry(&self, relation_index: u16) -> Option<&RelationInfo> {
@@ -2098,5 +2185,225 @@ impl SnapshotReader {
             attribute_stats: attr_map,
             metadata_sketches: metadata,
         })
+    }
+}
+
+/// Pure-Rust streaming SHA-256 (FIPS 180-4) with zero third-party dependencies (AGENTS.md §3.2).
+pub(crate) fn compute_sha256_bytes(data: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut state: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let compress = |st: &mut [u32; 8], block: &[u8; 64]| {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                block[i * 4],
+                block[i * 4 + 1],
+                block[i * 4 + 2],
+                block[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *st;
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+        st[0] = st[0].wrapping_add(a);
+        st[1] = st[1].wrapping_add(b);
+        st[2] = st[2].wrapping_add(c);
+        st[3] = st[3].wrapping_add(d);
+        st[4] = st[4].wrapping_add(e);
+        st[5] = st[5].wrapping_add(f);
+        st[6] = st[6].wrapping_add(g);
+        st[7] = st[7].wrapping_add(h);
+    };
+
+    let mut chunks = data.chunks_exact(64);
+    for chunk in chunks.by_ref() {
+        let block: &[u8; 64] = chunk.try_into().unwrap();
+        compress(&mut state, block);
+    }
+    let rem = chunks.remainder();
+    let mut final_block = [0u8; 64];
+    final_block[..rem.len()].copy_from_slice(rem);
+    final_block[rem.len()] = 0x80;
+    if rem.len() >= 56 {
+        compress(&mut state, &final_block);
+        final_block = [0u8; 64];
+    }
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    final_block[56..64].copy_from_slice(&bit_len.to_be_bytes());
+    compress(&mut state, &final_block);
+
+    let mut out = [0u8; 32];
+    for (i, word) in state.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+#[cfg(test)]
+mod metadata_introspection_tests {
+    use super::*;
+    use crate::writer::SnapshotWriter;
+
+    #[test]
+    fn test_sha256_nist_vectors() {
+        let empty = compute_sha256_bytes(b"");
+        let empty_hex: String = empty.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            empty_hex,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        let abc = compute_sha256_bytes(b"abc");
+        let abc_hex: String = abc.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            abc_hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // 56-byte NIST vector exercises the two-block padding path (rem.len() >= 56)
+        let nist56 =
+            compute_sha256_bytes(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
+        let nist56_hex: String = nist56.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            nist56_hex,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        // 64-byte exact block boundary
+        let block64 = compute_sha256_bytes(&[b'a'; 64]);
+        let block64_hex: String = block64.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            block64_hex,
+            "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"
+        );
+    }
+
+    #[test]
+    fn test_rust_metadata_introspection_roundtrip() {
+        let tmp = std::env::temp_dir().join("rust_metadata_introspection_test.imps");
+        let tmp_str = tmp.to_str().unwrap();
+        let mut writer = SnapshotWriter::new(tmp_str);
+        writer.add_domain(0, KeyType::Int32, "Account");
+        writer.set_domain_dense_id_width(0, 4);
+        writer.add_relation(0, 0, 3, 2, vec![0, 1, 2, 2], vec![1, 2]);
+        writer.set_relation_name(0, "transfer");
+        writer.set_relation_include_csc(0, true);
+        writer.set_relation_coo_v11(0, 1);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("owner".to_string(), "rust-suite".to_string());
+        meta.insert("env".to_string(), "test".to_string());
+        writer.set_metadata(meta);
+        writer.finalize().expect("finalize snapshot");
+
+        let raw = std::fs::read(&tmp).expect("read raw bytes");
+        let reader = SnapshotReader::open(&tmp).expect("open snapshot");
+        let hdr = reader.header();
+        assert_eq!(hdr.magic(), IMPULSE_MAGIC);
+        assert_eq!(hdr.version(), 11);
+        assert_eq!(hdr.domain_count(), 1);
+        assert_eq!(hdr.relation_count(), 1);
+        assert_eq!(hdr.index_count(), 0);
+        let _ts = hdr.timestamp_ms();
+        assert_eq!(hdr.snapshot_uuid().len(), 16);
+        assert_eq!(hdr.snapshot_uuid_hex().len(), 32);
+        assert_eq!(reader.file_size_bytes(), raw.len() as u64);
+        assert_eq!(reader.sha256_bytes(), compute_sha256_bytes(&raw));
+        assert_eq!(reader.sha256_hex().len(), 64);
+
+        let dom = reader.domain_by_name("Account").expect("domain by name");
+        assert_eq!(dom.domain_id, 0);
+        assert_eq!(reader.domain_by_id(0).unwrap().name, "Account");
+        assert!(reader.domain_by_name("Missing").is_none());
+        assert!(reader.domain_by_id(99).is_none());
+
+        let rel = reader.relation_by_name("transfer").expect("rel by name");
+        assert_eq!(rel.relation_id, 0);
+        assert_eq!(reader.relation_by_id(0).unwrap().name, "transfer");
+        assert!(reader.relation_by_name("missing").is_none());
+        assert!(reader.relation_by_id(99).is_none());
+        assert!(rel.has_csr());
+        assert!(rel.has_csc());
+        assert!(rel.has_coo());
+        assert_eq!(rel.coo_order, 1);
+        assert!(!rel.is_virtual());
+        assert_eq!(reader.relation_src_node_id_width(rel), 4);
+        assert_eq!(reader.relation_tgt_node_id_width(rel), 4);
+        assert_eq!(reader.index_count(), 0);
+
+        // Verify dense_id_width==0 fallback to rel.node_id_width
+        let mut rel_w2 = rel.clone();
+        rel_w2.src_domain_id = 99;
+        rel_w2.tgt_domain_id = 99;
+        rel_w2.node_id_width = 2;
+        assert_eq!(reader.relation_src_node_id_width(&rel_w2), 2);
+        assert_eq!(reader.relation_tgt_node_id_width(&rel_w2), 2);
+
+        assert_eq!(reader.metadata_count().unwrap(), 2);
+        assert_eq!(
+            reader.metadata_get("owner").unwrap().as_deref(),
+            Some("rust-suite")
+        );
+        assert_eq!(reader.metadata_get("missing").unwrap(), None);
+
+        let nullable_attr = AttributeInfo {
+            name: "score".to_string(),
+            type_code: 0x86,
+            dimension: 1,
+            precision: 0,
+            scale: 0,
+            data_offset: 4096,
+            data_bytes: 256,
+            offsets_offset: 0,
+            offsets_bytes: 0,
+        };
+        assert_eq!(nullable_attr.validity_range(0), (0, 0));
+        assert_eq!(nullable_attr.validity_range(4), (4096, 128));
+        assert_eq!(nullable_attr.validity_range(1024), (4096, 128));
+        assert_eq!(nullable_attr.validity_range(1025), (4096, 256));
+        assert_eq!(nullable_attr.validity_range(u64::MAX), (4096, 256));
+        let non_null_attr = AttributeInfo {
+            type_code: 0x06,
+            ..nullable_attr
+        };
+        assert_eq!(non_null_attr.validity_range(4), (0, 0));
+
+        let _ = std::fs::remove_file(&tmp);
     }
 }

@@ -292,7 +292,10 @@ private:
 
     Napi::Value DomainCount(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
-        if (!snapshot_) return Napi::Number::New(env, 0);
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
         return Napi::Number::New(env, impulse_snapshot_domain_count(snapshot_));
     }
 
@@ -327,7 +330,10 @@ private:
 
     Napi::Value RelationCount(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
-        if (!snapshot_) return Napi::Number::New(env, 0);
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
         return Napi::Number::New(env, impulse_snapshot_relation_count(snapshot_));
     }
 
@@ -376,13 +382,43 @@ private:
         obj.Set("cooTgtBytes", Napi::BigInt::New(env, entry.coo_tgt_bytes));
         obj.Set("cooEdgeIdOffset", Napi::BigInt::New(env, entry.coo_edge_id_offset));
         obj.Set("cooEdgeIdBytes", Napi::BigInt::New(env, entry.coo_edge_id_bytes));
-        bool has_csc = ((entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) != 0) ||
-                       entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0;
-        bool has_coo = ((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0) ||
-                       (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0);
         bool is_virt = (entry.section_features & IMP_REL_FEATURE_VIRTUAL) != 0;
+        bool has_csr = !is_virt && (entry.csr_row_off_bytes > 0 || entry.csr_col_idx_bytes > 0);
+        bool has_csc = !is_virt && (((entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) != 0) ||
+                       entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0);
+        bool has_coo = !is_virt && (((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0) ||
+                       (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0));
+        bool is_flat_fwd = !is_virt && entry.encoding_id != 3 &&
+                           entry.csr_row_off_bytes == 0 && entry.csr_col_idx_bytes > 0;
+        bool is_flat_rev = !is_virt && entry.encoding_id != 3 &&
+                           entry.csc_row_off_bytes == 0 && entry.csc_col_idx_bytes > 0;
+        auto norm_w = [](uint8_t w) -> uint8_t {
+            if (w == 16 || w == 2) return 2;
+            if (w == 64 || w == 8) return 8;
+            return 4;
+        };
+        uint8_t fallback_w = entry.node_id_width > 0 ? norm_w(entry.node_id_width) : 4;
+        uint8_t src_w = fallback_w;
+        uint8_t tgt_w = fallback_w;
+        uint16_t dcnt = impulse_snapshot_domain_count(snapshot_);
+        for (uint16_t di = 0; di < dcnt; ++di) {
+            impulse_domain_catalog_entry_t de{};
+            if (impulse_snapshot_get_domain_entry(snapshot_, di, &de, nullptr) == IMPULSE_OK) {
+                if (de.domain_id == entry.src_domain_id && de.dense_id_width > 0) {
+                    src_w = norm_w(de.dense_id_width);
+                }
+                if (de.domain_id == entry.tgt_domain_id && de.dense_id_width > 0) {
+                    tgt_w = norm_w(de.dense_id_width);
+                }
+            }
+        }
+        obj.Set("srcNodeIdWidth", Napi::Number::New(env, src_w));
+        obj.Set("tgtNodeIdWidth", Napi::Number::New(env, tgt_w));
+        obj.Set("hasCsr", Napi::Boolean::New(env, has_csr));
         obj.Set("hasCsc", Napi::Boolean::New(env, has_csc));
         obj.Set("hasCoo", Napi::Boolean::New(env, has_coo));
+        obj.Set("isFlatForward", Napi::Boolean::New(env, is_flat_fwd));
+        obj.Set("isFlatReverse", Napi::Boolean::New(env, is_flat_rev));
         obj.Set("cooOrder", Napi::Number::New(env, entry.coo_order));
         obj.Set("isVirtual", Napi::Boolean::New(env, is_virt));
         Napi::Array vcomps = Napi::Array::New(env);
@@ -666,12 +702,14 @@ private:
             Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
             return env.Null();
         }
-        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+        if (info.Length() < 2) {
             Napi::TypeError::New(env, "Expected (domainIndex, attrIndex)").ThrowAsJavaScriptException();
             return env.Null();
         }
-        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
-        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        uint16_t dom_idx = 0;
+        uint16_t attr_idx = 0;
+        if (!TryGetUint16Index(env, info[0], &dom_idx, "domainIndex")) return env.Null();
+        if (!TryGetUint16Index(env, info[1], &attr_idx, "attrIndex")) return env.Null();
         const void* data = nullptr;
         uint64_t data_bytes = 0;
         uint8_t type_code = 0;
@@ -707,12 +745,14 @@ private:
             Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
             return env.Null();
         }
-        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+        if (info.Length() < 2) {
             Napi::TypeError::New(env, "Expected (relationIndex, attrIndex)").ThrowAsJavaScriptException();
             return env.Null();
         }
-        uint16_t rel_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
-        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
+        uint16_t rel_idx = 0;
+        uint16_t attr_idx = 0;
+        if (!TryGetUint16Index(env, info[0], &rel_idx, "relationIndex")) return env.Null();
+        if (!TryGetUint16Index(env, info[1], &attr_idx, "attrIndex")) return env.Null();
         const void* data = nullptr;
         uint64_t data_bytes = 0;
         uint8_t type_code = 0;

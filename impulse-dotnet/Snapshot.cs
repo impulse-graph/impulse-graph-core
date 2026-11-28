@@ -39,6 +39,7 @@ public sealed record AttributeInfo(
     byte TypeCode,
     byte BaseTypeCode,
     bool IsNullable,
+    bool Has64BitOffsets,
     uint Dimension,
     ushort? Precision,
     byte? Scale,
@@ -46,7 +47,23 @@ public sealed record AttributeInfo(
     ulong DataBytes,
     ulong OffsetsOffset,
     ulong OffsetsBytes
-);
+)
+{
+    public (ulong Offset, ulong Length) GetValidityRange(ulong elementCount)
+    {
+        if (!IsNullable || elementCount == 0 || DataBytes == 0)
+        {
+            return (0UL, 0UL);
+        }
+        ulong rawBitsBytes = elementCount > ulong.MaxValue - 7UL
+            ? (ulong.MaxValue / 8UL)
+            : ((elementCount + 7UL) / 8UL);
+        ulong aligned = rawBitsBytes > ulong.MaxValue - 127UL
+            ? ulong.MaxValue
+            : (((rawBitsBytes + 127UL) / 128UL) * 128UL);
+        return (DataOffset, aligned < DataBytes ? aligned : DataBytes);
+    }
+}
 
 public sealed record IndexInfo(
     uint IndexId,
@@ -87,8 +104,13 @@ public sealed record RelationInfo(
     ulong CooEdgeIdOffset,
     ulong CooEdgeIdBytes,
     byte CooOrder,
+    byte SrcNodeIdWidth,
+    byte TgtNodeIdWidth,
+    bool HasCsr,
     bool HasCsc,
     bool HasCoo,
+    bool IsFlatForward,
+    bool IsFlatReverse,
     bool IsVirtual,
     ushort[] VirtualComponentIds
 );
@@ -195,6 +217,127 @@ public sealed class Snapshot : IDisposable
         }
     }
 
+    public uint MetadataCount
+    {
+        get
+        {
+            _rwLock.EnterReadLock();
+            try
+            {
+                var h = Volatile.Read(ref _handle);
+                return h == nint.Zero ? 0U : NativeMethods.impulse_snapshot_get_metadata_count(h);
+            }
+            finally
+            {
+                _rwLock.ExitReadLock();
+                GC.KeepAlive(this);
+            }
+        }
+    }
+
+    public IReadOnlyList<DomainInfo> Domains
+    {
+        get
+        {
+            _rwLock.EnterReadLock();
+            try
+            {
+                var h = EnsureOpen();
+                var count = NativeMethods.impulse_snapshot_domain_count(h);
+                var list = new List<DomainInfo>(count);
+                for (ushort i = 0; i < count; i++) list.Add(GetDomainEntryUnlocked(h, i));
+                return list;
+            }
+            finally
+            {
+                _rwLock.ExitReadLock();
+                GC.KeepAlive(this);
+            }
+        }
+    }
+
+    public IReadOnlyList<RelationInfo> Relations
+    {
+        get
+        {
+            _rwLock.EnterReadLock();
+            try
+            {
+                var h = EnsureOpen();
+                var count = NativeMethods.impulse_snapshot_relation_count(h);
+                var list = new List<RelationInfo>(count);
+                for (ushort i = 0; i < count; i++) list.Add(GetRelationInfoUnlocked(h, i));
+                return list;
+            }
+            finally
+            {
+                _rwLock.ExitReadLock();
+                GC.KeepAlive(this);
+            }
+        }
+    }
+
+    public IReadOnlyList<IndexInfo> Indices
+    {
+        get
+        {
+            _rwLock.EnterReadLock();
+            try
+            {
+                var h = EnsureOpen();
+                var count = NativeMethods.impulse_snapshot_get_index_count(h);
+                var list = new List<IndexInfo>(count);
+                for (ushort i = 0; i < count; i++) list.Add(GetIndexEntryUnlocked(h, i));
+                return list;
+            }
+            finally
+            {
+                _rwLock.ExitReadLock();
+                GC.KeepAlive(this);
+            }
+        }
+    }
+
+    public DomainInfo? GetDomainById(ushort domainId)
+    {
+        foreach (var d in Domains)
+        {
+            if (d.DomainId == domainId) return d;
+        }
+        return null;
+    }
+
+    public DomainInfo? GetDomainByName(string name)
+    {
+        var doms = Domains;
+        if (name is null) return null;
+        foreach (var d in doms)
+        {
+            if (string.Equals(d.Name, name, StringComparison.Ordinal)) return d;
+        }
+        return null;
+    }
+
+    public RelationInfo? GetRelationById(ushort relationId)
+    {
+        foreach (var r in Relations)
+        {
+            if (r.RelationId == relationId) return r;
+        }
+        return null;
+    }
+
+    public RelationInfo? GetRelationByName(string name)
+    {
+        var rels = Relations;
+        if (name is null) return null;
+        foreach (var r in rels)
+        {
+            if (string.Equals(r.Name, name, StringComparison.Ordinal)) return r;
+        }
+        return null;
+    }
+
     public ulong FileSize
     {
         get
@@ -281,28 +424,32 @@ public sealed class Snapshot : IDisposable
         _rwLock.EnterReadLock();
         try
         {
-            var h = EnsureOpen();
-            var status = NativeMethods.impulse_snapshot_get_domain_entry(h, domainIndex, out var entry, out var namePtr);
-            if (status != ImpulseStatus.Ok)
-            {
-                throw new ArgumentOutOfRangeException(nameof(domainIndex), $"Invalid domain index {domainIndex}: {status}");
-            }
-            var name = namePtr != nint.Zero ? Marshal.PtrToStringUTF8(namePtr) ?? string.Empty : string.Empty;
-            return new DomainInfo(
-                entry.DomainId,
-                entry.KeyType,
-                entry.DenseIdWidth,
-                entry.NodeCount,
-                entry.AttrCount,
-                entry.KeyAttrIndex,
-                name
-            );
+            return GetDomainEntryUnlocked(EnsureOpen(), domainIndex);
         }
         finally
         {
             _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
+    }
+
+    private static DomainInfo GetDomainEntryUnlocked(nint h, ushort domainIndex)
+    {
+        var status = NativeMethods.impulse_snapshot_get_domain_entry(h, domainIndex, out var entry, out var namePtr);
+        if (status != ImpulseStatus.Ok)
+        {
+            throw new ArgumentOutOfRangeException(nameof(domainIndex), $"Invalid domain index {domainIndex}: {status}");
+        }
+        var name = namePtr != nint.Zero ? Marshal.PtrToStringUTF8(namePtr) ?? string.Empty : string.Empty;
+        return new DomainInfo(
+            entry.DomainId,
+            entry.KeyType,
+            entry.DenseIdWidth,
+            entry.NodeCount,
+            entry.AttrCount,
+            entry.KeyAttrIndex,
+            name
+        );
     }
 
     public string GetRelationName(ushort relationIndex)
@@ -368,31 +515,7 @@ public sealed class Snapshot : IDisposable
         _rwLock.EnterReadLock();
         try
         {
-            var h = EnsureOpen();
-            var status = NativeMethods.impulse_snapshot_get_relation_entry(h, relationIndex, out var e);
-            if (status != ImpulseStatus.Ok)
-            {
-                throw new ArgumentOutOfRangeException(nameof(relationIndex), $"Invalid relation index {relationIndex}: {status}");
-            }
-            string name = string.Empty;
-            if (NativeMethods.impulse_snapshot_get_relation_name(h, relationIndex, out var namePtr) == ImpulseStatus.Ok && namePtr != nint.Zero)
-            {
-                name = Marshal.PtrToStringUTF8(namePtr) ?? string.Empty;
-            }
-            bool hasCsc = (e.SectionFeatures & 0x1UL) != 0 || e.CscRowOffBytes > 0 || e.CscColIdxBytes > 0;
-            bool hasCoo = (e.SectionFeatures & 0x100UL) != 0 || (e.CooSrcBytes > 0 && e.CooTgtBytes > 0);
-            bool isVirtual = (e.SectionFeatures & 0x4UL) != 0;
-            var vcomps = isVirtual ? GetRelationVirtualComponentsUnlocked(h, relationIndex) : Array.Empty<ushort>();
-            return new RelationInfo(
-                e.RelationId, name, e.SrcDomainId, e.TgtDomainId, e.EncodingId,
-                e.NodeIdWidth, e.EdgeIndexWidth, e.NodeCount, e.EdgeCount,
-                e.SectionFeatures, e.AttrCount,
-                e.CsrRowOffOffset, e.CsrRowOffBytes, e.CsrColIdxOffset, e.CsrColIdxBytes,
-                e.CscRowOffOffset, e.CscRowOffBytes, e.CscColIdxOffset, e.CscColIdxBytes,
-                e.CooSrcOffset, e.CooSrcBytes, e.CooTgtOffset, e.CooTgtBytes,
-                e.CooEdgeIdOffset, e.CooEdgeIdBytes, e.CooOrder,
-                hasCsc, hasCoo, isVirtual, vcomps
-            );
+            return GetRelationInfoUnlocked(EnsureOpen(), relationIndex);
         }
         finally
         {
@@ -401,11 +524,64 @@ public sealed class Snapshot : IDisposable
         }
     }
 
+    private static RelationInfo GetRelationInfoUnlocked(nint h, ushort relationIndex)
+    {
+        var status = NativeMethods.impulse_snapshot_get_relation_entry(h, relationIndex, out var e);
+        if (status != ImpulseStatus.Ok)
+        {
+            throw new ArgumentOutOfRangeException(nameof(relationIndex), $"Invalid relation index {relationIndex}: {status}");
+        }
+        string name = string.Empty;
+        if (NativeMethods.impulse_snapshot_get_relation_name(h, relationIndex, out var namePtr) == ImpulseStatus.Ok && namePtr != nint.Zero)
+        {
+            name = Marshal.PtrToStringUTF8(namePtr) ?? string.Empty;
+        }
+        static byte NormalizeWidth(byte w) => w is 16 or 2 ? (byte)2 : w is 64 or 8 ? (byte)8 : (byte)4;
+        ushort snapVer = NativeMethods.impulse_snapshot_version(h);
+        bool isVirtual = snapVer >= 10 && (e.SectionFeatures & 0x4UL) != 0;
+        bool hasCsr = !isVirtual && (e.CsrRowOffBytes > 0 || e.CsrColIdxBytes > 0);
+        bool hasCsc = !isVirtual && (e.CscRowOffBytes > 0 || e.CscColIdxBytes > 0);
+        bool hasCoo = !isVirtual && ((snapVer >= 11 && (e.SectionFeatures & 0x100UL) != 0) || (e.CooSrcBytes > 0 && e.CooTgtBytes > 0));
+        bool isFlatForward = !isVirtual && e.EncodingId != 3 && e.CsrRowOffBytes == 0 && e.CsrColIdxBytes > 0;
+        bool isFlatReverse = !isVirtual && e.EncodingId != 3 && e.CscRowOffBytes == 0 && e.CscColIdxBytes > 0;
+        byte fallbackW = e.NodeIdWidth > 0 ? NormalizeWidth(e.NodeIdWidth) : (byte)4;
+        byte srcWidth = fallbackW;
+        byte tgtWidth = fallbackW;
+        ushort domCount = NativeMethods.impulse_snapshot_domain_count(h);
+        for (ushort di = 0; di < domCount; di++)
+        {
+            if (NativeMethods.impulse_snapshot_get_domain_entry(h, di, out var de, out _) == ImpulseStatus.Ok)
+            {
+                if (de.DomainId == e.SrcDomainId && de.DenseIdWidth > 0)
+                {
+                    srcWidth = NormalizeWidth(de.DenseIdWidth);
+                }
+                if (de.DomainId == e.TgtDomainId && de.DenseIdWidth > 0)
+                {
+                    tgtWidth = NormalizeWidth(de.DenseIdWidth);
+                }
+            }
+        }
+        var vcomps = isVirtual ? GetRelationVirtualComponentsUnlocked(h, relationIndex) : Array.Empty<ushort>();
+        return new RelationInfo(
+            e.RelationId, name, e.SrcDomainId, e.TgtDomainId, e.EncodingId,
+            e.NodeIdWidth, e.EdgeIndexWidth, e.NodeCount, e.EdgeCount,
+            e.SectionFeatures, e.AttrCount,
+            e.CsrRowOffOffset, e.CsrRowOffBytes, e.CsrColIdxOffset, e.CsrColIdxBytes,
+            e.CscRowOffOffset, e.CscRowOffBytes, e.CscColIdxOffset, e.CscColIdxBytes,
+            e.CooSrcOffset, e.CooSrcBytes, e.CooTgtOffset, e.CooTgtBytes,
+            e.CooEdgeIdOffset, e.CooEdgeIdBytes, e.CooOrder,
+            srcWidth, tgtWidth, hasCsr, hasCsc, hasCoo, isFlatForward, isFlatReverse, isVirtual, vcomps
+        );
+    }
+
     private static AttributeInfo BuildAttributeInfo(in ImpulseAttributeDescriptor desc, nint namePtr)
     {
         var name = namePtr != nint.Zero ? Marshal.PtrToStringUTF8(namePtr) ?? string.Empty : string.Empty;
         byte baseType = (byte)(desc.TypeCode & 0x7F);
         bool isNullable = (desc.TypeCode & 0x80) != 0;
+        bool has64BitOffsets = (baseType == ImpulseAttrTypes.AttrTypeVarString || baseType == ImpulseAttrTypes.AttrTypeVarBytes)
+            && (desc.Reserved1 & 0x01) != 0;
         ushort? precision = baseType == ImpulseAttrTypes.AttrTypeDecimal64 ? desc.Reserved2 : null;
         byte? scale = baseType == ImpulseAttrTypes.AttrTypeDecimal64 ? desc.Reserved1 : null;
         return new AttributeInfo(
@@ -413,6 +589,7 @@ public sealed class Snapshot : IDisposable
             desc.TypeCode,
             baseType,
             isNullable,
+            has64BitOffsets,
             desc.Dimension,
             precision,
             scale,
@@ -472,30 +649,34 @@ public sealed class Snapshot : IDisposable
         _rwLock.EnterReadLock();
         try
         {
-            var h = EnsureOpen();
-            var status = NativeMethods.impulse_snapshot_get_index_entry(h, indexIdx, out var entry, out var namePtr);
-            if (status != ImpulseStatus.Ok)
-            {
-                throw new ArgumentOutOfRangeException(nameof(indexIdx), $"Invalid index {indexIdx}: {status}");
-            }
-            var name = namePtr != nint.Zero ? Marshal.PtrToStringUTF8(namePtr) ?? string.Empty : string.Empty;
-            return new IndexInfo(
-                entry.IndexId,
-                entry.DomainId,
-                entry.RelationId,
-                entry.AttributeIndex,
-                entry.IndexType,
-                name,
-                entry.DataOffset,
-                entry.DataBytes,
-                entry.PayloadFeatureMask
-            );
+            return GetIndexEntryUnlocked(EnsureOpen(), indexIdx);
         }
         finally
         {
             _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
+    }
+
+    private static IndexInfo GetIndexEntryUnlocked(nint h, ushort indexIdx)
+    {
+        var status = NativeMethods.impulse_snapshot_get_index_entry(h, indexIdx, out var entry, out var namePtr);
+        if (status != ImpulseStatus.Ok)
+        {
+            throw new ArgumentOutOfRangeException(nameof(indexIdx), $"Invalid index {indexIdx}: {status}");
+        }
+        var name = namePtr != nint.Zero ? Marshal.PtrToStringUTF8(namePtr) ?? string.Empty : string.Empty;
+        return new IndexInfo(
+            entry.IndexId,
+            entry.DomainId,
+            entry.RelationId,
+            entry.AttributeIndex,
+            entry.IndexType,
+            name,
+            entry.DataOffset,
+            entry.DataBytes,
+            entry.PayloadFeatureMask
+        );
     }
 
     public IReadOnlyDictionary<string, string> GetAllMetadata()
@@ -578,7 +759,7 @@ public sealed class Snapshot : IDisposable
         if (_handle == nint.Zero || status != ImpulseStatus.Ok)
         {
             var errPtr = NativeMethods.impulse_get_last_error();
-            var err = errPtr != nint.Zero ? Marshal.PtrToStringAnsi(errPtr) : status.ToString();
+            var err = errPtr != nint.Zero ? Marshal.PtrToStringUTF8(errPtr) : status.ToString();
             throw new InvalidOperationException($"Failed to open binary snapshot '{filePath}': {err}");
         }
     }
@@ -635,9 +816,10 @@ public sealed class Snapshot : IDisposable
 
     public unsafe Decimal64AttributeMeta GetDomainAttributeDecimal64Meta(ushort domainIndex, ushort attributeIndex)
     {
-        var h = EnsureOpen();
+        _rwLock.EnterReadLock();
         try
         {
+            var h = EnsureOpen();
             var st = NativeMethods.impulse_snapshot_get_domain_attribute_buffers(
                 h, domainIndex, attributeIndex,
                 out _, out _, out _, out _, out byte typeCode, out uint dimension);
@@ -662,15 +844,17 @@ public sealed class Snapshot : IDisposable
         }
         finally
         {
+            _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
     }
 
     public unsafe Decimal64AttributeMeta GetAttributeDecimal64Meta(ushort relationIndex, ushort attributeIndex)
     {
-        var h = EnsureOpen();
+        _rwLock.EnterReadLock();
         try
         {
+            var h = EnsureOpen();
             var st = NativeMethods.impulse_snapshot_get_attribute_buffers(
                 h, relationIndex, attributeIndex,
                 out _, out _, out _, out _, out byte typeCode, out uint dimension);
@@ -695,6 +879,7 @@ public sealed class Snapshot : IDisposable
         }
         finally
         {
+            _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
     }
@@ -704,9 +889,10 @@ public sealed class Snapshot : IDisposable
     /// </summary>
     public unsafe Decimal64?[] ReadDomainDecimal64Values(ushort domainIndex, ushort attributeIndex)
     {
-        var h = EnsureOpen();
+        _rwLock.EnterReadLock();
         try
         {
+            var h = EnsureOpen();
             var st = NativeMethods.impulse_snapshot_get_domain_attribute_buffers(
                 h, domainIndex, attributeIndex,
                 out void* dataPtr, out ulong dataBytes, out _, out _, out byte typeCode, out _);
@@ -741,6 +927,7 @@ public sealed class Snapshot : IDisposable
         }
         finally
         {
+            _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
     }
@@ -764,9 +951,10 @@ public sealed class Snapshot : IDisposable
     /// </summary>
     public unsafe Decimal64?[] ReadAttributeDecimal64Values(ushort relationIndex, ushort attributeIndex)
     {
-        var h = EnsureOpen();
+        _rwLock.EnterReadLock();
         try
         {
+            var h = EnsureOpen();
             var st = NativeMethods.impulse_snapshot_get_attribute_buffers(
                 h, relationIndex, attributeIndex,
                 out void* dataPtr, out ulong dataBytes, out _, out _, out byte typeCode, out _);
@@ -801,6 +989,7 @@ public sealed class Snapshot : IDisposable
         }
         finally
         {
+            _rwLock.ExitReadLock();
             GC.KeepAlive(this);
         }
     }
@@ -912,53 +1101,56 @@ public sealed class Snapshot : IDisposable
         ushort domainId = 0,
         ulong gasLimit = ulong.MaxValue)
     {
-        EnsureOpen();
         ArgumentNullException.ThrowIfNull(context);
         if (impbBytes.IsEmpty)
         {
             throw new ArgumentException("Bytecode container cannot be empty", nameof(impbBytes));
         }
 
-        var wsHandle = context.Handle;
-        if (wsHandle == nint.Zero)
-        {
-            throw new ObjectDisposedException(nameof(VmContext), "VM workspace has been disposed.");
-        }
-
-        ulong seed = seedNode ?? 0UL;
-        ImpulseVmParamBindingV11 binding = new()
-        {
-            ParamId = 0,
-            Kind = 6, // IMPULSE_VM_V11_PARAM_FRONTIER_IDS
-            DomainId = domainId,
-            Count = seedNode.HasValue ? 1u : 0u,
-            DataPtr = seedNode.HasValue ? &seed : null,
-        };
-        ImpulseVmParamsV11 execParams = new()
-        {
-            GasLimit = gasLimit,
-            GeometryOverride = null,
-            Bindings = seedNode.HasValue ? &binding : null,
-            BindingCount = seedNode.HasValue ? 1u : 0u,
-        };
-
-        uint rc;
-        nuint outBytes;
+        _rwLock.EnterReadLock();
         try
         {
-            fixed (byte* ptr = impbBytes)
+            var h = EnsureOpen();
+            var wsHandle = context.EnterWorkspaceLock();
+            try
             {
-                rc = NativeMethods.impulse_vm_execute_v11(
-                    ptr, (nuint)impbBytes.Length, Handle, &execParams, wsHandle, null, 0, out outBytes);
+                ulong seed = seedNode ?? 0UL;
+                ImpulseVmParamBindingV11 binding = new()
+                {
+                    ParamId = 0,
+                    Kind = 6, // IMPULSE_VM_V11_PARAM_FRONTIER_IDS
+                    DomainId = domainId,
+                    Count = seedNode.HasValue ? 1u : 0u,
+                    DataPtr = seedNode.HasValue ? &seed : null,
+                };
+                ImpulseVmParamsV11 execParams = new()
+                {
+                    GasLimit = gasLimit,
+                    GeometryOverride = null,
+                    Bindings = seedNode.HasValue ? &binding : null,
+                    BindingCount = seedNode.HasValue ? 1u : 0u,
+                };
+
+                uint rc;
+                nuint outBytes;
+                fixed (byte* ptr = impbBytes)
+                {
+                    rc = NativeMethods.impulse_vm_execute_v11(
+                        ptr, (nuint)impbBytes.Length, h, &execParams, wsHandle, null, 0, out outBytes);
+                }
+                return (ImpulseVmStatus)rc;
+            }
+            finally
+            {
+                context.ExitWorkspaceLock();
             }
         }
         finally
         {
+            _rwLock.ExitReadLock();
             GC.KeepAlive(this);
             GC.KeepAlive(context);
         }
-
-        return (ImpulseVmStatus)rc;
     }
 
     private unsafe ExecutionResult ExecuteQueryCore(Query query, VmContext context, ulong inputParam, VmContext? ownedContext)
