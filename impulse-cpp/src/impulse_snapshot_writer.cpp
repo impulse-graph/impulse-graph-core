@@ -230,6 +230,7 @@ impulse_status_t impulse_writer_add_relation_v11(
         if (csc_col_indices_data && csc_col_indices_bytes > 0) {
             rel.csc_col_indices.resize(csc_col_indices_bytes);
             std::memcpy(rel.csc_col_indices.data(), csc_col_indices_data, csc_col_indices_bytes);
+            rel.section_features |= IMP_REL_FEATURE_INCLUDE_CSC;
         }
         if (coo_src_data && coo_src_bytes > 0) {
             rel.coo_src.resize(coo_src_bytes);
@@ -352,6 +353,7 @@ impulse_status_t impulse_writer_add_index(
 
 impulse_status_t impulse_writer_set_metadata(impulse_writer_t* writer, const char* key, const char* value) {
     if (!writer || !key || !value) return IMPULSE_ERR_INVALID_ARGUMENT;
+    if (std::strlen(key) > 0xFFFFu) return IMPULSE_ERR_INVALID_ARGUMENT;
     try {
         writer->metadata[key] = value;
         return IMPULSE_OK;
@@ -368,13 +370,57 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         writer->global_features |= IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
     }
 
-    // Sort relations by src_domain_id primary, tgt_domain_id secondary
+    // Sort relations by src_domain_id primary, tgt_domain_id secondary, relation_id tiebreaker
+    // (preserves insertion stability without std::stable_sort's get_temporary_buffer),
+    // and remap secondary index & virtual relation child IDs to the new order.
     std::sort(writer->relations.begin(), writer->relations.end(), [](const impulse_writer_relation& a, const impulse_writer_relation& b) {
         if (a.src_domain_id != b.src_domain_id) return a.src_domain_id < b.src_domain_id;
-        return a.tgt_domain_id < b.tgt_domain_id;
+        if (a.tgt_domain_id != b.tgt_domain_id) return a.tgt_domain_id < b.tgt_domain_id;
+        return a.relation_id < b.relation_id;
     });
+    std::unordered_map<uint16_t, uint16_t> rel_id_remap;
+    rel_id_remap.reserve(writer->relations.size());
     for (size_t idx = 0; idx < writer->relations.size(); ++idx) {
+        rel_id_remap[writer->relations[idx].relation_id] = static_cast<uint16_t>(idx);
         writer->relations[idx].relation_id = static_cast<uint16_t>(idx);
+    }
+    for (auto& ie : writer->indexes) {
+        if (ie.relation_id != 0xFFFFu) {
+            auto it = rel_id_remap.find(ie.relation_id);
+            if (it != rel_id_remap.end()) ie.relation_id = it->second;
+        }
+    }
+    for (auto& rel : writer->relations) {
+        if ((rel.section_features & IMP_REL_FEATURE_VIRTUAL) == 0) continue;
+        uint16_t comp_count = 0;
+        uint16_t tag_or_first = 0;
+        std::memcpy(&comp_count, &rel.reserved2[0], sizeof(uint16_t));
+        std::memcpy(&tag_or_first, &rel.reserved2[2], sizeof(uint16_t));
+        if (comp_count == 0) continue;
+        bool use_overflow = (comp_count > 10) || (tag_or_first == 0xFFFFu);
+        if (use_overflow) {
+            if (rel.col_indices.size() >= static_cast<size_t>(comp_count) * 2u) {
+                for (uint16_t i = 0; i < comp_count; ++i) {
+                    uint16_t cid = 0;
+                    std::memcpy(&cid, rel.col_indices.data() + i * 2u, sizeof(uint16_t));
+                    auto it = rel_id_remap.find(cid);
+                    if (it != rel_id_remap.end()) {
+                        uint16_t mapped = it->second;
+                        std::memcpy(rel.col_indices.data() + i * 2u, &mapped, sizeof(uint16_t));
+                    }
+                }
+            }
+        } else {
+            for (uint16_t i = 0; i < comp_count; ++i) {
+                uint16_t cid = 0;
+                std::memcpy(&cid, &rel.reserved2[2 + 2 * i], sizeof(uint16_t));
+                auto it = rel_id_remap.find(cid);
+                if (it != rel_id_remap.end()) {
+                    uint16_t mapped = it->second;
+                    std::memcpy(&rel.reserved2[2 + 2 * i], &mapped, sizeof(uint16_t));
+                }
+            }
+        }
     }
 
     // 1. Build Shared String Table & String Pool
@@ -406,6 +452,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         }
     }
     for (const auto& rel : writer->relations) {
+        get_or_add_string(rel.name);
         for (const auto& attr : rel.attributes) {
             get_or_add_string(attr.name);
         }
@@ -612,12 +659,12 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.encoding_id = rel.encoding_id;
         entry.node_id_width = rel.node_id_width;
         entry.edge_index_width = rel.edge_index_width;
-        entry.name_offset = get_or_add_string("");
+        entry.name_offset = get_or_add_string(rel.name);
         entry.node_count = rel.node_count;
         entry.edge_count = rel.edge_count;
         uint64_t sec_feats = rel.section_features;
         if (!rel.attributes.empty()) sec_feats |= 0x02ULL; // IMP_REL_FEATURE_WEIGHTED
-        if (csc_row_off_bytes > 0) sec_feats |= IMP_REL_FEATURE_INCLUDE_CSC;
+        if (csc_row_off_bytes > 0 || csc_col_idx_bytes > 0) sec_feats |= IMP_REL_FEATURE_INCLUDE_CSC;
         if (coo_src_bytes > 0 || coo_tgt_bytes > 0) sec_feats |= IMPULSE_SECTION_FEAT_HAS_COO;
         if (coo_edge_id_bytes > 0) sec_feats |= IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS;
         entry.section_features = sec_feats;
@@ -630,6 +677,7 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         entry.csc_col_idx_offset = csc_col_idx_offset;
         entry.csc_col_idx_bytes = csc_col_idx_bytes;
         entry.attr_count = static_cast<uint16_t>(rel.attributes.size());
+        std::memcpy(entry.reserved2, rel.reserved2, sizeof(entry.reserved2));
         entry.coo_src_offset = coo_src_offset;
         entry.coo_src_bytes = coo_src_bytes;
         entry.coo_tgt_offset = coo_tgt_offset;
@@ -672,12 +720,12 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
             if (idx.index_type == 8 && idx.data.size() >= 64) { // Vamana ANN relative offset fixup
                 uint64_t rel_adj = 0;
                 std::memcpy(&rel_adj, idx.data.data() + 40, 8);
-                uint64_t abs_adj = (rel_adj == 0) ? (data_off + 128) : ((rel_adj < data_off) ? (data_off + rel_adj) : rel_adj);
+                uint64_t abs_adj = (rel_adj == 0) ? (data_off + 128) : ((rel_adj < idx.data.size()) ? (data_off + rel_adj) : rel_adj);
                 std::memcpy(idx.data.data() + 40, &abs_adj, 8);
 
                 uint64_t rel_quant = 0;
                 std::memcpy(&rel_quant, idx.data.data() + 56, 8);
-                if (rel_quant > 0 && rel_quant < data_off) {
+                if (rel_quant > 0 && rel_quant < idx.data.size()) {
                     uint64_t abs_quant = data_off + rel_quant;
                     std::memcpy(idx.data.data() + 56, &abs_quant, 8);
                 }
@@ -852,7 +900,7 @@ void impulse_delta_layer_destroy(impulse_delta_layer_t* delta) {
     delete delta;
 }
 
-static void populate_writer_from_snapshot(
+static impulse_status_t populate_writer_from_snapshot(
     const impulse_snapshot_t* base_snapshot,
     impulse_delta_layer_t** deltas,
     size_t delta_count,
@@ -864,15 +912,22 @@ static void populate_writer_from_snapshot(
     for (size_t i = 0; i < base_snapshot->domains.size(); ++i) {
         const auto& dom = base_snapshot->domains[i];
         const auto& name = base_snapshot->domain_names[i];
-        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
-        impulse_writer_set_domain_node_count(writer, static_cast<uint16_t>(i), dom.node_count);
-        impulse_writer_set_domain_key_attr(writer, static_cast<uint16_t>(i), dom.key_attr_index);
+        impulse_status_t st = impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, name.c_str());
+        if (st != IMPULSE_OK) return st;
+        st = impulse_writer_set_domain_node_count(writer, static_cast<uint16_t>(i), dom.node_count);
+        if (st != IMPULSE_OK) return st;
+        if (dom.dense_id_width == 2 || dom.dense_id_width == 4 || dom.dense_id_width == 8) {
+            st = impulse_writer_set_domain_dense_id_width(writer, static_cast<uint16_t>(i), dom.dense_id_width);
+            if (st != IMPULSE_OK) return st;
+        }
+        st = impulse_writer_set_domain_key_attr(writer, static_cast<uint16_t>(i), dom.key_attr_index);
+        if (st != IMPULSE_OK) return st;
         if (i < base_snapshot->domain_attributes.size()) {
             const auto& dattrs = base_snapshot->domain_attributes[i];
             const auto& dnames = base_snapshot->domain_attribute_names[i];
             for (size_t a = 0; a < dattrs.size(); ++a) {
                 const auto& attr = dattrs[a];
-                impulse_writer_add_domain_attribute(
+                st = impulse_writer_add_domain_attribute(
                     writer,
                     static_cast<uint16_t>(i),
                     dnames[a].c_str(),
@@ -883,6 +938,7 @@ static void populate_writer_from_snapshot(
                     (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
                     attr.offsets_bytes
                 );
+                if (st != IMPULSE_OK) return st;
                 if (!writer->domain_attributes[i].empty()) {
                     writer->domain_attributes[i].back().reserved1 = attr.reserved1;
                     writer->domain_attributes[i].back().reserved2 = attr.reserved2;
@@ -891,6 +947,27 @@ static void populate_writer_from_snapshot(
         }
     }
 
+    auto can_expand_domain = [&](uint16_t dom_id, uint64_t required_nodes, size_t mutating_rel_idx) -> bool {
+        if (dom_id >= writer->domains.size()) return true;
+        if (required_nodes <= writer->domains[dom_id].node_count) return true;
+        if (dom_id < writer->domain_attributes.size() && !writer->domain_attributes[dom_id].empty()) {
+            return false;
+        }
+        const uint8_t dw = writer->domains[dom_id].dense_id_width;
+        if ((dw == 2 && required_nodes > 0x10000ULL) || (dw == 4 && required_nodes > 0x100000000ULL)) {
+            return false;
+        }
+        for (size_t r2 = 0; r2 < base_snapshot->relations.size(); ++r2) {
+            if (r2 == mutating_rel_idx) continue;
+            const auto& other = base_snapshot->relations[r2];
+            if (other.tgt_domain_id == dom_id && (other.csc_row_off_bytes > 0 || other.csc_col_idx_bytes > 0)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::vector<bool> mutated_relations(base_snapshot->relations.size(), false);
     for (size_t r = 0; r < base_snapshot->relations.size(); ++r) {
         const auto& rel = base_snapshot->relations[r];
         const std::string rel_name = (r < base_snapshot->relation_names.size()) ? base_snapshot->relation_names[r] : "";
@@ -912,31 +989,98 @@ static void populate_writer_from_snapshot(
             }
         }
 
-        uint64_t sec_feats = rel.section_features & ~0x01ULL; // writer currently serializes CSR only
+        const bool is_v09 = (base_snapshot->header.version < 10);
+        const bool is_virtual = !is_v09 && ((rel.section_features & IMP_REL_FEATURE_VIRTUAL) != 0);
+        const uint64_t base_sec_feats = is_v09 ? 0ULL : rel.section_features;
+        bool edges_mutated = false;
 
-        if (matching_deltas.empty() || rel.csr_row_off_offset == 0 || rel.csr_col_idx_offset == 0) {
-            const void* row_ptr = raw + rel.csr_row_off_offset;
-            const void* col_ptr = raw + rel.csr_col_idx_offset;
-            impulse_writer_add_relation(
+        impulse_status_t rel_st = IMPULSE_OK;
+        if (matching_deltas.empty() || is_virtual) {
+            const void* csr_row_ptr = (rel.csr_row_off_offset > 0 && rel.csr_row_off_bytes > 0) ? (raw + rel.csr_row_off_offset) : nullptr;
+            const void* csr_col_ptr = (rel.csr_col_idx_offset > 0 && rel.csr_col_idx_bytes > 0) ? (raw + rel.csr_col_idx_offset) : nullptr;
+            const void* csc_row_ptr = (!is_virtual && rel.csc_row_off_offset > 0 && rel.csc_row_off_bytes > 0) ? (raw + rel.csc_row_off_offset) : nullptr;
+            const void* csc_col_ptr = (!is_virtual && rel.csc_col_idx_offset > 0 && rel.csc_col_idx_bytes > 0) ? (raw + rel.csc_col_idx_offset) : nullptr;
+            const void* coo_src_ptr = (!is_virtual && rel.coo_src_offset > 0 && rel.coo_src_bytes > 0) ? (raw + rel.coo_src_offset) : nullptr;
+            const void* coo_tgt_ptr = (!is_virtual && rel.coo_tgt_offset > 0 && rel.coo_tgt_bytes > 0) ? (raw + rel.coo_tgt_offset) : nullptr;
+            const void* coo_eid_ptr = (!is_virtual && rel.coo_edge_id_offset > 0 && rel.coo_edge_id_bytes > 0) ? (raw + rel.coo_edge_id_offset) : nullptr;
+            uint8_t nw = (rel.node_id_width == 2 || rel.node_id_width == 16) ? 2 : ((rel.node_id_width == 8 || rel.node_id_width == 64) ? 8 : 4);
+            uint8_t ew = (rel.edge_index_width == 8 || rel.edge_index_width == 64) ? 8 : 4;
+            rel_st = impulse_writer_add_relation_v11(
                 writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
-                rel.node_count, rel.edge_count, sec_feats,
-                row_ptr, rel.csr_row_off_bytes,
-                col_ptr, rel.csr_col_idx_bytes
+                nw, ew, rel.node_count, rel.edge_count, base_sec_feats,
+                csr_row_ptr, rel.csr_row_off_bytes,
+                csr_col_ptr, rel.csr_col_idx_bytes,
+                csc_row_ptr, is_virtual ? 0 : rel.csc_row_off_bytes,
+                csc_col_ptr, is_virtual ? 0 : rel.csc_col_idx_bytes,
+                coo_src_ptr, is_virtual ? 0 : rel.coo_src_bytes,
+                coo_tgt_ptr, is_virtual ? 0 : rel.coo_tgt_bytes,
+                coo_eid_ptr, is_virtual ? 0 : rel.coo_edge_id_bytes,
+                is_virtual ? 0 : rel.coo_order
             );
         } else {
-            // Merge base CSR with matching delta tombstones and additions (32-bit CSR)
-            const uint32_t* base_rows = reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset);
-            const uint32_t* base_cols = reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset);
+            // Merge base CSR or flat M:1/1:1 topology with matching delta tombstones and additions
+            edges_mutated = true;
+            const bool is_edge64 = (rel.edge_index_width == 8 || rel.edge_index_width == 64);
+            uint8_t eff_tgt_w = rel.node_id_width ? rel.node_id_width : 4;
+            if (base_snapshot->header.version >= 11 &&
+                rel.tgt_domain_id < base_snapshot->domains.size() &&
+                base_snapshot->domains[rel.tgt_domain_id].dense_id_width != 0) {
+                eff_tgt_w = base_snapshot->domains[rel.tgt_domain_id].dense_id_width;
+            }
+            const bool is_node16 = (eff_tgt_w == 2 || eff_tgt_w == 16);
+            const bool is_node64 = (eff_tgt_w == 8 || eff_tgt_w == 64);
+            const size_t base_edge_w = is_edge64 ? 8 : 4;
+            const size_t base_node_w = is_node16 ? 2 : (is_node64 ? 8 : 4);
+            const uint64_t mult = is_v09 ? 0ULL : ((rel.section_features >> 3) & 0x3ULL);
+            const bool is_flat_fwd = ((mult == 1ULL || mult == 3ULL) &&
+                                      rel.csr_row_off_offset == 0 && rel.csr_row_off_bytes == 0 &&
+                                      rel.csr_col_idx_offset > 0 && rel.csr_col_idx_bytes > 0);
+            if (rel.encoding_id == 3 ||
+                (rel.edge_count > 0 && !is_flat_fwd && (rel.csr_row_off_offset == 0 || rel.csr_col_idx_offset == 0))) {
+                return IMPULSE_ERR_UNSUPPORTED_SECTION_FEATURE;
+            }
+            const uint64_t max_sentinel = is_node16 ? 0xFFFFULL : (is_node64 ? UINT64_MAX : 0xFFFFFFFFULL);
+            const uint64_t num_base_rows = (rel.csr_row_off_offset > 0) ? (rel.csr_row_off_bytes / base_edge_w) : 0;
+            const uint64_t num_base_cols = (rel.csr_col_idx_offset > 0) ? (rel.csr_col_idx_bytes / base_node_w) : 0;
+            auto read_base_row = [&](uint64_t idx) -> uint64_t {
+                return is_edge64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_row_off_offset)[idx]
+                                 : reinterpret_cast<const uint32_t*>(raw + rel.csr_row_off_offset)[idx];
+            };
+            auto read_base_col = [&](uint64_t idx) -> uint64_t {
+                return is_node16 ? reinterpret_cast<const uint16_t*>(raw + rel.csr_col_idx_offset)[idx]
+                                 : (is_node64 ? reinterpret_cast<const uint64_t*>(raw + rel.csr_col_idx_offset)[idx]
+                                              : reinterpret_cast<const uint32_t*>(raw + rel.csr_col_idx_offset)[idx]);
+            };
+
+            uint8_t eff_src_w = rel.node_id_width ? rel.node_id_width : 4;
+            if (base_snapshot->header.version >= 11 &&
+                rel.src_domain_id < base_snapshot->domains.size() &&
+                base_snapshot->domains[rel.src_domain_id].dense_id_width != 0) {
+                eff_src_w = base_snapshot->domains[rel.src_domain_id].dense_id_width;
+            }
+            const bool is_src16 = (eff_src_w == 2 || eff_src_w == 16);
+            const bool is_src64 = (eff_src_w == 8 || eff_src_w == 64);
+
             uint64_t new_node_count = rel.node_count;
             for (auto* dl : matching_deltas) {
                 std::shared_lock<std::shared_mutex> lk(dl->mutex);
                 for (const auto& kv : dl->additions) {
+                    if (kv.first >= UINT64_MAX - 1) return IMPULSE_ERR_INVALID_ARGUMENT;
+                    if ((is_src16 && kv.first > 0xFFFFULL) || (!is_src64 && !is_src16 && kv.first > UINT32_MAX)) {
+                        return IMPULSE_ERR_INVALID_ARGUMENT;
+                    }
                     if (kv.first + 1 > new_node_count) new_node_count = kv.first + 1;
                 }
             }
-            std::vector<uint32_t> merged_rows(static_cast<size_t>(new_node_count) + 1, 0);
-            std::vector<uint32_t> merged_cols;
-            merged_cols.reserve(static_cast<size_t>(rel.edge_count));
+            if (new_node_count >= (std::numeric_limits<size_t>::max() / sizeof(uint64_t))) {
+                return IMPULSE_ERR_INVALID_ARGUMENT;
+            }
+            if (!can_expand_domain(rel.src_domain_id, new_node_count, r)) {
+                return IMPULSE_ERR_INVALID_ARGUMENT;
+            }
+            std::vector<uint64_t> merged_rows64(static_cast<size_t>(new_node_count) + 1, 0);
+            std::vector<uint64_t> merged_cols64;
+            merged_cols64.reserve(static_cast<size_t>(rel.edge_count));
 
             auto is_tomb = [&](uint64_t u, uint64_t v) {
                 for (auto* dl : matching_deltas) {
@@ -946,15 +1090,29 @@ static void populate_writer_from_snapshot(
                 return false;
             };
 
+            uint64_t max_tgt_seen = 0;
+            bool has_any_tgt = false;
             for (uint64_t u = 0; u < new_node_count; ++u) {
-                merged_rows[static_cast<size_t>(u)] = static_cast<uint32_t>(merged_cols.size());
+                merged_rows64[static_cast<size_t>(u)] = merged_cols64.size();
                 if (u < rel.node_count) {
-                    uint32_t start = base_rows[u];
-                    uint32_t end = base_rows[u + 1];
-                    for (uint32_t e = start; e < end; ++e) {
-                        uint64_t v = base_cols[e];
-                        if (!is_tomb(u, v)) {
-                            merged_cols.push_back(static_cast<uint32_t>(v));
+                    if (is_flat_fwd) {
+                        if (u < num_base_cols) {
+                            uint64_t v = read_base_col(u);
+                            if (v != max_sentinel && !is_tomb(u, v)) {
+                                merged_cols64.push_back(v);
+                                if (!has_any_tgt || v > max_tgt_seen) { max_tgt_seen = v; has_any_tgt = true; }
+                            }
+                        }
+                    } else if (rel.csr_row_off_offset > 0 && u + 1 < num_base_rows && rel.csr_col_idx_offset > 0) {
+                        uint64_t start = read_base_row(u);
+                        uint64_t end = read_base_row(u + 1);
+                        if (end > num_base_cols) end = num_base_cols;
+                        for (uint64_t e = start; e < end; ++e) {
+                            uint64_t v = read_base_col(e);
+                            if (!is_tomb(u, v)) {
+                                merged_cols64.push_back(v);
+                                if (!has_any_tgt || v > max_tgt_seen) { max_tgt_seen = v; has_any_tgt = true; }
+                            }
                         }
                     }
                 }
@@ -969,39 +1127,84 @@ static void populate_writer_from_snapshot(
                     }
                     for (uint64_t v : added_targets) {
                         if (!is_tomb(u, v)) {
-                            merged_cols.push_back(static_cast<uint32_t>(v));
+                            merged_cols64.push_back(v);
+                            if (!has_any_tgt || v > max_tgt_seen) { max_tgt_seen = v; has_any_tgt = true; }
                         }
                     }
                 }
             }
-            merged_rows[static_cast<size_t>(new_node_count)] = static_cast<uint32_t>(merged_cols.size());
+            merged_rows64[static_cast<size_t>(new_node_count)] = merged_cols64.size();
 
-            owned_buffers.emplace_back(merged_rows.size() * sizeof(uint32_t));
-            std::memcpy(owned_buffers.back().data(), merged_rows.data(), owned_buffers.back().size());
+            if (!is_edge64 && merged_cols64.size() > UINT32_MAX) {
+                return IMPULSE_ERR_INVALID_ARGUMENT;
+            }
+            if (has_any_tgt) {
+                if ((is_node16 && max_tgt_seen > 0xFFFFULL) || (!is_node64 && !is_node16 && max_tgt_seen > UINT32_MAX)) {
+                    return IMPULSE_ERR_INVALID_ARGUMENT;
+                }
+                if (max_tgt_seen == UINT64_MAX) return IMPULSE_ERR_INVALID_ARGUMENT;
+                if (rel.tgt_domain_id < writer->domains.size() && max_tgt_seen + 1 > writer->domains[rel.tgt_domain_id].node_count) {
+                    if (!can_expand_domain(rel.tgt_domain_id, max_tgt_seen + 1, r)) {
+                        return IMPULSE_ERR_INVALID_ARGUMENT;
+                    }
+                    writer->domains[rel.tgt_domain_id].node_count = max_tgt_seen + 1;
+                }
+            }
+
+            owned_buffers.emplace_back(merged_rows64.size() * base_edge_w);
+            if (is_edge64) {
+                std::memcpy(owned_buffers.back().data(), merged_rows64.data(), owned_buffers.back().size());
+            } else {
+                auto* dst = reinterpret_cast<uint32_t*>(owned_buffers.back().data());
+                for (size_t i = 0; i < merged_rows64.size(); ++i) dst[i] = static_cast<uint32_t>(merged_rows64[i]);
+            }
             const void* row_ptr = owned_buffers.back().data();
             const uint64_t row_bytes = owned_buffers.back().size();
 
-            owned_buffers.emplace_back(merged_cols.size() * sizeof(uint32_t));
-            if (!merged_cols.empty()) {
-                std::memcpy(owned_buffers.back().data(), merged_cols.data(), owned_buffers.back().size());
+            owned_buffers.emplace_back(merged_cols64.size() * base_node_w);
+            if (!merged_cols64.empty()) {
+                if (is_node16) {
+                    auto* dst = reinterpret_cast<uint16_t*>(owned_buffers.back().data());
+                    for (size_t i = 0; i < merged_cols64.size(); ++i) dst[i] = static_cast<uint16_t>(merged_cols64[i]);
+                } else if (is_node64) {
+                    std::memcpy(owned_buffers.back().data(), merged_cols64.data(), owned_buffers.back().size());
+                } else {
+                    auto* dst = reinterpret_cast<uint32_t*>(owned_buffers.back().data());
+                    for (size_t i = 0; i < merged_cols64.size(); ++i) dst[i] = static_cast<uint32_t>(merged_cols64[i]);
+                }
             }
             const void* col_ptr = owned_buffers.back().empty() ? nullptr : owned_buffers.back().data();
             const uint64_t col_bytes = owned_buffers.back().size();
 
-            impulse_writer_add_relation(
+            uint64_t sec_feats = base_sec_feats & ~(IMP_REL_FEATURE_INCLUDE_CSC | IMP_REL_FEATURE_WEIGHTED |
+                                                    (0x3ULL << 3) | IMPULSE_SECTION_FEAT_HAS_COO |
+                                                    IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS);
+            rel_st = impulse_writer_add_relation_v11(
                 writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
-                new_node_count, static_cast<uint64_t>(merged_cols.size()), sec_feats,
+                static_cast<uint8_t>(base_node_w), static_cast<uint8_t>(base_edge_w),
+                new_node_count, static_cast<uint64_t>(merged_cols64.size()), sec_feats,
                 row_ptr, row_bytes,
-                col_ptr, col_bytes
+                col_ptr, col_bytes,
+                nullptr, 0, nullptr, 0,
+                nullptr, 0, nullptr, 0, nullptr, 0, 0
             );
         }
+        if (rel_st != IMPULSE_OK) return rel_st;
+        if (!writer->relations.empty()) {
+            writer->relations.back().name = rel_name;
+            if (is_virtual) {
+                std::memcpy(writer->relations.back().reserved2, rel.reserved2, sizeof(rel.reserved2));
+            }
+        }
 
-        if (r < base_snapshot->relation_attributes.size()) {
+        mutated_relations[r] = edges_mutated;
+
+        if (!edges_mutated && r < base_snapshot->relation_attributes.size() && r < writer->relations.size()) {
             const auto& rattrs = base_snapshot->relation_attributes[r];
             const auto& rnames = base_snapshot->relation_attribute_names[r];
             for (size_t a = 0; a < rattrs.size(); ++a) {
                 const auto& attr = rattrs[a];
-                impulse_writer_add_attribute(
+                impulse_status_t ast = impulse_writer_add_attribute(
                     writer,
                     static_cast<uint16_t>(r),
                     rnames[a].c_str(),
@@ -1012,6 +1215,7 @@ static void populate_writer_from_snapshot(
                     (attr.offsets_offset > 0) ? (raw + attr.offsets_offset) : nullptr,
                     attr.offsets_bytes
                 );
+                if (ast != IMPULSE_OK) return ast;
                 if (!writer->relations[r].attributes.empty()) {
                     writer->relations[r].attributes.back().reserved1 = attr.reserved1;
                     writer->relations[r].attributes.back().reserved2 = attr.reserved2;
@@ -1022,9 +1226,29 @@ static void populate_writer_from_snapshot(
 
     for (size_t idx = 0; idx < base_snapshot->indexes.size(); ++idx) {
         const auto& ie = base_snapshot->indexes[idx];
+        if (ie.relation_id != 0xFFFFu && ie.relation_id < mutated_relations.size() && mutated_relations[ie.relation_id]) {
+            continue;
+        }
         const char* iname = (idx < base_snapshot->index_names.size()) ? base_snapshot->index_names[idx].c_str() : "";
         const void* idata = (ie.data_offset > 0 && ie.data_bytes > 0) ? (raw + ie.data_offset) : nullptr;
-        impulse_writer_add_index(
+        if (ie.index_type == 8 && idata != nullptr && ie.data_bytes >= 64) {
+            owned_buffers.emplace_back(static_cast<size_t>(ie.data_bytes));
+            std::memcpy(owned_buffers.back().data(), idata, static_cast<size_t>(ie.data_bytes));
+            uint64_t abs_adj = 0;
+            uint64_t abs_quant = 0;
+            std::memcpy(&abs_adj, owned_buffers.back().data() + 40, 8);
+            std::memcpy(&abs_quant, owned_buffers.back().data() + 56, 8);
+            if (abs_adj >= ie.data_offset && abs_adj < ie.data_offset + ie.data_bytes) {
+                uint64_t rel_adj = abs_adj - ie.data_offset;
+                std::memcpy(owned_buffers.back().data() + 40, &rel_adj, 8);
+            }
+            if (abs_quant >= ie.data_offset && abs_quant < ie.data_offset + ie.data_bytes) {
+                uint64_t rel_quant = abs_quant - ie.data_offset;
+                std::memcpy(owned_buffers.back().data() + 56, &rel_quant, 8);
+            }
+            idata = owned_buffers.back().data();
+        }
+        impulse_status_t ist = impulse_writer_add_index(
             writer,
             ie.domain_id,
             ie.relation_id,
@@ -1035,11 +1259,14 @@ static void populate_writer_from_snapshot(
             ie.data_bytes,
             ie.payload_feature_mask
         );
+        if (ist != IMPULSE_OK) return ist;
     }
 
-    for (const auto& kv : base_snapshot->metadata) {
-        impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
+    for (const auto& kv : base_snapshot->metadata_entries) {
+        impulse_status_t mst = impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
+        if (mst != IMPULSE_OK) return mst;
     }
+    return IMPULSE_OK;
 }
 
 impulse_status_t impulse_snapshot_compact_to_file(
@@ -1051,7 +1278,7 @@ impulse_status_t impulse_snapshot_compact_to_file(
     if (!base_snapshot || !output_file_path) return IMPULSE_ERR_INVALID_ARGUMENT;
     try {
         uint64_t gfeat = 0;
-        if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+        if (base_snapshot->header.version >= 9 && base_snapshot->header.version <= 11) {
             gfeat = base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED;
         }
         std::unique_ptr<impulse_writer_t, decltype(&impulse_writer_destroy)> writer(
@@ -1059,7 +1286,8 @@ impulse_status_t impulse_snapshot_compact_to_file(
         if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
         std::vector<std::vector<uint8_t>> owned_buffers;
-        populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
+        impulse_status_t pop_st = populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
+        if (pop_st != IMPULSE_OK) return pop_st;
 
         return impulse_writer_finalize(writer.get());
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
@@ -1075,7 +1303,7 @@ impulse_status_t impulse_snapshot_compact_to_stream(
     if (!base_snapshot || !write_cb) return IMPULSE_ERR_INVALID_ARGUMENT;
     try {
         uint64_t gfeat = IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
-        if (base_snapshot->header.version == 9 || base_snapshot->header.version == 10) {
+        if (base_snapshot->header.version >= 9 && base_snapshot->header.version <= 11) {
             gfeat |= (base_snapshot->header.required_features & ~IMPULSE_GLOBAL_FEAT_CRYPTO_SIGNED);
         }
         std::unique_ptr<impulse_writer_t, decltype(&impulse_writer_destroy)> writer(
@@ -1083,7 +1311,8 @@ impulse_status_t impulse_snapshot_compact_to_stream(
         if (!writer) return IMPULSE_ERR_IO_FAILURE;
 
         std::vector<std::vector<uint8_t>> owned_buffers;
-        populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
+        impulse_status_t pop_st = populate_writer_from_snapshot(base_snapshot, deltas, delta_count, writer.get(), owned_buffers);
+        if (pop_st != IMPULSE_OK) return pop_st;
 
         return impulse_writer_finalize(writer.get());
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)

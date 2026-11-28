@@ -191,7 +191,7 @@ std::vector<uint8_t> build_valid_v10_snapshot() {
 
     align_vec(dir, 128);
 
-    impulse_relation_directory_entry_t rel{};
+    impulse_relation_directory_entry_v0_10_t rel{};
     rel.relation_id = 0;
     rel.src_domain_id = 0;
     rel.tgt_domain_id = 0;
@@ -463,7 +463,7 @@ void test_integer_overflow_attacks() {
                      "rel.edge_count * 4 wrap-around must fail");
     }
 
-    // 3d. Footer metadata vlen = 0xFFFFFFFFu must break cleanly without 64-bit wrap or OOB read
+    // 3d. Footer metadata vlen = 0xFFFFFFFFu must be rejected with IMPULSE_ERR_BUFFER_OVERFLOW without wrap or OOB read
     {
         auto bad = build_valid_v10_snapshot();
         // Mutate vlen right before the 15B "hardening_suite" + 16B trailer
@@ -471,13 +471,10 @@ void test_integer_overflow_attacks() {
         uint32_t bad_vlen = 0xFFFFFFFFu;
         std::memcpy(bad.data() + vlen_pos, &bad_vlen, 4);
         ScopedTempFile tf("bad_footer_vlen", bad);
-        impulse_status_t st = IMPULSE_ERR_IO_FAILURE;
+        impulse_status_t st = IMPULSE_OK;
         impulse_snapshot_t* snap = impulse_snapshot_open(tf.path.c_str(), &st);
-        HARDEN_CHECK(snap != nullptr && st == IMPULSE_OK, "Truncated/malformed optional metadata KV skipped safely");
-        char val_buf[64]{};
-        HARDEN_CHECK(impulse_snapshot_get_metadata(snap, "generator", val_buf, sizeof(val_buf)) != IMPULSE_OK,
-                     "Malformed KV entry must not be inserted");
-        impulse_snapshot_close(snap);
+        HARDEN_CHECK(snap == nullptr && st == IMPULSE_ERR_BUFFER_OVERFLOW,
+                     "Truncated/malformed footer metadata vlen=0xFFFFFFFF must fail fast with BUFFER_OVERFLOW");
     }
 }
 

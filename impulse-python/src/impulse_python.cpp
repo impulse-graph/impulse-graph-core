@@ -82,15 +82,70 @@ public:
         return impulse_snapshot_is_reachable(lease->handle, relation_index, src_id, tgt_id);
     }
 
+    py::dict header() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        impulse_snapshot_header_info_t hdr{};
+        impulse_status_t st = impulse_snapshot_get_header(lease->handle, &hdr);
+        if (st != IMPULSE_OK) {
+            throw std::runtime_error("Failed to read snapshot header: " + std::string(impulse_get_last_error()));
+        }
+        py::dict res;
+        res["magic"] = hdr.magic;
+        res["version"] = hdr.version;
+        res["data_offset"] = hdr.data_offset;
+        res["domain_count"] = hdr.domain_count;
+        res["relation_count"] = hdr.relation_count;
+        res["index_count"] = hdr.index_count;
+        res["timestamp_ms"] = hdr.timestamp_ms;
+        res["required_features"] = hdr.required_features;
+        res["footer_directory_offset"] = hdr.footer_directory_offset;
+        res["footer_directory_bytes"] = hdr.footer_directory_bytes;
+        res["file_size"] = hdr.file_size;
+        res["header_checksum"] = hdr.header_checksum;
+        res["snapshot_uuid"] = py::bytes(reinterpret_cast<const char*>(hdr.snapshot_uuid), 16);
+        return res;
+    }
+
+    uint64_t file_size() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_file_size(lease->handle);
+    }
+
+    std::string sha256() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        uint8_t digest[32] = {};
+        impulse_status_t st = IMPULSE_OK;
+        {
+            py::gil_scoped_release release;
+            st = impulse_snapshot_compute_sha256(lease->handle, digest);
+        }
+        if (st != IMPULSE_OK) {
+            throw std::runtime_error("Failed to compute snapshot SHA-256: " + std::string(impulse_get_last_error()));
+        }
+        static const char hex[] = "0123456789abcdef";
+        std::string out(64, '0');
+        for (size_t i = 0; i < 32; ++i) {
+            out[i * 2] = hex[(digest[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = hex[digest[i] & 0x0F];
+        }
+        return out;
+    }
+
     uint16_t domain_count() const {
-        return snapshot_ ? impulse_snapshot_domain_count(snapshot_) : 0;
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_domain_count(lease->handle);
     }
 
     py::dict get_domain(uint16_t index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
         impulse_domain_catalog_entry_t entry;
         const char* name = nullptr;
-        impulse_status_t status = impulse_snapshot_get_domain_entry(snapshot_, index, &entry, &name);
+        impulse_status_t status = impulse_snapshot_get_domain_entry(lease->handle, index, &entry, &name);
         if (status != IMPULSE_OK) {
             throw std::out_of_range("Invalid domain index: " + std::to_string(index));
         }
@@ -98,41 +153,223 @@ public:
         py::dict res;
         res["domain_id"] = entry.domain_id;
         res["key_type"] = entry.key_type;
+        res["dense_id_width"] = entry.dense_id_width;
         res["node_count"] = entry.node_count;
+        res["attr_count"] = entry.attr_count;
+        res["key_attr_index"] = entry.key_attr_index;
         res["name"] = name ? std::string(name) : "";
         return res;
     }
 
+    uint16_t get_domain_attribute_count(uint16_t domain_index) const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        if (domain_index >= impulse_snapshot_domain_count(lease->handle)) {
+            throw std::out_of_range("Invalid domain index: " + std::to_string(domain_index));
+        }
+        return impulse_snapshot_get_domain_attribute_count(lease->handle, domain_index);
+    }
+
+    static py::dict build_attr_descriptor_dict(const impulse_attribute_descriptor_t& desc, const char* name) {
+        py::dict res;
+        uint8_t base_type = desc.type_code & 0x7Fu;
+        res["name"] = name ? std::string(name) : "";
+        res["type_code"] = desc.type_code;
+        res["base_type_code"] = base_type;
+        res["is_nullable"] = (desc.type_code & 0x80u) != 0;
+        res["dimension"] = desc.dimension;
+        res["data_offset"] = desc.data_offset;
+        res["data_bytes"] = desc.data_bytes;
+        res["offsets_offset"] = desc.offsets_offset;
+        res["offsets_bytes"] = desc.offsets_bytes;
+        if (base_type == 0x15u) {
+            res["precision"] = desc.reserved2;
+            res["scale"] = desc.reserved1;
+        }
+        return res;
+    }
+
+    py::dict get_domain_attribute_info(uint16_t domain_index, uint16_t attribute_index) const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        impulse_attribute_descriptor_t desc{};
+        const char* name = nullptr;
+        impulse_status_t st = impulse_snapshot_get_domain_attribute_descriptor(
+            lease->handle, domain_index, attribute_index, &desc, &name
+        );
+        if (st != IMPULSE_OK) {
+            throw std::out_of_range("Domain attribute info not available for domain " + std::to_string(domain_index) + ", attr " + std::to_string(attribute_index));
+        }
+        return build_attr_descriptor_dict(desc, name);
+    }
+
     uint16_t relation_count() const {
-        return snapshot_ ? impulse_snapshot_relation_count(snapshot_) : 0;
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_relation_count(lease->handle);
     }
 
     py::dict get_relation(uint16_t index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
         impulse_relation_directory_entry_t entry;
-        impulse_status_t status = impulse_snapshot_get_relation_entry(snapshot_, index, &entry);
+        impulse_status_t status = impulse_snapshot_get_relation_entry(lease->handle, index, &entry);
         if (status != IMPULSE_OK) {
             throw std::out_of_range("Invalid relation index: " + std::to_string(index));
         }
 
         py::dict res;
+        res["relation_id"] = entry.relation_id;
         res["src_domain_id"] = entry.src_domain_id;
         res["tgt_domain_id"] = entry.tgt_domain_id;
+        res["encoding_id"] = entry.encoding_id;
         res["encoding_type"] = entry.encoding_id;
+        res["node_id_width"] = entry.node_id_width;
+        res["edge_index_width"] = entry.edge_index_width;
         res["node_count"] = entry.node_count;
         res["edge_count"] = entry.edge_count;
         res["section_features"] = entry.section_features;
+        res["attr_count"] = entry.attr_count;
         res["csr_row_off_offset"] = entry.csr_row_off_offset;
         res["csr_row_off_bytes"] = entry.csr_row_off_bytes;
         res["csr_col_idx_offset"] = entry.csr_col_idx_offset;
         res["csr_col_idx_bytes"] = entry.csr_col_idx_bytes;
+        res["csc_row_off_offset"] = entry.csc_row_off_offset;
+        res["csc_row_off_bytes"] = entry.csc_row_off_bytes;
+        res["csc_col_idx_offset"] = entry.csc_col_idx_offset;
+        res["csc_col_idx_bytes"] = entry.csc_col_idx_bytes;
+        uint16_t snap_ver = impulse_snapshot_version(lease->handle);
+        bool is_virt = (snap_ver >= 10) && ((entry.section_features & IMP_REL_FEATURE_VIRTUAL) != 0);
+        res["is_virtual"] = is_virt;
+        res["has_csr"] = !is_virt && (entry.csr_row_off_bytes > 0 || entry.csr_col_idx_bytes > 0);
+        res["has_csc"] = !is_virt && (entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0);
+        res["has_coo"] = !is_virt && (((snap_ver >= 11) && ((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0)) ||
+                         (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0));
+        res["is_flat_forward"] = !is_virt && entry.encoding_id != 3 &&
+                                 entry.csr_row_off_bytes == 0 && entry.csr_col_idx_bytes > 0;
+        res["is_flat_reverse"] = !is_virt && entry.encoding_id != 3 &&
+                                 entry.csc_row_off_bytes == 0 && entry.csc_col_idx_bytes > 0;
+        auto norm_w = [](uint8_t w) -> uint8_t {
+            if (w == 16 || w == 2) return 2;
+            if (w == 64 || w == 8) return 8;
+            return 4;
+        };
+        uint8_t fallback_w = entry.node_id_width > 0 ? norm_w(entry.node_id_width) : 4;
+        uint8_t src_w = fallback_w;
+        uint8_t tgt_w = fallback_w;
+        uint16_t dcnt = impulse_snapshot_domain_count(lease->handle);
+        for (uint16_t di = 0; di < dcnt; ++di) {
+            impulse_domain_catalog_entry_t de{};
+            if (impulse_snapshot_get_domain_entry(lease->handle, di, &de, nullptr) == IMPULSE_OK) {
+                if (de.domain_id == entry.src_domain_id && de.dense_id_width > 0) {
+                    src_w = norm_w(de.dense_id_width);
+                }
+                if (de.domain_id == entry.tgt_domain_id && de.dense_id_width > 0) {
+                    tgt_w = norm_w(de.dense_id_width);
+                }
+            }
+        }
+        res["src_node_id_width"] = src_w;
+        res["tgt_node_id_width"] = tgt_w;
+        res["coo_src_offset"] = entry.coo_src_offset;
+        res["coo_src_bytes"] = entry.coo_src_bytes;
+        res["coo_tgt_offset"] = entry.coo_tgt_offset;
+        res["coo_tgt_bytes"] = entry.coo_tgt_bytes;
+        res["coo_edge_id_offset"] = entry.coo_edge_id_offset;
+        res["coo_edge_id_bytes"] = entry.coo_edge_id_bytes;
+        res["coo_order"] = entry.coo_order;
+        py::list vcomps;
+        if (is_virt) {
+            uint16_t vcnt = 0;
+            if (impulse_snapshot_get_relation_virtual_components(lease->handle, index, nullptr, 0, &vcnt) == IMPULSE_OK && vcnt > 0) {
+                std::vector<uint16_t> ids(vcnt);
+                if (impulse_snapshot_get_relation_virtual_components(lease->handle, index, ids.data(), vcnt, &vcnt) == IMPULSE_OK) {
+                    for (uint16_t cid : ids) vcomps.append(cid);
+                }
+            }
+        }
+        res["virtual_component_ids"] = vcomps;
         const char* rel_name = nullptr;
-        if (impulse_snapshot_get_relation_name(snapshot_, index, &rel_name) == IMPULSE_OK && rel_name) {
+        if (impulse_snapshot_get_relation_name(lease->handle, index, &rel_name) == IMPULSE_OK && rel_name) {
             res["name"] = std::string(rel_name);
         } else {
             res["name"] = "";
         }
         return res;
+    }
+
+    uint16_t index_count() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_get_index_count(lease->handle);
+    }
+
+    uint32_t metadata_count() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        return impulse_snapshot_get_metadata_count(lease->handle);
+    }
+
+    py::dict get_index(uint16_t index_idx) const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        impulse_index_directory_entry_t entry{};
+        const char* name = nullptr;
+        impulse_status_t st = impulse_snapshot_get_index_entry(lease->handle, index_idx, &entry, &name);
+        if (st != IMPULSE_OK) {
+            throw std::out_of_range("Invalid secondary index: " + std::to_string(index_idx));
+        }
+        py::dict res;
+        res["index_id"] = entry.index_id;
+        res["domain_id"] = entry.domain_id;
+        res["relation_id"] = entry.relation_id;
+        res["attribute_index"] = entry.attribute_index;
+        res["index_type"] = entry.index_type;
+        res["name"] = name ? std::string(name) : "";
+        res["data_offset"] = entry.data_offset;
+        res["data_bytes"] = entry.data_bytes;
+        res["payload_feature_mask"] = entry.payload_feature_mask;
+        return res;
+    }
+
+    py::dict metadata() const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        py::dict res;
+        uint32_t cnt = impulse_snapshot_get_metadata_count(lease->handle);
+        for (uint32_t i = 0; i < cnt; ++i) {
+            const char* k = nullptr;
+            const char* v = nullptr;
+            if (impulse_snapshot_get_metadata_entry(lease->handle, i, &k, &v) == IMPULSE_OK && k && v) {
+                res[py::str(k)] = py::str(v);
+            }
+        }
+        return res;
+    }
+
+    py::object get_metadata(const std::string& key) const {
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        uint32_t lo = 0;
+        uint32_t hi = impulse_snapshot_get_metadata_count(lease->handle);
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            const char* k = nullptr;
+            const char* v = nullptr;
+            if (impulse_snapshot_get_metadata_entry(lease->handle, mid, &k, &v) != IMPULSE_OK || !k) {
+                break;
+            }
+            int cmp = key.compare(k);
+            if (cmp == 0) {
+                return v ? py::object(py::str(v)) : py::object(py::str(""));
+            }
+            if (cmp > 0) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return py::none();
     }
 
     py::memoryview make_pinned_memoryview(const void* ptr, size_t size) const {
@@ -226,26 +463,17 @@ public:
     }
 
     py::dict get_attribute_info(uint16_t relation_index, uint16_t attribute_index) const {
-        if (!snapshot_) throw std::runtime_error("Snapshot is closed");
-        const void* data = nullptr;
-        uint64_t data_bytes = 0;
-        const void* offsets = nullptr;
-        uint64_t offsets_bytes = 0;
-        uint8_t type_code = 0;
-        uint32_t dimension = 0;
-        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
-            snapshot_, relation_index, attribute_index,
-            &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension
+        auto lease = lease_;
+        if (!lease || !lease->handle) throw std::runtime_error("Snapshot is closed");
+        impulse_attribute_descriptor_t desc{};
+        const char* name = nullptr;
+        impulse_status_t st = impulse_snapshot_get_attribute_descriptor(
+            lease->handle, relation_index, attribute_index, &desc, &name
         );
         if (st != IMPULSE_OK) {
-            throw std::runtime_error("Attribute info not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
+            throw std::out_of_range("Attribute info not available for relation " + std::to_string(relation_index) + ", attr " + std::to_string(attribute_index));
         }
-        py::dict res;
-        res["type_code"] = type_code;
-        res["dimension"] = dimension;
-        res["data_bytes"] = data_bytes;
-        res["offsets_bytes"] = offsets_bytes;
-        return res;
+        return build_attr_descriptor_dict(desc, name);
     }
 
     py::tuple sample_neighbors(uint16_t relation_index, const std::vector<uint64_t>& nodes, int k_samples, uint64_t seed) const {
@@ -452,6 +680,34 @@ public:
         );
         if (status != IMPULSE_OK) {
             throw std::runtime_error("Failed to add decimal64 attribute: " + std::string(impulse_get_last_error()));
+        }
+    }
+
+    void set_metadata(const std::string& key, const std::string& value) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        impulse_status_t status = impulse_writer_set_metadata(writer_, key.c_str(), value.c_str());
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to set metadata: " + std::string(impulse_get_last_error()));
+        }
+    }
+
+    void add_index(
+        uint16_t domain_id,
+        uint16_t relation_id,
+        uint16_t attribute_index,
+        uint8_t index_type,
+        const std::string& index_name,
+        const py::bytes& index_data,
+        uint64_t payload_feature_mask = 0
+    ) {
+        if (!writer_) throw std::runtime_error("Writer is destroyed");
+        std::string_view sv(index_data);
+        impulse_status_t status = impulse_writer_add_index(
+            writer_, domain_id, relation_id, attribute_index, index_type,
+            index_name.c_str(), sv.data(), static_cast<uint64_t>(sv.size()), payload_feature_mask
+        );
+        if (status != IMPULSE_OK) {
+            throw std::runtime_error("Failed to add index: " + std::string(impulse_get_last_error()));
         }
     }
 
@@ -849,10 +1105,20 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("close", &PyImpulseSnapshot::close)
         .def("__enter__", [](PyImpulseSnapshot& self) { return &self; })
         .def("__exit__", [](PyImpulseSnapshot& self, py::object, py::object, py::object) { self.close(); })
+        .def("header", &PyImpulseSnapshot::header)
+        .def("file_size", &PyImpulseSnapshot::file_size)
+        .def("sha256", &PyImpulseSnapshot::sha256)
         .def("domain_count", &PyImpulseSnapshot::domain_count)
         .def("get_domain", &PyImpulseSnapshot::get_domain, py::arg("index"))
+        .def("get_domain_attribute_count", &PyImpulseSnapshot::get_domain_attribute_count, py::arg("domain_index"))
+        .def("get_domain_attribute_info", &PyImpulseSnapshot::get_domain_attribute_info, py::arg("domain_index"), py::arg("attribute_index"))
         .def("relation_count", &PyImpulseSnapshot::relation_count)
         .def("get_relation", &PyImpulseSnapshot::get_relation, py::arg("index"))
+        .def("index_count", &PyImpulseSnapshot::index_count)
+        .def("metadata_count", &PyImpulseSnapshot::metadata_count)
+        .def("get_index", &PyImpulseSnapshot::get_index, py::arg("index"))
+        .def("metadata", &PyImpulseSnapshot::metadata)
+        .def("get_metadata", &PyImpulseSnapshot::get_metadata, py::arg("key"))
         .def("get_buffer", &PyImpulseSnapshot::get_buffer, py::arg("offset"), py::arg("size"))
         .def("get_csr_row_offsets", &PyImpulseSnapshot::get_csr_row_offsets, py::arg("index"))
         .def("get_csr_col_indices", &PyImpulseSnapshot::get_csr_col_indices, py::arg("index"))
@@ -890,6 +1156,11 @@ PYBIND11_MODULE(_impulse_native, m) {
         .def("add_attribute_decimal64", &PyImpulseWriter::add_attribute_decimal64,
              py::arg("relation_index"), py::arg("name"), py::arg("type_code"),
              py::arg("dimension"), py::arg("precision"), py::arg("scale"), py::arg("data"))
+        .def("set_metadata", &PyImpulseWriter::set_metadata, py::arg("key"), py::arg("value"))
+        .def("add_index", &PyImpulseWriter::add_index,
+             py::arg("domain_id"), py::arg("relation_id"), py::arg("attribute_index"),
+             py::arg("index_type"), py::arg("index_name"), py::arg("index_data"),
+             py::arg("payload_feature_mask") = 0)
         .def("finalize", &PyImpulseWriter::finalize);
 
     m.def("parse_cel", [](const std::string& expr) -> std::string {

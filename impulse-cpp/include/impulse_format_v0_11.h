@@ -182,6 +182,16 @@ static_assert(offsetof(impulse_relation_directory_entry_v0_11_t, coo_order) == 1
 static_assert(sizeof(impulse_attribute_descriptor_v0_11_t) == 44, "v0.11.0 AttributeDescriptor must be 44 bytes");
 static_assert(sizeof(impulse_index_directory_entry_v0_11_t) == 64, "v0.11.0 IndexDirectoryEntry must be 64 bytes");
 static_assert(sizeof(impulse_footer_trailer_v0_11_t) == 16, "v0.11.0 FooterTrailer must be 16 bytes");
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(impulse_snapshot_header_v0_11_t) == 4096, "v0.11.0 SnapshotHeader must be 4096 bytes");
+_Static_assert(sizeof(impulse_domain_catalog_entry_v0_11_t) == 32, "v0.11.0 DomainCatalogEntry must be 32 bytes");
+_Static_assert(offsetof(impulse_domain_catalog_entry_v0_11_t, dense_id_width) == 3, "v0.11.0 dense_id_width must be at offset 3");
+_Static_assert(sizeof(impulse_relation_directory_entry_v0_11_t) == 192, "v0.11.0 RelationDirectoryEntry must be 192 bytes");
+_Static_assert(offsetof(impulse_relation_directory_entry_v0_11_t, coo_src_offset) == 128, "v0.11.0 coo_src_offset must be at offset 128");
+_Static_assert(offsetof(impulse_relation_directory_entry_v0_11_t, coo_order) == 176, "v0.11.0 coo_order must be at offset 176");
+_Static_assert(sizeof(impulse_attribute_descriptor_v0_11_t) == 44, "v0.11.0 AttributeDescriptor must be 44 bytes");
+_Static_assert(sizeof(impulse_index_directory_entry_v0_11_t) == 64, "v0.11.0 IndexDirectoryEntry must be 64 bytes");
+_Static_assert(sizeof(impulse_footer_trailer_v0_11_t) == 16, "v0.11.0 FooterTrailer must be 16 bytes");
 #endif
 
 #ifdef __cplusplus

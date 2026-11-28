@@ -228,6 +228,18 @@ class Snapshot:
             self._get_default_vm()
         return self._default_state
 
+    def header(self) -> dict:
+        self._check_open()
+        return self._native.header()
+
+    def file_size(self) -> int:
+        self._check_open()
+        return self._native.file_size()
+
+    def sha256(self) -> str:
+        self._check_open()
+        return self._native.sha256()
+
     def domain_count(self) -> int:
         self._check_open()
         return self._native.domain_count()
@@ -236,10 +248,49 @@ class Snapshot:
         self._check_open()
         return self._native.get_domain(index)
 
+    def domains(self) -> List[dict]:
+        self._check_open()
+        return [self._native.get_domain(i) for i in range(self._native.domain_count())]
+
+    def get_domain_attribute_count(self, domain_index: int) -> int:
+        self._check_open()
+        return self._native.get_domain_attribute_count(domain_index)
+
+    def get_domain_attribute_info(self, domain_index: int, attribute_index: int) -> dict:
+        self._check_open()
+        return self._native.get_domain_attribute_info(domain_index, attribute_index)
+
+    def index_count(self) -> int:
+        self._check_open()
+        return self._native.index_count()
+
+    def get_index(self, index: int) -> dict:
+        self._check_open()
+        return self._native.get_index(index)
+
+    def indices(self) -> List[dict]:
+        self._check_open()
+        return [self._native.get_index(i) for i in range(self._native.index_count())]
+
+    def metadata(self) -> Dict[str, str]:
+        self._check_open()
+        return self._native.metadata()
+
+    def metadata_count(self) -> int:
+        self._check_open()
+        return self._native.metadata_count()
+
+    def get_metadata(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        self._check_open()
+        val = self._native.get_metadata(key)
+        return default if val is None else val
+
     def domain(
         self, name_or_id: Union[str, int], catalog: Optional[Union[str, Dict[str, int]]] = None
     ) -> DomainView:
         self._check_open()
+        if isinstance(name_or_id, bool):
+            raise TypeError("domain() argument must be str or int, got bool")
         effective_catalog = catalog if catalog is not None else self._catalog
         if isinstance(name_or_id, int):
             count = self.domain_count()
@@ -278,6 +329,28 @@ class Snapshot:
     def get_relation(self, index: int) -> dict:
         self._check_open()
         return self._native.get_relation(index)
+
+    def relations(self) -> List[dict]:
+        self._check_open()
+        return [self._native.get_relation(i) for i in range(self._native.relation_count())]
+
+    def relation(self, name_or_id: Union[str, int]) -> dict:
+        self._check_open()
+        if isinstance(name_or_id, bool):
+            raise TypeError("relation() argument must be str or int, got bool")
+        if isinstance(name_or_id, int):
+            for i in range(self._native.relation_count()):
+                rel = self._native.get_relation(i)
+                if rel["relation_id"] == name_or_id:
+                    return rel
+            raise KeyError(f"Relation ID {name_or_id} not found in snapshot catalog.")
+        if isinstance(name_or_id, str):
+            for i in range(self._native.relation_count()):
+                rel = self._native.get_relation(i)
+                if rel["name"] == name_or_id:
+                    return rel
+            raise KeyError(f"Relation '{name_or_id}' not found in snapshot catalog.")
+        raise TypeError(f"relation() argument must be str or int, got {type(name_or_id).__name__}")
 
     def is_reachable(self, relation_index: int, src_id: int, tgt_id: int) -> bool:
         self._check_open()
@@ -703,6 +776,29 @@ class Writer:
             data_bytes = np.asarray(data, dtype=np.int64).tobytes()
         self._native.add_attribute_decimal64(
             relation_index, name, type_code, dimension, precision, scale, data_bytes
+        )
+
+    def set_metadata(self, key: str, value: str):
+        self._native.set_metadata(key, value)
+
+    def add_index(
+        self,
+        domain_id: int,
+        relation_id: int,
+        attribute_index: int,
+        index_type: int,
+        index_name: str,
+        index_data: bytes,
+        payload_feature_mask: int = 0,
+    ):
+        self._native.add_index(
+            domain_id,
+            relation_id,
+            attribute_index,
+            index_type,
+            index_name,
+            index_data,
+            payload_feature_mask,
         )
 
     def finalize(self):

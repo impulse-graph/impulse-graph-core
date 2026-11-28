@@ -279,10 +279,22 @@ try {
     RangeError
   );
   narrowWriter.addDomainDecimal64(0, 'small', 4, 2, [12.34]);
+  narrowWriter.setMetadata('z_key', 'last');
+  narrowWriter.setMetadata('a_key', 'first');
+  narrowWriter.setMetadata('🚀_emoji', 'rocket');
+  narrowWriter.setMetadata('\uff21_fullwidth', 'fw');
   narrowWriter.finalize();
   const narrowSnap = new impulse.Snapshot(narrowPath);
   const narrowVals = narrowSnap.getDomainDecimal64(0, 0);
   assert.strictEqual(narrowVals[0].toString(), '12.34');
+  assert.strictEqual(narrowSnap.getMetadata('a_key'), 'first');
+  assert.strictEqual(narrowSnap.getMetadata('z_key'), 'last');
+  assert.strictEqual(narrowSnap.getMetadata('🚀_emoji'), 'rocket');
+  assert.strictEqual(narrowSnap.getMetadata('\uff21_fullwidth'), 'fw');
+  assert.strictEqual(narrowSnap.getMetadata('missing'), null);
+  const narrowMeta = narrowSnap.getAllMetadata();
+  assert.strictEqual(Object.keys(narrowMeta).length, 4);
+  assert.strictEqual(narrowMeta['🚀_emoji'], 'rocket');
   narrowSnap.close();
 
   const narrowParamProg = impulse.compileCypher(
@@ -332,8 +344,90 @@ try {
   const nullDivRes = nullDivProg.execute(snap);
   assert.strictEqual(nullDivRes.q, null);
 
+  // Phase 1 metadata introspection assertions
+  const crypto = require('crypto');
+  const hdr = snap.header();
+  assert.strictEqual(hdr.magic, 0x494d5053);
+  assert.strictEqual(hdr.version, 11);
+  assert.strictEqual(hdr.dataOffset, 4096);
+  assert.strictEqual(hdr.domainCount, snap.domainCount());
+  assert.strictEqual(hdr.relationCount, snap.relationCount());
+  assert.strictEqual(hdr.fileSize, snap.fileSize());
+  assert.strictEqual(hdr.snapshotUuid.length, 16);
+  const expectedSha = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(snapPath))
+    .digest('hex');
+  assert.strictEqual(snap.sha256(), expectedSha);
+
+  const dom0 = snap.getDomain(0);
+  assert.strictEqual(dom0.domainId, 0);
+  assert.ok(dom0.attrCount >= 1);
+  assert.strictEqual(typeof dom0.nodeCount, 'bigint');
+
+  const rel0 = snap.getRelation(0);
+  assert.strictEqual(rel0.relationId, 0);
+  assert.strictEqual(rel0.isVirtual, false);
+  assert.strictEqual(rel0.hasCsr, true);
+  assert.strictEqual(rel0.isFlatForward, false);
+  assert.strictEqual(rel0.srcNodeIdWidth, 4);
+  assert.strictEqual(rel0.tgtNodeIdWidth, 4);
+  assert.deepStrictEqual(rel0.virtualComponentIds, []);
+  assert.strictEqual(typeof rel0.csrRowOffOffset, 'bigint');
+  assert.strictEqual(typeof rel0.cooSrcOffset, 'bigint');
+  assert.strictEqual(typeof snap.getRelationName(0), 'string');
+
+  // Prototype list & lookup helpers
+  assert.strictEqual(snap.domains().length, snap.domainCount());
+  assert.strictEqual(snap.domain(0).domainId, 0);
+  assert.strictEqual(snap.domain(dom0.name).domainId, 0);
+  assert.strictEqual(snap.domain('__missing__'), null);
+  assert.throws(() => snap.domain(true), TypeError);
+  assert.strictEqual(snap.relations().length, snap.relationCount());
+  assert.strictEqual(snap.relation(0).relationId, 0);
+  assert.strictEqual(snap.relation('__missing__'), null);
+  assert.throws(() => snap.relation(false), TypeError);
+  assert.deepStrictEqual(snap.indices(), []);
+  assert.strictEqual(snap.metadataCount(), 0);
+
+  const da0 = snap.getDomainAttributeInfo(0, 0);
+  assert.ok(da0.dataOffset >= 4096n);
+  assert.strictEqual(typeof da0.dataBytes, 'bigint');
+  assert.strictEqual(typeof da0.offsetsBytes, 'bigint');
+
+  assert.strictEqual(snap.indexCount(), 0);
+  assert.deepStrictEqual(snap.getAllMetadata(), {});
+  assert.strictEqual(snap.getMetadata('missing'), null);
+
+  // H2 regression: invalid uint16 indices must throw RangeError (never wrap to 0)
+  for (const badIdx of [-1, -65536, 65536, NaN, Infinity, 0.5]) {
+    assert.throws(() => snap.getDomain(badIdx), RangeError);
+    assert.throws(() => snap.getRelation(badIdx), RangeError);
+    assert.throws(() => snap.getRelationName(badIdx), RangeError);
+    assert.throws(() => snap.getIndex(badIdx), RangeError);
+    assert.throws(() => snap.getDomainAttributeCount(badIdx), RangeError);
+    assert.throws(() => snap.getDomainAttributeInfo(badIdx, 0), RangeError);
+    assert.throws(() => snap.getAttributeInfo(badIdx, 0), RangeError);
+    assert.throws(() => snap.getDomainAttributeDecimal64(badIdx, 0), RangeError);
+    assert.throws(() => snap.getAttributeDecimal64(badIdx, 0), RangeError);
+  }
+  assert.throws(() => snap.getDomainAttributeInfo(0, 99), RangeError);
+  assert.throws(() => snap.getAttributeInfo(0, 99), RangeError);
+
   snap.close();
-  console.log('ALL NODE v0.11 + DECIMAL64 TESTS PASSED!');
+  assert.throws(() => snap.header(), /closed/i);
+  assert.throws(() => snap.fileSize(), /closed/i);
+  assert.throws(() => snap.sha256(), /closed/i);
+  assert.throws(() => snap.domainCount(), /closed/i);
+  assert.throws(() => snap.relationCount(), /closed/i);
+  assert.throws(() => snap.indexCount(), /closed/i);
+  assert.throws(() => snap.domains(), /closed/i);
+  assert.throws(() => snap.relations(), /closed/i);
+  assert.throws(() => snap.indices(), /closed/i);
+  assert.throws(() => snap.metadataCount(), /closed/i);
+  assert.throws(() => snap.getMetadata('k'), /closed/i);
+  assert.throws(() => snap.getAllMetadata(), /closed/i);
+  console.log('ALL NODE v0.11 + DECIMAL64 + INTROSPECTION TESTS PASSED!');
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }

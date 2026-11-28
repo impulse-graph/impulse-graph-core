@@ -236,26 +236,21 @@ void test_mcdc_snapshot_header_validation() {
     ASSERT_EQ(snap, nullptr);
     ASSERT_EQ(st, IMPULSE_ERR_BUFFER_OVERFLOW);
 
-    // 7. Legacy v2.4 SHA-256 Checksum Match vs Mismatch
+    // 7. Legacy v2 / v2.4 versions are retired and rejected with IMPULSE_ERR_UNSUPPORTED_VERSION
     {
         std::ofstream ofs(tmp_file, std::ios::binary);
-        std::vector<uint8_t> buf(8192, 0xAA);
+        std::vector<uint8_t> buf(8192, 0x00);
         uint32_t magic = IMPULSE_MAGIC;
         uint16_t ver_legacy = 0x0204;
-        uint64_t data_off = 4096;
+        uint32_t data_off = 4096;
         std::memcpy(buf.data(), &magic, 4);
         std::memcpy(buf.data() + 4, &ver_legacy, 2);
-        std::memcpy(buf.data() + 6, &data_off, 8);
-
-        // Put corrupted SHA256 in header
-        uint8_t fake_sha[32] = { 0x12, 0x34 };
-        std::memcpy(buf.data() + 30, fake_sha, 32);
-
+        std::memcpy(buf.data() + 6, &data_off, 4);
         ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
     }
     snap = impulse_snapshot_open(tmp_file, &st);
     ASSERT_EQ(snap, nullptr);
-    ASSERT_EQ(st, IMPULSE_ERR_CORRUPT_CHECKSUM);
+    ASSERT_EQ(st, IMPULSE_ERR_UNSUPPORTED_VERSION);
 
     std::remove(tmp_file);
 }
@@ -742,102 +737,30 @@ void test_mcdc_multi_width_node_edge_relations() {
 }
 
 // -----------------------------------------------------------------------------
-// 8. Legacy Snapshot v2.4 Format & Auxiliary Section Types
+// 8. Legacy Snapshot v2 / v2.4 Formats Must Be Rejected
 // -----------------------------------------------------------------------------
 void test_mcdc_legacy_snapshot_v24() {
-    std::cout << "[MC/DC Snapshot] Testing Legacy v2.4 Format & Auxiliary Sections..." << std::endl;
+    std::cout << "[MC/DC Snapshot] Verifying Retired Legacy v2/v2.4 Rejection..." << std::endl;
 
     const char* tmp_file = "__test_mcdc_legacy_v24.bin";
-    std::ofstream ofs(tmp_file, std::ios::binary);
+    const uint16_t retired_versions[] = { 2, 0x0204 };
+    for (uint16_t ver_legacy : retired_versions) {
+        std::ofstream ofs(tmp_file, std::ios::binary);
+        std::vector<uint8_t> buf(8192, 0x00);
+        uint32_t magic = IMPULSE_MAGIC;
+        uint32_t data_off = 4096;
+        std::memcpy(buf.data(), &magic, 4);
+        std::memcpy(buf.data() + 4, &ver_legacy, 2);
+        std::memcpy(buf.data() + 6, &data_off, 4);
+        ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+        ofs.close();
 
-    std::vector<uint8_t> buf(16384, 0x00);
-    uint32_t magic = IMPULSE_MAGIC;
-    uint16_t ver_legacy = 0x0204;
-    uint32_t data_off = 4096;
-    uint16_t dom_cnt = 1;
-    uint16_t rel_cnt = 1;
-    std::memcpy(buf.data(), &magic, 4);
-    std::memcpy(buf.data() + 4, &ver_legacy, 2);
-    std::memcpy(buf.data() + 6, &data_off, 4);
-    std::memcpy(buf.data() + 10, &dom_cnt, 2);
-    std::memcpy(buf.data() + 12, &rel_cnt, 2);
+        impulse_status_t st = IMPULSE_OK;
+        impulse_snapshot_t* snap = impulse_snapshot_open(tmp_file, &st);
+        ASSERT_EQ(snap, nullptr);
+        ASSERT_EQ(st, IMPULSE_ERR_UNSUPPORTED_VERSION);
+    }
 
-    // Legacy domain catalog at 4096 (64 bytes)
-    size_t cur = 4096;
-    uint16_t dom_id = 0;
-    uint8_t key_type = IMPULSE_KEY_TYPE_INT32;
-    uint32_t name_off = 4096 + 64 + 128; // Name after domain & relation entries
-    uint16_t name_len = 6;
-    std::memcpy(buf.data() + cur, &dom_id, 2);
-    buf[cur + 2] = key_type;
-    std::memcpy(buf.data() + cur + 44, &name_off, 4);
-    std::memcpy(buf.data() + cur + 48, &name_len, 2);
-    cur += 64;
-
-    // Legacy relation directory entry at 4160 (128 bytes)
-    uint16_t src_dom = 0, tgt_dom = 0;
-    uint8_t enc = IMPULSE_ENC_RAW;
-    uint64_t node_c = 2, edge_c = 2;
-    uint64_t csr_r_off = 8192, csr_r_bytes = 12;
-    uint64_t csr_c_off = 8320, csr_c_bytes = 8;
-    uint64_t aux_off = 8448, aux_bytes = 48; // 2 auxiliary entries: 0x0001 (CSC rows), 0x0002 (CSC cols)
-
-    std::memcpy(buf.data() + cur, &src_dom, 2);
-    std::memcpy(buf.data() + cur + 2, &tgt_dom, 2);
-    buf[cur + 4] = enc;
-    std::memcpy(buf.data() + cur + 5, &node_c, 8);
-    std::memcpy(buf.data() + cur + 13, &edge_c, 8);
-    std::memcpy(buf.data() + cur + 37, &csr_r_off, 8);
-    std::memcpy(buf.data() + cur + 45, &csr_r_bytes, 8);
-    std::memcpy(buf.data() + cur + 53, &csr_c_off, 8);
-    std::memcpy(buf.data() + cur + 61, &csr_c_bytes, 8);
-    std::memcpy(buf.data() + cur + 69, &aux_off, 8);
-    std::memcpy(buf.data() + cur + 77, &aux_bytes, 8);
-    cur += 128;
-
-    // Write name "legacy" at name_off
-    std::memcpy(buf.data() + name_off, "legacy", 6);
-
-    // CSR buffers
-    uint32_t r_offs[] = { 0, 1, 2 };
-    uint32_t c_tgts[] = { 1, 0 };
-    std::memcpy(buf.data() + csr_r_off, r_offs, sizeof(r_offs));
-    std::memcpy(buf.data() + csr_c_off, c_tgts, sizeof(c_tgts));
-
-    // Aux entry 1: 0x0001 CSC row offsets at 8576 (12 bytes)
-    uint16_t aux1_type = 0x0001;
-    uint64_t aux1_off = 8576, aux1_sz = 12;
-    std::memcpy(buf.data() + aux_off, &aux1_type, 2);
-    std::memcpy(buf.data() + aux_off + 8, &aux1_off, 8);
-    std::memcpy(buf.data() + aux_off + 16, &aux1_sz, 8);
-    std::memcpy(buf.data() + aux1_off, r_offs, sizeof(r_offs));
-
-    // Aux entry 2: 0x0002 CSC col targets at 8704 (8 bytes)
-    uint16_t aux2_type = 0x0002;
-    uint64_t aux2_off = 8704, aux2_sz = 8;
-    std::memcpy(buf.data() + aux_off + 24, &aux2_type, 2);
-    std::memcpy(buf.data() + aux_off + 32, &aux2_off, 8);
-    std::memcpy(buf.data() + aux_off + 40, &aux2_sz, 8);
-    std::memcpy(buf.data() + aux2_off, c_tgts, sizeof(c_tgts));
-
-    ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
-    ofs.close();
-
-    impulse_status_t st = IMPULSE_OK;
-    impulse_snapshot_t* snap = impulse_snapshot_open(tmp_file, &st);
-    ASSERT_EQ(st, IMPULSE_OK);
-    ASSERT_TRUE(snap != nullptr);
-
-    // Check CSC buffers parsed from aux table
-    const uint32_t* csc_r = nullptr;
-    const uint32_t* csc_c = nullptr;
-    uint64_t csc_rc = 0, csc_ec = 0;
-    st = impulse_snapshot_get_relation_csc_buffers(snap, 0, &csc_r, &csc_c, &csc_rc, &csc_ec);
-    ASSERT_EQ(st, IMPULSE_OK);
-    ASSERT_TRUE(csc_r != nullptr);
-    ASSERT_TRUE(csc_c != nullptr);
-
-    impulse_snapshot_close(snap);
     std::remove(tmp_file);
 }
 

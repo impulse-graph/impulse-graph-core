@@ -135,7 +135,13 @@ static std::vector<uint8_t> build_morsel_1hop(uint16_t rel_id, uint16_t in_dom, 
     return b.build_impb(0, 0, dom_req);
 }
 
-static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_idx, bool is_float, uint16_t dom_req) {
+static int64_t pow10_i64(uint8_t s) {
+    int64_t r = 1;
+    for (uint8_t i = 0; i < s; ++i) r *= 10;
+    return r;
+}
+
+static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_idx, bool is_float, int64_t target_i64, uint16_t dom_req) {
     V11ProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_COLUMN, 0, 0, 0, 0, 0, 0, dom_id, attr_idx);
     if (is_float) {
@@ -144,7 +150,7 @@ static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_
         std::memcpy(&fbits, &f40, 4);
         b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_F32, 0, 1, 0, 0, 0, fbits);
     } else {
-        b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, 1, 0, 0, 0, 40u);
+        b.emit_load_const_i64(1, target_i64);
     }
     b.emit(Opcode::OP_VEC_CMP, subop::kVEC_CMP_EQ, FLAG_SCALAR_RHS, 1, 0, 1, 0, 0);
     b.emit_u16(Opcode::OP_SET_CONVERT, 2, 0, 0, 1, 0, 0, dom_id, 0); // bool_vec -> frontier
@@ -154,7 +160,7 @@ static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_
     return b.build_impb(0, 0, dom_req);
 }
 
-static std::vector<uint8_t> build_edge_attr_morsel_eq40(uint16_t rel_id, uint16_t in_dom, uint16_t attr_idx, bool is_float, uint16_t dom_req) {
+static std::vector<uint8_t> build_edge_attr_morsel_eq40(uint16_t rel_id, uint16_t in_dom, uint16_t attr_idx, bool is_float, int64_t target_i64, uint16_t dom_req) {
     V11ProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, in_dom);
     b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, rel_id, 0);
@@ -164,7 +170,7 @@ static std::vector<uint8_t> build_edge_attr_morsel_eq40(uint16_t rel_id, uint16_
         std::memcpy(&fbits, &f40, 4);
         b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_F32, 0, 1, 0, 0, 0, fbits);
     } else {
-        b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, 1, 0, 0, 0, 40u);
+        b.emit_load_const_i64(1, target_i64);
     }
     b.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, 0, 0, 0, 0, 0u);
     b.emit_u16(Opcode::OP_WALK_MORSEL, subop::kWALK_MORSEL_FWD, 0, 0, 1, 0, 0, rel_id, 5);
@@ -331,7 +337,13 @@ int main(int argc, char** argv) {
         std::string aname(aname_c);
         if (!starts_with(aname, "EQ_NUM_")) continue;
         bool is_flt = (aname.find("_F32") != std::string::npos || aname.find("_F64") != std::string::npos);
-        auto prog = build_node_attr_eq40(canon_dom_id, a, is_flt, dom_cnt);
+        int64_t target_i64 = 40;
+        uint16_t dec_p = 0;
+        uint8_t dec_s = 0;
+        if (impulse_snapshot_get_domain_attribute_decimal64_meta(snap, canon_dom_id, a, &dec_p, &dec_s) == IMPULSE_OK) {
+            target_i64 = 40LL * pow10_i64(dec_s);
+        }
+        auto prog = build_node_attr_eq40(canon_dom_id, a, is_flt, target_i64, dom_cnt);
         impulse_vm_params_v11_t params{};
         RunRes rr = run_timed_prog(prog, snap, &params, ws, warmup, iters);
         if (!first_attr) std::printf(",");
@@ -348,7 +360,13 @@ int main(int argc, char** argv) {
         std::string aname(aname_c);
         if (!starts_with(aname, "EQ_NUM_")) continue;
         bool is_flt = (aname.find("_F32") != std::string::npos || aname.find("_F64") != std::string::npos);
-        auto prog = build_edge_attr_morsel_eq40(canon_rel_id, cre.src_domain_id, a, is_flt, dom_cnt);
+        int64_t target_i64 = 40;
+        uint16_t dec_p = 0;
+        uint8_t dec_s = 0;
+        if (impulse_snapshot_get_attribute_decimal64_meta(snap, canon_rel_id, a, &dec_p, &dec_s) == IMPULSE_OK) {
+            target_i64 = 40LL * pow10_i64(dec_s);
+        }
+        auto prog = build_edge_attr_morsel_eq40(canon_rel_id, cre.src_domain_id, a, is_flt, target_i64, dom_cnt);
         impulse_vm_param_binding_v11_t bind{};
         bind.param_id = 0;
         bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;

@@ -329,6 +329,43 @@ func (w *Writer) AddAttributeDecimal64Nullable(
 	return nil
 }
 
+// AddIndex registers a Section 2.6 secondary index descriptor and payload in the snapshot.
+func (w *Writer) AddIndex(
+	domainID uint16,
+	relationID uint16,
+	attributeIndex uint16,
+	indexType uint8,
+	name string,
+	data []byte,
+	payloadFeatureMask uint64,
+) error {
+	if w.ptr == nil {
+		return ErrInvalidArgument
+	}
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	var dataPtr unsafe.Pointer
+	if len(data) > 0 {
+		dataPtr = unsafe.Pointer(&data[0])
+	}
+	status := C.impulse_writer_add_index(
+		w.ptr,
+		C.uint16_t(domainID),
+		C.uint16_t(relationID),
+		C.uint16_t(attributeIndex),
+		C.uint8_t(indexType),
+		cName,
+		dataPtr,
+		C.uint64_t(len(data)),
+		C.uint64_t(payloadFeatureMask),
+	)
+	if status != C.IMPULSE_OK {
+		return Status(status)
+	}
+	return nil
+}
+
 // SetMetadata adds a custom key-value metadata entry to the snapshot metadata header block.
 func (w *Writer) SetMetadata(key, value string) error {
 	if w.ptr == nil {

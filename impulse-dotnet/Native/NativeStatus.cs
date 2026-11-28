@@ -50,6 +50,8 @@ public enum ImpulseVmStatus : int
 /// </summary>
 public static class ImpulseAttrTypes
 {
+    public const byte AttrTypeVarString = 0x0B;
+    public const byte AttrTypeVarBytes = 0x0C;
     public const byte AttrTypeBool = 0x0F;
     public const byte AttrTypeDecimal64 = 0x15;
     public const byte AttrTypeDecimal64Nullable = 0x95;
