@@ -1365,6 +1365,80 @@ static void test_v11_imps_decimal64_morsel_and_load_column() {
     std::printf("test_v11_imps_decimal64_morsel_and_load_column: PASS (0 allocs)\n");
 }
 
+static void test_imps_string_node_and_edge_attrs() {
+    const char* out_path = "/tmp/test_vm_string_attrs.imps";
+    std::remove(out_path);
+    impulse_writer_t* w = impulse_writer_create(out_path, 0);
+    CHECK(w != nullptr);
+    CHECK(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_UINT32, "User") == IMPULSE_OK);
+    CHECK(impulse_writer_set_domain_node_count(w, 0, 3) == IMPULSE_OK);
+
+    const uint32_t roff[4] = {0u, 2u, 2u, 2u};
+    const uint32_t ctgt[2] = {1u, 2u};
+    CHECK(impulse_writer_add_relation(
+        w, 0, 0, 0, 3, 2, 0, roff, sizeof(roff), ctgt, sizeof(ctgt)) == IMPULSE_OK);
+
+    // Node string attribute: ["admin", "viewer", "guest"]
+    const char node_str[] = "adminviewerguest";
+    const uint32_t node_off[4] = {0u, 5u, 11u, 16u};
+    CHECK(impulse_writer_add_domain_attribute(
+        w, 0, "role", IMPULSE_KEY_TYPE_STRING, 1,
+        node_str, 16, node_off, sizeof(node_off)) == IMPULSE_OK);
+
+    // Edge string attribute: ["direct", "proxy"]
+    const char edge_str[] = "directproxy";
+    const uint32_t edge_off[3] = {0u, 6u, 11u};
+    CHECK(impulse_writer_add_attribute(
+        w, 0, "label", IMPULSE_KEY_TYPE_STRING, 1,
+        edge_str, 11, edge_off, sizeof(edge_off)) == IMPULSE_OK);
+
+    CHECK(impulse_writer_finalize(w) == IMPULSE_OK);
+    impulse_writer_destroy(w);
+
+    impulse_status_t st = IMPULSE_OK;
+    impulse_snapshot_t* snap = impulse_snapshot_open(out_path, &st);
+    CHECK(snap != nullptr && st == IMPULSE_OK);
+    CHECK(impulse_vm_prepare_snapshot(snap) == IMPULSE_VM_OK);
+
+    alignas(128) static uint8_t scratch[2 * 1024 * 1024];
+    impulse_vm_workspace_t* ws = nullptr;
+    CHECK(impulse_workspace_init(scratch, sizeof(scratch), &ws) == IMPULSE_VM_OK);
+
+    // 1) GATHER_NODE_ATTR on string + VEC_CMP.ne.scalar against i32 -> TYPE_MISMATCH (not OOB)
+    std::vector<uint64_t> prog_type_neg = {
+        enc(0x20, 0, 1, 0, 0, 0, 0, 0),            // FSEED.single_imm F0, 0
+        enc(0x04, 0, 1, 5, 0, 0, 0, 80),           // LOAD_CONST.i32 R5, 80
+        enc(0x36, 0, 0, 0, 0, 0, 0, (4u << 16)),   // FILTER_MORSEL F0, end_off=4
+        enc(0x41, 0, 0, 12, 8, 0, 0, 0),           // GATHER_NODE_ATTR.vec M4(V12), M0(V8), dom=0, attr=0
+        enc(0x45, 0x2, 1, 13, 12, 5, 0, 0),        // VEC_CMP.ne.scalar M5(V13), M4(V12), R5
+        enc(0x37, 0, 0, 1, 8, 0, 0, 0),            // MORSEL_COMMIT.yield_frontier F1, M0
+        enc(0x38, 0, 0, 0, 0, 0, 0, (4u << 16)),   // MORSEL_END
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),            // HALT
+    };
+    auto impb_neg = build_impb(prog_type_neg);
+    impulse_vm_status_t rc_neg = impulse_vm_execute(
+        impb_neg.data(), impb_neg.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    CHECK(rc_neg == IMPULSE_VM_ERR_TYPE_MISMATCH);
+
+    // 2) WALK_MORSEL + GATHER_EDGE_ATTR on string edge attr -> OK
+    std::vector<uint64_t> prog_edge_ok = {
+        enc(0x21, 0, 0, 0, 0, 0, 0, 0),            // FSEED.all_domain F0, dom=0
+        enc(0x35, 0, 0, 0, 0, 0, 0, (3u << 16)),   // WALK_MORSEL.fwd F0, rel=0, end_off=3
+        enc(0x42, 0, 0, 12, 10, 0, 0, 0),          // GATHER_EDGE_ATTR.vec M4(V12), M2(V10), rel=0, attr=0
+        enc(0x37, 0, 0, 1, 9, 0, 0, 0),            // MORSEL_COMMIT.yield_frontier F1, M1(V9), dom=0
+        enc(0x38, 0, 0, 0, 0, 0, 0, (3u << 16)),   // MORSEL_END
+        enc(0x00, 0, 0, 0, 0, 0, 0, 0),            // HALT
+    };
+    auto impb_ok = build_impb(prog_edge_ok);
+    impulse_vm_status_t rc_ok = impulse_vm_execute(
+        impb_ok.data(), impb_ok.size(), snap, nullptr, ws, nullptr, 0, nullptr);
+    CHECK(rc_ok == IMPULSE_VM_OK);
+
+    impulse_snapshot_close(snap);
+    std::remove(out_path);
+    std::printf("test_imps_string_node_and_edge_attrs: PASS\n");
+}
+
 int main() {
     test_xxh3_known_answers();
     test_workspace_guards_and_zero_malloc();
@@ -1380,6 +1454,7 @@ int main() {
     test_v11_emitter_const_pool_params_and_collect_e2e();
     test_v11_imps_coo_roundtrip_and_hardening();
     test_v11_imps_decimal64_morsel_and_load_column();
+    test_imps_string_node_and_edge_attrs();
     std::printf("test_vm: ALL PASSED\n");
     return 0;
 }

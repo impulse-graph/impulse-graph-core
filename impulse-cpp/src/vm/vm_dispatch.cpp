@@ -476,6 +476,45 @@ VmVector* decode_imps_attr_to_vec(const uint8_t* raw,
         vec->i64_data = out;
         return vec;
     }
+    if (base_type == 11u) {
+        // Variable-length UTF-8 string column backed by 32-bit or 64-bit offsets array + raw UTF-8 payload
+        VmStrSlice* slices = (n > 0u) ? arena.alloc_array<VmStrSlice>(n, alignof(VmStrSlice)) : nullptr;
+        if (n > 0u && !slices) return nullptr;
+        const bool is_off64 = (desc.reserved1 & 0x01u) != 0u;
+        const size_t off_elem_sz = is_off64 ? sizeof(uint64_t) : sizeof(uint32_t);
+        const bool has_offsets = (desc.offsets_offset > 0u)
+            && (desc.offsets_offset <= file_size)
+            && (desc.offsets_bytes <= file_size - desc.offsets_offset)
+            && (desc.offsets_bytes >= (static_cast<size_t>(n) + 1u) * off_elem_sz);
+        const uint8_t* off_ptr = has_offsets ? (raw + desc.offsets_offset) : nullptr;
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
+            if (((valid_bits[i >> 6] >> (i & 63u)) & 1ULL) == 0ULL || !off_ptr) {
+                valid_bits[i >> 6] &= ~(1ULL << (i & 63u));
+                slices[i] = VmStrSlice{nullptr, 0u, 0u};
+                continue;
+            }
+            uint64_t start = 0u, end = 0u;
+            if (is_off64) {
+                std::memcpy(&start, off_ptr + i * sizeof(uint64_t), sizeof(uint64_t));
+                std::memcpy(&end, off_ptr + (i + 1u) * sizeof(uint64_t), sizeof(uint64_t));
+            } else {
+                uint32_t s32 = 0u, e32 = 0u;
+                std::memcpy(&s32, off_ptr + i * sizeof(uint32_t), sizeof(uint32_t));
+                std::memcpy(&e32, off_ptr + (i + 1u) * sizeof(uint32_t), sizeof(uint32_t));
+                start = s32;
+                end = e32;
+            }
+            if (end < start || end > payload_bytes || (end - start) > UINT32_MAX) {
+                valid_bits[i >> 6] &= ~(1ULL << (i & 63u));
+                slices[i] = VmStrSlice{nullptr, 0u, 0u};
+                continue;
+            }
+            slices[i] = VmStrSlice{reinterpret_cast<const char*>(ptr + start), static_cast<uint32_t>(end - start), 1u};
+        }
+        vec->elem_tag = kVecTagStr;
+        vec->str_data = slices;
+        return vec;
+    }
     return nullptr;
 }
 
@@ -1027,6 +1066,9 @@ extern "C" IMPULSE_API impulse_vm_status_t impulse_vm_prepare_snapshot(
                 if (n > (std::numeric_limits<size_t>::max)() / 8u) return false;
                 if (!safe_add(acc, n * 8u + 64u)) return false;
             }
+        } else if (base_type == 11u) {
+            if (n > (std::numeric_limits<size_t>::max)() / sizeof(VmStrSlice)) return false;
+            if (!safe_add(acc, n * sizeof(VmStrSlice) + 64u)) return false;
         }
         return true;
     };
