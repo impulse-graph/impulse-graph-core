@@ -220,9 +220,9 @@ struct impulse_snapshot {
     std::vector<std::string> index_names;
     // Sorted lexicographically by key at open time (zero-allocation binary search + O(1) indexed enumeration)
     std::vector<std::pair<std::string, std::string>> metadata_entries;
-    mutable std::mutex v11_view_mutex;
-    mutable std::atomic<void*> v11_cached_view{nullptr};
-    mutable void (*v11_cached_view_dtor)(void*) = nullptr;
+    mutable std::mutex vm_view_mutex;
+    mutable std::atomic<void*> vm_cached_view{nullptr};
+    mutable void (*vm_cached_view_dtor)(void*) = nullptr;
 
     const std::string* find_metadata(std::string_view key) const noexcept {
         auto it = std::lower_bound(
@@ -240,10 +240,10 @@ struct impulse_snapshot {
     }
 
     ~impulse_snapshot() {
-        void* v = v11_cached_view.exchange(nullptr, std::memory_order_acq_rel);
-        if (v && v11_cached_view_dtor) {
-            v11_cached_view_dtor(v);
-            v11_cached_view_dtor = nullptr;
+        void* v = vm_cached_view.exchange(nullptr, std::memory_order_acq_rel);
+        if (v && vm_cached_view_dtor) {
+            vm_cached_view_dtor(v);
+            vm_cached_view_dtor = nullptr;
         }
         if (mmap_ptr && file_size > 0) {
 #ifdef _WIN32

@@ -105,7 +105,7 @@ func (t *Traversal) Project(fields ...string) *Traversal {
 	return t
 }
 
-func (t *Traversal) compileV11(countOnly bool) ([]byte, uint16, error) {
+func (t *Traversal) compile(countOnly bool) ([]byte, uint16, error) {
 	if t.snapshot == nil || t.snapshot.Ptr() == nil {
 		return nil, 0, VMErrNullSnapshot
 	}
@@ -128,7 +128,7 @@ func (t *Traversal) compileV11(countOnly bool) ([]byte, uint16, error) {
 
 	words := make([]uint64, 0, len(t.steps)+4)
 	// OP_LOAD_PARAM (0x07), subop=1 (.frontier), dst=F0, imm16_lo=0 (param 0), imm16_hi=startDom
-	words = append(words, EncodeV11Word(0x07, 1, 0, 0, 0, 0, 0, uint32(startDom)<<16))
+	words = append(words, EncodeWord(0x07, 1, 0, 0, 0, 0, 0, uint32(startDom)<<16))
 
 	curReg := uint8(0)
 	for idx, step := range t.steps {
@@ -142,29 +142,29 @@ func (t *Traversal) compileV11(countOnly bool) ([]byte, uint16, error) {
 			subop = 1 // WALK.rev
 		}
 		// OP_WALK (0x30), dst=dstReg, s1=curReg, imm16_lo=relID
-		words = append(words, EncodeV11Word(0x30, subop, 0, dstReg, curReg, 0, 0, uint32(relID)))
+		words = append(words, EncodeWord(0x30, subop, 0, dstReg, curReg, 0, 0, uint32(relID)))
 		curReg = dstReg
 	}
 
 	if countOnly {
 		// OP_SET_CARDINALITY (0x24), subop=0 (.card_1bit), dst=R0, s1=curReg
-		words = append(words, EncodeV11Word(0x24, 0, 0, 0, curReg, 0, 0, 0))
+		words = append(words, EncodeWord(0x24, 0, 0, 0, curReg, 0, 0, 0))
 		// OP_COLLECT (0x57), subop=0 (.scalar), s1=R0, imm16_lo=0
-		words = append(words, EncodeV11Word(0x57, 0, 0, 0, 0, 0, 0, 0))
+		words = append(words, EncodeWord(0x57, 0, 0, 0, 0, 0, 0, 0))
 	} else {
 		// OP_COLLECT (0x57), subop=1 (.frontier), s1=curReg, imm16_lo=0
-		words = append(words, EncodeV11Word(0x57, 1, 0, 0, curReg, 0, 0, 0))
+		words = append(words, EncodeWord(0x57, 1, 0, 0, curReg, 0, 0, 0))
 	}
 	// OP_HALT (0x00)
-	words = append(words, EncodeV11Word(0x00, 0, 0, 0, 0, 0, 0, 0))
+	words = append(words, EncodeWord(0x00, 0, 0, 0, 0, 0, 0, 0))
 
 	domReq := uint16(t.snapshot.DomainCount())
-	return BuildImpbV11(words, domReq), startDom, nil
+	return BuildImpb(words, domReq), startDom, nil
 }
 
 // ToSlice executes the traversal on a pooled v0.11 VmWorkspace and returns the active node IDs.
 func (t *Traversal) ToSlice() ([]uint64, error) {
-	impb, startDom, err := t.compileV11(false)
+	impb, startDom, err := t.compile(false)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (t *Traversal) ToSlice() ([]uint64, error) {
 
 	seeds := []uint64{t.startNode}
 	if st := ws.Execute(impb, t.snapshot, seeds, startDom, 0); st != VmOk {
-		return nil, fmt.Errorf("impulse_vm_execute_v11 failed: status=%d", uint32(st))
+		return nil, fmt.Errorf("impulse_vm_execute failed: status=%d", uint32(st))
 	}
 	return ws.OutputU64Slice(0)
 }
@@ -204,7 +204,7 @@ func (t *Traversal) ToRecords() ([]Record, error) {
 
 // Count returns the number of reachable nodes at the end of the traversal.
 func (t *Traversal) Count() (int, error) {
-	impb, startDom, err := t.compileV11(true)
+	impb, startDom, err := t.compile(true)
 	if err != nil {
 		return 0, err
 	}
@@ -216,7 +216,7 @@ func (t *Traversal) Count() (int, error) {
 
 	seeds := []uint64{t.startNode}
 	if st := ws.Execute(impb, t.snapshot, seeds, startDom, 0); st != VmOk {
-		return 0, fmt.Errorf("impulse_vm_execute_v11 failed: status=%d", uint32(st))
+		return 0, fmt.Errorf("impulse_vm_execute failed: status=%d", uint32(st))
 	}
 	cnt, ok := ws.OutputScalarU64(0)
 	if !ok {

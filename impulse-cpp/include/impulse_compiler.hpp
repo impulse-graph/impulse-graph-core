@@ -11,9 +11,79 @@
 #define IMPULSE_COMPILER_HPP
 
 
+#include "impulse_math_ops.h"
 #include "impulse_scm_ast.hpp"
 
 namespace impulse::compiler {
+
+// Scoped legacy AST-compiler IR instruction layout & opcodes used only by
+// ImpulseCompiler::compile() unit tests (isolated from public impulse_vm.h).
+struct alignas(8) impulse_instruction_t {
+    uint8_t  opcode;
+    uint8_t  flags;
+    uint16_t dst_reg;
+    uint32_t payload;
+};
+
+static constexpr uint8_t IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY = 0x01;
+static constexpr uint8_t IMPULSE_VM_OP_FLAG_INPUT_SEED = 0x02;
+static constexpr uint8_t OP_HALT = 0x00;
+static constexpr uint8_t OP_NOP = 0x01;
+static constexpr uint8_t OP_INIT_INPUT_NODE = 0x02;
+static constexpr uint8_t OP_INIT_INPUT_SET = 0x03;
+static constexpr uint8_t OP_LOAD_CONST_INT = 0x04;
+static constexpr uint8_t OP_CSR_WALK_2HOP = 0x0E;
+static constexpr uint8_t OP_CSR_WALK = 0x10;
+static constexpr uint8_t OP_CSR_WALK_FILTERED = 0x11;
+static constexpr uint8_t OP_CSC_WALK = 0x18;
+static constexpr uint8_t OP_ADAPTIVE_WALK = 0x1D;
+static constexpr uint8_t OP_CREATE_SCRATCH_INDEX = 0x1E;
+static constexpr uint8_t OP_DROP_SCRATCH_INDEX = 0x1F;
+static constexpr uint8_t OP_SET_UNION = 0x30;
+static constexpr uint8_t OP_SET_INTERSECT = 0x31;
+static constexpr uint8_t OP_SET_DIFFERENCE = 0x32;
+static constexpr uint8_t OP_SET_CARDINALITY = 0x33;
+static constexpr uint8_t OP_VECTOR_REDUCE_SUM = 0x35;
+static constexpr uint8_t OP_VECTOR_TIME_VALID_AT = 0x3D;
+static constexpr uint8_t OP_REDUCE = 0x45;
+static constexpr uint8_t OP_JMP = 0x50;
+static constexpr uint8_t OP_JZ = 0x51;
+static constexpr uint8_t OP_MOV = 0x70;
+static constexpr uint8_t OP_CLEAR_REG = 0x71;
+static constexpr uint8_t OP_FIXPOINT_KLEENE_STAR = 0x88;
+static constexpr uint8_t OP_COLLECT_BITSET = 0x90;
+static constexpr uint8_t OP_COLLECT_ARRAY = 0x91;
+static constexpr uint8_t OP_COLLECT_VALUE_MAP = 0x93;
+static constexpr uint8_t OP_STREAM_FUNC_BEGIN = 0xA1;
+static constexpr uint8_t OP_STREAM_FUNC_END = 0xA2;
+static constexpr uint8_t OP_STREAM_LOAD_SRC = 0xA3;
+static constexpr uint8_t OP_STREAM_FILTER = 0xA7;
+static constexpr uint8_t OP_CSR_WALK_STREAM = 0xA9;
+static constexpr uint8_t OP_CSC_WALK_STREAM = 0xAA;
+static constexpr uint8_t OP_STREAM_LOAD_SRC_ID = 0xBA;
+static constexpr uint8_t OP_STREAM_YIELD = 0xBE;
+static constexpr uint8_t OP_STREAM_SCATTER_REDUCE = 0xBF;
+static constexpr uint8_t OP_LANE_INIT_SEEDS = 0xC0;
+static constexpr uint8_t OP_LANE_INIT_GROUPS = 0xC1;
+static constexpr uint8_t OP_LANE_SET_EDGE_MASK = 0xC2;
+static constexpr uint8_t OP_LANE_CSR_WALK = 0xC3;
+static constexpr uint8_t OP_LANE_CSC_WALK = 0xC4;
+static constexpr uint8_t OP_LANE_PRUNE_MASK = 0xC5;
+static constexpr uint8_t OP_LANE_FILTER_QUORUM = 0xC6;
+static constexpr uint8_t OP_LANE_REDUCE_AND = 0xC7;
+static constexpr uint8_t OP_LANE_REDUCE_ATTR = 0xC8;
+static constexpr uint8_t OP_LANE_SET_COVER = 0xC9;
+static constexpr uint8_t OP_VECTOR_ANN_SEARCH = 0xCA;
+static constexpr uint8_t OP_VECTOR_RERANK_DOT = 0xCB;
+static constexpr uint8_t OP_C2_FLAG_SET_FROM_REG = 0x02;
+static constexpr uint8_t BINARY_OP_ADD = 0;
+static constexpr uint8_t BINARY_OP_MUL = 1;
+static constexpr uint8_t BINARY_OP_MIN = 2;
+static constexpr uint8_t BINARY_OP_MAX = 3;
+static constexpr uint8_t BINARY_OP_AND = 4;
+static constexpr uint8_t BINARY_OP_OR = 5;
+static constexpr uint8_t BINARY_OP_ARGMIN = 6;
+static constexpr uint8_t BINARY_OP_ARGMAX = 7;
 
 // ---------------------------------------------------------------------------
 // Compiled Query Result Object

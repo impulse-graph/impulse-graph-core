@@ -1,7 +1,7 @@
 #include "vm/impulse_impscm.hpp"
 #include "impulse_cypher.hpp"
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-using namespace impulse::compiler::v11;
+using namespace impulse::compiler;
 using namespace impulse::compiler;
 
 #define CHECK(cond)                                                                             \
@@ -26,7 +26,7 @@ namespace {
 
 struct AlignedWorkspace {
     void* buf = nullptr;
-    impulse_vm_workspace_v11_t* ws = nullptr;
+    impulse_vm_workspace_t* ws = nullptr;
     explicit AlignedWorkspace(size_t bytes = 4 * 1024 * 1024) {
         size_t aligned = ((bytes + 127) / 128) * 128;
 #if defined(_MSC_VER)
@@ -36,8 +36,8 @@ struct AlignedWorkspace {
 #endif
         CHECK(buf != nullptr);
         std::memset(buf, 0, aligned);
-        impulse_vm_status_v11_t rc = impulse_workspace_init(buf, aligned, &ws);
-        CHECK(rc == IMPULSE_VM_V11_OK && ws != nullptr);
+        impulse_vm_status_t rc = impulse_workspace_init(buf, aligned, &ws);
+        CHECK(rc == IMPULSE_VM_OK && ws != nullptr);
     }
     ~AlignedWorkspace() {
         if (buf) {
@@ -51,48 +51,48 @@ struct AlignedWorkspace {
 };
 
 static int64_t exec_scalar_i64(
-    const ImpScmV11CompileResult& compiled,
+    const ImpScmCompileResult& compiled,
     const impulse_snapshot_t* snap,
-    const std::vector<impulse_vm_param_binding_v11_t>& bindings = {},
-    impulse_vm_status_v11_t expected_status = IMPULSE_VM_V11_OK
+    const std::vector<impulse_vm_param_binding_t>& bindings = {},
+    impulse_vm_status_t expected_status = IMPULSE_VM_OK
 ) {
     AlignedWorkspace aw;
-    impulse_vm_params_v11_t params{};
+    impulse_vm_params_t params{};
     params.gas_limit = UINT64_MAX;
     params.bindings = bindings.empty() ? nullptr : bindings.data();
     params.binding_count = static_cast<uint32_t>(bindings.size());
     size_t out_bytes = 0;
-    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+    impulse_vm_status_t rc = impulse_vm_execute(
         compiled.impb_bytes.data(), compiled.impb_bytes.size(),
         snap, &params, aw.ws, nullptr, 0, &out_bytes);
     CHECK(rc == expected_status);
-    if (expected_status != IMPULSE_VM_V11_OK) return 0;
-    impulse_vm_output_view_v11_t view{};
-    CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+    if (expected_status != IMPULSE_VM_OK) return 0;
+    impulse_vm_output_view_t view{};
+    CHECK(impulse_vm_get_output(aw.ws, 0, &view) != 0);
     CHECK(view.length == 1 && view.i64_data != nullptr);
     return view.i64_data[0];
 }
 
 static std::vector<int64_t> exec_vec_i64(
-    const ImpScmV11CompileResult& compiled,
+    const ImpScmCompileResult& compiled,
     const impulse_snapshot_t* snap,
-    const std::vector<impulse_vm_param_binding_v11_t>& bindings = {}
+    const std::vector<impulse_vm_param_binding_t>& bindings = {}
 ) {
     AlignedWorkspace aw;
-    impulse_vm_params_v11_t params{};
+    impulse_vm_params_t params{};
     params.gas_limit = UINT64_MAX;
     params.bindings = bindings.empty() ? nullptr : bindings.data();
     params.binding_count = static_cast<uint32_t>(bindings.size());
     size_t out_bytes = 0;
-    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+    impulse_vm_status_t rc = impulse_vm_execute(
         compiled.impb_bytes.data(), compiled.impb_bytes.size(),
         snap, &params, aw.ws, nullptr, 0, &out_bytes);
-    if (rc != IMPULSE_VM_V11_OK) {
+    if (rc != IMPULSE_VM_OK) {
         std::cerr << "exec_vec_i64 failed: rc=" << rc << "\n";
     }
-    CHECK(rc == IMPULSE_VM_V11_OK);
-    impulse_vm_output_view_v11_t view{};
-    CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+    CHECK(rc == IMPULSE_VM_OK);
+    impulse_vm_output_view_t view{};
+    CHECK(impulse_vm_get_output(aw.ws, 0, &view) != 0);
     if (view.length == 0) return {};
     CHECK(view.i64_data != nullptr);
     return std::vector<int64_t>(view.i64_data, view.i64_data + view.length);
@@ -101,7 +101,7 @@ static std::vector<int64_t> exec_vec_i64(
 static void assert_compile_error(const std::string& src, const impulse_snapshot_t* snap, const std::string& expected_prefix) {
     bool threw = false;
     try {
-        (void)ImpScmV11Compiler::compile(src, snap, true);
+        (void)ImpScmCompiler::compile(src, snap, true);
     } catch (const std::exception& ex) {
         threw = true;
         std::string msg = ex.what();
@@ -157,7 +157,7 @@ void test_exact_parser_and_boundary_folder() {
 void test_coercion_matrix_and_casts() {
     // 1. DECIMAL(10, 2) + DECIMAL(10, 4) -> scale 4
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (collect :scalar \"sum\" (+ (dec \"10.50\" 10 2) (dec \"1.2345\" 10 4))))",
             nullptr, true);
         CHECK(r.output_schema.size() == 1);
@@ -167,7 +167,7 @@ void test_coercion_matrix_and_casts() {
 
     // 2. DECIMAL(10, 2) + INT (exact promotion to DECIMAL(18, 0))
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (collect :scalar \"sum\" (+ (dec \"19.99\" 10 2) 5)))",
             nullptr, true);
         CHECK(r.output_schema[0].is_decimal && r.output_schema[0].scale == 2);
@@ -176,7 +176,7 @@ void test_coercion_matrix_and_casts() {
 
     // 3. DECIMAL * DECIMAL
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (collect :scalar \"prod\" (* (dec \"12.50\" 10 2) (dec \"2.00\" 10 2))))",
             nullptr, true);
         CHECK(r.output_schema[0].is_decimal && r.output_schema[0].scale == 4);
@@ -185,37 +185,37 @@ void test_coercion_matrix_and_casts() {
 
     // 4. DECIMAL / DECIMAL and safe-div (0-guarded)
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (collect :scalar \"q\" (/ (dec \"10.00\" 10 2) (dec \"4.00\" 10 2))))",
             nullptr, true);
         CHECK(r.output_schema[0].is_decimal && r.output_schema[0].scale == 6);
         CHECK(exec_scalar_i64(r, nullptr) == 2500000LL);
 
         // safe-div by zero returns NULL (status OK, valid_bits == 0)
-        auto r_safe = ImpScmV11Compiler::compile(
+        auto r_safe = ImpScmCompiler::compile(
             "(query (collect :scalar \"q\" (safe-div (dec \"10.00\" 10 2) (dec \"0.00\" 10 2))))",
             nullptr, true);
         AlignedWorkspace aw;
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         params.gas_limit = UINT64_MAX;
         size_t out_bytes = 0;
-        CHECK(impulse_vm_execute_v11(
+        CHECK(impulse_vm_execute(
             r_safe.impb_bytes.data(), r_safe.impb_bytes.size(),
-            nullptr, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_V11_OK);
-        impulse_vm_output_view_v11_t view{};
-        CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+            nullptr, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_OK);
+        impulse_vm_output_view_t view{};
+        CHECK(impulse_vm_get_output(aw.ws, 0, &view) != 0);
         CHECK(view.valid_bits != nullptr && (view.valid_bits[0] & 1ULL) == 0ULL);
     }
 
     // 5. Explicit casts: DECIMAL -> DECIMAL (round_scale), INT -> DECIMAL, DECIMAL -> I64
     {
-        auto r1 = ImpScmV11Compiler::compile(
+        auto r1 = ImpScmCompiler::compile(
             "(query (collect :scalar \"c\" (cast (dec \"19.995\" 10 3) (decimal 10 2))))",
             nullptr, true);
         CHECK(r1.output_schema[0].precision == 10 && r1.output_schema[0].scale == 2);
         CHECK(exec_scalar_i64(r1, nullptr) == 2000LL);
 
-        auto r2 = ImpScmV11Compiler::compile(
+        auto r2 = ImpScmCompiler::compile(
             "(query (collect :scalar \"c\" (cast (dec \"19.99\" 10 2) i64)))",
             nullptr, true);
         CHECK(!r2.output_schema[0].is_decimal && r2.output_schema[0].type == "I64");
@@ -269,13 +269,13 @@ void test_e2e_financial_ledger_and_cypher_v11() {
 
     // 1. Exact reduce :max and :min above 2^53 (must distinguish ...302 vs ...301)
     {
-        auto r_max = ImpScmV11Compiler::compile(
+        auto r_max = ImpScmCompiler::compile(
             "(query (let ((b (load-node-attr \"Account\" \"balance\"))) (collect :scalar \"mx\" (reduce :max b))))",
             snap, true);
         CHECK(r_max.output_schema[0].is_decimal && r_max.output_schema[0].precision == 18 && r_max.output_schema[0].scale == 2);
         CHECK(exec_scalar_i64(r_max, snap) == 900719925474099302LL);
 
-        auto r_min = ImpScmV11Compiler::compile(
+        auto r_min = ImpScmCompiler::compile(
             "(query (let ((b (load-node-attr \"Account\" \"balance\"))) (collect :scalar \"mn\" (reduce :min b))))",
             snap, true);
         CHECK(exec_scalar_i64(r_min, snap) == 1000LL);
@@ -283,7 +283,7 @@ void test_e2e_financial_ledger_and_cypher_v11() {
 
     // 2. node-filter with compile-time boundary folding (19.995 -> >= 20.00 -> Accounts 1, 2, 3)
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (let ((f (node-filter (domain-all \"Account\") \"balance\" > (dec \"19.995\" 5 3)))) "
             "  (collect :frontier-ids \"ids\" f)))",
             snap, true);
@@ -293,7 +293,7 @@ void test_e2e_financial_ledger_and_cypher_v11() {
 
     // 3. edge-stream scatter-add (0x37.scatter_add_chk) over TRANSFER.amount
     {
-        auto r = ImpScmV11Compiler::compile(
+        auto r = ImpScmCompiler::compile(
             "(query (let ((acc (vec-fill \"Account\" (decimal 18 2) 0)) "
             "             (f (domain-all \"Account\"))) "
             "  (edge-stream :fwd \"TRANSFER\" f (lambda (u v e) "
@@ -310,29 +310,29 @@ void test_e2e_financial_ledger_and_cypher_v11() {
     {
         std::unordered_map<std::string, CypherCompiler::ParamTypeSpec> ptypes;
         ptypes["min_bal"] = {"DECIMAL", 18, 2, ""};
-        std::string scm = CypherCompiler::lower_to_impscm_v11(
+        std::string scm = CypherCompiler::lower_to_impscm(
             "MATCH (a:Account) WHERE a.balance >= $min_bal RETURN count(a)", ptypes);
-        auto compiled = ImpScmV11Compiler::compile(scm, snap, true);
+        auto compiled = ImpScmCompiler::compile(scm, snap, true);
         CHECK(compiled.param_schema.size() == 1);
         CHECK(compiled.param_schema[0].is_decimal && compiled.param_schema[0].scale == 2);
 
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = 0;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_I64;
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_I64;
         pb.scalar_bits = static_cast<uint64_t>(1999LL); // 19.99
         CHECK(exec_scalar_i64(compiled, snap, {pb}) == 3LL);
     }
     {
-        std::string scm = CypherCompiler::lower_to_impscm_v11(
+        std::string scm = CypherCompiler::lower_to_impscm(
             "MATCH (a:Account) WHERE a.balance >= 19.99d AND a.balance <= CAST(30.00 AS DECIMAL(18, 2)) RETURN sum(a.balance)");
-        auto compiled = ImpScmV11Compiler::compile(scm, snap, true);
+        auto compiled = ImpScmCompiler::compile(scm, snap, true);
         CHECK(compiled.output_schema[0].is_decimal && compiled.output_schema[0].scale == 2);
         CHECK(exec_scalar_i64(compiled, snap) == 2550LL);
     }
 
     // 5. Audit regression #2: Cypher string escaping
     {
-        std::string scm = CypherCompiler::lower_to_impscm_v11(
+        std::string scm = CypherCompiler::lower_to_impscm(
             "MATCH (a:Account) WHERE a.tag = 'foo\"bar\\baz' RETURN count(a)");
         CHECK(scm.find("\"foo\\\"bar\\\\baz\"") != std::string::npos);
     }
@@ -340,7 +340,7 @@ void test_e2e_financial_ledger_and_cypher_v11() {
     // 6. Audit regression #4: mixed-scale +/- inside filtered edge-stream (morsel V12..V15 reuse)
     //    and safe-div vec/vec inside edge-stream
     {
-        auto r_ms = ImpScmV11Compiler::compile(
+        auto r_ms = ImpScmCompiler::compile(
             "(query (let ((acc (vec-fill \"Account\" (decimal 18 4) 0)) "
             "             (f (domain-all \"Account\"))) "
             "  (edge-stream :fwd \"TRANSFER\" f (lambda (u v e) "
@@ -351,7 +351,7 @@ void test_e2e_financial_ledger_and_cypher_v11() {
         auto res_ms = exec_vec_i64(r_ms, snap);
         CHECK(res_ms.size() == 4);
 
-        auto r_sdiv_morsel = ImpScmV11Compiler::compile(
+        auto r_sdiv_morsel = ImpScmCompiler::compile(
             "(query (let ((acc (vec-fill \"Account\" (decimal 18 6) 0)) "
             "             (f (domain-all \"Account\"))) "
             "  (edge-stream :fwd \"TRANSFER\" f (lambda (u v e) "
@@ -367,70 +367,70 @@ void test_e2e_financial_ledger_and_cypher_v11() {
     {
         std::unordered_map<std::string, CypherCompiler::ParamTypeSpec> ptypes;
         ptypes["p"] = {"DECIMAL", 18, 2, ""};
-        std::string scm_neg = CypherCompiler::lower_to_impscm_v11(
+        std::string scm_neg = CypherCompiler::lower_to_impscm(
             "MATCH (a:Account) WHERE a.balance >= CAST(-$p AS DECIMAL(18, 2)) RETURN count(a)", ptypes);
         CHECK(scm_neg.find("(cast (- 0 $p) (decimal 18 2))") != std::string::npos);
 
         bool threw_neg_str = false;
         try {
-            (void)CypherCompiler::lower_to_impscm_v11(
+            (void)CypherCompiler::lower_to_impscm(
                 "MATCH (a:Account) WHERE a.balance >= CAST(-'19.99' AS DECIMAL(18, 2)) RETURN count(a)");
         } catch (const std::exception&) {
             threw_neg_str = true;
         }
         CHECK(threw_neg_str);
 
-        std::string scm_round = CypherCompiler::lower_to_impscm_v11(
+        std::string scm_round = CypherCompiler::lower_to_impscm(
             "MATCH (a:Account) WHERE a.balance >= CAST(19.995d AS DECIMAL(10, 2)) RETURN count(a)");
         CHECK(scm_round.find("(cast (dec \"19.995\" 5 3) (decimal 10 2))") != std::string::npos);
-        auto comp_round = ImpScmV11Compiler::compile(scm_round, snap, true);
+        auto comp_round = ImpScmCompiler::compile(scm_round, snap, true);
         CHECK(exec_scalar_i64(comp_round, snap) == 3LL);
     }
 
     // 8. Audit regression #6: scalar NULL divisor in safe-div with raw_k > 18 must return NULL without overflow
     {
-        auto r_null_div = ImpScmV11Compiler::compile(
+        auto r_null_div = ImpScmCompiler::compile(
             "(query (param $d (decimal 18 16)) "
             "  (collect :scalar \"q\" (safe-div (dec \"9999999999999999.00\" 18 2) $d)))",
             snap, true);
         AlignedWorkspace aw;
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = 0;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_NULL;
-        impulse_vm_params_v11_t params{};
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_NULL;
+        impulse_vm_params_t params{};
         params.gas_limit = UINT64_MAX;
         params.bindings = &pb;
         params.binding_count = 1;
         size_t out_bytes = 0;
-        CHECK(impulse_vm_execute_v11(
+        CHECK(impulse_vm_execute(
             r_null_div.impb_bytes.data(), r_null_div.impb_bytes.size(),
-            snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_V11_OK);
-        impulse_vm_output_view_v11_t view{};
-        CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+            snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_OK);
+        impulse_vm_output_view_t view{};
+        CHECK(impulse_vm_get_output(aw.ws, 0, &view) != 0);
         CHECK(view.valid_bits != nullptr && (view.valid_bits[0] & 1ULL) == 0ULL);
     }
 
     // 9. Audit regression #8 & #11: non-decimal scalar - vec, scalar + vec, and vec-fill type mismatch
     {
-        auto exec_vec_f64 = [&](const ImpScmV11CompileResult& compiled) -> std::vector<double> {
+        auto exec_vec_f64 = [&](const ImpScmCompileResult& compiled) -> std::vector<double> {
             AlignedWorkspace aw;
-            impulse_vm_params_v11_t params{};
+            impulse_vm_params_t params{};
             params.gas_limit = UINT64_MAX;
             size_t out_bytes = 0;
-            CHECK(impulse_vm_execute_v11(
+            CHECK(impulse_vm_execute(
                 compiled.impb_bytes.data(), compiled.impb_bytes.size(),
-                snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_V11_OK);
-            impulse_vm_output_view_v11_t view{};
-            CHECK(impulse_vm_v11_get_output(aw.ws, 0, &view) != 0);
+                snap, &params, aw.ws, nullptr, 0, &out_bytes) == IMPULSE_VM_OK);
+            impulse_vm_output_view_t view{};
+            CHECK(impulse_vm_get_output(aw.ws, 0, &view) != 0);
             CHECK(view.length > 0 && view.f64_data != nullptr);
             return std::vector<double>(view.f64_data, view.f64_data + view.length);
         };
-        auto r_sub = ImpScmV11Compiler::compile(
+        auto r_sub = ImpScmCompiler::compile(
             "(query (collect :vec \"v\" (- 100.0 (vec-fill \"Account\" f64 30.0))))", snap, true);
         auto v_sub = exec_vec_f64(r_sub);
         CHECK(v_sub.size() == 4 && v_sub[0] == 70.0 && v_sub[3] == 70.0);
 
-        auto r_add = ImpScmV11Compiler::compile(
+        auto r_add = ImpScmCompiler::compile(
             "(query (collect :vec \"v\" (+ 10.0 (vec-fill \"Account\" f64 30.0))))", snap, true);
         auto v_add = exec_vec_f64(r_add);
         CHECK(v_add.size() == 4 && v_add[0] == 40.0);

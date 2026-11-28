@@ -1,15 +1,15 @@
 // Opcode 0x6D: OP_LANE_STATE_OP
-V11_OP_CASE(LANE_STATE_OP) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
-    const int32_t imm32_s = IMP_V11_IMM32_S(w);
+VM_OP_CASE(LANE_STATE_OP) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
+    const int32_t imm32_s = IMP_IMM32_S(w);
 
-    const V11Vector* ls = ws.v_regs[s1];
-    if (!ls || ls->elem_tag != kVecTagLaneState) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+    const VmVector* ls = ws.v_regs[s1];
+    if (!ls || ls->elem_tag != kVecTagLaneState) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
     const uint32_t n = ls->length;
     const uint16_t k = ls->ls_k;
     const uint16_t dom = ls->ls_dom;
@@ -18,8 +18,8 @@ V11_OP_CASE(LANE_STATE_OP) {
         case 0: { // .project_affine: fma(a, x, b)
             double a = p4_is_scalar_f64_valid(ws, s2) ? p4_read_scalar_f64(ws, s2) : 1.0;
             double b = p4_is_scalar_f64_valid(ws, s3) ? p4_read_scalar_f64(ws, s3) : 0.0;
-            V11Vector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
-            if (!ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            VmVector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
+            if (!ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             ov->ls_witness = ls->ls_witness;
             ov->ls_witness_valid = ls->ls_witness_valid;
             size_t total = static_cast<size_t>(n) * k;
@@ -35,8 +35,8 @@ V11_OP_CASE(LANE_STATE_OP) {
         }
         case 1: { // .prune_cutoff
             double cut = p4_is_scalar_f64_valid(ws, s2) ? p4_read_scalar_f64(ws, s2) : std::numeric_limits<double>::infinity();
-            V11Vector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
-            if (!ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            VmVector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
+            if (!ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             ov->ls_witness = ls->ls_witness;
             ov->ls_witness_valid = ls->ls_witness_valid;
             size_t total = static_cast<size_t>(n) * k;
@@ -57,8 +57,8 @@ V11_OP_CASE(LANE_STATE_OP) {
             int64_t q = ((flags & FLAG_SCALAR_RHS) != 0u)
                 ? (ws.is_r_valid(s2) ? static_cast<int64_t>(ws.read_r_raw(s2)) : 1)
                 : static_cast<int64_t>(imm32_s);
-            V11Vector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
-            if (!ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            VmVector* ov = p5_alloc_lane_state(ws.arena, dom, n, k, false);
+            if (!ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             ov->ls_witness = ls->ls_witness;
             ov->ls_witness_valid = ls->ls_witness_valid;
             bool any = false;
@@ -80,7 +80,7 @@ V11_OP_CASE(LANE_STATE_OP) {
         case 3: { // .to_lane_frontier
             uint64_t* ns = (n > 0u) ? ws.arena.alloc_array<uint64_t>(n, 8) : nullptr;
             uint64_t* ms = (n > 0u) ? ws.arena.alloc_array<uint64_t>(n, 8) : nullptr;
-            if (n > 0u && (!ns || !ms)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (n > 0u && (!ns || !ms)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             uint16_t lim = (k < 64u) ? k : 64u;
             uint32_t cnt = 0u;
             for (uint32_t u = 0; u < n; ++u) {
@@ -92,7 +92,7 @@ V11_OP_CASE(LANE_STATE_OP) {
                 if (m != 0ULL) { ns[cnt] = u; ms[cnt] = m; ++cnt; }
             }
             if (!ws.f_regs[dst].init_multi_lane(ws.arena, dom, n, p5_choose_width(lim), static_cast<uint8_t>(lim), ns, ms, cnt, ws.geometry)) {
-                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
+                ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH();
             }
             ws.set_f_init(dst, true);
             ws.set_zf(cnt == 0u);
@@ -104,7 +104,7 @@ V11_OP_CASE(LANE_STATE_OP) {
                 ? (ws.is_r_valid(s2) ? static_cast<int64_t>(ws.read_r_raw(s2)) : 1)
                 : static_cast<int64_t>(imm32_s);
             uint32_t* out = (n > 0u) ? ws.arena.alloc_array<uint32_t>(n, 8) : nullptr;
-            if (n > 0u && !out) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (n > 0u && !out) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             uint32_t cnt = 0u;
             for (uint32_t u = 0; u < n; ++u) {
                 size_t base = static_cast<size_t>(u) * k;
@@ -113,7 +113,7 @@ V11_OP_CASE(LANE_STATE_OP) {
                 if (lc >= q) out[cnt++] = u;
             }
             if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, dom, n, out, cnt, ws.geometry, true)) {
-                ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
+                ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH();
             }
             ws.set_f_init(dst, true);
             ws.set_zf(cnt == 0u);
@@ -121,8 +121,8 @@ V11_OP_CASE(LANE_STATE_OP) {
             break;
         }
         default:
-            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
             break;
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

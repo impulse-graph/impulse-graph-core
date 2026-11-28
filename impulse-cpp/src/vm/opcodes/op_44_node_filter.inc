@@ -1,21 +1,21 @@
 // Opcode 0x44: OP_NODE_FILTER
-V11_OP_CASE(NODE_FILTER) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
-    const uint16_t dom_id = IMP_V11_IMM16_LO(w);
-    const uint16_t attr_id = IMP_V11_IMM16_HI(w);
+VM_OP_CASE(NODE_FILTER) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
+    const uint16_t dom_id = IMP_IMM16_LO(w);
+    const uint16_t attr_id = IMP_IMM16_HI(w);
 
-    if (!snap) { ws.status = IMPULSE_VM_V11_ERR_NULL_SNAPSHOT; V11_DISPATCH(); }
-    const V11Frontier* f_src = p3_get_f1bit(ws, s1);
-    if (!f_src) V11_DISPATCH();
-    if (f_src->domain_id != dom_id) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
-    if (dom_id >= snap->domain_count) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
-    const V11Vector* col = p3_find_node_attr(snap, dom_id, attr_id);
-    if (!col) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+    if (!snap) { ws.status = IMPULSE_VM_ERR_NULL_SNAPSHOT; VM_DISPATCH(); }
+    const VmFrontier* f_src = p3_get_f1bit(ws, s1);
+    if (!f_src) VM_DISPATCH();
+    if (f_src->domain_id != dom_id) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
+    if (dom_id >= snap->domain_count) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
+    const VmVector* col = p3_find_node_attr(snap, dom_id, attr_id);
+    if (!col) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
 
     const uint64_t dom_card = snap->domain_cards[dom_id];
     const bool accum = (flags & FLAG_ACCUM) != 0u;
@@ -23,25 +23,25 @@ V11_OP_CASE(NODE_FILTER) {
 
     const uint32_t* acc_ids = nullptr; uint32_t acc_len = 0u;
     if (accum) {
-        const V11Frontier* fd = p3_get_f1bit(ws, dst);
-        if (!fd) V11_DISPATCH();
-        if (fd->domain_id != dom_id) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
-        if (!fd->materialize_1bit(ws.arena, &acc_ids, &acc_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+        const VmFrontier* fd = p3_get_f1bit(ws, dst);
+        if (!fd) VM_DISPATCH();
+        if (fd->domain_id != dom_id) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
+        if (!fd->materialize_1bit(ws.arena, &acc_ids, &acc_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
     }
 
     const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-    if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+    if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
 
-    const V11Vector* v_s2 = scalar_rhs ? nullptr : ws.v_regs[s2];
-    const V11Vector* v_s3 = scalar_rhs ? nullptr : ws.v_regs[s3];
+    const VmVector* v_s2 = scalar_rhs ? nullptr : ws.v_regs[s2];
+    const VmVector* v_s3 = scalar_rhs ? nullptr : ws.v_regs[s3];
 
     uint32_t* kept = (src_len > 0u) ? ws.arena.alloc_array<uint32_t>(src_len, 8) : nullptr;
-    if (src_len > 0u && !kept) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+    if (src_len > 0u && !kept) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
     uint32_t kept_cnt = 0u;
 
     for (uint32_t i = 0; i < src_len; ++i) {
         uint32_t u = src_ids[i];
-        if (u >= col->length) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+        if (u >= col->length) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
         bool col_valid = col->is_valid_at(u);
         bool keep = false;
         if (subop == 7u) { // .is_null
@@ -109,14 +109,14 @@ V11_OP_CASE(NODE_FILTER) {
     uint32_t final_len = kept_cnt;
     if (accum && acc_len > 0u) {
         if (!p3_union_sorted(ws.arena, acc_ids, acc_len, kept, kept_cnt, &final_ids, &final_len)) {
-            ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
+            ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH();
         }
     }
     if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, dom_id, dom_card, final_ids, final_len, ws.geometry, true)) {
-        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH();
+        ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH();
     }
     ws.set_f_init(dst, true);
     ws.set_zf(final_len == 0u);
     ws.state.pc += 1u;
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

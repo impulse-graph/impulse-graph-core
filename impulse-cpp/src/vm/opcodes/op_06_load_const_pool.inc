@@ -1,43 +1,43 @@
 // Opcode 0x06: OP_LOAD_CONST_POOL
-V11_OP_CASE(LOAD_CONST_POOL) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint32_t imm32 = IMP_V11_IMM32(w);
-    const uint16_t imm_lo = IMP_V11_IMM16_LO(w);
-    const uint16_t imm_hi = IMP_V11_IMM16_HI(w);
+VM_OP_CASE(LOAD_CONST_POOL) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint32_t imm32 = IMP_IMM32(w);
+    const uint16_t imm_lo = IMP_IMM16_LO(w);
+    const uint16_t imm_hi = IMP_IMM16_HI(w);
     switch (subop) {
         case 0: { // .vec
-            const V11ConstPoolEntry* e = ws.find_const_pool(imm32);
+            const VmConstPoolEntry* e = ws.find_const_pool(imm32);
             if (!e) {
-                ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
+                ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             } else if (e->kind == ConstPoolKind::Vec) {
                 ws.v_regs[dst] = e->vec;
                 ws.state.pc += 1u;
             } else {
-                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+                ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             }
             break;
         }
         case 1: { // .frontier
-            const V11ConstPoolEntry* e = ws.find_const_pool(imm_lo);
+            const VmConstPoolEntry* e = ws.find_const_pool(imm_lo);
             if (!e) {
-                ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
+                ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             } else if (e->kind == ConstPoolKind::Frontier) {
                 p1_load_frontier_ids(ws, snap, dst, imm_hi, e->f_ids, e->f_len, (flags & FLAG_ACCUM) != 0u);
             } else {
-                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+                ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             }
             break;
         }
         case 2: { // .str
-            const V11ConstPoolEntry* e = ws.find_const_pool(imm32);
+            const VmConstPoolEntry* e = ws.find_const_pool(imm32);
             if (!e) {
-                ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
+                ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS;
             } else if (e->kind == ConstPoolKind::Str) {
                 uint64_t h = ws.intern_scalar_str(e->str.ptr, e->str.len);
                 if (h == 0ULL) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                    ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
                     break;
                 }
                 ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE), h);
@@ -45,13 +45,13 @@ V11_OP_CASE(LOAD_CONST_POOL) {
                 ws.set_nf(false);
                 ws.state.pc += 1u;
             } else {
-                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+                ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             }
             break;
         }
         default:
-            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
             break;
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

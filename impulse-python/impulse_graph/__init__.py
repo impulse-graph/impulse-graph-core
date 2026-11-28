@@ -972,7 +972,7 @@ class Writer:
 from .traversal import Traversal  # noqa: E402
 
 
-class CompiledV11Program:
+class CompiledProgram:
     """Compiled ImpulseVM v0.11 program with typed parameter and DECIMAL64 output schema."""
 
     def __init__(self, compiled_dict: dict):
@@ -1071,12 +1071,12 @@ def compile_impscm(
     source: str,
     snapshot: Optional["Snapshot"] = None,
     enable_optimizations: bool = True,
-) -> CompiledV11Program:
+) -> CompiledProgram:
     """Compile an ImpScheme v0.11 (query ...) program against a Snapshot."""
     from . import _impulse_native
 
     native_snap = getattr(snapshot, "_native", snapshot) if snapshot is not None else None
-    return CompiledV11Program(
+    return CompiledProgram(
         _impulse_native.compile_impscm(source, native_snap, enable_optimizations)
     )
 
@@ -1086,12 +1086,12 @@ def compile_cypher(
     snapshot: Optional["Snapshot"] = None,
     param_types: Optional[Dict[str, object]] = None,
     enable_optimizations: bool = True,
-) -> CompiledV11Program:
+) -> CompiledProgram:
     """Compile an openCypher query (with DECIMAL64 literals, CAST, and typed $params) to ImpulseVM v0.11."""
     from . import _impulse_native
 
     native_snap = getattr(snapshot, "_native", snapshot) if snapshot is not None else None
-    return CompiledV11Program(
+    return CompiledProgram(
         _impulse_native.compile_cypher(
             cypher, native_snap, param_types or {}, enable_optimizations
         )
@@ -1115,7 +1115,7 @@ __all__ = [
     "Decimal64",
     "decimal_to_scaled_i64",
     "scaled_i64_to_decimal",
-    "CompiledV11Program",
+    "CompiledProgram",
     "compile_impscm",
     "compile_cypher",
     "Snapshot",

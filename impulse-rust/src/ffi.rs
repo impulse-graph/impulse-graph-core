@@ -199,18 +199,6 @@ extern "C" {
         word_idx: usize,
     ) -> u64;
 
-    pub fn impulse_vm_execute(
-        bytecode: *const impulse_instruction_t,
-        instruction_count: usize,
-        vm_state: *mut impulse_vm_state_t,
-        input_param: u64,
-    ) -> i32;
-
-    pub fn impulse_vm_validate(
-        bytecode: *const impulse_instruction_t,
-        instruction_count: usize,
-    ) -> i32;
-
     pub fn impulse_vm_context_get_double_vector(
         ctx: *const impulse_vm_context_t,
         handle: usize,
@@ -293,7 +281,7 @@ extern "C" {
 }
 
 #[repr(C)]
-pub struct impulse_vm_workspace_v11_t {
+pub struct impulse_vm_workspace_t {
     _private: [u8; 0],
 }
 
@@ -307,14 +295,14 @@ pub struct impulse_vm_memory_plan_t {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct impulse_vm_validation_v11_t {
+pub struct impulse_vm_validation_t {
     pub status: i32,
     pub bad_pc: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct impulse_vm_param_binding_v11_t {
+pub struct impulse_vm_param_binding_t {
     pub param_id: u32,
     pub kind: u32,
     pub domain_id: u16,
@@ -327,16 +315,16 @@ pub struct impulse_vm_param_binding_v11_t {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct impulse_vm_params_v11_t {
+pub struct impulse_vm_params_t {
     pub gas_limit: u64,
     pub geometry_override: *const std::ffi::c_void,
-    pub bindings: *const impulse_vm_param_binding_v11_t,
+    pub bindings: *const impulse_vm_param_binding_t,
     pub binding_count: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct impulse_vm_output_view_v11_t {
+pub struct impulse_vm_output_view_t {
     pub slot: u16,
     pub elem_tag: u8,
     pub reserved: u8,
@@ -347,13 +335,13 @@ pub struct impulse_vm_output_view_v11_t {
     pub bool_data_bits: *const u64,
 }
 
-pub const IMPULSE_VM_V11_PARAM_FRONTIER_IDS: u32 = 6;
+pub const IMPULSE_VM_PARAM_FRONTIER_IDS: u32 = 6;
 
 extern "C" {
-    pub fn impulse_vm_validate_v11(
+    pub fn impulse_vm_validate(
         impb_bytes: *const std::ffi::c_void,
         impb_len: usize,
-    ) -> impulse_vm_validation_v11_t;
+    ) -> impulse_vm_validation_t;
     pub fn impulse_vm_plan_memory(
         impb_bytes: *const std::ffi::c_void,
         impb_len: usize,
@@ -364,24 +352,24 @@ extern "C" {
     pub fn impulse_workspace_init(
         scratch_buf: *mut std::ffi::c_void,
         scratch_bytes: usize,
-        out_ws: *mut *mut impulse_vm_workspace_v11_t,
+        out_ws: *mut *mut impulse_vm_workspace_t,
     ) -> i32;
-    pub fn impulse_vm_v11_prepare_snapshot(snapshot: *const impulse_snapshot_t) -> i32;
-    pub fn impulse_vm_execute_v11(
+    pub fn impulse_vm_prepare_snapshot(snapshot: *const impulse_snapshot_t) -> i32;
+    pub fn impulse_vm_execute(
         impb_bytes: *const std::ffi::c_void,
         impb_len: usize,
         snapshot: *const impulse_snapshot_t,
-        params: *const impulse_vm_params_v11_t,
-        scratch_ws: *mut impulse_vm_workspace_v11_t,
+        params: *const impulse_vm_params_t,
+        scratch_ws: *mut impulse_vm_workspace_t,
         result_buf: *mut std::ffi::c_void,
         result_cap: usize,
         out_result_bytes: *mut usize,
     ) -> i32;
-    pub fn impulse_vm_v11_get_output_count(ws: *const impulse_vm_workspace_v11_t) -> u32;
-    pub fn impulse_vm_v11_get_output(
-        ws: *const impulse_vm_workspace_v11_t,
+    pub fn impulse_vm_get_output_count(ws: *const impulse_vm_workspace_t) -> u32;
+    pub fn impulse_vm_get_output(
+        ws: *const impulse_vm_workspace_t,
         index: u32,
-        out_view: *mut impulse_vm_output_view_v11_t,
+        out_view: *mut impulse_vm_output_view_t,
     ) -> i32;
 }
 

@@ -2,13 +2,13 @@
  * @file fuzz_vm_bytecode.cpp
  * @brief Fuzz target: ImpulseVM v0.11 static validator, memory planner, and executor.
  *
- * Contract checked: impulse_vm_validate_v11, impulse_vm_plan_memory, and
- * impulse_vm_execute_v11 (gas-limited) return a status without crashing or
+ * Contract checked: impulse_vm_validate, impulse_vm_plan_memory, and
+ * impulse_vm_execute (gas-limited) return a status without crashing or
  * tripping ASan/UBSan/TSan on arbitrary or structured .impb v11 bytecode.
  */
 
 #include "fuzz_snapshot_util.hpp"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 
 #include <cstring>
 #include <vector>
@@ -19,24 +19,24 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     if (!data || size == 0) return 0;
 
     // 1. Fuzz raw bytes directly against validator + executor
-    (void)impulse_vm_validate_v11(data, size);
+    (void)impulse_vm_validate(data, size);
 
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    if (impulse_workspace_init(g_scratch, sizeof(g_scratch), &ws) != IMPULSE_VM_V11_OK || !ws) {
+    impulse_vm_workspace_t* ws = nullptr;
+    if (impulse_workspace_init(g_scratch, sizeof(g_scratch), &ws) != IMPULSE_VM_OK || !ws) {
         return 0;
     }
 
-    impulse_vm_params_v11_t params{};
+    impulse_vm_params_t params{};
     params.gas_limit = 5000ULL;
     size_t out_bytes = 0;
-    (void)impulse_vm_execute_v11(data, size, g_snap, &params, ws, nullptr, 0, &out_bytes);
+    (void)impulse_vm_execute(data, size, g_snap, &params, ws, nullptr, 0, &out_bytes);
 
     // 2. Wrap fuzz bytes as a valid 32B .impb v11 container header + instruction words
     size_t n_words = size / 8u;
     if (n_words > 64u) n_words = 64u;
     if (n_words > 0u) {
-        std::vector<uint8_t> impb(sizeof(impulse_impb_header_v11_t) + n_words * 8u, 0u);
-        impulse_impb_header_v11_t hdr{};
+        std::vector<uint8_t> impb(sizeof(impulse_impb_header_t) + n_words * 8u, 0u);
+        impulse_impb_header_t hdr{};
         hdr.magic = 0x494D5042u;
         hdr.isa_version = 0x000Bu;
         hdr.code_word_count = static_cast<uint32_t>(n_words);
@@ -44,12 +44,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         std::memcpy(impb.data(), &hdr, sizeof(hdr));
         std::memcpy(impb.data() + sizeof(hdr), data, n_words * 8u);
 
-        impulse_vm_validation_v11_t v = impulse_vm_validate_v11(impb.data(), impb.size());
-        if (v.status == IMPULSE_VM_V11_OK) {
+        impulse_vm_validation_t v = impulse_vm_validate(impb.data(), impb.size());
+        if (v.status == IMPULSE_VM_OK) {
             impulse_vm_memory_plan_t plan{};
             (void)impulse_vm_plan_memory(impb.data(), impb.size(), g_snap, 1u, &plan);
         }
-        (void)impulse_vm_execute_v11(impb.data(), impb.size(), g_snap, &params, ws, nullptr, 0, &out_bytes);
+        (void)impulse_vm_execute(impb.data(), impb.size(), g_snap, &params, ws, nullptr, 0, &out_bytes);
     }
     return 0;
 }

@@ -58,7 +58,7 @@ pub struct WriterRelation {
     pub virtual_component_ids: Vec<u16>,
     pub include_csr: bool,
     pub include_csc: bool,
-    pub include_coo_v11: bool,
+    pub include_coo: bool,
     pub coo_order: u8,
     pub attributes: Vec<AttributeField>,
     pub csr_row_off_offset: u64,
@@ -131,9 +131,9 @@ impl SnapshotWriter {
         }
     }
 
-    pub fn set_relation_coo_v11(&mut self, relation_index: usize, coo_order: u8) {
+    pub fn set_relation_coo(&mut self, relation_index: usize, coo_order: u8) {
         if let Some(rel) = self.relations.get_mut(relation_index) {
-            rel.include_coo_v11 = true;
+            rel.include_coo = true;
             rel.coo_order = coo_order;
         }
     }
@@ -166,7 +166,7 @@ impl SnapshotWriter {
             virtual_component_ids: Vec::new(),
             include_csr: true,
             include_csc: false,
-            include_coo_v11: false,
+            include_coo: false,
             coo_order: 0,
             attributes: Vec::new(),
             csr_row_off_offset: 0,
@@ -723,14 +723,14 @@ impl SnapshotWriter {
             .collect();
 
         // Compute exact Section 2 Directory Table byte length prior to 4KB page padding
-        let emit_v11 = self.relations.iter().any(|r| r.include_coo_v11)
+        let emit_vm = self.relations.iter().any(|r| r.include_coo)
             || self.domains.iter().any(|d| d.dense_id_width != 0);
-        let target_version = if emit_v11 {
+        let target_version = if emit_vm {
             IMPULSE_VERSION_V011
         } else {
             IMPULSE_VERSION_PACKED
         };
-        let rel_entry_size = if emit_v11 {
+        let rel_entry_size = if emit_vm {
             std::mem::size_of::<RelationDirectoryEntryV011>()
         } else {
             std::mem::size_of::<RelationDirectoryEntry>()
@@ -1087,7 +1087,7 @@ impl SnapshotWriter {
             }
 
             // Serialize v0.11 dedicated COO arrays if requested
-            if rel.include_coo_v11 && !is_virtual {
+            if rel.include_coo && !is_virtual {
                 let mut coo_srcs: Vec<u32> = Vec::with_capacity(rel.edge_count as usize);
                 let mut coo_tgts: Vec<u32> = Vec::with_capacity(rel.edge_count as usize);
                 if let Some(ref srcs) = rel.coo_src_indices {
@@ -1202,7 +1202,7 @@ impl SnapshotWriter {
             let dom_entry = DomainCatalogEntry {
                 domain_id: dom.domain_id,
                 key_type: dom.key_type as u8,
-                reserved: if emit_v11 { dom.dense_id_width } else { 0 },
+                reserved: if emit_vm { dom.dense_id_width } else { 0 },
                 name_offset: domain_name_offsets[d_idx],
                 node_count: dom.node_count,
                 attr_count: dom.attributes.len() as u16,
@@ -1251,8 +1251,7 @@ impl SnapshotWriter {
             {
                 sec_features |= IMPULSE_SECTION_FEAT_INCLUDE_CSC;
             }
-            if !is_virtual
-                && (rel.include_coo_v11 || (rel.coo_src_bytes > 0 && rel.coo_tgt_bytes > 0))
+            if !is_virtual && (rel.include_coo || (rel.coo_src_bytes > 0 && rel.coo_tgt_bytes > 0))
             {
                 sec_features |= IMPULSE_SECTION_FEAT_HAS_COO;
             }
@@ -1303,7 +1302,7 @@ impl SnapshotWriter {
                 )
             };
             dir_table_bytes.extend_from_slice(rel_bytes);
-            if emit_v11 {
+            if emit_vm {
                 let mut ext64 = [0u8; 64];
                 ext64[0..8].copy_from_slice(&rel.coo_src_offset.to_le_bytes());
                 ext64[8..16].copy_from_slice(&rel.coo_src_bytes.to_le_bytes());

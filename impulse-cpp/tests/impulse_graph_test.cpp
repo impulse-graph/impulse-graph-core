@@ -540,7 +540,7 @@ static void test_phase0_metadata_introspection() {
     ASSERT_EQ(impulse_writer_add_domain(w16, 0, IMPULSE_KEY_TYPE_INT32, "SmallDom"), IMPULSE_OK);
     ASSERT_EQ(impulse_writer_set_domain_node_count(w16, 0, 2), IMPULSE_OK);
     ASSERT_EQ(impulse_writer_set_domain_dense_id_width(w16, 0, 2), IMPULSE_OK);
-    ASSERT_EQ(impulse_writer_add_relation_v11(
+    ASSERT_EQ(impulse_writer_add_relation_ex(
         w16, 0, 0, IMPULSE_ENC_RAW, 0, 4, 2, 2, 0,
         w16_rows, sizeof(w16_rows), w16_cols, sizeof(w16_cols),
         nullptr, 0, nullptr, 0,
@@ -1179,7 +1179,7 @@ static void test_phase0_coverage_matrix() {
         ASSERT_EQ(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "SmallSrc"), IMPULSE_OK);
         ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 2), IMPULSE_OK);
         ASSERT_EQ(impulse_writer_set_domain_dense_id_width(w, 0, 2), IMPULSE_OK);
-        ASSERT_EQ(impulse_writer_add_relation_v11(
+        ASSERT_EQ(impulse_writer_add_relation_ex(
             w, 0, 0, IMPULSE_ENC_RAW, 0, 4, 2, 2, IMP_REL_FEATURE_INCLUDE_CSC,
             rows, sizeof(rows), cols16, sizeof(cols16),
             rows, sizeof(rows), cols16, sizeof(cols16),
@@ -1369,7 +1369,7 @@ static void test_phase0_coverage_matrix() {
         impulse_writer_t* w = impulse_writer_create(flat_m1_file, IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED);
         ASSERT_EQ(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Node"), IMPULSE_OK);
         ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 3), IMPULSE_OK);
-        ASSERT_EQ(impulse_writer_add_relation_v11(
+        ASSERT_EQ(impulse_writer_add_relation_ex(
             w, 0, 0, IMPULSE_ENC_RAW, 4, 4, 3, 2, (1ULL << 3), // M:1 flat forward
             nullptr, 0, flat_targets, sizeof(flat_targets),
             nullptr, 0, nullptr, 0,
@@ -1406,7 +1406,7 @@ static void test_phase0_coverage_matrix() {
         ASSERT_EQ(impulse_writer_add_domain(w, 0, IMPULSE_KEY_TYPE_INT32, "Small"), IMPULSE_OK);
         ASSERT_EQ(impulse_writer_set_domain_node_count(w, 0, 2), IMPULSE_OK);
         ASSERT_EQ(impulse_writer_set_domain_dense_id_width(w, 0, 2), IMPULSE_OK);
-        ASSERT_EQ(impulse_writer_add_relation_v11(
+        ASSERT_EQ(impulse_writer_add_relation_ex(
             w, 0, 0, IMPULSE_ENC_RAW, 2, 4, 2, 1, 0,
             rows, sizeof(rows), cols16, sizeof(cols16),
             nullptr, 0, nullptr, 0,

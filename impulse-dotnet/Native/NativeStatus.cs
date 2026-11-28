@@ -20,7 +20,7 @@ public enum ImpulseStatus : int
 
 /// <summary>
 /// Native Impulse VM execution status codes.
-/// Maps to impulse_vm_status_v11_t in impulse_vm_v11.h.
+/// Maps to impulse_vm_status_t in impulse_vm.h.
 /// </summary>
 public enum ImpulseVmStatus : int
 {

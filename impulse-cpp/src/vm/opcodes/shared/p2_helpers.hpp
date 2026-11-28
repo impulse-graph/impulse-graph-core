@@ -1,15 +1,15 @@
 /**
- * @file v11_p2_helpers.hpp
+ * @file p2_helpers.hpp
  * @brief Shared Pillar 2 (0x20..0x27) helpers for ImpulseVM v0.11.0 opcode .inc handlers.
  */
 #pragma once
 
-#include "v11_p1_helpers.hpp"
+#include "p1_helpers.hpp"
 #include <bit>
 
 namespace impulse::vm {
 
-inline bool p2_set_f1bit(impulse_vm_workspace_v11_t& ws,
+inline bool p2_set_f1bit(impulse_vm_workspace_t& ws,
                          uint8_t dst,
                          uint16_t dom_id,
                          uint64_t dom_card,
@@ -23,14 +23,14 @@ inline bool p2_set_f1bit(impulse_vm_workspace_v11_t& ws,
         return true;
     }
     if (!ws.f_regs[dst].init_from_sorted_ids(ws.arena, dom_id, dom_card, sorted_ids, count, ws.geometry, know_card)) {
-        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+        ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
         return false;
     }
     ws.set_f_init(dst, true);
     return true;
 }
 
-inline bool p2_add_sorted_unique(V11Arena& arena,
+inline bool p2_add_sorted_unique(VmArena& arena,
                                  const uint32_t* base,
                                  uint32_t base_len,
                                  uint32_t u,
@@ -56,7 +56,7 @@ inline bool p2_add_sorted_unique(V11Arena& arena,
     return true;
 }
 
-inline bool p2_remove_sorted(V11Arena& arena,
+inline bool p2_remove_sorted(VmArena& arena,
                              const uint32_t* base,
                              uint32_t base_len,
                              uint32_t u,
@@ -101,12 +101,12 @@ inline uint64_t p2_popcount64(uint64_t x) noexcept {
     return static_cast<uint64_t>(std::popcount(x));
 }
 
-inline bool p2_is_numeric_vec(const V11Vector* v) noexcept {
+inline bool p2_is_numeric_vec(const VmVector* v) noexcept {
     return v != nullptr &&
            (v->elem_tag == kVecTagF64 || v->elem_tag == kVecTagI64 || v->elem_tag == kVecTagU64);
 }
 
-inline double p2_read_numeric_as_f64(const V11Vector& v, uint32_t idx) noexcept {
+inline double p2_read_numeric_as_f64(const VmVector& v, uint32_t idx) noexcept {
     if (v.elem_tag == kVecTagF64) return v.f64_data[idx];
     return static_cast<double>(v.i64_data[idx]);
 }

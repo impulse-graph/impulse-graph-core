@@ -1,6 +1,6 @@
 #include "impulse_graph.h"
 #include "impulse_vm.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -86,7 +86,7 @@ static void test_statement_lifecycle_datalog_and_exec(const impulse_snapshot_t* 
 
     impulse_execution_result_t res{};
     TEST_ASSERT(impulse_exec(snap, "MATCH (u:User)-[:rel_0]->(v:User) RETURN v", 0, &res) == IMPULSE_OK);
-    TEST_ASSERT(res.status == IMPULSE_VM_V11_OK);
+    TEST_ASSERT(res.status == IMPULSE_VM_OK);
     TEST_ASSERT(res.row_count > 0 && res.column_count == 1 && res.data_ptr != nullptr);
     std::printf("  [PASS] ImpLog Datalog & impulse_exec\n");
 }
@@ -131,7 +131,7 @@ static void test_statement_null_and_boundaries(const impulse_snapshot_t* snap) {
 }
 
 int main() {
-    std::string path_str = (std::filesystem::temp_directory_path() / "impulse_test_stmt_v11.imps").string();
+    std::string path_str = (std::filesystem::temp_directory_path() / "impulse_test_stmt.imps").string();
     const char* path = path_str.c_str();
     impulse_snapshot_t* snap = build_test_snapshot(path);
     test_statement_lifecycle_cypher_and_reuse(snap);

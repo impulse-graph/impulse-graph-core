@@ -1,7 +1,7 @@
 package impulse
 
 /*
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,22 +14,22 @@ static void* alloc_aligned_128(size_t n) {
     return p;
 }
 
-static impulse_vm_status_v11_t exec_v11_with_seeds(
+static impulse_vm_status_t exec_with_seeds(
     const void* impb, size_t impb_len,
     const impulse_snapshot_t* snap,
-    impulse_vm_workspace_v11_t* ws,
+    impulse_vm_workspace_t* ws,
     uint64_t gas_limit,
     uint16_t dom_id,
     const uint64_t* seeds, uint32_t seed_cnt
 ) {
-    impulse_vm_params_v11_t params;
+    impulse_vm_params_t params;
     memset(&params, 0, sizeof(params));
     params.gas_limit = gas_limit;
-    impulse_vm_param_binding_v11_t binding;
+    impulse_vm_param_binding_t binding;
     memset(&binding, 0, sizeof(binding));
     if (seeds != NULL && seed_cnt > 0) {
         binding.param_id = 0;
-        binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+        binding.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
         binding.domain_id = dom_id;
         binding.count = seed_cnt;
         binding.data_ptr = seeds;
@@ -37,7 +37,7 @@ static impulse_vm_status_v11_t exec_v11_with_seeds(
         params.binding_count = 1;
     }
     size_t out_bytes = 0;
-    return impulse_vm_execute_v11(impb, impb_len, snap, &params, ws, NULL, 0, &out_bytes);
+    return impulse_vm_execute(impb, impb_len, snap, &params, ws, NULL, 0, &out_bytes);
 }
 */
 import "C"
@@ -50,7 +50,7 @@ import (
 	"unsafe"
 )
 
-// VmStatus mirrors impulse_vm_status_v11_t in impulse_vm_v11.h.
+// VmStatus mirrors impulse_vm_status_t in impulse_vm.h.
 type VmStatus uint32
 
 const (
@@ -94,7 +94,7 @@ func ValidateBytecode(impb []byte) (VmStatus, uint32) {
 	if len(impb) == 0 {
 		return VmErrValidationFailed, 0
 	}
-	res := C.impulse_vm_validate_v11(unsafe.Pointer(&impb[0]), C.size_t(len(impb)))
+	res := C.impulse_vm_validate(unsafe.Pointer(&impb[0]), C.size_t(len(impb)))
 	return VmStatus(res.status), uint32(res.bad_pc)
 }
 
@@ -128,7 +128,7 @@ func PlanMemory(impb []byte, snapshot *Snapshot, maxDop uint16) (MemoryPlan, err
 // VmWorkspace owns a 128-byte-aligned scratch arena initialized with impulse_workspace_init.
 type VmWorkspace struct {
 	rawBuf unsafe.Pointer
-	ws     *C.impulse_vm_workspace_v11_t
+	ws     *C.impulse_vm_workspace_t
 	cap    C.size_t
 }
 
@@ -142,7 +142,7 @@ func NewVmWorkspace(scratchBytes uint64) (*VmWorkspace, error) {
 	if buf == nil {
 		return nil, errors.New("failed to allocate 128-byte-aligned workspace")
 	}
-	var ws *C.impulse_vm_workspace_v11_t
+	var ws *C.impulse_vm_workspace_t
 	rc := C.impulse_workspace_init(buf, C.size_t(aligned), &ws)
 	if rc != 0 || ws == nil {
 		C.free(buf)
@@ -176,7 +176,7 @@ func (w *VmWorkspace) Execute(impb []byte, snapshot *Snapshot, seedIDs []uint64,
 	if len(seedIDs) > 0 {
 		seedPtr = (*C.uint64_t)(unsafe.Pointer(&seedIDs[0]))
 	}
-	rc := C.exec_v11_with_seeds(
+	rc := C.exec_with_seeds(
 		unsafe.Pointer(&impb[0]),
 		C.size_t(len(impb)),
 		cSnap,
@@ -198,7 +198,7 @@ func (w *VmWorkspace) OutputCount() uint32 {
 	if w.ws == nil {
 		return 0
 	}
-	n := uint32(C.impulse_vm_v11_get_output_count(w.ws))
+	n := uint32(C.impulse_vm_get_output_count(w.ws))
 	runtime.KeepAlive(w)
 	return n
 }
@@ -208,8 +208,8 @@ func (w *VmWorkspace) OutputU64Slice(slot uint32) ([]uint64, error) {
 	if w.ws == nil {
 		return nil, errors.New("workspace closed")
 	}
-	var view C.impulse_vm_output_view_v11_t
-	if C.impulse_vm_v11_get_output(w.ws, C.uint32_t(slot), &view) == 0 {
+	var view C.impulse_vm_output_view_t
+	if C.impulse_vm_get_output(w.ws, C.uint32_t(slot), &view) == 0 {
 		runtime.KeepAlive(w)
 		return nil, fmt.Errorf("output slot %d not available", slot)
 	}
@@ -228,8 +228,8 @@ func (w *VmWorkspace) OutputScalarU64(slot uint32) (uint64, bool) {
 	if w.ws == nil {
 		return 0, false
 	}
-	var view C.impulse_vm_output_view_v11_t
-	if C.impulse_vm_v11_get_output(w.ws, C.uint32_t(slot), &view) == 0 || view.length == 0 || view.i64_data == nil {
+	var view C.impulse_vm_output_view_t
+	if C.impulse_vm_get_output(w.ws, C.uint32_t(slot), &view) == 0 || view.length == 0 || view.i64_data == nil {
 		runtime.KeepAlive(w)
 		return 0, false
 	}
@@ -247,8 +247,8 @@ func (w *VmWorkspace) OutputDecimal64Slice(slot uint32, precision, scale uint8) 
 	if err := validateDecimal64PrecisionScale(precision, scale); err != nil {
 		return nil, err
 	}
-	var view C.impulse_vm_output_view_v11_t
-	if C.impulse_vm_v11_get_output(w.ws, C.uint32_t(slot), &view) == 0 {
+	var view C.impulse_vm_output_view_t
+	if C.impulse_vm_get_output(w.ws, C.uint32_t(slot), &view) == 0 {
 		runtime.KeepAlive(w)
 		return nil, fmt.Errorf("output slot %d not available", slot)
 	}
@@ -290,8 +290,8 @@ func (w *VmWorkspace) OutputScalarDecimal64(slot uint32, precision, scale uint8)
 	return vals[0].Value, vals[0].Valid, nil
 }
 
-// EncodeV11Word packs a single 64-bit ImpulseVM v0.11 instruction word.
-func EncodeV11Word(op, subop, flags, dst, s1, s2, s3 uint8, imm32 uint32) uint64 {
+// EncodeWord packs a single 64-bit ImpulseVM v0.11 instruction word.
+func EncodeWord(op, subop, flags, dst, s1, s2, s3 uint8, imm32 uint32) uint64 {
 	return uint64(op) |
 		(uint64(subop&0xF) << 8) |
 		(uint64(flags&0xF) << 12) |
@@ -302,8 +302,8 @@ func EncodeV11Word(op, subop, flags, dst, s1, s2, s3 uint8, imm32 uint32) uint64
 		(uint64(imm32) << 32)
 }
 
-// BuildImpbV11 wraps raw 64-bit v0.11 instruction words in a canonical 32-byte .impb v11 container.
-func BuildImpbV11(words []uint64, domainCountReq uint16) []byte {
+// BuildImpb wraps raw 64-bit v0.11 instruction words in a canonical 32-byte .impb v11 container.
+func BuildImpb(words []uint64, domainCountReq uint16) []byte {
 	buf := make([]byte, 32+len(words)*8)
 	binary.LittleEndian.PutUint32(buf[0:4], 0x494D5042)       // kImpbMagic
 	binary.LittleEndian.PutUint16(buf[4:6], 11)               // v0.11
@@ -323,7 +323,7 @@ func (w *VmWorkspace) ComputeIctxV2() DualIctxV2 {
 	if w.ws == nil {
 		return DualIctxV2{}
 	}
-	d := C.impulse_vm_v11_compute_ictx_v2(w.ws)
+	d := C.impulse_vm_compute_ictx_v2(w.ws)
 	runtime.KeepAlive(w)
 	return DualIctxV2{
 		LogicalHash:  uint64(d.logical_hash),

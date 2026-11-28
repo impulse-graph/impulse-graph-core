@@ -2,7 +2,7 @@
  * @file v11_ictx_v2.cpp
  * @brief Dual ICTX v2 Wire Serializer & Canonical XXH3-64 Digest Engine.
  *
- * Bit-identical to V11_ictx_v2 (impulse-ocaml) and V11ContextHash (impulse-graph-java).
+ * Bit-identical to V11_ictx_v2 (impulse-ocaml) and VmContextHash (impulse-graph-java).
  */
 #include "vm_internal.hpp"
 #include "vm_xxh3.hpp"
@@ -75,7 +75,7 @@ uint32_t count_dirty_pages(const uint32_t* sorted_nodes, uint32_t count, uint32_
     return pages;
 }
 
-void serialize_vec(ByteBuf& b, const V11Vector& v) {
+void serialize_vec(ByteBuf& b, const VmVector& v) {
     b.add_u8(v.elem_tag);
     b.add_u64_le(static_cast<uint64_t>(v.length));
     switch (v.elem_tag) {
@@ -169,8 +169,8 @@ void serialize_vec(ByteBuf& b, const V11Vector& v) {
 } // namespace
 } // namespace impulse::vm
 
-extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
-    const impulse_vm_workspace_v11_t* ws
+extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_compute_ictx_v2(
+    const impulse_vm_workspace_t* ws
 ) {
     using namespace impulse::vm;
     if (!ws) {
@@ -214,7 +214,7 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
             uint8_t ty = ws->read_r_type(i);
             uint64_t rv = ws->read_r_raw(i);
             if (ty == static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE)) {
-                V11StrSlice s = ws->resolve_scalar_str(rv);
+                VmStrSlice s = ws->resolve_scalar_str(rv);
                 bl.add_string(s.valid ? s.ptr : nullptr, s.valid ? s.len : 0u);
                 bp.add_string(s.valid ? s.ptr : nullptr, s.valid ? s.len : 0u);
             } else {
@@ -230,7 +230,7 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
             bl.add_u8(0u);
             bp.add_u8(0u);
         } else {
-            const V11Frontier& f = ws->f_regs[i];
+            const VmFrontier& f = ws->f_regs[i];
             bl.add_u8(1u);
             bp.add_u8(1u);
             bl.add_u16_le(f.domain_id);
@@ -289,7 +289,7 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
 
     // 4. Vector Bank V0..V15
     for (uint8_t i = 0; i < 16; ++i) {
-        const V11Vector* v = ws->v_regs[i];
+        const VmVector* v = ws->v_regs[i];
         if (!v) {
             bl.add_u8(0u);
             bp.add_u8(0u);
@@ -314,7 +314,7 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
     bl.add_u32_le(clamped_out);
     bp.add_u32_le(clamped_out);
     for (uint32_t i = 0; i < clamped_out; ++i) {
-        const V11OutputSlot& out = ws->outputs[order[i]];
+        const VmOutputSlot& out = ws->outputs[order[i]];
         bl.add_u16_le(out.slot);
         bp.add_u16_le(out.slot);
         if (out.vec) {
@@ -324,7 +324,7 @@ extern "C" IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_v11_compute_ictx_v2(
     }
 
     impulse_vm_ictx_v2_t digest{};
-    digest.logical_hash = V11Xxh3::hash64_with_seed(bl.data.data(), bl.data.size(), kLogicalSeed);
-    digest.physical_hash = V11Xxh3::hash64_with_seed(bp.data.data(), bp.data.size(), kPhysicalSeed);
+    digest.logical_hash = VmXxh3::hash64_with_seed(bl.data.data(), bl.data.size(), kLogicalSeed);
+    digest.physical_hash = VmXxh3::hash64_with_seed(bp.data.data(), bp.data.size(), kPhysicalSeed);
     return digest;
 }

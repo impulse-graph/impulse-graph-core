@@ -3,7 +3,7 @@
  * @brief Empirical C++20 v0.11 E2E benchmark (2-hop, fixpoint BFS/ReBAC, CC) on real .imps snapshots.
  */
 #include "vm/impulse_bytecode_emitter.hpp"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "impulse_graph.h"
 
 #undef OP_HALT
@@ -20,17 +20,17 @@
 static double run_timed(
     const std::vector<uint8_t>& impb,
     const impulse_snapshot_t* snap,
-    const impulse_vm_params_v11_t* params,
-    impulse_vm_workspace_v11_t* ws,
+    const impulse_vm_params_t* params,
+    impulse_vm_workspace_t* ws,
     int warmup,
     int iters,
     int64_t* out_val
 ) {
     for (int i = 0; i < warmup; ++i) {
-        impulse_vm_status_v11_t st = impulse_vm_execute_v11(
+        impulse_vm_status_t st = impulse_vm_execute(
             impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
-        if (st != IMPULSE_VM_V11_OK) {
-            const auto* stf = impulse_vm_v11_get_state(ws);
+        if (st != IMPULSE_VM_OK) {
+            const auto* stf = impulse_vm_get_state(ws);
             std::fprintf(stderr, "VM error during warmup: %u at pc=%u\n", st, stf ? stf->pc : 9999u);
             std::exit(2);
         }
@@ -39,17 +39,17 @@ static double run_timed(
     us.reserve(static_cast<size_t>(iters));
     for (int i = 0; i < iters; ++i) {
         auto t0 = std::chrono::steady_clock::now();
-        impulse_vm_status_v11_t st = impulse_vm_execute_v11(
+        impulse_vm_status_t st = impulse_vm_execute(
             impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
         auto t1 = std::chrono::steady_clock::now();
-        if (st != IMPULSE_VM_V11_OK) {
+        if (st != IMPULSE_VM_OK) {
             std::fprintf(stderr, "VM error during iter %d: %u\n", i, st);
             std::exit(2);
         }
         us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     }
-    impulse_vm_output_view_v11_t ov{};
-    if (impulse_vm_v11_get_output(ws, 0, &ov) == 1 && ov.length > 0 && ov.i64_data) {
+    impulse_vm_output_view_t ov{};
+    if (impulse_vm_get_output(ws, 0, &ov) == 1 && ov.length > 0 && ov.i64_data) {
         *out_val = ov.i64_data[0];
     }
     std::sort(us.begin(), us.end());
@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Failed to open snapshot %s (status=%d)\n", path, open_st);
         return 1;
     }
-    if (impulse_vm_v11_prepare_snapshot(snap) != IMPULSE_VM_V11_OK) {
+    if (impulse_vm_prepare_snapshot(snap) != IMPULSE_VM_OK) {
         std::fprintf(stderr, "Failed to prepare v11 snapshot view\n");
         return 1;
     }
@@ -81,14 +81,14 @@ int main(int argc, char** argv) {
     const size_t ws_bytes = 64u * 1024u * 1024u;
     std::vector<uint8_t> raw_buf(ws_bytes + 128u);
     void* raw = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(raw_buf.data()) + 127u) & ~uintptr_t(127u));
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_V11_OK) return 1;
+    impulse_vm_workspace_t* ws = nullptr;
+    if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_OK) return 1;
 
-    using namespace impulse::compiler::v11;
+    using namespace impulse::compiler;
     using namespace impulse::vm;
 
     // 1. 2-Hop Walk + Cardinality
-    V11ProgramBuilder b2;
+    VmProgramBuilder b2;
     b2.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
     b2.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
     b2.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 0, 1, 0, 0, 0, 0);
@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
     auto impb_2hop = b2.build_impb(0, 0, 1);
 
     // 2. Fixpoint Kleene* Reachability (BFS / ReBAC) + Cardinality
-    V11ProgramBuilder bf;
+    VmProgramBuilder bf;
     bf.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
     bf.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD_FIXPOINT_STAR, 0, 1, 0, 0, 0, 0, 0);
     bf.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, 0, 1, 0, 0, 0);
@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     auto impb_bfs = bf.build_impb(0, 0, 1);
 
     // 3. Morsel 2-Hop (WALK 1-hop + WALK_MORSEL.fwd + MORSEL_COMMIT.yield_frontier + CARD)
-    V11ProgramBuilder bm;
+    VmProgramBuilder bm;
     bm.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
     bm.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
     bm.emit_u16(Opcode::OP_WALK_MORSEL, subop::kWALK_MORSEL_FWD, 0, 0, 1, 0, 0, 0, 2);
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
     auto impb_morsel_2hop = bm.build_impb(0, 0, 1);
 
     // 4. Morsel Edge Count (WALK 1-hop + WALK_MORSEL.fwd + MORSEL_COMMIT.count_add_r)
-    V11ProgramBuilder bmc;
+    VmProgramBuilder bmc;
     bmc.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, 0);
     bmc.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, 0, 0);
     bmc.emit(Opcode::OP_LOAD_CONST, subop::kLOAD_CONST_I32, 0, 0, 0, 0, 0, 0);
@@ -130,13 +130,13 @@ int main(int argc, char** argv) {
     bmc.emit(Opcode::OP_HALT, 0, 0, 0, 0, 0, 0, 0);
     auto impb_morsel_cnt = bmc.build_impb(0, 0, 1);
 
-    impulse_vm_param_binding_v11_t bind{};
+    impulse_vm_param_binding_t bind{};
     bind.param_id = 0u;
-    bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+    bind.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
     bind.domain_id = 0u;
     bind.count = 1u;
     bind.data_ptr = &seed;
-    impulse_vm_params_v11_t params{};
+    impulse_vm_params_t params{};
     params.gas_limit = 0ULL;
     params.bindings = &bind;
     params.binding_count = 1u;

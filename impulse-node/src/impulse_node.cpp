@@ -5,7 +5,7 @@
 
 #include <napi.h>
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "vm/impulse_vm_isa.hpp"
 #include "vm/impulse_impscm.hpp"
 #include "impulse_cypher.hpp"
@@ -1180,8 +1180,8 @@ public:
         }
         std::memset(buf_, 0, aligned);
         cap_ = aligned;
-        impulse_vm_status_v11_t rc = impulse_workspace_init(buf_, cap_, &ws_);
-        if (rc != IMPULSE_VM_V11_OK || !ws_) {
+        impulse_vm_status_t rc = impulse_workspace_init(buf_, cap_, &ws_);
+        if (rc != IMPULSE_VM_OK || !ws_) {
             DestroyInternal();
             Napi::Error::New(env, "impulse_workspace_init failed: status=" + std::to_string(rc)).ThrowAsJavaScriptException();
         }
@@ -1235,12 +1235,12 @@ private:
         uint16_t domain_id = (info.Length() >= 4 && info[3].IsNumber())
             ? static_cast<uint16_t>(info[3].As<Napi::Number>().Uint32Value()) : 0;
 
-        impulse_vm_param_binding_v11_t binding{};
-        impulse_vm_params_v11_t params{};
+        impulse_vm_param_binding_t binding{};
+        impulse_vm_params_t params{};
         params.gas_limit = UINT64_MAX;
         if (!seeds.empty()) {
             binding.param_id = 0;
-            binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+            binding.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
             binding.domain_id = domain_id;
             binding.count = static_cast<uint32_t>(seeds.size());
             binding.data_ptr = seeds.data();
@@ -1248,7 +1248,7 @@ private:
             params.binding_count = 1;
         }
         size_t out_bytes = 0;
-        impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+        impulse_vm_status_t rc = impulse_vm_execute(
             buf.Data(), buf.Length(), snap, &params, ws_, nullptr, 0, &out_bytes);
         return Napi::Number::New(env, rc);
     }
@@ -1269,7 +1269,7 @@ private:
             NodeSnapshot* ns = Napi::ObjectWrap<NodeSnapshot>::Unwrap(info[1].As<Napi::Object>());
             if (ns) snap = ns->RawSnapshot();
         }
-        std::vector<impulse_vm_param_binding_v11_t> c_bindings;
+        std::vector<impulse_vm_param_binding_t> c_bindings;
         std::deque<std::vector<uint64_t>> id_storage;
         std::deque<std::string> str_storage;
 
@@ -1289,20 +1289,20 @@ private:
                     Napi::TypeError::New(env, "Binding requires numeric 'paramId' and 'kind'").ThrowAsJavaScriptException();
                     return env.Null();
                 }
-                impulse_vm_param_binding_v11_t b{};
+                impulse_vm_param_binding_t b{};
                 b.param_id = pidVal.As<Napi::Number>().Uint32Value();
                 b.kind = kindVal.As<Napi::Number>().Uint32Value();
-                if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_NULL) {
+                if (b.kind == IMPULSE_VM_PARAM_SCALAR_NULL) {
                     b.scalar_bits = 0;
-                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_I64) {
+                } else if (b.kind == IMPULSE_VM_PARAM_SCALAR_I64) {
                     int64_t v = 0;
                     if (!TryGetInt64(env, item.Get("scalarI64"), v)) return env.Null();
                     std::memcpy(&b.scalar_bits, &v, sizeof(v));
-                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_U64 || b.kind == IMPULSE_VM_V11_PARAM_SCALAR_BOOL) {
+                } else if (b.kind == IMPULSE_VM_PARAM_SCALAR_U64 || b.kind == IMPULSE_VM_PARAM_SCALAR_BOOL) {
                     uint64_t uv = 0;
                     if (!TryGetUint64(env, item.Get("scalarBits"), uv)) return env.Null();
                     b.scalar_bits = uv;
-                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_F64) {
+                } else if (b.kind == IMPULSE_VM_PARAM_SCALAR_F64) {
                     Napi::Value fv = item.Get("scalarF64");
                     if (!fv.IsNumber()) {
                         Napi::TypeError::New(env, "SCALAR_F64 binding requires numeric 'scalarF64'").ThrowAsJavaScriptException();
@@ -1310,7 +1310,7 @@ private:
                     }
                     double dv = fv.As<Napi::Number>().DoubleValue();
                     std::memcpy(&b.scalar_bits, &dv, sizeof(dv));
-                } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_STR) {
+                } else if (b.kind == IMPULSE_VM_PARAM_SCALAR_STR) {
                     Napi::Value sv = item.Get("strVal");
                     if (!sv.IsString()) {
                         Napi::TypeError::New(env, "SCALAR_STR binding requires string 'strVal'").ThrowAsJavaScriptException();
@@ -1319,7 +1319,7 @@ private:
                     str_storage.push_back(sv.As<Napi::String>().Utf8Value());
                     b.data_ptr = str_storage.back().data();
                     b.count = static_cast<uint32_t>(str_storage.back().size());
-                } else if (b.kind == IMPULSE_VM_V11_PARAM_FRONTIER_IDS) {
+                } else if (b.kind == IMPULSE_VM_PARAM_FRONTIER_IDS) {
                     if (item.Has("domainId")) {
                         Napi::Value domVal = item.Get("domainId");
                         if (!domVal.IsNumber()) {
@@ -1349,7 +1349,7 @@ private:
             }
         }
 
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         if (info.Length() >= 4 && !info[3].IsNull() && !info[3].IsUndefined()) {
             uint64_t gl = 0;
             if (!TryGetUint64(env, info[3], gl)) return env.Null();
@@ -1362,13 +1362,13 @@ private:
             params.binding_count = static_cast<uint32_t>(c_bindings.size());
         }
         size_t out_bytes = 0;
-        impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+        impulse_vm_status_t rc = impulse_vm_execute(
             buf.Data(), buf.Length(), snap, &params, ws_, nullptr, 0, &out_bytes);
         return Napi::Number::New(env, rc);
     }
 
     Napi::Value OutputCount(const Napi::CallbackInfo& info) {
-        return Napi::Number::New(info.Env(), ws_ ? impulse_vm_v11_get_output_count(ws_) : 0);
+        return Napi::Number::New(info.Env(), ws_ ? impulse_vm_get_output_count(ws_) : 0);
     }
 
     Napi::Value GetOutput(const Napi::CallbackInfo& info) {
@@ -1377,8 +1377,8 @@ private:
             return env.Null();
         }
         uint16_t slot = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
-        impulse_vm_output_view_v11_t view{};
-        if (impulse_vm_v11_get_output(ws_, slot, &view) == 0) {
+        impulse_vm_output_view_t view{};
+        if (impulse_vm_get_output(ws_, slot, &view) == 0) {
             return env.Null();
         }
         auto is_valid = [&](uint32_t i) -> bool {
@@ -1432,7 +1432,7 @@ private:
         Napi::Env env = info.Env();
         Napi::Object obj = Napi::Object::New(env);
         if (ws_) {
-            impulse_vm_ictx_v2_t d = impulse_vm_v11_compute_ictx_v2(ws_);
+            impulse_vm_ictx_v2_t d = impulse_vm_compute_ictx_v2(ws_);
             obj.Set("logicalHash", Napi::BigInt::New(env, d.logical_hash));
             obj.Set("physicalHash", Napi::BigInt::New(env, d.physical_hash));
         }
@@ -1441,7 +1441,7 @@ private:
 
     void* buf_ = nullptr;
     size_t cap_ = 0;
-    impulse_vm_workspace_v11_t* ws_ = nullptr;
+    impulse_vm_workspace_t* ws_ = nullptr;
 };
 
 static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
@@ -1461,19 +1461,19 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     exports.Set("Opcodes", opcodes);
 
     Napi::Object vmStatus = Napi::Object::New(env);
-    vmStatus.Set("OK", Napi::Number::New(env, IMPULSE_VM_V11_OK));
-    vmStatus.Set("ERR_INVALID_OPCODE", Napi::Number::New(env, IMPULSE_VM_V11_ERR_INVALID_OPCODE));
-    vmStatus.Set("ERR_OUT_OF_BOUNDS", Napi::Number::New(env, IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS));
-    vmStatus.Set("ERR_NULL_SNAPSHOT", Napi::Number::New(env, IMPULSE_VM_V11_ERR_NULL_SNAPSHOT));
-    vmStatus.Set("ERR_DOMAIN_MISMATCH", Napi::Number::New(env, IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH));
-    vmStatus.Set("ERR_BUFFER_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW));
-    vmStatus.Set("ERR_GAS_EXHAUSTED", Napi::Number::New(env, IMPULSE_VM_V11_ERR_GAS_EXHAUSTED));
-    vmStatus.Set("ERR_TYPE_MISMATCH", Napi::Number::New(env, IMPULSE_VM_V11_ERR_TYPE_MISMATCH));
-    vmStatus.Set("ERR_VALIDATION_FAILED", Napi::Number::New(env, IMPULSE_VM_V11_ERR_VALIDATION_FAILED));
-    vmStatus.Set("ERR_ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW));
-    vmStatus.Set("ERR_DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_V11_ERR_DIV_BY_ZERO));
-    vmStatus.Set("ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW));
-    vmStatus.Set("DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_V11_ERR_DIV_BY_ZERO));
+    vmStatus.Set("OK", Napi::Number::New(env, IMPULSE_VM_OK));
+    vmStatus.Set("ERR_INVALID_OPCODE", Napi::Number::New(env, IMPULSE_VM_ERR_INVALID_OPCODE));
+    vmStatus.Set("ERR_OUT_OF_BOUNDS", Napi::Number::New(env, IMPULSE_VM_ERR_OUT_OF_BOUNDS));
+    vmStatus.Set("ERR_NULL_SNAPSHOT", Napi::Number::New(env, IMPULSE_VM_ERR_NULL_SNAPSHOT));
+    vmStatus.Set("ERR_DOMAIN_MISMATCH", Napi::Number::New(env, IMPULSE_VM_ERR_DOMAIN_MISMATCH));
+    vmStatus.Set("ERR_BUFFER_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_ERR_BUFFER_OVERFLOW));
+    vmStatus.Set("ERR_GAS_EXHAUSTED", Napi::Number::New(env, IMPULSE_VM_ERR_GAS_EXHAUSTED));
+    vmStatus.Set("ERR_TYPE_MISMATCH", Napi::Number::New(env, IMPULSE_VM_ERR_TYPE_MISMATCH));
+    vmStatus.Set("ERR_VALIDATION_FAILED", Napi::Number::New(env, IMPULSE_VM_ERR_VALIDATION_FAILED));
+    vmStatus.Set("ERR_ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW));
+    vmStatus.Set("ERR_DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_ERR_DIV_BY_ZERO));
+    vmStatus.Set("ARITHMETIC_OVERFLOW", Napi::Number::New(env, IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW));
+    vmStatus.Set("DIV_BY_ZERO", Napi::Number::New(env, IMPULSE_VM_ERR_DIV_BY_ZERO));
     exports.Set("VmStatus", vmStatus);
 
     Napi::Object attrType = Napi::Object::New(env);
@@ -1482,7 +1482,7 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     attrType.Set("DECIMAL64_NULLABLE", Napi::Number::New(env, 0x95));
     exports.Set("AttrType", attrType);
 
-    auto pack_compile_result = [](Napi::Env e, const impulse::compiler::v11::ImpScmV11CompileResult& res) -> Napi::Object {
+    auto pack_compile_result = [](Napi::Env e, const impulse::compiler::ImpScmCompileResult& res) -> Napi::Object {
         Napi::Object out = Napi::Object::New(e);
         out.Set("impbBytes", Napi::Buffer<uint8_t>::Copy(e, res.impb_bytes.data(), res.impb_bytes.size()));
 
@@ -1543,7 +1543,7 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
         bool enable_opt = (info.Length() >= 3 && info[2].IsBoolean())
             ? info[2].As<Napi::Boolean>().Value() : true;
         try {
-            auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(source, snap, enable_opt);
+            auto res = impulse::compiler::ImpScmCompiler::compile(source, snap, enable_opt);
             return pack_compile_result(e, res);
         } catch (const std::exception& ex) {
             Napi::Error::New(e, ex.what()).ThrowAsJavaScriptException();
@@ -1653,8 +1653,8 @@ static Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
         bool enable_opt = (info.Length() >= 4 && info[3].IsBoolean())
             ? info[3].As<Napi::Boolean>().Value() : true;
         try {
-            std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm_v11(cypher, pmap);
-            auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(impscm_src, snap, enable_opt);
+            std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm(cypher, pmap);
+            auto res = impulse::compiler::ImpScmCompiler::compile(impscm_src, snap, enable_opt);
             Napi::Object out = pack_compile_result(e, res);
             out.Set("impscmSource", Napi::String::New(e, impscm_src));
             return out;

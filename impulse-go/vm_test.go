@@ -10,7 +10,7 @@ import (
 	impulse "github.com/impulse-graph/impulse-graph/go"
 )
 
-func TestVMV11ExecutionPoolingAndNoLeak(t *testing.T) {
+func TestVMExecutionPoolingAndNoLeak(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "impulse_vm_v11_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -48,12 +48,12 @@ func TestVMV11ExecutionPoolingAndNoLeak(t *testing.T) {
 	//    2: OP_COLLECT.frontier    slot=0, F1
 	//    3: OP_HALT
 	words := []uint64{
-		impulse.EncodeV11Word(0x07, 1, 0, 0, 0, 0, 0, 0),
-		impulse.EncodeV11Word(0x30, 0, 0, 1, 0, 0, 0, 0),
-		impulse.EncodeV11Word(0x57, 1, 0, 0, 1, 0, 0, 0),
-		impulse.EncodeV11Word(0x00, 0, 0, 0, 0, 0, 0, 0),
+		impulse.EncodeWord(0x07, 1, 0, 0, 0, 0, 0, 0),
+		impulse.EncodeWord(0x30, 0, 0, 1, 0, 0, 0, 0),
+		impulse.EncodeWord(0x57, 1, 0, 0, 1, 0, 0, 0),
+		impulse.EncodeWord(0x00, 0, 0, 0, 0, 0, 0, 0),
 	}
-	impb := impulse.BuildImpbV11(words, 1)
+	impb := impulse.BuildImpb(words, 1)
 
 	if st, badPC := impulse.ValidateBytecode(impb); st != impulse.VmOk {
 		t.Fatalf("ValidateBytecode failed: status=%d badPC=%d", st, badPC)

@@ -180,7 +180,7 @@ impulse_status_t impulse_writer_add_relation(
     } IMPULSE_C_ABI_CATCH_STATUS(IMPULSE_ERR_BUFFER_OVERFLOW, IMPULSE_ERR_IO_FAILURE)
 }
 
-impulse_status_t impulse_writer_add_relation_v11(
+impulse_status_t impulse_writer_add_relation_ex(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
     uint16_t tgt_domain_id,
@@ -1005,7 +1005,7 @@ static impulse_status_t populate_writer_from_snapshot(
             const void* coo_eid_ptr = (!is_virtual && rel.coo_edge_id_offset > 0 && rel.coo_edge_id_bytes > 0) ? (raw + rel.coo_edge_id_offset) : nullptr;
             uint8_t nw = (rel.node_id_width == 2 || rel.node_id_width == 16) ? 2 : ((rel.node_id_width == 8 || rel.node_id_width == 64) ? 8 : 4);
             uint8_t ew = (rel.edge_index_width == 8 || rel.edge_index_width == 64) ? 8 : 4;
-            rel_st = impulse_writer_add_relation_v11(
+            rel_st = impulse_writer_add_relation_ex(
                 writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
                 nw, ew, rel.node_count, rel.edge_count, base_sec_feats,
                 csr_row_ptr, rel.csr_row_off_bytes,
@@ -1179,7 +1179,7 @@ static impulse_status_t populate_writer_from_snapshot(
             uint64_t sec_feats = base_sec_feats & ~(IMP_REL_FEATURE_INCLUDE_CSC | IMP_REL_FEATURE_WEIGHTED |
                                                     (0x3ULL << 3) | IMPULSE_SECTION_FEAT_HAS_COO |
                                                     IMPULSE_SECTION_FEAT_COO_EXPLICIT_EDGE_IDS);
-            rel_st = impulse_writer_add_relation_v11(
+            rel_st = impulse_writer_add_relation_ex(
                 writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_id,
                 static_cast<uint8_t>(base_node_w), static_cast<uint8_t>(base_edge_w),
                 new_node_count, static_cast<uint64_t>(merged_cols64.size()), sec_feats,

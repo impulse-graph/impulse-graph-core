@@ -3,8 +3,8 @@
  * @brief ImpulseVM v0.11.0 64-bit nibble ISA bytecode builder, ScmProgram emitter,
  *        and ImpAsm v0.11 disassembler.
  */
-#ifndef IMPULSE_V11_BYTECODE_EMITTER_HPP
-#define IMPULSE_V11_BYTECODE_EMITTER_HPP
+#ifndef IMPULSE_VM_BYTECODE_EMITTER_HPP
+#define IMPULSE_VM_BYTECODE_EMITTER_HPP
 
 #include <cstdint>
 #include <cstring>
@@ -14,14 +14,14 @@
 #include <vector>
 
 #include "vm/impulse_vm_isa.hpp"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "impulse_scm_ast.hpp"
 #include "impulse_graph.h"
 
-namespace impulse::compiler::v11 {
+namespace impulse::compiler {
 
 /** Canonical constant pool entry serialized into .impb const_pool_bytes. */
-struct V11ConstPoolDef {
+struct VmConstPoolDef {
     uint32_t id = 0;
     uint8_t  kind = 0;      // 1=Vec, 2=Frontier, 3=Str
     uint8_t  elem_tag = 0;  // 0=I64, 1=U64, 4=F64, 6=BOOL_3VL, 7=STR
@@ -35,7 +35,7 @@ struct V11ConstPoolDef {
 /**
  * Type-safe 64-bit nibble instruction builder and .impb v0.11 container serializer.
  */
-class V11ProgramBuilder {
+class VmProgramBuilder {
 public:
     static inline uint64_t encode_word(
         uint8_t opcode,
@@ -159,7 +159,7 @@ public:
 
     uint32_t add_const_pool_str(const std::string& s) {
         uint32_t id = static_cast<uint32_t>(const_pool_.size());
-        V11ConstPoolDef def;
+        VmConstPoolDef def;
         def.id = id;
         def.kind = 3; // Str
         def.str_val = s;
@@ -169,7 +169,7 @@ public:
 
     uint32_t add_const_pool_frontier(const std::vector<uint64_t>& ids) {
         uint32_t id = static_cast<uint32_t>(const_pool_.size());
-        V11ConstPoolDef def;
+        VmConstPoolDef def;
         def.id = id;
         def.kind = 2; // Frontier
         def.frontier_ids = ids;
@@ -179,7 +179,7 @@ public:
 
     uint32_t add_const_pool_vec_u64(const std::vector<int64_t>& vals) {
         uint32_t id = static_cast<uint32_t>(const_pool_.size());
-        V11ConstPoolDef def;
+        VmConstPoolDef def;
         def.id = id;
         def.kind = 1; // Vec
         def.elem_tag = 1; // kVecTagU64
@@ -190,7 +190,7 @@ public:
 
     uint32_t add_const_pool_vec_f64(const std::vector<double>& vals) {
         uint32_t id = static_cast<uint32_t>(const_pool_.size());
-        V11ConstPoolDef def;
+        VmConstPoolDef def;
         def.id = id;
         def.kind = 1; // Vec
         def.elem_tag = 4; // kVecTagF64
@@ -200,7 +200,7 @@ public:
     }
 
     const std::vector<uint64_t>& words() const noexcept { return words_; }
-    const std::vector<V11ConstPoolDef>& const_pool() const noexcept { return const_pool_; }
+    const std::vector<VmConstPoolDef>& const_pool() const noexcept { return const_pool_; }
 
     void append_words(const std::vector<uint64_t>& extra) {
         words_.insert(words_.end(), extra.begin(), extra.end());
@@ -215,7 +215,7 @@ public:
 
 private:
     std::vector<uint64_t> words_;
-    std::vector<V11ConstPoolDef> const_pool_;
+    std::vector<VmConstPoolDef> const_pool_;
 };
 
 /** Output of ImpulseBytecodeEmitter::emit(). */
@@ -241,6 +241,6 @@ public:
     static std::string disassemble(const std::vector<uint64_t>& words);
 };
 
-} // namespace impulse::compiler::v11
+} // namespace impulse::compiler
 
-#endif /* IMPULSE_V11_BYTECODE_EMITTER_HPP */
+#endif /* IMPULSE_VM_BYTECODE_EMITTER_HPP */

@@ -1161,17 +1161,17 @@ public:
 
     /**
      * Lowers a parsed openCypher query (including DECIMAL64 literals, CAST(... AS DECIMAL(P, S)),
-     * and typed $param bindings) into canonical ImpScheme v0.11 SSA source for ImpScmV11Compiler.
+     * and typed $param bindings) into canonical ImpScheme v0.11 SSA source for ImpScmCompiler.
      */
-    static std::string lower_to_impscm_v11(
+    static std::string lower_to_impscm(
         const std::string& cypher_query,
         const std::unordered_map<std::string, ParamTypeSpec>& param_types = {}
     ) {
         CypherQuery query = CypherParser::parse(cypher_query);
-        return lower_to_impscm_v11(query, param_types);
+        return lower_to_impscm(query, param_types);
     }
 
-    static std::string lower_to_impscm_v11(
+    static std::string lower_to_impscm(
         const CypherQuery& query,
         const std::unordered_map<std::string, ParamTypeSpec>& param_types = {}
     ) {

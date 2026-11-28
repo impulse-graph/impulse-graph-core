@@ -2,7 +2,7 @@ package impulse
 
 /*
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include <stdlib.h>
 
 static inline void impulse_go_unpack_attr_desc(
@@ -56,7 +56,7 @@ func OpenSnapshot(path string) (*Snapshot, error) {
 		}
 		return nil, Status(status)
 	}
-	_ = C.impulse_vm_v11_prepare_snapshot(ptr)
+	_ = C.impulse_vm_prepare_snapshot(ptr)
 
 	poolCap := runtime.GOMAXPROCS(0) * 2
 	if poolCap < 8 {

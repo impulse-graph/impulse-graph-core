@@ -955,7 +955,7 @@ mod tests {
         // Rel 0: FOLLOWS with dedicated v0.11 COO arrays (SRC_MAJOR)
         writer.add_relation(0, 0, 4, 3, vec![0, 2, 3, 3, 3], vec![1, 2, 3]);
         writer.set_relation_name(0, "FOLLOWS");
-        writer.set_relation_coo_v11(0, 1); // SRC_MAJOR
+        writer.set_relation_coo(0, 1); // SRC_MAJOR
 
         let bytes = writer.finalize_to_bytes().unwrap();
         let reader = SnapshotReader::from_bytes(bytes).unwrap();

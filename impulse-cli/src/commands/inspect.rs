@@ -1237,7 +1237,7 @@ mod inspect_metadata_tests {
         writer.add_relation(0, 0, 3, 2, vec![0, 1, 2, 2], vec![1, 2]);
         writer.set_relation_name(0, "transfer");
         writer.set_relation_include_csc(0, true);
-        writer.set_relation_coo_v11(0, 1);
+        writer.set_relation_coo(0, 1);
         let mut wbytes = Vec::new();
         wbytes.extend_from_slice(&1.5f32.to_le_bytes());
         wbytes.extend_from_slice(&2.5f32.to_le_bytes());

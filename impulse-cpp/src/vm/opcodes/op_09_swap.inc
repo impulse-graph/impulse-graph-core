@@ -1,8 +1,8 @@
 // Opcode 0x09: OP_SWAP
-V11_OP_CASE(SWAP) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
+VM_OP_CASE(SWAP) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
     switch (subop) {
         case 0: { // .r
             bool vd = ws.is_r_valid(dst);
@@ -19,7 +19,7 @@ V11_OP_CASE(SWAP) {
         case 1: { // .f
             bool init_d = ws.is_f_init(dst);
             bool init_s = ws.is_f_init(s1);
-            V11Frontier tmp = ws.f_regs[dst];
+            VmFrontier tmp = ws.f_regs[dst];
             ws.f_regs[dst] = ws.f_regs[s1];
             ws.f_regs[s1] = tmp;
             ws.set_f_init(dst, init_s);
@@ -28,15 +28,15 @@ V11_OP_CASE(SWAP) {
             break;
         }
         case 2: { // .v
-            V11Vector* tmp = ws.v_regs[dst];
+            VmVector* tmp = ws.v_regs[dst];
             ws.v_regs[dst] = ws.v_regs[s1];
             ws.v_regs[s1] = tmp;
             ws.state.pc += 1u;
             break;
         }
         default:
-            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
             break;
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

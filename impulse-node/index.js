@@ -295,7 +295,7 @@ native.Snapshot.prototype.getRelationDecimal64 = function (relationIndex, attrIn
   return decodeDecimal64Values(raw);
 };
 
-class CompiledV11Program {
+class CompiledProgram {
   constructor(compiled) {
     this.impbBytes = compiled.impbBytes;
     this.paramNameToId = { ...compiled.paramNameToId };
@@ -397,11 +397,11 @@ class CompiledV11Program {
 }
 
 function compileImpScm(source, snapshot = null, enableOptimizations = true) {
-  return new CompiledV11Program(native.compileImpScm(source, snapshot, enableOptimizations));
+  return new CompiledProgram(native.compileImpScm(source, snapshot, enableOptimizations));
 }
 
 function compileCypher(cypher, snapshot = null, paramTypes = {}, enableOptimizations = true) {
-  return new CompiledV11Program(
+  return new CompiledProgram(
     native.compileCypher(cypher, snapshot, paramTypes, enableOptimizations)
   );
 }
@@ -600,7 +600,7 @@ const AttrType = {
 module.exports = {
   ...native,
   Decimal64,
-  CompiledV11Program,
+  CompiledProgram,
   compileImpScm,
   compileCypher,
   Opcodes,

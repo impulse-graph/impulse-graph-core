@@ -3,7 +3,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/functional.h>
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "vm/impulse_vm_isa.hpp"
 #include "vm/impulse_impscm.hpp"
 #include "impulse_cypher.hpp"
@@ -736,8 +736,8 @@ public:
         if (!buf_) throw std::bad_alloc();
         std::memset(buf_, 0, aligned);
         cap_ = aligned;
-        impulse_vm_status_v11_t rc = impulse_workspace_init(buf_, cap_, &ws_);
-        if (rc != IMPULSE_VM_V11_OK || !ws_) {
+        impulse_vm_status_t rc = impulse_workspace_init(buf_, cap_, &ws_);
+        if (rc != IMPULSE_VM_OK || !ws_) {
             destroy();
             throw std::runtime_error("impulse_workspace_init failed: status=" + std::to_string(rc));
         }
@@ -770,12 +770,12 @@ public:
         const impulse_snapshot_t* s_ptr = lease ? lease->handle : nullptr;
         std::string prog = impb_bytes;
 
-        impulse_vm_param_binding_v11_t binding{};
-        impulse_vm_params_v11_t params{};
+        impulse_vm_param_binding_t binding{};
+        impulse_vm_params_t params{};
         params.gas_limit = gas_limit;
         if (!seed_ids.empty()) {
             binding.param_id = 0;
-            binding.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+            binding.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
             binding.domain_id = domain_id;
             binding.count = static_cast<uint32_t>(seed_ids.size());
             binding.data_ptr = seed_ids.data();
@@ -784,10 +784,10 @@ public:
         }
 
         size_t out_bytes = 0;
-        impulse_vm_status_v11_t rc;
+        impulse_vm_status_t rc;
         {
             py::gil_scoped_release release;
-            rc = impulse_vm_execute_v11(
+            rc = impulse_vm_execute(
                 prog.data(), prog.size(), s_ptr, &params, ws_, nullptr, 0, &out_bytes);
         }
         return rc;
@@ -804,7 +804,7 @@ public:
         const impulse_snapshot_t* s_ptr = lease ? lease->handle : nullptr;
         std::string prog = impb_bytes;
 
-        std::vector<impulse_vm_param_binding_v11_t> bindings;
+        std::vector<impulse_vm_param_binding_t> bindings;
         std::vector<std::vector<uint64_t>> owned_u64_bufs;
         std::vector<std::string> owned_str_bufs;
         bindings.reserve(bindings_list.size());
@@ -813,15 +813,15 @@ public:
 
         for (const auto& item : bindings_list) {
             py::dict d = item.cast<py::dict>();
-            impulse_vm_param_binding_v11_t b{};
+            impulse_vm_param_binding_t b{};
             b.param_id = d["param_id"].cast<uint32_t>();
             b.kind = d["kind"].cast<uint32_t>();
             if (d.contains("domain_id")) b.domain_id = d["domain_id"].cast<uint16_t>();
-            if (b.kind == IMPULSE_VM_V11_PARAM_FRONTIER_IDS) {
+            if (b.kind == IMPULSE_VM_PARAM_FRONTIER_IDS) {
                 owned_u64_bufs.push_back(d["ids"].cast<std::vector<uint64_t>>());
                 b.count = static_cast<uint32_t>(owned_u64_bufs.back().size());
                 b.data_ptr = owned_u64_bufs.back().data();
-            } else if (b.kind == IMPULSE_VM_V11_PARAM_SCALAR_STR) {
+            } else if (b.kind == IMPULSE_VM_PARAM_SCALAR_STR) {
                 owned_str_bufs.push_back(d["str_val"].cast<std::string>());
                 b.count = static_cast<uint32_t>(owned_str_bufs.back().size());
                 b.data_ptr = owned_str_bufs.back().data();
@@ -839,29 +839,29 @@ public:
             bindings.push_back(b);
         }
 
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         params.gas_limit = gas_limit;
         params.bindings = bindings.empty() ? nullptr : bindings.data();
         params.binding_count = static_cast<uint32_t>(bindings.size());
 
         size_t out_bytes = 0;
-        impulse_vm_status_v11_t rc;
+        impulse_vm_status_t rc;
         {
             py::gil_scoped_release release;
-            rc = impulse_vm_execute_v11(
+            rc = impulse_vm_execute(
                 prog.data(), prog.size(), s_ptr, &params, ws_, nullptr, 0, &out_bytes);
         }
         return rc;
     }
 
     uint32_t output_count() const {
-        return ws_ ? impulse_vm_v11_get_output_count(ws_) : 0;
+        return ws_ ? impulse_vm_get_output_count(ws_) : 0;
     }
 
     py::dict get_output(uint16_t slot) const {
         if (!ws_) throw std::runtime_error("VmWorkspace has been destroyed");
-        impulse_vm_output_view_v11_t view{};
-        int rc = impulse_vm_v11_get_output(ws_, slot, &view);
+        impulse_vm_output_view_t view{};
+        int rc = impulse_vm_get_output(ws_, slot, &view);
         if (rc == 0) {
             throw std::out_of_range("Output slot " + std::to_string(slot) + " unavailable");
         }
@@ -912,7 +912,7 @@ public:
                 const char* ptr = nullptr;
                 uint32_t len = 0;
                 int valid = 0;
-                if (impulse_vm_v11_get_output_str(ws_, slot, i, &ptr, &len, &valid) != 0 && valid && ptr) {
+                if (impulse_vm_get_output_str(ws_, slot, i, &ptr, &len, &valid) != 0 && valid && ptr) {
                     vals.append(py::str(ptr, len));
                 } else {
                     vals.append(py::none());
@@ -925,14 +925,14 @@ public:
 
     std::pair<uint64_t, uint64_t> compute_ictx_v2() const {
         if (!ws_) throw std::runtime_error("VmWorkspace has been destroyed");
-        impulse_vm_ictx_v2_t d = impulse_vm_v11_compute_ictx_v2(ws_);
+        impulse_vm_ictx_v2_t d = impulse_vm_compute_ictx_v2(ws_);
         return {d.logical_hash, d.physical_hash};
     }
 
 private:
     void* buf_ = nullptr;
     size_t cap_ = 0;
-    impulse_vm_workspace_v11_t* ws_ = nullptr;
+    impulse_vm_workspace_t* ws_ = nullptr;
 };
 
 class PyStatement {
@@ -1032,14 +1032,14 @@ PYBIND11_MODULE(_impulse_native, m) {
 
     m.attr("ATTR_TYPE_BOOL") = static_cast<uint8_t>(0x0F);
     m.attr("ATTR_TYPE_DECIMAL64") = static_cast<uint8_t>(0x15);
-    m.attr("IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW") = static_cast<uint32_t>(IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW);
-    m.attr("IMPULSE_VM_ERR_DIV_BY_ZERO") = static_cast<uint32_t>(IMPULSE_VM_V11_ERR_DIV_BY_ZERO);
+    m.attr("IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW") = static_cast<uint32_t>(IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW);
+    m.attr("IMPULSE_VM_ERR_DIV_BY_ZERO") = static_cast<uint32_t>(IMPULSE_VM_ERR_DIV_BY_ZERO);
     m.attr("OP_SCALAR_DECIMAL_ALU") = static_cast<uint8_t>(0x15);
     m.attr("OP_VEC_DECIMAL_ALU") = static_cast<uint8_t>(0x58);
 
     m.def("validate_bytecode", [](const py::bytes& impb_bytes) {
         std::string prog = impb_bytes;
-        impulse_vm_validation_v11_t v = impulse_vm_validate_v11(prog.data(), prog.size());
+        impulse_vm_validation_t v = impulse_vm_validate(prog.data(), prog.size());
         return std::make_pair(v.status, v.bad_pc);
     }, py::arg("impb_bytes"));
 
@@ -1047,8 +1047,8 @@ PYBIND11_MODULE(_impulse_native, m) {
         std::string prog = impb_bytes;
         const impulse_snapshot_t* s_ptr = snap ? snap->raw_handle() : nullptr;
         impulse_vm_memory_plan_t plan{};
-        impulse_vm_status_v11_t rc = impulse_vm_plan_memory(prog.data(), prog.size(), s_ptr, max_dop, &plan);
-        if (rc != IMPULSE_VM_V11_OK) {
+        impulse_vm_status_t rc = impulse_vm_plan_memory(prog.data(), prog.size(), s_ptr, max_dop, &plan);
+        if (rc != IMPULSE_VM_OK) {
             throw std::runtime_error("impulse_vm_plan_memory failed: status=" + std::to_string(rc));
         }
         py::dict d;
@@ -1182,7 +1182,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         return impulse::cel::CelCompiler::to_impscheme(optimized);
     }, py::arg("expression"), "Parse, optimize, and constant-fold a Google CEL expression into ImpScheme IR");
 
-    auto pack_compile_result = [](const impulse::compiler::v11::ImpScmV11CompileResult& res) -> py::dict {
+    auto pack_compile_result = [](const impulse::compiler::ImpScmCompileResult& res) -> py::dict {
         py::dict out;
         out["impb_bytes"] = py::bytes(
             reinterpret_cast<const char*>(res.impb_bytes.data()),
@@ -1224,7 +1224,7 @@ PYBIND11_MODULE(_impulse_native, m) {
         bool enable_optimizations
     ) -> py::dict {
         const impulse_snapshot_t* s_ptr = snapshot ? snapshot->raw_handle() : nullptr;
-        auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(source, s_ptr, enable_optimizations);
+        auto res = impulse::compiler::ImpScmCompiler::compile(source, s_ptr, enable_optimizations);
         return pack_compile_result(res);
     }, py::arg("source"), py::arg("snapshot") = nullptr, py::arg("enable_optimizations") = true,
        "Compile an ImpScheme v0.11 (query ...) program into validated .impb bytecode with schema metadata");
@@ -1296,9 +1296,9 @@ PYBIND11_MODULE(_impulse_native, m) {
             }
             pmap[key] = std::move(spec);
         }
-        std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm_v11(cypher, pmap);
+        std::string impscm_src = impulse::compiler::CypherCompiler::lower_to_impscm(cypher, pmap);
         const impulse_snapshot_t* s_ptr = snapshot ? snapshot->raw_handle() : nullptr;
-        auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(impscm_src, s_ptr, enable_optimizations);
+        auto res = impulse::compiler::ImpScmCompiler::compile(impscm_src, s_ptr, enable_optimizations);
         py::dict out = pack_compile_result(res);
         out["impscm_source"] = impscm_src;
         return out;

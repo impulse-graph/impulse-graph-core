@@ -259,10 +259,7 @@ fn main() {
         cpp_root
     );
     println!("cargo:rerun-if-changed={}/include/impulse_simd.h", cpp_root);
-    println!(
-        "cargo:rerun-if-changed={}/include/impulse_vm_v11.h",
-        cpp_root
-    );
+    println!("cargo:rerun-if-changed={}/include/impulse_vm.h", cpp_root);
     println!("cargo:rerun-if-changed={}/include/vm", cpp_root);
     println!(
         "cargo:rerun-if-changed={}/include/impulse_graph.h",
