@@ -78,7 +78,64 @@ func (s Status) Error() string {
 	}
 }
 
-// RelationDirectoryEntry holds metadata for a relation directory in a snapshot.
+// SnapshotHeader holds active Page 0 snapshot header metadata (impulse_snapshot_header_info_t).
+type SnapshotHeader struct {
+	Magic                 uint32
+	DataOffset            uint32
+	TimestampMs           uint64
+	RequiredFeatures      uint64
+	FooterDirectoryOffset uint64
+	FooterDirectoryBytes  uint64
+	FileSize              uint64
+	Version               uint16
+	DomainCount           uint16
+	RelationCount         uint16
+	IndexCount            uint16
+	HeaderChecksum        uint16
+	SnapshotUUID          [16]byte
+}
+
+// DomainCatalogEntry holds metadata for a node domain in a snapshot (v0.11).
+type DomainCatalogEntry struct {
+	DomainID     uint16
+	KeyType      KeyType
+	DenseIDWidth uint8
+	NameOffset   uint32
+	NodeCount    uint64
+	AttrCount    uint16
+	KeyAttrIndex uint16
+	Name         string
+}
+
+// AttributeDescriptor holds metadata for a node domain or edge relation attribute.
+type AttributeDescriptor struct {
+	Name          string
+	TypeCode      uint8
+	BaseTypeCode  uint8
+	IsNullable    bool
+	Dimension     uint32
+	Precision     uint16
+	Scale         uint8
+	DataOffset    uint64
+	DataBytes     uint64
+	OffsetsOffset uint64
+	OffsetsBytes  uint64
+}
+
+// IndexDirectoryEntry holds metadata for a Section 2.6 secondary index descriptor.
+type IndexDirectoryEntry struct {
+	IndexID            uint32
+	DomainID           uint16
+	RelationID         uint16
+	AttributeIndex     uint16
+	IndexType          uint8
+	Name               string
+	DataOffset         uint64
+	DataBytes          uint64
+	PayloadFeatureMask uint64
+}
+
+// RelationDirectoryEntry holds metadata for a relation directory in a snapshot (v0.11).
 type RelationDirectoryEntry struct {
 	RelationID      uint16
 	SrcDomainID     uint16
@@ -99,6 +156,14 @@ type RelationDirectoryEntry struct {
 	CSCColIdxOffset uint64
 	CSCColIdxBytes  uint64
 	AttrCount       uint16
+	// v0.11.0 COO Topology Extension Block
+	CooSrcOffset    uint64
+	CooSrcBytes     uint64
+	CooTgtOffset    uint64
+	CooTgtBytes     uint64
+	CooEdgeIDOffset uint64
+	CooEdgeIDBytes  uint64
+	CooOrder        uint8
 }
 
 // VMStatus represents ImpulseVM execution status return codes.

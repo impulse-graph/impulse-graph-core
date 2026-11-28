@@ -627,8 +627,8 @@ struct CompilerCtx {
             }
         }
         for (size_t i = 0; i < snap->relations.size(); ++i) {
-            auto it = snap->metadata.find("relation." + std::to_string(i) + ".name");
-            if (it != snap->metadata.end() && it->second == name) {
+            const std::string* meta_name = snap->find_metadata("relation." + std::to_string(i) + ".name");
+            if (meta_name && *meta_name == name) {
                 const auto& r = snap->relations[i];
                 return {r.relation_id, i, r.src_domain_id, r.tgt_domain_id, name};
             }

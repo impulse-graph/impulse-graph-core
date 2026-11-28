@@ -1,6 +1,6 @@
 /**
  * @file impulse_graph.h
- * @brief Impulse Graph Engine Native C-ABI Kernel Specification v0.9.0.
+ * @brief Impulse Graph Engine Native C-ABI Kernel Specification v0.11.0.
  *
  * Provides high-performance zero-copy memory-mapped snapshot loading, graph reachability,
  * SIMD neighborhood sampling, live overlay delta compaction, and snapshot creation APIs.
@@ -86,6 +86,33 @@ typedef impulse_relation_directory_entry_v0_11_t impulse_relation_directory_entr
 typedef impulse_attribute_descriptor_v0_11_t impulse_attribute_descriptor_t;
 typedef impulse_index_directory_entry_v0_11_t impulse_index_directory_entry_t;
 
+/**
+ * @brief Naturally aligned summary of active Page 0 snapshot header fields
+ *        (omits the 4030-byte reserved page padding of impulse_snapshot_header_t).
+ */
+typedef struct impulse_snapshot_header_info {
+    uint32_t magic;                   // Magic constant (0x494D5053 = 'IMPS')
+    uint32_t data_offset;             // Byte offset where Section 2 payload begins (4096)
+    uint64_t timestamp_ms;            // Unix epoch timestamp (milliseconds)
+    uint64_t required_features;       // Global feature flags bitmask
+    uint64_t footer_directory_offset; // Absolute file offset to Footer Directory Table (0 if Page 1)
+    uint64_t footer_directory_bytes;  // Byte size of Footer Directory Table
+    uint64_t file_size;               // Total mapped byte size of the snapshot file
+    uint16_t version;                 // Protocol version (9=v0.9, 10=v0.10, 11=v0.11)
+    uint16_t domain_count;            // Total number of domains in catalog
+    uint16_t relation_count;          // Total number of relations in directory
+    uint16_t index_count;             // Total number of secondary indices
+    uint16_t header_checksum;         // CRC-16-CCITT checksum over bytes 0x00..0x3D
+    uint8_t  reserved[6];             // Zero-filled alignment padding
+    uint8_t  snapshot_uuid[16];       // 128-bit Binary UUID
+} impulse_snapshot_header_info_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(impulse_snapshot_header_info_t) == 80, "impulse_snapshot_header_info_t must be 80 bytes");
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(impulse_snapshot_header_info_t) == 80, "impulse_snapshot_header_info_t must be 80 bytes");
+#endif
+
 #if defined(_WIN32) || defined(__CYGWIN__)
   #if defined(IMPULSE_BUILDING_DLL)
     #define IMPULSE_API __declspec(dllexport)
@@ -151,9 +178,38 @@ IMPULSE_API uint32_t impulse_snapshot_magic(const impulse_snapshot_t* snapshot);
 /**
  * @brief Get snapshot format version.
  * @param snapshot Pointer to snapshot handle.
- * @return Format version number (e.g. 9 for v0.9.0 spec).
+ * @return Format version number (e.g. 11 for v0.11.0 spec).
  */
 IMPULSE_API uint16_t impulse_snapshot_version(const impulse_snapshot_t* snapshot);
+
+/**
+ * @brief Inspect active Page 0 snapshot header metadata into a naturally aligned struct.
+ * @param snapshot Pointer to snapshot handle.
+ * @param out_header Required output struct to populate with active header fields and file_size.
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT if snapshot or out_header is NULL.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_header(
+    const impulse_snapshot_t* snapshot,
+    impulse_snapshot_header_info_t* out_header
+);
+
+/**
+ * @brief Get total mapped byte size of the snapshot file.
+ * @param snapshot Pointer to snapshot handle.
+ * @return Snapshot file size in bytes, or 0 if null.
+ */
+IMPULSE_API uint64_t impulse_snapshot_file_size(const impulse_snapshot_t* snapshot);
+
+/**
+ * @brief Compute SHA-256 digest over the entire mapped snapshot file.
+ * @param snapshot Pointer to snapshot handle.
+ * @param out_digest Caller-provided 32-byte buffer to receive the raw SHA-256 digest.
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT if null.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_compute_sha256(
+    const impulse_snapshot_t* snapshot,
+    uint8_t out_digest[32]
+);
 
 /**
  * @brief Get number of defined domains in snapshot catalog.
@@ -195,6 +251,28 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_relation_entry(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
     impulse_relation_directory_entry_t* out_entry
+);
+
+/**
+ * @brief Retrieve direct constituent child relation IDs for a virtual super-relation
+ *        (handles both inline <=10 and 0xFFFF overflow component lists).
+ *        Note: Child IDs may themselves be nested virtual relations (up to depth 16,
+ *        validated acyclic at open).
+ * @param snapshot Pointer to snapshot handle.
+ * @param relation_index Index of relation entry (0..relation_count-1).
+ * @param out_component_ids Optional output buffer (pass NULL to query count only).
+ * @param out_capacity Capacity of out_component_ids in uint16_t elements.
+ * @param out_count Required output pointer receiving direct constituent child count (0 for non-virtual).
+ * @return IMPULSE_OK on success, IMPULSE_ERR_BUFFER_OVERFLOW if out_component_ids != NULL and
+ *         out_capacity < *out_count (in which case *out_count still receives the required count),
+ *         or IMPULSE_ERR_INVALID_ARGUMENT on invalid arguments/index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_relation_virtual_components(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t* out_component_ids,
+    uint16_t out_capacity,
+    uint16_t* out_count
 );
 
 /**
@@ -308,6 +386,22 @@ IMPULSE_API impulse_status_t impulse_writer_finalize(impulse_writer_t* writer);
 IMPULSE_API void impulse_writer_destroy(impulse_writer_t* writer);
 
 IMPULSE_API uint16_t impulse_snapshot_get_index_count(const impulse_snapshot_t* snapshot);
+
+/**
+ * @brief Inspect full 64-byte secondary index directory entry by index.
+ * @param snapshot Pointer to snapshot handle.
+ * @param index_idx Zero-based index (0..index_count-1).
+ * @param out_entry Required output struct receiving the index directory descriptor.
+ * @param out_name Optional output pointer receiving borrowed null-terminated UTF-8 index name
+ *        (valid until impulse_snapshot_close; caller must not free).
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT on NULL args or OOB index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_index_entry(
+    const impulse_snapshot_t* snapshot,
+    uint16_t index_idx,
+    impulse_index_directory_entry_t* out_entry,
+    const char** out_name
+);
 IMPULSE_API impulse_status_t impulse_snapshot_get_index(
     const impulse_snapshot_t* snapshot,
     uint16_t index_idx,
@@ -368,6 +462,30 @@ IMPULSE_API impulse_status_t impulse_snapshot_compact_to_stream(
 );
 
 IMPULSE_API impulse_status_t impulse_snapshot_get_metadata(const impulse_snapshot_t* snapshot, const char* key, char* out_val, size_t out_capacity);
+
+/**
+ * @brief Get total number of custom UTF-8 key-value metadata entries stored in the snapshot footer.
+ * @param snapshot Pointer to snapshot handle.
+ * @return Number of metadata entries, or 0 if snapshot is NULL.
+ */
+IMPULSE_API uint32_t impulse_snapshot_get_metadata_count(const impulse_snapshot_t* snapshot);
+
+/**
+ * @brief Enumerate a custom footer metadata entry by index (sorted lexicographically by key).
+ * @param snapshot Pointer to snapshot handle.
+ * @param metadata_index Zero-based index (0..metadata_count-1).
+ * @param out_key Optional output pointer receiving borrowed null-terminated UTF-8 key
+ *        (valid until impulse_snapshot_close; caller must not free).
+ * @param out_value Optional output pointer receiving borrowed null-terminated UTF-8 value
+ *        (valid until impulse_snapshot_close; caller must not free).
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT if snapshot is NULL or index is OOB.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_metadata_entry(
+    const impulse_snapshot_t* snapshot,
+    uint32_t metadata_index,
+    const char** out_key,
+    const char** out_value
+);
 
 IMPULSE_API const void* impulse_snapshot_get_buffer(
     const impulse_snapshot_t* snapshot,
@@ -456,6 +574,23 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_name(
     uint16_t attribute_index,
     const char** out_name
 );
+/**
+ * @brief Inspect full 44-byte edge relation attribute descriptor and optional name.
+ * @param snapshot Pointer to snapshot handle.
+ * @param relation_index Zero-based relation index.
+ * @param attribute_index Zero-based attribute index within the relation.
+ * @param out_descriptor Required output struct receiving the 44-byte attribute descriptor.
+ * @param out_name Optional output pointer receiving borrowed null-terminated UTF-8 name
+ *        (valid until impulse_snapshot_close; caller must not free).
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT on NULL args or OOB index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_descriptor(
+    const impulse_snapshot_t* snapshot,
+    uint16_t relation_index,
+    uint16_t attribute_index,
+    impulse_attribute_descriptor_t* out_descriptor,
+    const char** out_name
+);
 IMPULSE_API impulse_status_t impulse_snapshot_get_attribute_decimal64_meta(
     const impulse_snapshot_t* snapshot,
     uint16_t relation_index,
@@ -488,6 +623,23 @@ IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_name(
     const impulse_snapshot_t* snapshot,
     uint16_t domain_index,
     uint16_t attribute_index,
+    const char** out_name
+);
+/**
+ * @brief Inspect full 44-byte node domain attribute descriptor and optional name.
+ * @param snapshot Pointer to snapshot handle.
+ * @param domain_index Zero-based domain index.
+ * @param attribute_index Zero-based attribute index within the domain.
+ * @param out_descriptor Required output struct receiving the 44-byte attribute descriptor.
+ * @param out_name Optional output pointer receiving borrowed null-terminated UTF-8 name
+ *        (valid until impulse_snapshot_close; caller must not free).
+ * @return IMPULSE_OK on success, or IMPULSE_ERR_INVALID_ARGUMENT on NULL args or OOB index.
+ */
+IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_descriptor(
+    const impulse_snapshot_t* snapshot,
+    uint16_t domain_index,
+    uint16_t attribute_index,
+    impulse_attribute_descriptor_t* out_descriptor,
     const char** out_name
 );
 IMPULSE_API impulse_status_t impulse_snapshot_get_domain_attribute_decimal64_meta(

@@ -25,6 +25,7 @@
 #include <new>
 #include <shared_mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -113,7 +114,9 @@ struct MmapGuard {
     size_t size;
     MmapGuard(void* p, size_t s) : ptr(p), size(s) {}
     ~MmapGuard() {
-#ifndef _WIN32
+#ifdef _WIN32
+        if (ptr) UnmapViewOfFile(ptr);
+#else
         if (ptr && ptr != MAP_FAILED) ::munmap(ptr, size);
 #endif
     }
@@ -210,14 +213,31 @@ struct impulse_snapshot {
     std::vector<std::vector<std::string>> domain_attribute_names;
     std::vector<impulse_relation_directory_entry_t> relations;
     std::vector<std::string> relation_names;
+    std::vector<std::vector<uint16_t>> relation_virtual_components;
     std::vector<std::vector<impulse_attribute_descriptor_t>> relation_attributes;
     std::vector<std::vector<std::string>> relation_attribute_names;
     std::vector<impulse_index_directory_entry_t> indexes;
     std::vector<std::string> index_names;
-    std::unordered_map<std::string, std::string> metadata;
+    // Sorted lexicographically by key at open time (zero-allocation binary search + O(1) indexed enumeration)
+    std::vector<std::pair<std::string, std::string>> metadata_entries;
     mutable std::mutex v11_view_mutex;
     mutable std::atomic<void*> v11_cached_view{nullptr};
     mutable void (*v11_cached_view_dtor)(void*) = nullptr;
+
+    const std::string* find_metadata(std::string_view key) const noexcept {
+        auto it = std::lower_bound(
+            metadata_entries.begin(),
+            metadata_entries.end(),
+            key,
+            [](const std::pair<std::string, std::string>& entry, std::string_view k) {
+                return std::string_view(entry.first) < k;
+            }
+        );
+        if (it != metadata_entries.end() && std::string_view(it->first) == key) {
+            return &it->second;
+        }
+        return nullptr;
+    }
 
     ~impulse_snapshot() {
         void* v = v11_cached_view.exchange(nullptr, std::memory_order_acq_rel);

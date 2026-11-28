@@ -26,6 +26,7 @@ const void* impulse_stmt_column_data(const impulse_stmt_t* stmt, uint32_t col_id
 }
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include "impulse_assert.h"
 
@@ -87,6 +88,20 @@ inline uint64_t GetUint64(const Napi::Value& val) {
     return out;
 }
 
+inline bool TryGetUint16Index(Napi::Env env, const Napi::Value& val, uint16_t* out, const char* arg_name) {
+    if (!val.IsNumber()) {
+        Napi::TypeError::New(env, std::string(arg_name) + " must be a number").ThrowAsJavaScriptException();
+        return false;
+    }
+    double d = val.As<Napi::Number>().DoubleValue();
+    if (!std::isfinite(d) || std::floor(d) != d || d < 0.0 || d > 65535.0) {
+        Napi::RangeError::New(env, std::string(arg_name) + " must be an integer in [0, 65535]").ThrowAsJavaScriptException();
+        return false;
+    }
+    *out = static_cast<uint16_t>(d);
+    return true;
+}
+
 inline int64_t GetInt64(const Napi::Value& val) {
     int64_t out = 0;
     TryGetInt64(val.Env(), val, out);
@@ -101,14 +116,23 @@ public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports) {
         Napi::Function func = DefineClass(env, "Snapshot", {
             InstanceMethod("isReachable", &NodeSnapshot::IsReachable),
+            InstanceMethod("header", &NodeSnapshot::Header),
+            InstanceMethod("fileSize", &NodeSnapshot::FileSize),
+            InstanceMethod("sha256", &NodeSnapshot::Sha256),
             InstanceMethod("domainCount", &NodeSnapshot::DomainCount),
+            InstanceMethod("getDomain", &NodeSnapshot::GetDomain),
             InstanceMethod("relationCount", &NodeSnapshot::RelationCount),
+            InstanceMethod("getRelation", &NodeSnapshot::GetRelation),
             InstanceMethod("getRelationName", &NodeSnapshot::GetRelationName),
             InstanceMethod("getDomainAttributeCount", &NodeSnapshot::GetDomainAttributeCount),
             InstanceMethod("getDomainAttributeInfo", &NodeSnapshot::GetDomainAttributeInfo),
             InstanceMethod("getAttributeInfo", &NodeSnapshot::GetAttributeInfo),
             InstanceMethod("getDomainAttributeDecimal64", &NodeSnapshot::GetDomainAttributeDecimal64),
             InstanceMethod("getAttributeDecimal64", &NodeSnapshot::GetAttributeDecimal64),
+            InstanceMethod("indexCount", &NodeSnapshot::IndexCount),
+            InstanceMethod("getIndex", &NodeSnapshot::GetIndex),
+            InstanceMethod("getMetadata", &NodeSnapshot::GetMetadata),
+            InstanceMethod("getAllMetadata", &NodeSnapshot::GetAllMetadata),
             InstanceMethod("executeCypher", &NodeSnapshot::ExecuteCypher),
             InstanceMethod("close", &NodeSnapshot::Close)
         });
@@ -207,10 +231,98 @@ private:
         return Napi::Boolean::New(env, reachable);
     }
 
+    Napi::Value Header(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        impulse_snapshot_header_info_t hdr{};
+        impulse_status_t st = impulse_snapshot_get_header(snapshot_, &hdr);
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to read snapshot header").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("magic", Napi::Number::New(env, hdr.magic));
+        obj.Set("version", Napi::Number::New(env, hdr.version));
+        obj.Set("dataOffset", Napi::Number::New(env, hdr.data_offset));
+        obj.Set("domainCount", Napi::Number::New(env, hdr.domain_count));
+        obj.Set("relationCount", Napi::Number::New(env, hdr.relation_count));
+        obj.Set("indexCount", Napi::Number::New(env, hdr.index_count));
+        obj.Set("timestampMs", Napi::BigInt::New(env, hdr.timestamp_ms));
+        obj.Set("requiredFeatures", Napi::BigInt::New(env, hdr.required_features));
+        obj.Set("footerDirectoryOffset", Napi::BigInt::New(env, hdr.footer_directory_offset));
+        obj.Set("footerDirectoryBytes", Napi::BigInt::New(env, hdr.footer_directory_bytes));
+        obj.Set("fileSize", Napi::BigInt::New(env, hdr.file_size));
+        obj.Set("headerChecksum", Napi::Number::New(env, hdr.header_checksum));
+        obj.Set("snapshotUuid", Napi::Buffer<uint8_t>::Copy(env, hdr.snapshot_uuid, 16));
+        return obj;
+    }
+
+    Napi::Value FileSize(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        return Napi::BigInt::New(env, impulse_snapshot_file_size(snapshot_));
+    }
+
+    Napi::Value Sha256(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint8_t digest[32] = {};
+        if (impulse_snapshot_compute_sha256(snapshot_, digest) != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to compute SHA-256").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        static const char hex[] = "0123456789abcdef";
+        char out[65];
+        for (size_t i = 0; i < 32; ++i) {
+            out[i * 2] = hex[(digest[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = hex[digest[i] & 0x0F];
+        }
+        out[64] = '\0';
+        return Napi::String::New(env, out, 64);
+    }
+
     Napi::Value DomainCount(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
         if (!snapshot_) return Napi::Number::New(env, 0);
         return Napi::Number::New(env, impulse_snapshot_domain_count(snapshot_));
+    }
+
+    Napi::Value GetDomain(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1) {
+            Napi::TypeError::New(env, "Expected (domainIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t idx = 0;
+        if (!TryGetUint16Index(env, info[0], &idx, "domainIndex")) return env.Null();
+        impulse_domain_catalog_entry_t entry{};
+        const char* name = nullptr;
+        if (impulse_snapshot_get_domain_entry(snapshot_, idx, &entry, &name) != IMPULSE_OK) {
+            Napi::RangeError::New(env, "Invalid domain index").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("domainId", Napi::Number::New(env, entry.domain_id));
+        obj.Set("keyType", Napi::Number::New(env, entry.key_type));
+        obj.Set("denseIdWidth", Napi::Number::New(env, entry.dense_id_width));
+        obj.Set("nodeCount", Napi::BigInt::New(env, entry.node_count));
+        obj.Set("attrCount", Napi::Number::New(env, entry.attr_count));
+        obj.Set("keyAttrIndex", Napi::Number::New(env, entry.key_attr_index));
+        obj.Set("name", name ? Napi::String::New(env, name) : Napi::String::New(env, ""));
+        return obj;
     }
 
     Napi::Value RelationCount(const Napi::CallbackInfo& info) {
@@ -219,12 +331,180 @@ private:
         return Napi::Number::New(env, impulse_snapshot_relation_count(snapshot_));
     }
 
-    Napi::Value GetRelationName(const Napi::CallbackInfo& info) {
+    Napi::Value GetRelation(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
-        if (!snapshot_ || info.Length() < 1 || !info[0].IsNumber()) {
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
             return env.Null();
         }
-        uint16_t idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        if (info.Length() < 1) {
+            Napi::TypeError::New(env, "Expected (relationIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t idx = 0;
+        if (!TryGetUint16Index(env, info[0], &idx, "relationIndex")) return env.Null();
+        impulse_relation_directory_entry_t entry{};
+        if (impulse_snapshot_get_relation_entry(snapshot_, idx, &entry) != IMPULSE_OK) {
+            Napi::RangeError::New(env, "Invalid relation index").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        const char* rel_name = nullptr;
+        impulse_snapshot_get_relation_name(snapshot_, idx, &rel_name);
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("relationId", Napi::Number::New(env, entry.relation_id));
+        obj.Set("name", rel_name ? Napi::String::New(env, rel_name) : Napi::String::New(env, ""));
+        obj.Set("srcDomainId", Napi::Number::New(env, entry.src_domain_id));
+        obj.Set("tgtDomainId", Napi::Number::New(env, entry.tgt_domain_id));
+        obj.Set("encodingId", Napi::Number::New(env, entry.encoding_id));
+        obj.Set("nodeIdWidth", Napi::Number::New(env, entry.node_id_width));
+        obj.Set("edgeIndexWidth", Napi::Number::New(env, entry.edge_index_width));
+        obj.Set("nodeCount", Napi::BigInt::New(env, entry.node_count));
+        obj.Set("edgeCount", Napi::BigInt::New(env, entry.edge_count));
+        obj.Set("sectionFeatures", Napi::BigInt::New(env, entry.section_features));
+        obj.Set("attrCount", Napi::Number::New(env, entry.attr_count));
+        obj.Set("csrRowOffOffset", Napi::BigInt::New(env, entry.csr_row_off_offset));
+        obj.Set("csrRowOffBytes", Napi::BigInt::New(env, entry.csr_row_off_bytes));
+        obj.Set("csrColIdxOffset", Napi::BigInt::New(env, entry.csr_col_idx_offset));
+        obj.Set("csrColIdxBytes", Napi::BigInt::New(env, entry.csr_col_idx_bytes));
+        obj.Set("cscRowOffOffset", Napi::BigInt::New(env, entry.csc_row_off_offset));
+        obj.Set("cscRowOffBytes", Napi::BigInt::New(env, entry.csc_row_off_bytes));
+        obj.Set("cscColIdxOffset", Napi::BigInt::New(env, entry.csc_col_idx_offset));
+        obj.Set("cscColIdxBytes", Napi::BigInt::New(env, entry.csc_col_idx_bytes));
+        obj.Set("cooSrcOffset", Napi::BigInt::New(env, entry.coo_src_offset));
+        obj.Set("cooSrcBytes", Napi::BigInt::New(env, entry.coo_src_bytes));
+        obj.Set("cooTgtOffset", Napi::BigInt::New(env, entry.coo_tgt_offset));
+        obj.Set("cooTgtBytes", Napi::BigInt::New(env, entry.coo_tgt_bytes));
+        obj.Set("cooEdgeIdOffset", Napi::BigInt::New(env, entry.coo_edge_id_offset));
+        obj.Set("cooEdgeIdBytes", Napi::BigInt::New(env, entry.coo_edge_id_bytes));
+        bool has_csc = ((entry.section_features & IMP_REL_FEATURE_INCLUDE_CSC) != 0) ||
+                       entry.csc_row_off_bytes > 0 || entry.csc_col_idx_bytes > 0;
+        bool has_coo = ((entry.section_features & IMPULSE_SECTION_FEAT_HAS_COO) != 0) ||
+                       (entry.coo_src_bytes > 0 && entry.coo_tgt_bytes > 0);
+        bool is_virt = (entry.section_features & IMP_REL_FEATURE_VIRTUAL) != 0;
+        obj.Set("hasCsc", Napi::Boolean::New(env, has_csc));
+        obj.Set("hasCoo", Napi::Boolean::New(env, has_coo));
+        obj.Set("cooOrder", Napi::Number::New(env, entry.coo_order));
+        obj.Set("isVirtual", Napi::Boolean::New(env, is_virt));
+        Napi::Array vcomps = Napi::Array::New(env);
+        if (is_virt) {
+            uint16_t vcnt = 0;
+            if (impulse_snapshot_get_relation_virtual_components(snapshot_, idx, nullptr, 0, &vcnt) == IMPULSE_OK && vcnt > 0) {
+                std::vector<uint16_t> ids(vcnt);
+                if (impulse_snapshot_get_relation_virtual_components(snapshot_, idx, ids.data(), vcnt, &vcnt) == IMPULSE_OK) {
+                    for (uint16_t i = 0; i < vcnt; ++i) {
+                        vcomps.Set(i, Napi::Number::New(env, ids[i]));
+                    }
+                }
+            }
+        }
+        obj.Set("virtualComponentIds", vcomps);
+        return obj;
+    }
+
+    Napi::Value IndexCount(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        return Napi::Number::New(env, impulse_snapshot_get_index_count(snapshot_));
+    }
+
+    Napi::Value GetIndex(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1) {
+            Napi::TypeError::New(env, "Expected (indexIdx)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t idx = 0;
+        if (!TryGetUint16Index(env, info[0], &idx, "indexIdx")) return env.Null();
+        impulse_index_directory_entry_t entry{};
+        const char* name = nullptr;
+        if (impulse_snapshot_get_index_entry(snapshot_, idx, &entry, &name) != IMPULSE_OK) {
+            Napi::RangeError::New(env, "Invalid secondary index").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        Napi::Object obj = Napi::Object::New(env);
+        obj.Set("indexId", Napi::Number::New(env, entry.index_id));
+        obj.Set("domainId", Napi::Number::New(env, entry.domain_id));
+        obj.Set("relationId", Napi::Number::New(env, entry.relation_id));
+        obj.Set("attributeIndex", Napi::Number::New(env, entry.attribute_index));
+        obj.Set("indexType", Napi::Number::New(env, entry.index_type));
+        obj.Set("name", name ? Napi::String::New(env, name) : Napi::String::New(env, ""));
+        obj.Set("dataOffset", Napi::BigInt::New(env, entry.data_offset));
+        obj.Set("dataBytes", Napi::BigInt::New(env, entry.data_bytes));
+        obj.Set("payloadFeatureMask", Napi::BigInt::New(env, entry.payload_feature_mask));
+        return obj;
+    }
+
+    Napi::Value GetMetadata(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1 || !info[0].IsString()) {
+            Napi::TypeError::New(env, "Expected (key: string)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        std::string key = info[0].As<Napi::String>().Utf8Value();
+        uint32_t lo = 0;
+        uint32_t hi = impulse_snapshot_get_metadata_count(snapshot_);
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            const char* k = nullptr;
+            const char* v = nullptr;
+            if (impulse_snapshot_get_metadata_entry(snapshot_, mid, &k, &v) != IMPULSE_OK || !k) {
+                break;
+            }
+            int cmp = key.compare(k);
+            if (cmp == 0) {
+                return Napi::String::New(env, v ? v : "");
+            }
+            if (cmp > 0) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return env.Null();
+    }
+
+    Napi::Value GetAllMetadata(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        Napi::Object obj = Napi::Object::New(env);
+        uint32_t cnt = impulse_snapshot_get_metadata_count(snapshot_);
+        for (uint32_t i = 0; i < cnt; ++i) {
+            const char* k = nullptr;
+            const char* v = nullptr;
+            if (impulse_snapshot_get_metadata_entry(snapshot_, i, &k, &v) == IMPULSE_OK && k && v) {
+                obj.DefineProperty(Napi::PropertyDescriptor::Value(
+                    k, Napi::String::New(env, v), napi_default_jsproperty));
+            }
+        }
+        return obj;
+    }
+
+    Napi::Value GetRelationName(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        if (info.Length() < 1) {
+            Napi::TypeError::New(env, "Expected (relationIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t idx = 0;
+        if (!TryGetUint16Index(env, info[0], &idx, "relationIndex")) return env.Null();
         const char* name = nullptr;
         if (impulse_snapshot_get_relation_name(snapshot_, idx, &name) == IMPULSE_OK && name) {
             return Napi::String::New(env, name);
@@ -234,33 +514,38 @@ private:
 
     Napi::Value GetDomainAttributeCount(const Napi::CallbackInfo& info) {
         Napi::Env env = info.Env();
-        if (!snapshot_ || info.Length() < 1 || !info[0].IsNumber()) {
-            return Napi::Number::New(env, 0);
+        if (!snapshot_) {
+            Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
+            return env.Null();
         }
-        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
+        if (info.Length() < 1) {
+            Napi::TypeError::New(env, "Expected (domainIndex)").ThrowAsJavaScriptException();
+            return env.Null();
+        }
+        uint16_t dom_idx = 0;
+        if (!TryGetUint16Index(env, info[0], &dom_idx, "domainIndex")) return env.Null();
         return Napi::Number::New(env, impulse_snapshot_get_domain_attribute_count(snapshot_, dom_idx));
     }
 
     Napi::Value BuildAttributeInfoObject(
         Napi::Env env,
-        const char* name,
-        uint8_t type_code,
-        uint32_t dimension,
-        uint64_t data_bytes,
-        bool has_dec_meta,
-        uint16_t precision,
-        uint8_t scale
+        const impulse_attribute_descriptor_t& desc,
+        const char* name
     ) {
+        uint8_t base_type = desc.type_code & 0x7Fu;
         Napi::Object obj = Napi::Object::New(env);
-        obj.Set("name", name ? Napi::String::New(env, name) : env.Null());
-        obj.Set("typeCode", Napi::Number::New(env, type_code));
-        obj.Set("baseTypeCode", Napi::Number::New(env, type_code & 0x7Fu));
-        obj.Set("isNullable", Napi::Boolean::New(env, (type_code & 0x80u) != 0));
-        obj.Set("dimension", Napi::Number::New(env, dimension));
-        obj.Set("dataBytes", Napi::Number::New(env, static_cast<double>(data_bytes)));
-        if (has_dec_meta) {
-            obj.Set("precision", Napi::Number::New(env, precision));
-            obj.Set("scale", Napi::Number::New(env, scale));
+        obj.Set("name", name ? Napi::String::New(env, name) : Napi::String::New(env, ""));
+        obj.Set("typeCode", Napi::Number::New(env, desc.type_code));
+        obj.Set("baseTypeCode", Napi::Number::New(env, base_type));
+        obj.Set("isNullable", Napi::Boolean::New(env, (desc.type_code & 0x80u) != 0));
+        obj.Set("dimension", Napi::Number::New(env, desc.dimension));
+        obj.Set("dataOffset", Napi::BigInt::New(env, desc.data_offset));
+        obj.Set("dataBytes", Napi::BigInt::New(env, desc.data_bytes));
+        obj.Set("offsetsOffset", Napi::BigInt::New(env, desc.offsets_offset));
+        obj.Set("offsetsBytes", Napi::BigInt::New(env, desc.offsets_bytes));
+        if (base_type == 0x15u) {
+            obj.Set("precision", Napi::Number::New(env, desc.reserved2));
+            obj.Set("scale", Napi::Number::New(env, desc.reserved1));
         }
         return obj;
     }
@@ -271,31 +556,23 @@ private:
             Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
             return env.Null();
         }
-        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+        if (info.Length() < 2) {
             Napi::TypeError::New(env, "Expected (domainIndex, attrIndex)").ThrowAsJavaScriptException();
             return env.Null();
         }
-        uint16_t dom_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
-        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
-        const void* data = nullptr;
-        uint64_t data_bytes = 0;
-        const void* offsets = nullptr;
-        uint64_t offsets_bytes = 0;
-        uint8_t type_code = 0;
-        uint32_t dimension = 0;
-        impulse_status_t st = impulse_snapshot_get_domain_attribute_buffers(
-            snapshot_, dom_idx, attr_idx, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension);
+        uint16_t dom_idx = 0;
+        uint16_t attr_idx = 0;
+        if (!TryGetUint16Index(env, info[0], &dom_idx, "domainIndex")) return env.Null();
+        if (!TryGetUint16Index(env, info[1], &attr_idx, "attrIndex")) return env.Null();
+        impulse_attribute_descriptor_t desc{};
+        const char* name = nullptr;
+        impulse_status_t st = impulse_snapshot_get_domain_attribute_descriptor(
+            snapshot_, dom_idx, attr_idx, &desc, &name);
         if (st != IMPULSE_OK) {
-            Napi::Error::New(env, "Failed to read domain attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            Napi::RangeError::New(env, "Failed to read domain attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
             return env.Null();
         }
-        const char* name = nullptr;
-        impulse_snapshot_get_domain_attribute_name(snapshot_, dom_idx, attr_idx, &name);
-        uint16_t precision = 0;
-        uint8_t scale = 0;
-        bool has_dec_meta = ((type_code & 0x7Fu) == 0x15u) &&
-            (impulse_snapshot_get_domain_attribute_decimal64_meta(snapshot_, dom_idx, attr_idx, &precision, &scale) == IMPULSE_OK);
-        return BuildAttributeInfoObject(env, name, type_code, dimension, data_bytes, has_dec_meta, precision, scale);
+        return BuildAttributeInfoObject(env, desc, name);
     }
 
     Napi::Value GetAttributeInfo(const Napi::CallbackInfo& info) {
@@ -304,31 +581,23 @@ private:
             Napi::Error::New(env, "Snapshot is closed").ThrowAsJavaScriptException();
             return env.Null();
         }
-        if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
+        if (info.Length() < 2) {
             Napi::TypeError::New(env, "Expected (relationIndex, attrIndex)").ThrowAsJavaScriptException();
             return env.Null();
         }
-        uint16_t rel_idx = static_cast<uint16_t>(info[0].As<Napi::Number>().Uint32Value());
-        uint16_t attr_idx = static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value());
-        const void* data = nullptr;
-        uint64_t data_bytes = 0;
-        const void* offsets = nullptr;
-        uint64_t offsets_bytes = 0;
-        uint8_t type_code = 0;
-        uint32_t dimension = 0;
-        impulse_status_t st = impulse_snapshot_get_attribute_buffers(
-            snapshot_, rel_idx, attr_idx, &data, &data_bytes, &offsets, &offsets_bytes, &type_code, &dimension);
+        uint16_t rel_idx = 0;
+        uint16_t attr_idx = 0;
+        if (!TryGetUint16Index(env, info[0], &rel_idx, "relationIndex")) return env.Null();
+        if (!TryGetUint16Index(env, info[1], &attr_idx, "attrIndex")) return env.Null();
+        impulse_attribute_descriptor_t desc{};
+        const char* name = nullptr;
+        impulse_status_t st = impulse_snapshot_get_attribute_descriptor(
+            snapshot_, rel_idx, attr_idx, &desc, &name);
         if (st != IMPULSE_OK) {
-            Napi::Error::New(env, "Failed to read relation attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+            Napi::RangeError::New(env, "Failed to read relation attribute info: code=" + std::to_string(st)).ThrowAsJavaScriptException();
             return env.Null();
         }
-        const char* name = nullptr;
-        impulse_snapshot_get_attribute_name(snapshot_, rel_idx, attr_idx, &name);
-        uint16_t precision = 0;
-        uint8_t scale = 0;
-        bool has_dec_meta = ((type_code & 0x7Fu) == 0x15u) &&
-            (impulse_snapshot_get_attribute_decimal64_meta(snapshot_, rel_idx, attr_idx, &precision, &scale) == IMPULSE_OK);
-        return BuildAttributeInfoObject(env, name, type_code, dimension, data_bytes, has_dec_meta, precision, scale);
+        return BuildAttributeInfoObject(env, desc, name);
     }
 
     Napi::Value DecodeDecimal64Buffer(
@@ -560,6 +829,7 @@ public:
             InstanceMethod("addDomainAttributeDecimal64", &NodeWriter::AddDomainAttributeDecimal64),
             InstanceMethod("addRelation", &NodeWriter::AddRelation),
             InstanceMethod("addAttributeDecimal64", &NodeWriter::AddAttributeDecimal64),
+            InstanceMethod("setMetadata", &NodeWriter::SetMetadata),
             InstanceMethod("finalize", &NodeWriter::DoFinalize)
         });
 
@@ -787,6 +1057,25 @@ private:
             Napi::Error::New(env, "Failed to add relation: " + err).ThrowAsJavaScriptException();
         }
 
+        return env.Undefined();
+    }
+
+    Napi::Value SetMetadata(const Napi::CallbackInfo& info) {
+        Napi::Env env = info.Env();
+        if (!writer_) {
+            Napi::Error::New(env, "Writer is closed").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        if (info.Length() < 2 || !info[0].IsString() || !info[1].IsString()) {
+            Napi::TypeError::New(env, "Expected (key: string, value: string)").ThrowAsJavaScriptException();
+            return env.Undefined();
+        }
+        std::string key = info[0].As<Napi::String>().Utf8Value();
+        std::string val = info[1].As<Napi::String>().Utf8Value();
+        impulse_status_t st = impulse_writer_set_metadata(writer_, key.c_str(), val.c_str());
+        if (st != IMPULSE_OK) {
+            Napi::Error::New(env, "Failed to set metadata: code=" + std::to_string(st)).ThrowAsJavaScriptException();
+        }
         return env.Undefined();
     }
 

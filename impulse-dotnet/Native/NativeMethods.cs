@@ -23,6 +23,21 @@ internal static unsafe partial class NativeMethods
     public static partial ushort impulse_snapshot_version(nint snapshot);
 
     [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_header(
+        nint snapshot,
+        out ImpulseSnapshotHeaderInfo outHeader
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ulong impulse_snapshot_file_size(nint snapshot);
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_compute_sha256(
+        nint snapshot,
+        byte* outDigest
+    );
+
+    [LibraryImport(LibName)]
     public static partial ushort impulse_snapshot_domain_count(nint snapshot);
 
     [LibraryImport(LibName)]
@@ -37,10 +52,74 @@ internal static unsafe partial class NativeMethods
     );
 
     [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_domain_entry(
+        nint snapshot,
+        ushort domainIndex,
+        out ImpulseDomainEntry outEntry,
+        out nint outName
+    );
+
+    [LibraryImport(LibName)]
     public static partial ImpulseStatus impulse_snapshot_get_relation_entry(
         nint snapshot,
         ushort relationIndex,
         out ImpulseRelationEntry outEntry
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_relation_name(
+        nint snapshot,
+        ushort relationIndex,
+        out nint outName
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_relation_virtual_components(
+        nint snapshot,
+        ushort relationIndex,
+        ushort* outComponentIds,
+        ushort outCapacity,
+        out ushort outCount
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_domain_attribute_descriptor(
+        nint snapshot,
+        ushort domainIndex,
+        ushort attributeIndex,
+        out ImpulseAttributeDescriptor outDescriptor,
+        out nint outName
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_attribute_descriptor(
+        nint snapshot,
+        ushort relationIndex,
+        ushort attributeIndex,
+        out ImpulseAttributeDescriptor outDescriptor,
+        out nint outName
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ushort impulse_snapshot_get_index_count(nint snapshot);
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_index_entry(
+        nint snapshot,
+        ushort indexIdx,
+        out ImpulseIndexEntry outEntry,
+        out nint outName
+    );
+
+    [LibraryImport(LibName)]
+    public static partial uint impulse_snapshot_get_metadata_count(nint snapshot);
+
+    [LibraryImport(LibName)]
+    public static partial ImpulseStatus impulse_snapshot_get_metadata_entry(
+        nint snapshot,
+        uint metadataIndex,
+        out nint outKey,
+        out nint outValue
     );
 
     [LibraryImport(LibName)]

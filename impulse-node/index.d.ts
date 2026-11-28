@@ -11,13 +11,87 @@ export class Decimal64 {
   equals(other: unknown): boolean;
 }
 
+export interface SnapshotHeaderInfo {
+  magic: number;
+  version: number;
+  dataOffset: number;
+  domainCount: number;
+  relationCount: number;
+  indexCount: number;
+  timestampMs: bigint;
+  requiredFeatures: bigint;
+  footerDirectoryOffset: bigint;
+  footerDirectoryBytes: bigint;
+  fileSize: bigint;
+  headerChecksum: number;
+  snapshotUuid: Buffer;
+}
+
+export interface DomainInfo {
+  domainId: number;
+  keyType: number;
+  denseIdWidth: number;
+  nodeCount: bigint;
+  attrCount: number;
+  keyAttrIndex: number;
+  name: string;
+}
+
+export interface RelationInfo {
+  relationId: number;
+  name: string;
+  srcDomainId: number;
+  tgtDomainId: number;
+  encodingId: number;
+  nodeIdWidth: number;
+  edgeIndexWidth: number;
+  nodeCount: bigint;
+  edgeCount: bigint;
+  sectionFeatures: bigint;
+  attrCount: number;
+  csrRowOffOffset: bigint;
+  csrRowOffBytes: bigint;
+  csrColIdxOffset: bigint;
+  csrColIdxBytes: bigint;
+  cscRowOffOffset: bigint;
+  cscRowOffBytes: bigint;
+  cscColIdxOffset: bigint;
+  cscColIdxBytes: bigint;
+  cooSrcOffset: bigint;
+  cooSrcBytes: bigint;
+  cooTgtOffset: bigint;
+  cooTgtBytes: bigint;
+  cooEdgeIdOffset: bigint;
+  cooEdgeIdBytes: bigint;
+  hasCsc: boolean;
+  hasCoo: boolean;
+  cooOrder: number;
+  isVirtual: boolean;
+  virtualComponentIds: number[];
+}
+
+export interface IndexInfo {
+  indexId: number;
+  domainId: number;
+  relationId: number;
+  attributeIndex: number;
+  indexType: number;
+  name: string;
+  dataOffset: bigint;
+  dataBytes: bigint;
+  payloadFeatureMask: bigint;
+}
+
 export interface AttributeInfo {
-  name: string | null;
+  name: string;
   typeCode: number;
   baseTypeCode: number;
   isNullable: boolean;
   dimension: number;
-  dataBytes: number;
+  dataOffset: bigint;
+  dataBytes: bigint;
+  offsetsOffset: bigint;
+  offsetsBytes: bigint;
   precision?: number;
   scale?: number;
 }
@@ -94,8 +168,13 @@ export function compileCypher(
 
 export class Snapshot {
   constructor(path: string);
+  header(): SnapshotHeaderInfo;
+  fileSize(): bigint;
+  sha256(): string;
   domainCount(): number;
+  getDomain(domainIndex: number): DomainInfo;
   relationCount(): number;
+  getRelation(relationIndex: number): RelationInfo;
   getRelationName(relationIndex: number): string | null;
   getDomainAttributeCount(domainIndex: number): number;
   getDomainAttributeInfo(domainIndex: number, attrIndex: number): AttributeInfo;
@@ -104,6 +183,10 @@ export class Snapshot {
   getAttributeDecimal64(relationIndex: number, attrIndex: number): RawDecimal64Column;
   getDomainDecimal64(domainIndex: number, attrIndex: number): Array<Decimal64 | null>;
   getRelationDecimal64(relationIndex: number, attrIndex: number): Array<Decimal64 | null>;
+  indexCount(): number;
+  getIndex(indexIdx: number): IndexInfo;
+  getMetadata(key: string): string | null;
+  getAllMetadata(): Record<string, string>;
   isReachable(
     relationIndex: number,
     srcId: number | bigint,
@@ -167,6 +250,7 @@ export class Writer {
     values: Array<Decimal64 | string | bigint | number | null> | Buffer | ArrayBufferView,
     options?: Decimal64WriteOptions
   ): void;
+  setMetadata(key: string, value: string): void;
   finalize(): void;
 }
 

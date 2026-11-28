@@ -1037,7 +1037,7 @@ static void populate_writer_from_snapshot(
         );
     }
 
-    for (const auto& kv : base_snapshot->metadata) {
+    for (const auto& kv : base_snapshot->metadata_entries) {
         impulse_writer_set_metadata(writer, kv.first.c_str(), kv.second.c_str());
     }
 }

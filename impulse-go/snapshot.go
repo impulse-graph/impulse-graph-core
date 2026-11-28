@@ -4,6 +4,27 @@ package impulse
 #include "impulse_graph.h"
 #include "impulse_vm_v11.h"
 #include <stdlib.h>
+
+static inline void impulse_go_unpack_attr_desc(
+    const impulse_attribute_descriptor_t* d,
+    uint8_t* type_code,
+    uint8_t* reserved1,
+    uint16_t* reserved2,
+    uint32_t* dimension,
+    uint64_t* data_offset,
+    uint64_t* data_bytes,
+    uint64_t* offsets_offset,
+    uint64_t* offsets_bytes
+) {
+    *type_code = d->type_code;
+    *reserved1 = d->reserved1;
+    *reserved2 = d->reserved2;
+    *dimension = d->dimension;
+    *data_offset = d->data_offset;
+    *data_bytes = d->data_bytes;
+    *offsets_offset = d->offsets_offset;
+    *offsets_bytes = d->offsets_bytes;
+}
 */
 import "C"
 
@@ -123,7 +144,10 @@ func (s *Snapshot) Ptr() *C.impulse_snapshot_t {
 
 // Magic returns the 32-bit magic integer (0x494D5053).
 func (s *Snapshot) Magic() uint32 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint32(C.impulse_snapshot_magic(s.ptr))
@@ -131,23 +155,171 @@ func (s *Snapshot) Magic() uint32 {
 
 // Version returns the snapshot format version.
 func (s *Snapshot) Version() uint16 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint16(C.impulse_snapshot_version(s.ptr))
 }
 
+// Header returns the active Page 0 snapshot header metadata and total file size.
+func (s *Snapshot) Header() (SnapshotHeader, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return SnapshotHeader{}, ErrInvalidArgument
+	}
+	var cHdr C.impulse_snapshot_header_info_t
+	status := C.impulse_snapshot_get_header(s.ptr, &cHdr)
+	if status != C.IMPULSE_OK {
+		return SnapshotHeader{}, Status(status)
+	}
+	hdr := SnapshotHeader{
+		Magic:                 uint32(cHdr.magic),
+		DataOffset:            uint32(cHdr.data_offset),
+		TimestampMs:           uint64(cHdr.timestamp_ms),
+		RequiredFeatures:      uint64(cHdr.required_features),
+		FooterDirectoryOffset: uint64(cHdr.footer_directory_offset),
+		FooterDirectoryBytes:  uint64(cHdr.footer_directory_bytes),
+		FileSize:              uint64(cHdr.file_size),
+		Version:               uint16(cHdr.version),
+		DomainCount:           uint16(cHdr.domain_count),
+		RelationCount:         uint16(cHdr.relation_count),
+		IndexCount:            uint16(cHdr.index_count),
+		HeaderChecksum:        uint16(cHdr.header_checksum),
+	}
+	for i := 0; i < 16; i++ {
+		hdr.SnapshotUUID[i] = byte(cHdr.snapshot_uuid[i])
+	}
+	return hdr, nil
+}
+
+// FileSize returns the total mapped byte size of the snapshot file.
+func (s *Snapshot) FileSize() uint64 {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return 0
+	}
+	return uint64(C.impulse_snapshot_file_size(s.ptr))
+}
+
+// SHA256 computes the SHA-256 digest over the entire mapped snapshot file.
+func (s *Snapshot) SHA256() ([32]byte, error) {
+	var out [32]byte
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return out, ErrInvalidArgument
+	}
+	status := C.impulse_snapshot_compute_sha256(s.ptr, (*C.uint8_t)(unsafe.Pointer(&out[0])))
+	if status != C.IMPULSE_OK {
+		return out, Status(status)
+	}
+	return out, nil
+}
+
 // DomainCount returns the number of defined domains in the snapshot catalog.
 func (s *Snapshot) DomainCount() uint16 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint16(C.impulse_snapshot_domain_count(s.ptr))
 }
 
+// GetDomainEntry retrieves domain catalog metadata and name by domain index.
+func (s *Snapshot) GetDomainEntry(domainIndex uint16) (DomainCatalogEntry, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return DomainCatalogEntry{}, ErrInvalidArgument
+	}
+	var cEntry C.impulse_domain_catalog_entry_t
+	var cName *C.char
+	status := C.impulse_snapshot_get_domain_entry(s.ptr, C.uint16_t(domainIndex), &cEntry, &cName)
+	if status != C.IMPULSE_OK {
+		return DomainCatalogEntry{}, Status(status)
+	}
+	var name string
+	if cName != nil {
+		name = C.GoString(cName)
+	}
+	return DomainCatalogEntry{
+		DomainID:     uint16(cEntry.domain_id),
+		KeyType:      KeyType(cEntry.key_type),
+		DenseIDWidth: uint8(cEntry.dense_id_width),
+		NameOffset:   uint32(cEntry.name_offset),
+		NodeCount:    uint64(cEntry.node_count),
+		AttrCount:    uint16(cEntry.attr_count),
+		KeyAttrIndex: uint16(cEntry.key_attr_index),
+		Name:         name,
+	}, nil
+}
+
+// GetRelationName retrieves the UTF-8 name of a relation by index.
+func (s *Snapshot) GetRelationName(relationIndex uint16) (string, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return "", ErrInvalidArgument
+	}
+	var cName *C.char
+	status := C.impulse_snapshot_get_relation_name(s.ptr, C.uint16_t(relationIndex), &cName)
+	if status != C.IMPULSE_OK {
+		return "", Status(status)
+	}
+	if cName == nil {
+		return "", nil
+	}
+	return C.GoString(cName), nil
+}
+
+// GetRelationVirtualComponents retrieves direct constituent child relation IDs for a virtual super-relation.
+func (s *Snapshot) GetRelationVirtualComponents(relationIndex uint16) ([]uint16, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return nil, ErrInvalidArgument
+	}
+	var count C.uint16_t
+	status := C.impulse_snapshot_get_relation_virtual_components(s.ptr, C.uint16_t(relationIndex), nil, 0, &count)
+	if status != C.IMPULSE_OK {
+		return nil, Status(status)
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	ids := make([]uint16, int(count))
+	status = C.impulse_snapshot_get_relation_virtual_components(
+		s.ptr,
+		C.uint16_t(relationIndex),
+		(*C.uint16_t)(unsafe.Pointer(&ids[0])),
+		count,
+		&count,
+	)
+	if status != C.IMPULSE_OK {
+		return nil, Status(status)
+	}
+	return ids[:int(count)], nil
+}
+
 // RelationCount returns the number of relation directory entries in the snapshot.
 func (s *Snapshot) RelationCount() uint16 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint16(C.impulse_snapshot_relation_count(s.ptr))
@@ -155,10 +327,13 @@ func (s *Snapshot) RelationCount() uint16 {
 
 // RelationIndex looks up a relation index in the snapshot catalog.
 func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0, false
 	}
-	count := s.RelationCount()
+	count := uint16(C.impulse_snapshot_relation_count(s.ptr))
 	for i := uint16(0); i < count; i++ {
 		var cName *C.char
 		status := C.impulse_snapshot_get_relation_name(s.ptr, C.uint16_t(i), &cName)
@@ -171,7 +346,10 @@ func (s *Snapshot) RelationIndex(name string) (uint16, bool) {
 
 // GetRelationEntry retrieves relation directory metadata by relation index.
 func (s *Snapshot) GetRelationEntry(relationIndex uint16) (RelationDirectoryEntry, error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return RelationDirectoryEntry{}, ErrInvalidArgument
 	}
 
@@ -201,13 +379,23 @@ func (s *Snapshot) GetRelationEntry(relationIndex uint16) (RelationDirectoryEntr
 		CSCColIdxOffset: uint64(cEntry.csc_col_idx_offset),
 		CSCColIdxBytes:  uint64(cEntry.csc_col_idx_bytes),
 		AttrCount:       uint16(cEntry.attr_count),
+		CooSrcOffset:    uint64(cEntry.coo_src_offset),
+		CooSrcBytes:     uint64(cEntry.coo_src_bytes),
+		CooTgtOffset:    uint64(cEntry.coo_tgt_offset),
+		CooTgtBytes:     uint64(cEntry.coo_tgt_bytes),
+		CooEdgeIDOffset: uint64(cEntry.coo_edge_id_offset),
+		CooEdgeIDBytes:  uint64(cEntry.coo_edge_id_bytes),
+		CooOrder:        uint8(cEntry.coo_order),
 	}
 	return entry, nil
 }
 
 // IsReachable tests direct reachability between source and target nodes on a relation.
 func (s *Snapshot) IsReachable(relationIndex uint16, srcID, tgtID uint64) bool {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return false
 	}
 	return bool(C.impulse_snapshot_is_reachable(s.ptr, C.uint16_t(relationIndex), C.uint64_t(srcID), C.uint64_t(tgtID)))
@@ -215,7 +403,10 @@ func (s *Snapshot) IsReachable(relationIndex uint16, srcID, tgtID uint64) bool {
 
 // SampleNeighbors executes zero-copy SIMD neighborhood sampling for seed nodes on a relation.
 func (s *Snapshot) SampleNeighbors(relationIndex uint16, srcNodes []uint64, kSamples int, seed uint64) ([]uint64, []uint64, error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return nil, nil, ErrInvalidArgument
 	}
 
@@ -257,7 +448,10 @@ func (s *Snapshot) SampleNeighbors(relationIndex uint16, srcNodes []uint64, kSam
 
 // MaxNodeCount returns the maximum node count across all domains in the snapshot.
 func (s *Snapshot) MaxNodeCount() uint64 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint64(C.impulse_snapshot_max_node_count(s.ptr))
@@ -405,7 +599,10 @@ func (s *Snapshot) GetAttributeBuffers(relationIndex, attributeIndex uint16) (da
 
 // GetDomainAttributeCount returns the number of attributes attached to a domain.
 func (s *Snapshot) GetDomainAttributeCount(domainIndex uint16) uint16 {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return 0
 	}
 	return uint16(C.impulse_snapshot_get_domain_attribute_count(s.ptr, C.uint16_t(domainIndex)))
@@ -569,27 +766,176 @@ func (s *Snapshot) GetAttributeDecimal64(relationIndex, attributeIndex uint16) (
 	return vals, meta, nil
 }
 
-// GetMetadata retrieves custom snapshot key-value metadata.
+// GetAttributeInfo retrieves edge relation attribute metadata without copying payload bytes.
+func (s *Snapshot) GetAttributeInfo(relationIndex, attributeIndex uint16) (AttributeDescriptor, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return AttributeDescriptor{}, ErrInvalidArgument
+	}
+	var cDesc C.impulse_attribute_descriptor_t
+	var cName *C.char
+	status := C.impulse_snapshot_get_attribute_descriptor(
+		s.ptr, C.uint16_t(relationIndex), C.uint16_t(attributeIndex), &cDesc, &cName,
+	)
+	if status != C.IMPULSE_OK {
+		return AttributeDescriptor{}, Status(status)
+	}
+	return buildAttrDescriptor(cDesc, cName), nil
+}
+
+// GetDomainAttributeInfo retrieves node domain attribute metadata without copying payload bytes.
+func (s *Snapshot) GetDomainAttributeInfo(domainIndex, attributeIndex uint16) (AttributeDescriptor, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return AttributeDescriptor{}, ErrInvalidArgument
+	}
+	var cDesc C.impulse_attribute_descriptor_t
+	var cName *C.char
+	status := C.impulse_snapshot_get_domain_attribute_descriptor(
+		s.ptr, C.uint16_t(domainIndex), C.uint16_t(attributeIndex), &cDesc, &cName,
+	)
+	if status != C.IMPULSE_OK {
+		return AttributeDescriptor{}, Status(status)
+	}
+	return buildAttrDescriptor(cDesc, cName), nil
+}
+
+func buildAttrDescriptor(cDesc C.impulse_attribute_descriptor_t, cName *C.char) AttributeDescriptor {
+	var name string
+	if cName != nil {
+		name = C.GoString(cName)
+	}
+	var cTC, cR1 C.uint8_t
+	var cR2 C.uint16_t
+	var cDim C.uint32_t
+	var cDataOff, cDataBytes, cOffsOff, cOffsBytes C.uint64_t
+	C.impulse_go_unpack_attr_desc(&cDesc, &cTC, &cR1, &cR2, &cDim, &cDataOff, &cDataBytes, &cOffsOff, &cOffsBytes)
+	tc := uint8(cTC)
+	base := tc & 0x7F
+	d := AttributeDescriptor{
+		Name:          name,
+		TypeCode:      tc,
+		BaseTypeCode:  base,
+		IsNullable:    (tc & 0x80) != 0,
+		Dimension:     uint32(cDim),
+		DataOffset:    uint64(cDataOff),
+		DataBytes:     uint64(cDataBytes),
+		OffsetsOffset: uint64(cOffsOff),
+		OffsetsBytes:  uint64(cOffsBytes),
+	}
+	if base == 0x15 {
+		d.Precision = uint16(cR2)
+		d.Scale = uint8(cR1)
+	}
+	return d
+}
+
+// IndexCount returns the number of secondary indices in the snapshot.
+func (s *Snapshot) IndexCount() uint16 {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return 0
+	}
+	return uint16(C.impulse_snapshot_get_index_count(s.ptr))
+}
+
+// GetIndexEntry retrieves secondary index directory metadata by index.
+func (s *Snapshot) GetIndexEntry(indexIdx uint16) (IndexDirectoryEntry, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return IndexDirectoryEntry{}, ErrInvalidArgument
+	}
+	var cEntry C.impulse_index_directory_entry_t
+	var cName *C.char
+	status := C.impulse_snapshot_get_index_entry(s.ptr, C.uint16_t(indexIdx), &cEntry, &cName)
+	if status != C.IMPULSE_OK {
+		return IndexDirectoryEntry{}, Status(status)
+	}
+	var name string
+	if cName != nil {
+		name = C.GoString(cName)
+	}
+	return IndexDirectoryEntry{
+		IndexID:            uint32(cEntry.index_id),
+		DomainID:           uint16(cEntry.domain_id),
+		RelationID:         uint16(cEntry.relation_id),
+		AttributeIndex:     uint16(cEntry.attribute_index),
+		IndexType:          uint8(cEntry.index_type),
+		Name:               name,
+		DataOffset:         uint64(cEntry.data_offset),
+		DataBytes:          uint64(cEntry.data_bytes),
+		PayloadFeatureMask: uint64(cEntry.payload_feature_mask),
+	}, nil
+}
+
+// GetAllMetadata returns all custom UTF-8 key-value metadata entries stored in the snapshot footer.
+func (s *Snapshot) GetAllMetadata() (map[string]string, error) {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
+		return nil, ErrInvalidArgument
+	}
+	cnt := uint32(C.impulse_snapshot_get_metadata_count(s.ptr))
+	out := make(map[string]string, cnt)
+	for i := uint32(0); i < cnt; i++ {
+		var cKey *C.char
+		var cVal *C.char
+		if C.impulse_snapshot_get_metadata_entry(s.ptr, C.uint32_t(i), &cKey, &cVal) == C.IMPULSE_OK && cKey != nil && cVal != nil {
+			out[C.GoString(cKey)] = C.GoString(cVal)
+		}
+	}
+	return out, nil
+}
+
+// GetMetadata retrieves custom snapshot key-value metadata using O(log N) binary search
+// over sorted footer metadata entries (supports arbitrary value lengths).
 func (s *Snapshot) GetMetadata(key string) (string, error) {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return "", ErrInvalidArgument
 	}
-
-	cKey := C.CString(key)
-	defer C.free(unsafe.Pointer(cKey))
-
-	buf := make([]byte, 4096)
-	status := C.impulse_snapshot_get_metadata(s.ptr, cKey, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)))
-	if status != C.IMPULSE_OK {
-		return "", Status(status)
+	cnt := uint32(C.impulse_snapshot_get_metadata_count(s.ptr))
+	lo, hi := uint32(0), cnt
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		var cKey *C.char
+		var cVal *C.char
+		if C.impulse_snapshot_get_metadata_entry(s.ptr, C.uint32_t(mid), &cKey, &cVal) != C.IMPULSE_OK || cKey == nil {
+			return "", ErrInvalidArgument
+		}
+		k := C.GoString(cKey)
+		if k == key {
+			if cVal == nil {
+				return "", nil
+			}
+			return C.GoString(cVal), nil
+		}
+		if k < key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
 	}
-
-	return C.GoString((*C.char)(unsafe.Pointer(&buf[0]))), nil
+	return "", ErrInvalidArgument
 }
 
 // CompactToFile compacts base snapshot and live delta layer overlays into a new binary snapshot file on disk.
 func (s *Snapshot) CompactToFile(deltas []*DeltaLayer, outputPath string) error {
-	if s.ptr == nil {
+	s.poolMu.RLock()
+	defer s.poolMu.RUnlock()
+	defer runtime.KeepAlive(s)
+	if s.closed || s.ptr == nil {
 		return ErrInvalidArgument
 	}
 

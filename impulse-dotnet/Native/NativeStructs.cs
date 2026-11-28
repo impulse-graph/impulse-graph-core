@@ -24,6 +24,67 @@ public struct ImpulseInstruction
 }
 
 /// <summary>
+/// Naturally aligned summary of active Page 0 snapshot header fields.
+/// Maps to impulse_snapshot_header_info_t in impulse_graph.h.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct ImpulseSnapshotHeaderInfo
+{
+    public uint Magic;
+    public uint DataOffset;
+    public ulong TimestampMs;
+    public ulong RequiredFeatures;
+    public ulong FooterDirectoryOffset;
+    public ulong FooterDirectoryBytes;
+    public ulong FileSize;
+    public ushort Version;
+    public ushort DomainCount;
+    public ushort RelationCount;
+    public ushort IndexCount;
+    public ushort HeaderChecksum;
+    public fixed byte Reserved[6];
+    public fixed byte SnapshotUuid[16];
+}
+
+/// <summary>
+/// Attribute Descriptor Structure (Fixed 44 Bytes).
+/// Maps to impulse_attribute_descriptor_v0_11_t in impulse_format_v0_11.h.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 44)]
+public struct ImpulseAttributeDescriptor
+{
+    public uint NameOffset;
+    public byte TypeCode;
+    public byte Reserved1;
+    public ushort Reserved2;
+    public uint Dimension;
+    public ulong DataOffset;
+    public ulong DataBytes;
+    public ulong OffsetsOffset;
+    public ulong OffsetsBytes;
+}
+
+/// <summary>
+/// Secondary Index Directory Entry (Fixed 64 Bytes).
+/// Maps to impulse_index_directory_entry_v0_11_t in impulse_format_v0_11.h.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 64)]
+public unsafe struct ImpulseIndexEntry
+{
+    public uint IndexId;
+    public ushort DomainId;
+    public ushort RelationId;
+    public ushort AttributeIndex;
+    public byte IndexType;
+    public byte Reserved1;
+    public uint NameOffset;
+    public ulong DataOffset;
+    public ulong DataBytes;
+    public ulong PayloadFeatureMask;
+    public fixed byte ReservedPadding[24];
+}
+
+/// <summary>
 /// Domain Catalog Entry Descriptor (Fixed 32 Bytes).
 /// Maps to impulse_domain_catalog_entry_v0_11_t in impulse_format_v0_11.h.
 /// </summary>

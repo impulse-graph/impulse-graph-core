@@ -75,4 +75,14 @@ public class SnapshotTests
             using var snap = new Snapshot("__non_existent_path_12345.imps");
         });
     }
+
+    [Fact]
+    public void TestPhase1NativeStructSizes()
+    {
+        Assert.Equal(32, System.Runtime.InteropServices.Marshal.SizeOf<ImpulseDomainEntry>());
+        Assert.Equal(192, System.Runtime.InteropServices.Marshal.SizeOf<ImpulseRelationEntry>());
+        Assert.Equal(44, System.Runtime.InteropServices.Marshal.SizeOf<ImpulseAttributeDescriptor>());
+        Assert.Equal(64, System.Runtime.InteropServices.Marshal.SizeOf<ImpulseIndexEntry>());
+        Assert.Equal(80, System.Runtime.InteropServices.Marshal.SizeOf<ImpulseSnapshotHeaderInfo>());
+    }
 }
