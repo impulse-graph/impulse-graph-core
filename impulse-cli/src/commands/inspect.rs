@@ -98,7 +98,11 @@ pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Bo
     };
     println!("Version:           {}", version_str);
     println!("Timestamp (ms):    {}", header.timestamp_ms());
-    println!("UUID:              {}", header.snapshot_uuid_hex());
+    let snapshot_id_hex: String = reader.as_bytes()[0x2E..0x3E]
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    println!("UUID:              {}", snapshot_id_hex);
     println!(
         "Required Features: {}",
         format_required_features(header.required_features())
