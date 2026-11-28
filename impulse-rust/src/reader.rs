@@ -2255,12 +2255,10 @@ pub(crate) fn compute_sha256_bytes(data: &[u8]) -> [u8; 32] {
         st[7] = st[7].wrapping_add(h);
     };
 
-    let mut chunks = data.chunks_exact(64);
-    for chunk in chunks.by_ref() {
-        let block: &[u8; 64] = chunk.try_into().unwrap();
+    let (chunks, rem) = data.as_chunks::<64>();
+    for block in chunks {
         compress(&mut state, block);
     }
-    let rem = chunks.remainder();
     let mut final_block = [0u8; 64];
     final_block[..rem.len()].copy_from_slice(rem);
     final_block[rem.len()] = 0x80;

@@ -831,7 +831,7 @@ fn render_page_map(
     let slice = reader.as_bytes();
     let header = reader.header();
     let ver = header.version();
-    let is_modern = matches!(ver, 9 | 10 | 11);
+    let is_modern = matches!(ver, 9..=11);
     let dir_offset = if is_modern && header.footer_directory_offset() > 0 {
         header.footer_directory_offset() as usize
     } else {

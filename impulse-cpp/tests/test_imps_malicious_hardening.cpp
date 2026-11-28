@@ -191,7 +191,7 @@ std::vector<uint8_t> build_valid_v10_snapshot() {
 
     align_vec(dir, 128);
 
-    impulse_relation_directory_entry_t rel{};
+    impulse_relation_directory_entry_v0_10_t rel{};
     rel.relation_id = 0;
     rel.src_domain_id = 0;
     rel.tgt_domain_id = 0;

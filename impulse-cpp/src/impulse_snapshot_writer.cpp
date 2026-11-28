@@ -370,11 +370,13 @@ impulse_status_t impulse_writer_finalize(impulse_writer_t* writer) {
         writer->global_features |= IMPULSE_GLOBAL_FEAT_FOOTER_CATALOG;
     }
 
-    // Stable-sort relations by src_domain_id primary, tgt_domain_id secondary,
+    // Sort relations by src_domain_id primary, tgt_domain_id secondary, relation_id tiebreaker
+    // (preserves insertion stability without std::stable_sort's get_temporary_buffer),
     // and remap secondary index & virtual relation child IDs to the new order.
-    std::stable_sort(writer->relations.begin(), writer->relations.end(), [](const impulse_writer_relation& a, const impulse_writer_relation& b) {
+    std::sort(writer->relations.begin(), writer->relations.end(), [](const impulse_writer_relation& a, const impulse_writer_relation& b) {
         if (a.src_domain_id != b.src_domain_id) return a.src_domain_id < b.src_domain_id;
-        return a.tgt_domain_id < b.tgt_domain_id;
+        if (a.tgt_domain_id != b.tgt_domain_id) return a.tgt_domain_id < b.tgt_domain_id;
+        return a.relation_id < b.relation_id;
     });
     std::unordered_map<uint16_t, uint16_t> rel_id_remap;
     rel_id_remap.reserve(writer->relations.size());
