@@ -3,36 +3,13 @@
 #include "../impulse_graph_internal.hpp"
 #include "vm_internal.hpp"
 
-// Undefine v0.10 macro opcodes pulled in by impulse_scm_ast.hpp -> impulse_vm.h
-// so impulse::vm::Opcode::OP_* enum identifiers resolve cleanly.
-#undef OP_HALT
-#undef OP_NOP
-#undef OP_TRAP
-#undef OP_MOV
-#undef OP_SWAP
-#undef OP_JMP
-#undef OP_LOOP_DECR
-#undef OP_SET_CARDINALITY
-#undef OP_STABLE_CHECK
-#undef OP_NODE_FILTER
-#undef OP_GATHER_NODE_ATTR
-#undef OP_GATHER_EDGE_ATTR
-#undef OP_VEC_BLEND
-#undef OP_COALESCE
-#undef OP_LANE_INIT_SEEDS
-#undef OP_LANE_INIT_GROUPS
-#undef OP_LANE_FILTER_QUORUM
-#undef OP_LANE_REDUCE_AND
-#undef OP_LANE_REDUCE_ATTR
-#undef OP_VECTOR_ANN_SEARCH
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <stdexcept>
 
-namespace impulse::compiler::v11 {
+namespace impulse::compiler {
 
 using namespace impulse::vm;
 
@@ -105,7 +82,7 @@ int resolve_edge_attr_id(const impulse_snapshot_t* snap, int rel_id, const std::
  */
 uint8_t emit_morsel_expr(
     const AstPtr& expr,
-    V11ProgramBuilder& b,
+    VmProgramBuilder& b,
     uint8_t& next_mreg,
     uint8_t& next_rreg,
     const impulse_snapshot_t* snap,
@@ -209,7 +186,7 @@ uint8_t emit_morsel_expr(
 
 } // namespace
 
-std::vector<uint8_t> V11ProgramBuilder::build_impb(
+std::vector<uint8_t> VmProgramBuilder::build_impb(
     uint8_t max_call_depth,
     uint32_t entry_pc,
     uint16_t required_domains
@@ -264,9 +241,9 @@ std::vector<uint8_t> V11ProgramBuilder::build_impb(
     // 2. Build payload (code words + const_pool) and compute XXH3-64 checksum
     const size_t code_bytes_len = words_.size() * sizeof(uint64_t);
     const size_t payload_len = code_bytes_len + cp_bytes.size();
-    std::vector<uint8_t> out(sizeof(impulse_impb_header_v11_t) + payload_len, 0u);
+    std::vector<uint8_t> out(sizeof(impulse_impb_header_t) + payload_len, 0u);
 
-    uint8_t* payload_ptr = out.data() + sizeof(impulse_impb_header_v11_t);
+    uint8_t* payload_ptr = out.data() + sizeof(impulse_impb_header_t);
     if (code_bytes_len > 0u) {
         std::memcpy(payload_ptr, words_.data(), code_bytes_len);
     }
@@ -274,9 +251,9 @@ std::vector<uint8_t> V11ProgramBuilder::build_impb(
         std::memcpy(payload_ptr + code_bytes_len, cp_bytes.data(), cp_bytes.size());
     }
 
-    uint64_t checksum = V11Xxh3::hash64(payload_ptr, payload_len);
+    uint64_t checksum = VmXxh3::hash64(payload_ptr, payload_len);
 
-    impulse_impb_header_v11_t hdr{};
+    impulse_impb_header_t hdr{};
     hdr.magic = kImpbMagic;
     hdr.isa_version = kImpbVersion;
     hdr.header_flags = cp_bytes.empty() ? 0u : 1u;
@@ -300,7 +277,7 @@ ImpulseCompiledProgram ImpulseBytecodeEmitter::emit(
         throw std::invalid_argument("ImpulseBytecodeEmitter expects a ScmProgram root");
     }
 
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     ImpulseCompiledProgram result;
     result.start_domain_id = start_domain_id;
 
@@ -638,9 +615,9 @@ ImpulseCompiledProgram ImpulseBytecodeEmitter::emit(
     result.required_domains = req_doms;
     result.impb_bytes = b.build_impb(0u, 0u, req_doms);
 
-    // Static verification post-condition: emitted .impb MUST pass impulse_vm_validate_v11
-    impulse_vm_validation_v11_t vr = impulse_vm_validate_v11(result.impb_bytes.data(), result.impb_bytes.size());
-    if (vr.status != IMPULSE_VM_V11_OK) {
+    // Static verification post-condition: emitted .impb MUST pass impulse_vm_validate
+    impulse_vm_validation_t vr = impulse_vm_validate(result.impb_bytes.data(), result.impb_bytes.size());
+    if (vr.status != IMPULSE_VM_OK) {
         throw std::runtime_error("ImpulseBytecodeEmitter produced invalid v0.11 bytecode at pc=" +
                                  std::to_string(vr.bad_pc) + " status=" + std::to_string(vr.status));
     }
@@ -653,23 +630,23 @@ std::string ImpulseBytecodeEmitter::disassemble(const std::vector<uint64_t>& wor
     ss << ".version 0.11.0\n.instructions " << words.size() << "\n\n";
     for (size_t pc = 0; pc < words.size(); ++pc) {
         uint64_t w = words[pc];
-        uint8_t op = IMP_V11_OPCODE(w);
+        uint8_t op = IMP_OPCODE(w);
         const auto& meta = kOpcodeMeta[op];
         char buf[256];
         std::snprintf(buf, sizeof(buf),
                       "  0x%04x:  %-20s sub=%u flg=0x%x dst=%u s1=%u s2=%u s3=%u imm=0x%08x\n",
                       static_cast<unsigned>(pc),
                       meta.defined ? meta.mnemonic.data() : "UNKNOWN",
-                      static_cast<unsigned>(IMP_V11_SUBOP(w)),
-                      static_cast<unsigned>(IMP_V11_FLAGS(w)),
-                      static_cast<unsigned>(IMP_V11_DST(w)),
-                      static_cast<unsigned>(IMP_V11_S1(w)),
-                      static_cast<unsigned>(IMP_V11_S2(w)),
-                      static_cast<unsigned>(IMP_V11_S3(w)),
-                      static_cast<unsigned>(IMP_V11_IMM32(w)));
+                      static_cast<unsigned>(IMP_SUBOP(w)),
+                      static_cast<unsigned>(IMP_FLAGS(w)),
+                      static_cast<unsigned>(IMP_DST(w)),
+                      static_cast<unsigned>(IMP_S1(w)),
+                      static_cast<unsigned>(IMP_S2(w)),
+                      static_cast<unsigned>(IMP_S3(w)),
+                      static_cast<unsigned>(IMP_IMM32(w)));
         ss << buf;
     }
     return ss.str();
 }
 
-} // namespace impulse::compiler::v11
+} // namespace impulse::compiler

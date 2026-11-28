@@ -1,11 +1,11 @@
 /**
- * @file v11_p5_helpers.hpp
+ * @file p5_helpers.hpp
  * @brief Shared Pillar 5 (0x60..0x6F) zero-malloc helpers for multi-lane bit-sliced
  *        frontiers, vector similarity metrics, and MITra AoS LANE_STATE tensors.
  */
 #pragma once
 
-#include "v11_p4_helpers.hpp"
+#include "p4_helpers.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -29,21 +29,21 @@ inline uint64_t p5_active_lane_mask(uint8_t ac) noexcept {
     return (1ULL << ac) - 1ULL;
 }
 
-inline const V11Frontier* p5_get_fml(impulse_vm_workspace_v11_t& ws, uint8_t reg) noexcept {
+inline const VmFrontier* p5_get_fml(impulse_vm_workspace_t& ws, uint8_t reg) noexcept {
     if (!ws.is_f_init(reg) || !ws.f_regs[reg].multi_lane) {
-        ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+        ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
         return nullptr;
     }
     return &ws.f_regs[reg];
 }
 
-struct V11MlPair {
+struct VmMlPair {
     uint64_t node;
     uint64_t mask;
 };
 
 /** Arena-backed canonical sorted (node, nonzero-mask) multi-lane map. */
-struct V11MlMap {
+struct VmMlMap {
     uint64_t* nodes = nullptr;
     uint64_t* masks = nullptr;
     uint32_t  len   = 0;
@@ -58,12 +58,12 @@ struct V11MlMap {
     }
 };
 
-inline bool p5_ml_from_pairs(V11Arena& arena, V11MlPair* pairs, uint32_t count, V11MlMap* out) noexcept {
+inline bool p5_ml_from_pairs(VmArena& arena, VmMlPair* pairs, uint32_t count, VmMlMap* out) noexcept {
     if (count == 0u) {
         out->nodes = nullptr; out->masks = nullptr; out->len = 0u;
         return true;
     }
-    std::sort(pairs, pairs + count, [](const V11MlPair& a, const V11MlPair& b) { return a.node < b.node; });
+    std::sort(pairs, pairs + count, [](const VmMlPair& a, const VmMlPair& b) { return a.node < b.node; });
     uint32_t uniq = 0u;
     for (uint32_t i = 0; i < count; ++i) {
         if (pairs[i].mask == 0ULL) continue;
@@ -90,15 +90,15 @@ inline bool p5_ml_from_pairs(V11Arena& arena, V11MlPair* pairs, uint32_t count, 
     return true;
 }
 
-inline V11MlMap p5_ml_view(const V11Frontier& f) noexcept {
-    V11MlMap m{};
+inline VmMlMap p5_ml_view(const VmFrontier& f) noexcept {
+    VmMlMap m{};
     m.nodes = f.ml_nodes;
     m.masks = f.ml_masks;
     m.len   = f.ml_count;
     return m;
 }
 
-inline bool p5_ml_union(V11Arena& arena, const V11MlMap& a, const V11MlMap& b, V11MlMap* out) noexcept {
+inline bool p5_ml_union(VmArena& arena, const VmMlMap& a, const VmMlMap& b, VmMlMap* out) noexcept {
     size_t cap = static_cast<size_t>(a.len) + static_cast<size_t>(b.len);
     if (cap == 0u) { out->nodes = nullptr; out->masks = nullptr; out->len = 0u; return true; }
     uint64_t* ns = arena.alloc_array<uint64_t>(cap, 8);
@@ -124,7 +124,7 @@ inline bool p5_ml_union(V11Arena& arena, const V11MlMap& a, const V11MlMap& b, V
     return true;
 }
 
-inline bool p5_ml_diff(V11Arena& arena, const V11MlMap& a, const V11MlMap& b, V11MlMap* out) noexcept {
+inline bool p5_ml_diff(VmArena& arena, const VmMlMap& a, const VmMlMap& b, VmMlMap* out) noexcept {
     if (a.len == 0u) { out->nodes = nullptr; out->masks = nullptr; out->len = 0u; return true; }
     uint64_t* ns = arena.alloc_array<uint64_t>(a.len, 8);
     uint64_t* ms = arena.alloc_array<uint64_t>(a.len, 8);
@@ -138,14 +138,14 @@ inline bool p5_ml_diff(V11Arena& arena, const V11MlMap& a, const V11MlMap& b, V1
     return true;
 }
 
-IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
-    V11Arena& arena,
+IMPULSE_VM_NOINLINE inline bool p5_lane_walk_step_once(
+    VmArena& arena,
     uint8_t subop,
-    const V11RelView& rel,
-    const V11Vector* edge_mask,
-    const V11MlMap& cur,
-    const V11MlMap& excl,
-    V11MlMap* out
+    const VmRelView& rel,
+    const VmVector* edge_mask,
+    const VmMlMap& cur,
+    const VmMlMap& excl,
+    VmMlMap* out
 ) noexcept {
     const bool do_fwd = (subop == 0u || subop == 3u || subop == 4u || subop == 7u || subop == 2u || subop == 8u || subop == 9u);
     const bool do_rev = (subop == 1u || subop == 5u || subop == 6u || subop == 2u || subop == 8u || subop == 9u);
@@ -171,7 +171,7 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
     }
     if (cap == 0u) { out->nodes = nullptr; out->masks = nullptr; out->len = 0u; return true; }
     if (cap > UINT32_MAX) return false;
-    V11MlPair* pairs = arena.alloc_array<V11MlPair>(cap, 8);
+    VmMlPair* pairs = arena.alloc_array<VmMlPair>(cap, 8);
     if (!pairs) return false;
     uint32_t cnt = 0u;
 
@@ -210,7 +210,7 @@ IMPULSE_V11_NOINLINE inline bool p5_lane_walk_step_once(
     return p5_ml_from_pairs(arena, pairs, cnt, out);
 }
 
-inline bool p5_vec_to_f64_dense(V11Arena& arena, const V11Vector* v, double** out_ptr, uint32_t* out_len) noexcept {
+inline bool p5_vec_to_f64_dense(VmArena& arena, const VmVector* v, double** out_ptr, uint32_t* out_len) noexcept {
     if (!p4_is_numeric_vec(v)) return false;
     uint32_t n = v->length;
     *out_len = n;
@@ -250,7 +250,7 @@ inline double p5_sim_metric(uint8_t metric, const double* a, uint32_t a_len, con
     }
 }
 
-inline V11Vector* p5_alloc_lane_state(V11Arena& arena,
+inline VmVector* p5_alloc_lane_state(VmArena& arena,
                                       uint16_t dom,
                                       uint32_t n,
                                       uint16_t k,
@@ -259,7 +259,7 @@ inline V11Vector* p5_alloc_lane_state(V11Arena& arena,
     if (total64 > (std::numeric_limits<size_t>::max)() / sizeof(double)) return nullptr;
     size_t total = static_cast<size_t>(total64);
 
-    auto* v = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+    auto* v = static_cast<VmVector*>(arena.alloc(sizeof(VmVector), alignof(VmVector)));
     if (!v) return nullptr;
     double*  vals  = (total > 0u) ? arena.alloc_array<double>(total, 8)  : nullptr;
     uint8_t* valid = (total > 0u) ? arena.alloc_array<uint8_t>(total, 8) : nullptr;
@@ -281,7 +281,7 @@ inline V11Vector* p5_alloc_lane_state(V11Arena& arena,
         }
     }
 
-    new (v) V11Vector();
+    new (v) VmVector();
     v->elem_tag = kVecTagLaneState;
     v->length   = n;
     v->ls_dom   = dom;
@@ -295,8 +295,8 @@ inline V11Vector* p5_alloc_lane_state(V11Arena& arena,
 
 inline void p5_relax_lane_edge(
     uint32_t u, uint32_t v, uint32_t e, uint16_t k, uint8_t semi,
-    const V11Frontier* mask,
-    bool scalar_w, bool scalar_w_valid, double scalar_w_val, const V11Vector* weight_col,
+    const VmFrontier* mask,
+    bool scalar_w, bool scalar_w_valid, double scalar_w_val, const VmVector* weight_col,
     const double* snap_in, const uint8_t* snap_in_valid,
     double* out_vals, uint8_t* out_valid,
     int64_t* out_wit, uint8_t* out_wit_valid,

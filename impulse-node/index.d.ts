@@ -116,7 +116,7 @@ export interface Decimal64WriteOptions {
   dimension?: number;
 }
 
-export interface V11ParamSchema {
+export interface ParamSchema {
   name: string;
   paramId: number;
   type: string;
@@ -126,7 +126,7 @@ export interface V11ParamSchema {
   domainId: number;
 }
 
-export interface V11OutputSchema {
+export interface OutputSchema {
   name: string;
   type: string;
   isDecimal: boolean;
@@ -134,12 +134,12 @@ export interface V11OutputSchema {
   scale: number;
 }
 
-export class CompiledV11Program {
+export class CompiledProgram {
   readonly impbBytes: Buffer;
   readonly paramNameToId: Record<string, number>;
-  readonly paramSchema: V11ParamSchema[];
+  readonly paramSchema: ParamSchema[];
   readonly outputNames: string[];
-  readonly outputSchema: V11OutputSchema[];
+  readonly outputSchema: OutputSchema[];
   readonly impscmSource: string | null;
 
   execute(
@@ -162,14 +162,14 @@ export function compileImpScm(
   source: string,
   snapshot?: Snapshot | null,
   enableOptimizations?: boolean
-): CompiledV11Program;
+): CompiledProgram;
 
 export function compileCypher(
   cypher: string,
   snapshot?: Snapshot | null,
   paramTypes?: Record<string, CypherParamTypeSpec>,
   enableOptimizations?: boolean
-): CompiledV11Program;
+): CompiledProgram;
 
 export class Snapshot {
   constructor(path: string);

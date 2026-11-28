@@ -1,53 +1,53 @@
 // Opcode 0x34: OP_SPMV
-V11_OP_CASE(SPMV) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
-    const uint16_t rel_id = IMP_V11_IMM16_LO(w);
-    const uint16_t attr_id = IMP_V11_IMM16_HI(w);
+VM_OP_CASE(SPMV) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
+    const uint16_t rel_id = IMP_IMM16_LO(w);
+    const uint16_t attr_id = IMP_IMM16_HI(w);
 
-    const V11RelView* rel = p3_get_rel(snap, ws, rel_id);
-    if (!rel) V11_DISPATCH();
-    const V11Frontier* f_src = p3_get_f1bit(ws, s1);
-    if (!f_src) V11_DISPATCH();
+    const VmRelView* rel = p3_get_rel(snap, ws, rel_id);
+    if (!rel) VM_DISPATCH();
+    const VmFrontier* f_src = p3_get_f1bit(ws, s1);
+    if (!f_src) VM_DISPATCH();
 
     bool is_rev = (subop == 1u || subop == 3u);
     uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
     if (!is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) {
-        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
-        V11_DISPATCH();
+        ws.status = IMPULSE_VM_ERR_INVALID_OPERAND;
+        VM_DISPATCH();
     }
     if (is_rev && rel->csc_row_off_raw == nullptr) {
-        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND;
-        V11_DISPATCH();
+        ws.status = IMPULSE_VM_ERR_INVALID_OPERAND;
+        VM_DISPATCH();
     }
-    if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
+    if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
 
-    const V11Frontier* tgt_mask = nullptr;
+    const VmFrontier* tgt_mask = nullptr;
     if ((flags & FLAG_MASKED_S3) != 0u) {
         tgt_mask = p3_get_f1bit(ws, s3);
-        if (!tgt_mask) V11_DISPATCH();
-        if (tgt_mask->domain_id != out_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
+        if (!tgt_mask) VM_DISPATCH();
+        if (tgt_mask->domain_id != out_dom) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
     }
 
-    const V11Vector* weight_col = nullptr;
+    const VmVector* weight_col = nullptr;
     if (attr_id != 0xFFFFu) {
         weight_col = p3_find_edge_attr(*rel, attr_id);
-        if (!weight_col || !p2_is_numeric_vec(weight_col)) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+        if (!weight_col || !p2_is_numeric_vec(weight_col)) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
     }
 
     uint64_t n_in64  = (in_dom  < snap->domain_count) ? snap->domain_cards[in_dom]  : 0ULL;
     uint64_t n_out64 = (out_dom < snap->domain_count) ? snap->domain_cards[out_dom] : 0ULL;
-    if (n_in64 > UINT32_MAX || n_out64 > UINT32_MAX) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+    if (n_in64 > UINT32_MAX || n_out64 > UINT32_MAX) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
     uint32_t n_in  = static_cast<uint32_t>(n_in64);
     uint32_t n_out = static_cast<uint32_t>(n_out64);
 
     const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-    if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+    if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
 
     size_t vwords = (n_out > 0u) ? ((static_cast<size_t>(n_out) + 63u) >> 6) : 1u;
 
@@ -58,8 +58,8 @@ V11_OP_CASE(SPMV) {
         if (subop == 7u) { // .fwd_first_src
             int64_t* out = (n_out > 0u) ? ws.arena.alloc_array<int64_t>(n_out, 8) : nullptr;
             uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-            auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-            if ((n_out > 0u && !out) || !valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            auto* ov = static_cast<VmVector*>(ws.arena.alloc(sizeof(VmVector), alignof(VmVector)));
+            if ((n_out > 0u && !out) || !valid || !ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             std::memset(valid, 0, vwords * sizeof(uint64_t));
             uint32_t hits = 0u;
             for (uint32_t i = 0; i < src_len; ++i) {
@@ -79,31 +79,31 @@ V11_OP_CASE(SPMV) {
                     }
                 }
             }
-            new (ov) V11Vector();
+            new (ov) VmVector();
             ov->elem_tag = kVecTagU64; ov->length = n_out; ov->i64_data = out; ov->valid_bits = valid;
             ws.v_regs[dst] = ov;
             ws.set_zf(hits == 0u);
             ws.state.pc += 1u;
-            V11_DISPATCH();
+            VM_DISPATCH();
         }
 
         bool scalar_rhs = (flags & FLAG_SCALAR_RHS) != 0u;
         bool scalar_valid = scalar_rhs && ws.is_r_valid(s2);
         double scalar_val = scalar_valid ? p1_bits_to_f64(ws.read_r_raw(s2)) : std::numeric_limits<double>::quiet_NaN();
-        const V11Vector* rv = nullptr;
+        const VmVector* rv = nullptr;
         double* rhs_snap = nullptr;
         uint8_t* rhs_snap_valid = nullptr;
         bool direct_f64_rhs = false;
         if (!scalar_rhs) {
             rv = ws.v_regs[s2];
-            if (!rv || !p2_is_numeric_vec(rv)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-            if (rv->length < n_in) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+            if (!rv || !p2_is_numeric_vec(rv)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+            if (rv->length < n_in) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
             if (rv->elem_tag == kVecTagF64 && dst != s2) {
                 direct_f64_rhs = true;
             } else if (rv->length > 0u) {
                 rhs_snap = ws.arena.alloc_array<double>(rv->length, 8);
                 rhs_snap_valid = ws.arena.alloc_array<uint8_t>(rv->length, 8);
-                if (!rhs_snap || !rhs_snap_valid) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                if (!rhs_snap || !rhs_snap_valid) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
                 for (uint32_t i = 0; i < rv->length; ++i) {
                     if (rv->is_valid_at(i)) {
                         rhs_snap_valid[i] = 1u;
@@ -119,8 +119,8 @@ V11_OP_CASE(SPMV) {
             double* best_cost = (n_out > 0u) ? ws.arena.alloc_array<double>(n_out, 8) : nullptr;
             int64_t* best_src = (n_out > 0u) ? ws.arena.alloc_array<int64_t>(n_out, 8) : nullptr;
             uint64_t* valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-            auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-            if ((n_out > 0u && (!best_cost || !best_src)) || !valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            auto* ov = static_cast<VmVector*>(ws.arena.alloc(sizeof(VmVector), alignof(VmVector)));
+            if ((n_out > 0u && (!best_cost || !best_src)) || !valid || !ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             std::memset(valid, 0, vwords * sizeof(uint64_t));
             uint32_t hits = 0u;
             for (uint32_t i = 0; i < src_len; ++i) {
@@ -149,25 +149,25 @@ V11_OP_CASE(SPMV) {
                     }
                 }
             }
-            new (ov) V11Vector();
+            new (ov) VmVector();
             ov->elem_tag = kVecTagU64; ov->length = n_out; ov->i64_data = best_src; ov->valid_bits = valid;
             ws.v_regs[dst] = ov;
             ws.set_zf(hits == 0u);
             ws.state.pc += 1u;
-            V11_DISPATCH();
+            VM_DISPATCH();
         }
 
         bool is_plus_times = (subop == 0u);
         double* out = (n_out > 0u) ? ws.arena.alloc_array<double>(n_out, 8) : nullptr;
         uint64_t* out_valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-        auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-        if ((n_out > 0u && !out) || !out_valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+        auto* ov = static_cast<VmVector*>(ws.arena.alloc(sizeof(VmVector), alignof(VmVector)));
+        if ((n_out > 0u && !out) || !out_valid || !ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
         std::memset(out_valid, 0, vwords * sizeof(uint64_t));
 
         if ((flags & FLAG_ACCUM) != 0u) {
-            const V11Vector* dv = ws.v_regs[dst];
-            if (!dv) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-            if (dv->elem_tag != kVecTagF64 || dv->length != n_out) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+            const VmVector* dv = ws.v_regs[dst];
+            if (!dv) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+            if (dv->elem_tag != kVecTagF64 || dv->length != n_out) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
             if (n_out > 0u) std::memcpy(out, dv->f64_data, static_cast<size_t>(n_out) * sizeof(double));
             if (dv->valid_bits == nullptr) {
                 for (uint32_t i = 0; i < n_out; ++i) out_valid[i >> 6] |= (1ULL << (i & 63u));
@@ -249,12 +249,12 @@ V11_OP_CASE(SPMV) {
             }
         }
 
-        new (ov) V11Vector();
+        new (ov) VmVector();
         ov->elem_tag = kVecTagF64; ov->length = n_out; ov->f64_data = out; ov->valid_bits = out_valid;
         ws.v_regs[dst] = ov;
         ws.set_zf(hits == 0u);
         ws.state.pc += 1u;
-        V11_DISPATCH();
+        VM_DISPATCH();
     }
 
     // Streaming reverse SpMV path (is_rev: subop == 1 rev_plus_times, subop == 3 rev_min_plus) directly over CSC
@@ -264,13 +264,13 @@ V11_OP_CASE(SPMV) {
     double* rhs_snap = nullptr;
     uint8_t* rhs_snap_valid = nullptr;
     if (!scalar_rhs) {
-        const V11Vector* rv = ws.v_regs[s2];
-        if (!rv || !p2_is_numeric_vec(rv)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-        if (rv->length < n_in) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+        const VmVector* rv = ws.v_regs[s2];
+        if (!rv || !p2_is_numeric_vec(rv)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+        if (rv->length < n_in) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
         if (rv->length > 0u) {
             rhs_snap = ws.arena.alloc_array<double>(rv->length, 8);
             rhs_snap_valid = ws.arena.alloc_array<uint8_t>(rv->length, 8);
-            if (!rhs_snap || !rhs_snap_valid) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (!rhs_snap || !rhs_snap_valid) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             for (uint32_t i = 0; i < rv->length; ++i) {
                 if (rv->is_valid_at(i)) {
                     rhs_snap_valid[i] = 1u;
@@ -285,14 +285,14 @@ V11_OP_CASE(SPMV) {
     bool is_plus_times = (subop == 1u);
     double* out = (n_out > 0u) ? ws.arena.alloc_array<double>(n_out, 8) : nullptr;
     uint64_t* out_valid = ws.arena.alloc_array<uint64_t>(vwords, 8);
-    auto* ov = static_cast<V11Vector*>(ws.arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
-    if ((n_out > 0u && !out) || !out_valid || !ov) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+    auto* ov = static_cast<VmVector*>(ws.arena.alloc(sizeof(VmVector), alignof(VmVector)));
+    if ((n_out > 0u && !out) || !out_valid || !ov) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
     std::memset(out_valid, 0, vwords * sizeof(uint64_t));
 
     if ((flags & FLAG_ACCUM) != 0u) {
-        const V11Vector* dv = ws.v_regs[dst];
-        if (!dv) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-        if (dv->elem_tag != kVecTagF64 || dv->length != n_out) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+        const VmVector* dv = ws.v_regs[dst];
+        if (!dv) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+        if (dv->elem_tag != kVecTagF64 || dv->length != n_out) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
         if (n_out > 0u) std::memcpy(out, dv->f64_data, static_cast<size_t>(n_out) * sizeof(double));
         for (uint32_t i = 0; i < n_out; ++i) {
             if (dv->is_valid_at(i)) out_valid[i >> 6] |= (1ULL << (i & 63u));
@@ -332,10 +332,10 @@ V11_OP_CASE(SPMV) {
         }
     }
 
-    new (ov) V11Vector();
+    new (ov) VmVector();
     ov->elem_tag = kVecTagF64; ov->length = n_out; ov->f64_data = out; ov->valid_bits = out_valid;
     ws.v_regs[dst] = ov;
     ws.set_zf(hits == 0u);
     ws.state.pc += 1u;
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

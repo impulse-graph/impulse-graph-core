@@ -1,15 +1,15 @@
 // Opcode 0x52: OP_VEC_REDUCE
-V11_OP_CASE(VEC_REDUCE) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s3 = IMP_V11_S3(w);
+VM_OP_CASE(VEC_REDUCE) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s3 = IMP_S3(w);
 
-    const V11Frontier* mask = p4_get_mask_frontier(ws, flags, s3);
-    if (ws.status != IMPULSE_VM_V11_OK) V11_DISPATCH();
-    const V11Vector* v = ws.v_regs[s1];
-    if (!v) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+    const VmFrontier* mask = p4_get_mask_frontier(ws, flags, s3);
+    if (ws.status != IMPULSE_VM_OK) VM_DISPATCH();
+    const VmVector* v = ws.v_regs[s1];
+    if (!v) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
     const uint32_t n = v->length;
 
     switch (subop) {
@@ -27,7 +27,7 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         case subop::kVEC_REDUCE_ANY_TRUE: {
-            if (v->elem_tag != kVecTagBool3vl) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (v->elem_tag != kVecTagBool3vl) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             bool has_true = false, has_null = false;
             for (uint32_t i = 0; i < n; ++i) {
                 if (!p4_lane_active(mask, i)) continue;
@@ -41,7 +41,7 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         case subop::kVEC_REDUCE_ALL_TRUE: {
-            if (v->elem_tag != kVecTagBool3vl) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (v->elem_tag != kVecTagBool3vl) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             bool has_false = false, has_null = false;
             for (uint32_t i = 0; i < n; ++i) {
                 if (!p4_lane_active(mask, i)) continue;
@@ -55,16 +55,16 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         case subop::kVEC_REDUCE_SUM_I64_CHK: {
-            if (v->elem_tag != kVecTagI64) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-            V11Sum128 acc{};
+            if (v->elem_tag != kVecTagI64) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+            VmSum128 acc{};
             for (uint32_t i = 0; i < n; ++i) {
                 if (!p4_lane_active(mask, i) || !v->is_valid_at(i)) continue;
                 acc.add(v->i64_data[i]);
             }
             int64_t res = 0LL;
             bool out_valid = false;
-            impulse_vm_status_v11_t st = acc.finalize(&res, &out_valid);
-            if (st != IMPULSE_VM_V11_OK) { ws.status = st; V11_DISPATCH(); }
+            impulse_vm_status_t st = acc.finalize(&res, &out_valid);
+            if (st != IMPULSE_VM_OK) { ws.status = st; VM_DISPATCH(); }
             if (!out_valid) {
                 ws.write_r_null(dst);
                 ws.set_zf(true);
@@ -79,7 +79,7 @@ V11_OP_CASE(VEC_REDUCE) {
         }
         case subop::kVEC_REDUCE_SUM:
         case subop::kVEC_REDUCE_MEAN: {
-            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             uint64_t cnt = 0ULL;
             double sum = 0.0;
             if (!mask && v->elem_tag == kVecTagF64) {
@@ -113,7 +113,7 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         case subop::kVEC_REDUCE_L1_NORM: {
-            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             uint64_t cnt = 0ULL;
             double l1 = 0.0;
             if (!mask && v->elem_tag == kVecTagF64) {
@@ -136,7 +136,7 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         case subop::kVEC_REDUCE_L2_NORM_SQ: {
-            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             uint64_t cnt = 0ULL;
             double l2sq = 0.0;
             if (!mask && v->elem_tag == kVecTagF64) {
@@ -160,7 +160,7 @@ V11_OP_CASE(VEC_REDUCE) {
         }
         case subop::kVEC_REDUCE_MIN:
         case subop::kVEC_REDUCE_ARGMIN: {
-            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             bool has_mn = false;
             double mn = 0.0;
             int64_t argmn = -1;
@@ -185,7 +185,7 @@ V11_OP_CASE(VEC_REDUCE) {
         }
         case subop::kVEC_REDUCE_MAX:
         case subop::kVEC_REDUCE_ARGMAX: {
-            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (!p4_is_numeric_vec(v)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             bool has_mx = false;
             double mx = 0.0;
             int64_t argmx = -1;
@@ -209,9 +209,9 @@ V11_OP_CASE(VEC_REDUCE) {
             break;
         }
         default: {
-            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
-            V11_DISPATCH();
+            ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
+            VM_DISPATCH();
         }
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

@@ -1,11 +1,11 @@
 /**
- * @file v11_p4_helpers.hpp
+ * @file p4_helpers.hpp
  * @brief Shared Pillar 4 (0x40..0x57) zero-malloc helpers, math approximations,
  *        gather/copy utilities, and output slot management.
  */
 #pragma once
 
-#include "v11_p3_helpers.hpp"
+#include "p3_helpers.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -20,40 +20,40 @@ inline constexpr double kP4Sqrt2 = 1.41421356237309504880168872420969807857;
 inline constexpr double kP4Ln2   = 0.69314718055994530941723212145817656808;
 inline constexpr double kP4Pi    = 3.14159265358979323846264338327950288420;
 
-inline const V11Frontier* p4_get_mask_frontier(impulse_vm_workspace_v11_t& ws,
+inline const VmFrontier* p4_get_mask_frontier(impulse_vm_workspace_t& ws,
                                                uint8_t flags,
                                                uint8_t s3) noexcept {
     if ((flags & FLAG_MASKED_S3) == 0u) return nullptr;
     if (!ws.is_f_init(s3) || ws.f_regs[s3].multi_lane) {
-        ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+        ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
         return nullptr;
     }
     return &ws.f_regs[s3];
 }
 
-inline bool p4_lane_active(const V11Frontier* mask, uint32_t i) noexcept {
+inline bool p4_lane_active(const VmFrontier* mask, uint32_t i) noexcept {
     return mask == nullptr || mask->contains_1bit(i);
 }
 
-inline bool p4_is_numeric_vec(const V11Vector* v) noexcept {
+inline bool p4_is_numeric_vec(const VmVector* v) noexcept {
     return v != nullptr && (v->elem_tag == kVecTagF64 || v->elem_tag == kVecTagI64 || v->elem_tag == kVecTagU64);
 }
 
-inline double p4_vec_to_f64(const V11Vector& v, uint32_t i) noexcept {
+inline double p4_vec_to_f64(const VmVector& v, uint32_t i) noexcept {
     if (v.elem_tag == kVecTagF64) return v.f64_data[i];
     return static_cast<double>(v.i64_data[i]);
 }
 
-inline bool p4_is_scalar_f64_valid(const impulse_vm_workspace_v11_t& ws, uint8_t reg) noexcept {
+inline bool p4_is_scalar_f64_valid(const impulse_vm_workspace_t& ws, uint8_t reg) noexcept {
     if (!ws.is_r_valid(reg)) return false;
     return !std::isnan(p1_bits_to_f64(ws.read_r_raw(reg)));
 }
 
-inline double p4_read_scalar_f64(const impulse_vm_workspace_v11_t& ws, uint8_t reg) noexcept {
+inline double p4_read_scalar_f64(const impulse_vm_workspace_t& ws, uint8_t reg) noexcept {
     return p1_bits_to_f64(ws.read_r_raw(reg));
 }
 
-inline uint64_t* p4_alloc_valid_all_true(V11Arena& arena, uint32_t len) noexcept {
+inline uint64_t* p4_alloc_valid_all_true(VmArena& arena, uint32_t len) noexcept {
     size_t words = (len > 0u) ? ((static_cast<size_t>(len) + 63u) >> 6) : 1u;
     uint64_t* bits = arena.alloc_array<uint64_t>(words, 8);
     if (!bits) return nullptr;
@@ -69,8 +69,8 @@ inline uint64_t* p4_alloc_valid_all_true(V11Arena& arena, uint32_t len) noexcept
     return bits;
 }
 
-inline V11Vector* p4_shallow_copy_vec(V11Arena& arena, const V11Vector& col) noexcept {
-    auto* ov = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+inline VmVector* p4_shallow_copy_vec(VmArena& arena, const VmVector& col) noexcept {
+    auto* ov = static_cast<VmVector*>(arena.alloc(sizeof(VmVector), alignof(VmVector)));
     if (!ov) return nullptr;
     *ov = col;
     return ov;
@@ -100,7 +100,7 @@ inline bool p4_eval_cmp_f64(uint8_t subop, double a, double b) noexcept {
     }
 }
 
-inline int p4_str_cmp(const V11StrSlice& a, const V11StrSlice& b) noexcept {
+inline int p4_str_cmp(const VmStrSlice& a, const VmStrSlice& b) noexcept {
     uint32_t m = (a.len < b.len) ? a.len : b.len;
     if (m > 0u) {
         int c = std::memcmp(a.ptr, b.ptr, m);
@@ -111,19 +111,19 @@ inline int p4_str_cmp(const V11StrSlice& a, const V11StrSlice& b) noexcept {
     return 0;
 }
 
-inline bool p4_str_eq(const V11StrSlice& a, const V11StrSlice& b) noexcept {
+inline bool p4_str_eq(const VmStrSlice& a, const VmStrSlice& b) noexcept {
     return a.len == b.len && (a.len == 0u || std::memcmp(a.ptr, b.ptr, a.len) == 0);
 }
 
-inline bool p4_str_starts_with(const V11StrSlice& a, const V11StrSlice& b) noexcept {
+inline bool p4_str_starts_with(const VmStrSlice& a, const VmStrSlice& b) noexcept {
     return b.len <= a.len && (b.len == 0u || std::memcmp(a.ptr, b.ptr, b.len) == 0);
 }
 
-inline bool p4_str_ends_with(const V11StrSlice& a, const V11StrSlice& b) noexcept {
+inline bool p4_str_ends_with(const VmStrSlice& a, const VmStrSlice& b) noexcept {
     return b.len <= a.len && (b.len == 0u || std::memcmp(a.ptr + (a.len - b.len), b.ptr, b.len) == 0);
 }
 
-inline bool p4_str_contains(const V11StrSlice& a, const V11StrSlice& b) noexcept {
+inline bool p4_str_contains(const VmStrSlice& a, const VmStrSlice& b) noexcept {
     if (b.len == 0u) return true;
     if (b.len > a.len) return false;
     for (uint32_t i = 0; i + b.len <= a.len; ++i) {
@@ -182,7 +182,7 @@ inline double p4_lgamma_approx(double x) noexcept {
     return 0.5 * std::log(2.0 * kP4Pi) + (z + 0.5) * std::log(t) - t + std::log(acc);
 }
 
-inline void p4_write_f64_scalar(impulse_vm_workspace_v11_t& ws, uint8_t dst, bool valid, double val) noexcept {
+inline void p4_write_f64_scalar(impulse_vm_workspace_t& ws, uint8_t dst, bool valid, double val) noexcept {
     if (!valid || std::isnan(val)) {
         ws.write_r_null(dst);
         ws.set_zf(true);
@@ -194,16 +194,16 @@ inline void p4_write_f64_scalar(impulse_vm_workspace_v11_t& ws, uint8_t dst, boo
     }
 }
 
-inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_v11_t& ws,
+inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_t& ws,
                                         uint8_t dst,
-                                        const V11Vector& col,
+                                        const VmVector& col,
                                         uint32_t idx) noexcept {
     if (col.elem_tag != kVecTagI64 &&
         col.elem_tag != kVecTagU64 &&
         col.elem_tag != kVecTagF64 &&
         col.elem_tag != kVecTagBool3vl &&
         col.elem_tag != kVecTagStr) {
-        ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+        ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
         return;
     }
     if (!col.is_valid_at(idx)) {
@@ -239,7 +239,7 @@ inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_v11_t& ws,
             break;
         }
         case kVecTagStr: {
-            V11StrSlice s = col.str_data[idx];
+            VmStrSlice s = col.str_data[idx];
             if (!s.valid) {
                 ws.write_r_null(dst);
                 ws.set_zf(true);
@@ -247,7 +247,7 @@ inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_v11_t& ws,
             } else {
                 uint64_t h = ws.intern_scalar_str(s.ptr, s.len);
                 if (h == 0ULL) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                    ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
                     return;
                 }
                 ws.write_r(dst, static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE), h);
@@ -257,23 +257,23 @@ inline void p4_write_vec_elem_to_scalar(impulse_vm_workspace_v11_t& ws,
             break;
         }
         default:
-            ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+            ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             break;
     }
 }
 
-IMPULSE_V11_NOINLINE inline V11Vector* p4_gather_from_vec(
-    V11Arena& arena,
-    const V11Vector& col,
+IMPULSE_VM_NOINLINE inline VmVector* p4_gather_from_vec(
+    VmArena& arena,
+    const VmVector& col,
     const uint32_t* indices,
     const uint8_t* idx_valid,
     uint32_t n,
-    const V11Frontier* mask
+    const VmFrontier* mask
 ) noexcept {
     size_t words = (n > 0u) ? ((static_cast<size_t>(n) + 63u) >> 6) : 1u;
-    auto* ov = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+    auto* ov = static_cast<VmVector*>(arena.alloc(sizeof(VmVector), alignof(VmVector)));
     if (!ov) return nullptr;
-    new (ov) V11Vector();
+    new (ov) VmVector();
     ov->elem_tag = col.elem_tag;
     ov->length = n;
 
@@ -338,7 +338,7 @@ IMPULSE_V11_NOINLINE inline V11Vector* p4_gather_from_vec(
             return ov;
         }
         case kVecTagStr: {
-            V11StrSlice* out = (n > 0u) ? arena.alloc_array<V11StrSlice>(n, 8) : nullptr;
+            VmStrSlice* out = (n > 0u) ? arena.alloc_array<VmStrSlice>(n, 8) : nullptr;
             if (n > 0u && !out) return nullptr;
             for (uint32_t i = 0; i < n; ++i) {
                 out[i] = {nullptr, 0u, 0u};
@@ -379,7 +379,7 @@ IMPULSE_V11_NOINLINE inline V11Vector* p4_gather_from_vec(
     }
 }
 
-inline const V11KeyCatalog* p4_find_key_catalog(const V11SnapshotView* snap, uint16_t dom_id) noexcept {
+inline const VmKeyCatalog* p4_find_key_catalog(const VmSnapshotView* snap, uint16_t dom_id) noexcept {
     if (!snap) return nullptr;
     for (uint32_t i = 0; i < snap->key_catalog_count; ++i) {
         if (snap->key_catalogs[i].dom_id == dom_id) return &snap->key_catalogs[i];
@@ -387,7 +387,7 @@ inline const V11KeyCatalog* p4_find_key_catalog(const V11SnapshotView* snap, uin
     return nullptr;
 }
 
-inline int64_t p4_lookup_key(const V11KeyCatalog* kc, const V11StrSlice& key) noexcept {
+inline int64_t p4_lookup_key(const VmKeyCatalog* kc, const VmStrSlice& key) noexcept {
     if (!kc || !key.valid) return -1;
     for (uint32_t i = 0; i < kc->count; ++i) {
         if (kc->keys[i].valid && p4_str_eq(kc->keys[i], key)) return static_cast<int64_t>(i);
@@ -395,7 +395,7 @@ inline int64_t p4_lookup_key(const V11KeyCatalog* kc, const V11StrSlice& key) no
     return -1;
 }
 
-inline bool p4_put_output(impulse_vm_workspace_v11_t& ws, uint16_t slot, V11Vector* vec) noexcept {
+inline bool p4_put_output(impulse_vm_workspace_t& ws, uint16_t slot, VmVector* vec) noexcept {
     for (uint32_t i = 0; i < ws.output_count; ++i) {
         if (ws.outputs[i].slot == slot) {
             ws.outputs[i].vec = vec;

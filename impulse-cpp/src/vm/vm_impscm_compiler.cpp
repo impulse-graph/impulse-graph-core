@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-namespace impulse::compiler::v11 {
+namespace impulse::compiler {
 
 using namespace impulse::vm;
 
@@ -384,7 +384,7 @@ struct MorselScope {
     std::string edge_var;
     int pred_reg = -1;
     uint8_t next_morsel_v = 12; // V8=src, V9=tgt, V10=edge, V11=pred, V12..V15=temps
-    V11ProgramBuilder* hoisted_b = nullptr; // Points to outer builder before OP_WALK_MORSEL
+    VmProgramBuilder* hoisted_b = nullptr; // Points to outer builder before OP_WALK_MORSEL
 
     uint8_t alloc_temp_v(uint32_t pinned_v_mask) {
         for (int attempt = 0; attempt < 4; ++attempt) {
@@ -460,7 +460,7 @@ DecimalCmpOp flip_cmp_op(DecimalCmpOp op) noexcept {
 struct CompilerCtx {
     const impulse_snapshot_t* snap = nullptr;
     bool opt = true;
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     uint8_t next_r = 0;
     uint8_t next_f = 0;
     uint8_t next_v = 0;
@@ -476,7 +476,7 @@ struct CompilerCtx {
     std::vector<OutputColumnMeta> output_schema;
     std::unique_ptr<MorselScope> morsel;
 
-    V11ProgramBuilder& const_builder() noexcept {
+    VmProgramBuilder& const_builder() noexcept {
         return (morsel && morsel->hoisted_b) ? *morsel->hoisted_b : b;
     }
 
@@ -1463,8 +1463,8 @@ struct CompilerCtx {
 
         // Buffer morsel body words separately so any scalar OP_LOAD_CONST inside the body
         // is hoisted cleanly BEFORE OP_WALK_MORSEL (OP_LOAD_CONST is MorselRole::Forbidden).
-        V11ProgramBuilder outer_b = std::move(b);
-        b = V11ProgramBuilder();
+        VmProgramBuilder outer_b = std::move(b);
+        b = VmProgramBuilder();
 
         auto prev_morsel = std::move(morsel);
         uint32_t saved_pin_r = pinned_r_mask;
@@ -2346,7 +2346,7 @@ std::pair<uint16_t, uint8_t> infer_decimal_precision_scale(const std::string& te
     return {p, sc};
 }
 
-ImpScmV11CompileResult ImpScmV11Compiler::compile(
+ImpScmCompileResult ImpScmCompiler::compile(
     const std::string& source,
     const impulse_snapshot_t* snapshot,
     bool enable_optimizations
@@ -2442,7 +2442,7 @@ ImpScmV11CompileResult ImpScmV11Compiler::compile(
     ctx.b.emit(Opcode::OP_HALT, subop::kHALT_OK, 0, 0, 0, 0, 0, 0);
 
     uint16_t req_doms = snapshot ? static_cast<uint16_t>(snapshot->domains.size()) : 0u;
-    ImpScmV11CompileResult res;
+    ImpScmCompileResult res;
     res.code_words = ctx.b.words();
     res.impb_bytes = ctx.b.build_impb(0, 0, req_doms);
     res.param_name_to_id = std::move(ctx.param_map);
@@ -2450,16 +2450,16 @@ ImpScmV11CompileResult ImpScmV11Compiler::compile(
     res.output_names = std::move(ctx.output_names);
     res.output_schema = std::move(ctx.output_schema);
 
-    impulse_vm_validation_v11_t vr = impulse_vm_validate_v11(res.impb_bytes.data(), res.impb_bytes.size());
-    if (vr.status != IMPULSE_VM_V11_OK) {
+    impulse_vm_validation_t vr = impulse_vm_validate(res.impb_bytes.data(), res.impb_bytes.size());
+    if (vr.status != IMPULSE_VM_OK) {
         throw std::runtime_error("VALIDATION_ERROR: emitted invalid v0.11 bytecode at pc=" + std::to_string(vr.bad_pc));
     }
     return res;
 }
 
-} // namespace impulse::compiler::v11
+} // namespace impulse::compiler
 
-extern "C" IMPULSE_API int impulse_compile_impscm_v11(
+extern "C" IMPULSE_API int impulse_compile_impscm(
     const char* impscm_src,
     const impulse_snapshot_t* snapshot,
     int opt_level,
@@ -2472,7 +2472,7 @@ extern "C" IMPULSE_API int impulse_compile_impscm_v11(
     *out_impb = nullptr;
     *out_len = 0;
     try {
-        auto res = impulse::compiler::v11::ImpScmV11Compiler::compile(impscm_src, snapshot, opt_level != 0);
+        auto res = impulse::compiler::ImpScmCompiler::compile(impscm_src, snapshot, opt_level != 0);
         auto* buf = static_cast<uint8_t*>(std::malloc(res.impb_bytes.size()));
         if (!buf) return -2;
         std::memcpy(buf, res.impb_bytes.data(), res.impb_bytes.size());
@@ -2487,6 +2487,6 @@ extern "C" IMPULSE_API int impulse_compile_impscm_v11(
     }
 }
 
-extern "C" IMPULSE_API void impulse_vm_v11_free_bytes(uint8_t* ptr) {
+extern "C" IMPULSE_API void impulse_vm_free_bytes(uint8_t* ptr) {
     std::free(ptr);
 }

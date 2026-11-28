@@ -1,14 +1,14 @@
 // Opcode 0x13: OP_RET
-V11_OP_CASE(RET) {
+VM_OP_CASE(RET) {
     if (ws.state.call_depth == 0u) {
-        ws.status = IMPULSE_VM_V11_ERR_STACK_UNDERFLOW;
-        V11_DISPATCH();
+        ws.status = IMPULSE_VM_ERR_STACK_UNDERFLOW;
+        VM_DISPATCH();
     }
     uint32_t callee_spill_base = static_cast<uint32_t>(ws.state.call_depth) * kSpillPerFrame;
     for (uint32_t k = 0; k < kSpillPerFrame; ++k) ws.spill_slots[callee_spill_base + k].kind = kSpillEmpty;
 
     uint16_t d = --ws.state.call_depth;
-    const V11CallFrame& frame = ws.call_frames[d];
+    const VmCallFrame& frame = ws.call_frames[d];
     uint8_t rs = frame.r_stride;
     uint8_t fs = frame.f_stride;
     uint8_t vs = frame.v_stride;
@@ -38,8 +38,8 @@ V11_OP_CASE(RET) {
                 uint8_t src = static_cast<uint8_t>(i - fs);
                 if (ws.is_f_init(src)) {
                     if (!ws.f_regs[i].copy_from(ws.arena, ws.f_regs[src])) {
-                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-                        V11_DISPATCH();
+                        ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
+                        VM_DISPATCH();
                     }
                     ws.set_f_init(i, true);
                 } else {
@@ -47,8 +47,8 @@ V11_OP_CASE(RET) {
                 }
             } else if (((saved_fvm >> i) & 1u) != 0u) {
                 if (!ws.f_regs[i].copy_from(ws.arena, frame.saved_f[i])) {
-                    ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
-                    V11_DISPATCH();
+                    ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
+                    VM_DISPATCH();
                 }
                 ws.set_f_init(i, true);
             } else {
@@ -63,5 +63,5 @@ V11_OP_CASE(RET) {
         }
     }
     ws.state.pc = frame.return_pc;
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

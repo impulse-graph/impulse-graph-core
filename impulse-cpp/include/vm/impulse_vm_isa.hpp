@@ -10,7 +10,7 @@
 // 1. SQLite-Style X-Macro Opcode Lists & Zero-Cost 64-Bit Nibble Macros
 // =============================================================================
 // X(NAME, CODE, MNEMONIC, PILLAR, ALLOWED_FLAGS, VALID_SUBOP_MASK, MORSEL_ROLE)
-#define IMPULSE_V11_ACTIVE_OPCODE_LIST(X) \
+#define IMPULSE_ACTIVE_OPCODE_LIST(X) \
   X(OP_HALT, 0x00, HALT, 1, 0x0, 0x0001, Forbidden) \
   X(OP_NOP, 0x01, NOP, 1, 0x0, 0x0001, BodyOk) \
   X(OP_TRAP, 0x02, TRAP, 1, 0x0, 0x0001, Forbidden) \
@@ -92,23 +92,23 @@
   X(OP_LANE_STATE_REDUCE, 0x6E, LANE_STATE_REDUCE, 5, 0x2, 0x007F, Forbidden) \
   X(OP_VECTOR_POOL, 0x6F, VECTOR_POOL, 5, 0x0, 0x000F, Forbidden)
 
-#define IMPULSE_V11_OPCODE_LIST(X) \
-  IMPULSE_V11_ACTIVE_OPCODE_LIST(X) \
+#define IMPULSE_OPCODE_LIST(X) \
+  IMPULSE_ACTIVE_OPCODE_LIST(X) \
   X(OP_EXTENSION_PAYLOAD, 0xFF, EXTENSION_PAYLOAD, 0, 0x0, 0x0001, Forbidden)
 
 // 64-bit instruction word field extraction macros (little-endian nibble layout):
 // [imm32:32 | s2:4 | s3:4 | dst:4 | s1:4 | flags:4 | subop:4 | opcode:8]
-#define IMP_V11_OPCODE(w)    (static_cast<uint8_t>((static_cast<uint64_t>(w)) & 0xFFULL))
-#define IMP_V11_SUBOP(w)     (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 8) & 0xFULL))
-#define IMP_V11_FLAGS(w)     (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 12) & 0xFULL))
-#define IMP_V11_S1(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 16) & 0xFULL))
-#define IMP_V11_DST(w)       (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 20) & 0xFULL))
-#define IMP_V11_S3(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 24) & 0xFULL))
-#define IMP_V11_S2(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 28) & 0xFULL))
-#define IMP_V11_IMM32(w)     (static_cast<uint32_t>(((static_cast<uint64_t>(w)) >> 32) & 0xFFFFFFFFULL))
-#define IMP_V11_IMM32_S(w)   (static_cast<int32_t>(IMP_V11_IMM32(w)))
-#define IMP_V11_IMM16_LO(w)  (static_cast<uint16_t>(IMP_V11_IMM32(w) & 0xFFFFu))
-#define IMP_V11_IMM16_HI(w)  (static_cast<uint16_t>((IMP_V11_IMM32(w) >> 16) & 0xFFFFu))
+#define IMP_OPCODE(w)    (static_cast<uint8_t>((static_cast<uint64_t>(w)) & 0xFFULL))
+#define IMP_SUBOP(w)     (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 8) & 0xFULL))
+#define IMP_FLAGS(w)     (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 12) & 0xFULL))
+#define IMP_S1(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 16) & 0xFULL))
+#define IMP_DST(w)       (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 20) & 0xFULL))
+#define IMP_S3(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 24) & 0xFULL))
+#define IMP_S2(w)        (static_cast<uint8_t>(((static_cast<uint64_t>(w)) >> 28) & 0xFULL))
+#define IMP_IMM32(w)     (static_cast<uint32_t>(((static_cast<uint64_t>(w)) >> 32) & 0xFFFFFFFFULL))
+#define IMP_IMM32_S(w)   (static_cast<int32_t>(IMP_IMM32(w)))
+#define IMP_IMM16_LO(w)  (static_cast<uint16_t>(IMP_IMM32(w) & 0xFFFFu))
+#define IMP_IMM16_HI(w)  (static_cast<uint16_t>((IMP_IMM32(w) >> 16) & 0xFFFFu))
 
 namespace impulse::vm {
 
@@ -173,9 +173,9 @@ enum class MorselRole : uint8_t {
 };
 
 enum class Opcode : uint8_t {
-#define IMP_V11_ENUM_ENTRY(NAME, CODE, MNEM, PILLAR, FLAGS, MASK, ROLE) NAME = CODE,
-  IMPULSE_V11_OPCODE_LIST(IMP_V11_ENUM_ENTRY)
-#undef IMP_V11_ENUM_ENTRY
+#define IMP_ENUM_ENTRY(NAME, CODE, MNEM, PILLAR, FLAGS, MASK, ROLE) NAME = CODE,
+  IMPULSE_OPCODE_LIST(IMP_ENUM_ENTRY)
+#undef IMP_ENUM_ENTRY
 };
 
 namespace subop {
@@ -681,10 +681,10 @@ struct OpcodeMeta {
 
 inline constexpr std::array<OpcodeMeta, 256> kOpcodeMeta = []() constexpr {
   std::array<OpcodeMeta, 256> tbl{};
-#define IMP_V11_META_ENTRY(NAME, CODE, MNEM, PILLAR, FLAGS, MASK, ROLE) \
+#define IMP_META_ENTRY(NAME, CODE, MNEM, PILLAR, FLAGS, MASK, ROLE) \
   tbl[CODE] = OpcodeMeta{true, CODE, PILLAR, FLAGS, MASK, MorselRole::ROLE, #NAME, #MNEM};
-  IMPULSE_V11_OPCODE_LIST(IMP_V11_META_ENTRY)
-#undef IMP_V11_META_ENTRY
+  IMPULSE_OPCODE_LIST(IMP_META_ENTRY)
+#undef IMP_META_ENTRY
   return tbl;
 }();
 

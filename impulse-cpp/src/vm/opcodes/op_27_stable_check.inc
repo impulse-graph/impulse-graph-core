@@ -1,17 +1,17 @@
 // Opcode 0x27: OP_STABLE_CHECK
-V11_OP_CASE(STABLE_CHECK) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
+VM_OP_CASE(STABLE_CHECK) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
 
     if (subop == 0u) {
-        if (!ws.is_f_init(s1) || !ws.is_f_init(s2)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-        const V11Frontier& fa = ws.f_regs[s1];
-        const V11Frontier& fb = ws.f_regs[s2];
-        if (fa.domain_id != fb.domain_id) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
-        if (fa.multi_lane != fb.multi_lane) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+        if (!ws.is_f_init(s1) || !ws.is_f_init(s2)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+        const VmFrontier& fa = ws.f_regs[s1];
+        const VmFrontier& fb = ws.f_regs[s2];
+        if (fa.domain_id != fb.domain_id) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
+        if (fa.multi_lane != fb.multi_lane) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
         bool eq = false;
         if (!fa.multi_lane) {
             if (fa.tier == kTierAllSpan && fb.tier == kTierAllSpan) {
@@ -28,7 +28,7 @@ V11_OP_CASE(STABLE_CHECK) {
                       std::memcmp(fa.nodes, fb.nodes, static_cast<size_t>(fa.node_count) * sizeof(uint32_t)) == 0);
             }
         } else {
-            if (fa.alloc_width != fb.alloc_width) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+            if (fa.alloc_width != fb.alloc_width) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
             eq = (fa.ml_count == fb.ml_count) &&
                  (fa.ml_count == 0u ||
                   (std::memcmp(fa.ml_nodes, fb.ml_nodes, static_cast<size_t>(fa.ml_count) * sizeof(uint64_t)) == 0 &&
@@ -38,14 +38,14 @@ V11_OP_CASE(STABLE_CHECK) {
         ws.set_zf(eq);
         ws.state.pc += 1u;
     } else if (subop == 1u) {
-        if (!ws.is_r_valid(s3)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-        const V11Vector* v1 = ws.v_regs[s1];
-        const V11Vector* v2 = ws.v_regs[s2];
-        if (!v1 || !v2) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
+        if (!ws.is_r_valid(s3)) { ws.status = IMPULSE_VM_ERR_INVALID_OPERAND; VM_DISPATCH(); }
+        const VmVector* v1 = ws.v_regs[s1];
+        const VmVector* v2 = ws.v_regs[s2];
+        if (!v1 || !v2) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
         double eps = p1_bits_to_f64(ws.read_r_raw(s3));
-        if (std::isnan(eps)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-        if (!p2_is_numeric_vec(v1) || !p2_is_numeric_vec(v2)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-        if (v1->length != v2->length) { ws.status = IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS; V11_DISPATCH(); }
+        if (std::isnan(eps)) { ws.status = IMPULSE_VM_ERR_INVALID_OPERAND; VM_DISPATCH(); }
+        if (!p2_is_numeric_vec(v1) || !p2_is_numeric_vec(v2)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+        if (v1->length != v2->length) { ws.status = IMPULSE_VM_ERR_OUT_OF_BOUNDS; VM_DISPATCH(); }
         double sum = 0.0;
         bool null_mismatch = false;
         for (uint32_t i = 0; i < v1->length; ++i) {
@@ -68,7 +68,7 @@ V11_OP_CASE(STABLE_CHECK) {
         }
         ws.state.pc += 1u;
     } else {
-        ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+        ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

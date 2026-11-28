@@ -4,7 +4,7 @@
  *        Multi-Lane vs Single-Lane, Morsel, and Attribute-Type Benchmark & Equivalence Runner.
  */
 #include "vm/impulse_bytecode_emitter.hpp"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "impulse_graph.h"
 
 #undef OP_HALT
@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-using namespace impulse::compiler::v11;
+using namespace impulse::compiler;
 using namespace impulse::vm;
 
 struct RunRes {
@@ -36,16 +36,16 @@ struct RunRes {
 static RunRes run_timed_prog(
     const std::vector<uint8_t>& impb,
     const impulse_snapshot_t* snap,
-    const impulse_vm_params_v11_t* params,
-    impulse_vm_workspace_v11_t* ws,
+    const impulse_vm_params_t* params,
+    impulse_vm_workspace_t* ws,
     int warmup,
     int iters
 ) {
     RunRes res{};
     for (int i = 0; i < warmup; ++i) {
-        uint32_t st = impulse_vm_execute_v11(
+        uint32_t st = impulse_vm_execute(
             impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
-        if (st != IMPULSE_VM_V11_OK) {
+        if (st != IMPULSE_VM_OK) {
             res.status = st;
             return res;
         }
@@ -54,21 +54,21 @@ static RunRes run_timed_prog(
     samples.reserve(static_cast<size_t>(iters));
     for (int i = 0; i < iters; ++i) {
         auto t0 = std::chrono::steady_clock::now();
-        uint32_t st = impulse_vm_execute_v11(
+        uint32_t st = impulse_vm_execute(
             impb.data(), impb.size(), snap, params, ws, nullptr, 0, nullptr);
         auto t1 = std::chrono::steady_clock::now();
-        if (st != IMPULSE_VM_V11_OK) {
+        if (st != IMPULSE_VM_OK) {
             res.status = st;
             return res;
         }
         samples.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
     }
     std::sort(samples.begin(), samples.end());
-    res.status = IMPULSE_VM_V11_OK;
+    res.status = IMPULSE_VM_OK;
     res.us = samples.empty() ? 0.0 : samples[samples.size() / 2];
 
-    impulse_vm_output_view_v11_t ov{};
-    if (impulse_vm_v11_get_output(ws, 0, &ov) == 1 && ov.length > 0) {
+    impulse_vm_output_view_t ov{};
+    if (impulse_vm_get_output(ws, 0, &ov) == 1 && ov.length > 0) {
         if ((ov.elem_tag == 0 || ov.elem_tag == 1) && ov.i64_data) {
             res.val = ov.i64_data[0];
         } else if (ov.elem_tag == 4 && ov.f64_data) {
@@ -103,7 +103,7 @@ static bool starts_with(const std::string& s, const std::string& prefix) {
 }
 
 static std::vector<uint8_t> build_walk_2hop(uint16_t rel_id, uint16_t in_dom, uint8_t walk_subop, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, in_dom);
     b.emit_u16(Opcode::OP_WALK, walk_subop, 0, 1, 0, 0, 0, rel_id, 0);
     b.emit_u16(Opcode::OP_WALK, walk_subop, 0, 0, 1, 0, 0, rel_id, 0);
@@ -114,7 +114,7 @@ static std::vector<uint8_t> build_walk_2hop(uint16_t rel_id, uint16_t in_dom, ui
 }
 
 static std::vector<uint8_t> build_walk_1hop(uint16_t rel_id, uint16_t in_dom, uint8_t walk_subop, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, in_dom);
     b.emit_u16(Opcode::OP_WALK, walk_subop, 0, 1, 0, 0, 0, rel_id, 0);
     b.emit(Opcode::OP_SET_CARDINALITY, subop::kSET_CARDINALITY_CARD_1BIT, 0, 0, 1, 0, 0, 0);
@@ -124,7 +124,7 @@ static std::vector<uint8_t> build_walk_1hop(uint16_t rel_id, uint16_t in_dom, ui
 }
 
 static std::vector<uint8_t> build_morsel_1hop(uint16_t rel_id, uint16_t in_dom, uint16_t tgt_dom, uint8_t morsel_subop, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, in_dom);
     b.emit_u16(Opcode::OP_WALK_MORSEL, morsel_subop, 0, 0, 0, 0, 0, rel_id, 2);
     b.emit_u16(Opcode::OP_MORSEL_COMMIT, subop::kMORSEL_COMMIT_YIELD_FRONTIER, 0, 1, 9, 0, 0, tgt_dom, 0);
@@ -142,7 +142,7 @@ static int64_t pow10_i64(uint8_t s) {
 }
 
 static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_idx, bool is_float, int64_t target_i64, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_COLUMN, 0, 0, 0, 0, 0, 0, dom_id, attr_idx);
     if (is_float) {
         float f40 = 40.0f;
@@ -161,7 +161,7 @@ static std::vector<uint8_t> build_node_attr_eq40(uint16_t dom_id, uint16_t attr_
 }
 
 static std::vector<uint8_t> build_edge_attr_morsel_eq40(uint16_t rel_id, uint16_t in_dom, uint16_t attr_idx, bool is_float, int64_t target_i64, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_FRONTIER, 0, 0, 0, 0, 0, 0, in_dom);
     b.emit_u16(Opcode::OP_WALK, subop::kWALK_FWD, 0, 1, 0, 0, 0, rel_id, 0);
     if (is_float) {
@@ -185,7 +185,7 @@ static std::vector<uint8_t> build_edge_attr_morsel_eq40(uint16_t rel_id, uint16_
 }
 
 static std::vector<uint8_t> build_node_attr_reduce(uint16_t dom_id, uint16_t attr_idx, uint8_t red_subop, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_COLUMN, 0, 0, 0, 0, 0, 0, dom_id, attr_idx);
     b.emit(Opcode::OP_VEC_REDUCE, red_subop, 0, 0, 0, 0, 0, 0);
     b.emit_u16(Opcode::OP_COLLECT, subop::kCOLLECT_SCALAR, 0, 0, 0, 0, 0, 0, 0);
@@ -194,7 +194,7 @@ static std::vector<uint8_t> build_node_attr_reduce(uint16_t dom_id, uint16_t att
 }
 
 static std::vector<uint8_t> build_ml_2hop(uint16_t rel_id, uint16_t dom_id, bool force_w64, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_VEC, 0, 0, 0, 0, 0, 0, 2);
     b.emit_u16(Opcode::OP_LANE_INIT_SEEDS, force_w64 ? subop::kLANE_INIT_SEEDS_FORCE_W64 : subop::kLANE_INIT_SEEDS_AUTO_WIDTH,
                0, 0, 0, 0, 0, dom_id, 0);
@@ -207,7 +207,7 @@ static std::vector<uint8_t> build_ml_2hop(uint16_t rel_id, uint16_t dom_id, bool
 }
 
 static std::vector<uint8_t> build_ml_morsel_2hop(uint16_t rel_id, uint16_t dom_id, bool force_w64, uint16_t dom_req) {
-    V11ProgramBuilder b;
+    VmProgramBuilder b;
     b.emit_u16(Opcode::OP_LOAD_PARAM, subop::kLOAD_PARAM_VEC, 0, 0, 0, 0, 0, 0, 2);
     b.emit_u16(Opcode::OP_LANE_INIT_SEEDS, force_w64 ? subop::kLANE_INIT_SEEDS_FORCE_W64 : subop::kLANE_INIT_SEEDS_AUTO_WIDTH,
                0, 0, 0, 0, 0, dom_id, 0);
@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Failed to open snapshot %s (status=%d)\n", path, open_st);
         return 1;
     }
-    if (impulse_vm_v11_prepare_snapshot(snap) != IMPULSE_VM_V11_OK) {
+    if (impulse_vm_prepare_snapshot(snap) != IMPULSE_VM_OK) {
         std::fprintf(stderr, "Failed to prepare v11 snapshot view\n");
         return 1;
     }
@@ -244,8 +244,8 @@ int main(int argc, char** argv) {
     const size_t ws_bytes = 64u * 1024u * 1024u;
     std::vector<uint8_t> raw_buf(ws_bytes + 128u);
     void* raw = reinterpret_cast<void*>((reinterpret_cast<uintptr_t>(raw_buf.data()) + 127u) & ~uintptr_t(127u));
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_V11_OK) return 1;
+    impulse_vm_workspace_t* ws = nullptr;
+    if (impulse_workspace_init(raw, ws_bytes, &ws) != IMPULSE_VM_OK) return 1;
 
     uint16_t dom_cnt = impulse_snapshot_domain_count(snap);
     uint16_t rel_cnt = impulse_snapshot_relation_count(snap);
@@ -294,13 +294,13 @@ int main(int argc, char** argv) {
         auto run_rel = [&](uint8_t subop, uint16_t in_dom, bool is_morsel) -> RunRes {
             auto prog = is_morsel ? build_morsel_1hop(r, in_dom, (subop == 1 || subop == 3) ? re.src_domain_id : re.tgt_domain_id, subop, dom_cnt)
                                   : build_walk_1hop(r, in_dom, subop, dom_cnt);
-            impulse_vm_param_binding_v11_t bind{};
+            impulse_vm_param_binding_t bind{};
             bind.param_id = 0;
-            bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+            bind.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
             bind.domain_id = in_dom;
             bind.count = 1;
             bind.data_ptr = &main_seed;
-            impulse_vm_params_v11_t params{};
+            impulse_vm_params_t params{};
             params.bindings = &bind;
             params.binding_count = 1;
             return run_timed_prog(prog, snap, &params, ws, warmup, iters);
@@ -310,7 +310,7 @@ int main(int argc, char** argv) {
         RunRes r_csc  = run_rel(subop::kWALK_REV, re.tgt_domain_id, false);
         RunRes r_coof = run_rel(subop::kWALK_COO_FWD, re.src_domain_id, false);
         RunRes r_coor = run_rel(subop::kWALK_COO_REV, re.tgt_domain_id, false);
-        RunRes r_mors = has_csr ? run_rel(subop::kWALK_MORSEL_FWD, re.src_domain_id, true) : RunRes{IMPULSE_VM_V11_ERR_INVALID_OPERAND, 0.0, -1};
+        RunRes r_mors = has_csr ? run_rel(subop::kWALK_MORSEL_FWD, re.src_domain_id, true) : RunRes{IMPULSE_VM_ERR_INVALID_OPERAND, 0.0, -1};
 
         if (!first_rel) std::printf(",");
         first_rel = false;
@@ -344,7 +344,7 @@ int main(int argc, char** argv) {
             target_i64 = 40LL * pow10_i64(dec_s);
         }
         auto prog = build_node_attr_eq40(canon_dom_id, a, is_flt, target_i64, dom_cnt);
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         RunRes rr = run_timed_prog(prog, snap, &params, ws, warmup, iters);
         if (!first_attr) std::printf(",");
         first_attr = false;
@@ -367,13 +367,13 @@ int main(int argc, char** argv) {
             target_i64 = 40LL * pow10_i64(dec_s);
         }
         auto prog = build_edge_attr_morsel_eq40(canon_rel_id, cre.src_domain_id, a, is_flt, target_i64, dom_cnt);
-        impulse_vm_param_binding_v11_t bind{};
+        impulse_vm_param_binding_t bind{};
         bind.param_id = 0;
-        bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+        bind.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
         bind.domain_id = cre.src_domain_id;
         bind.count = 1;
         bind.data_ptr = &main_seed;
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         params.bindings = &bind;
         params.binding_count = 1;
         RunRes rr = run_timed_prog(prog, snap, &params, ws, warmup, iters);
@@ -391,7 +391,7 @@ int main(int argc, char** argv) {
         if (impulse_snapshot_get_domain_attribute_name(snap, canon_dom_id, a, &aname_c) != IMPULSE_OK || !aname_c) continue;
         std::string aname(aname_c);
         if (!starts_with(aname, "BOUNDARY_")) continue;
-        impulse_vm_params_v11_t params{};
+        impulse_vm_params_t params{};
         RunRes r_cnt = run_timed_prog(build_node_attr_reduce(canon_dom_id, a, subop::kVEC_REDUCE_COUNT_VALID, dom_cnt), snap, &params, ws, 2, 5);
         RunRes r_min = run_timed_prog(build_node_attr_reduce(canon_dom_id, a, subop::kVEC_REDUCE_MIN, dom_cnt), snap, &params, ws, 2, 5);
         RunRes r_max = run_timed_prog(build_node_attr_reduce(canon_dom_id, a, subop::kVEC_REDUCE_MAX, dom_cnt), snap, &params, ws, 2, 5);
@@ -424,10 +424,10 @@ int main(int argc, char** argv) {
     // Baseline single-lane 1-seed 2hop
     {
         auto prog = build_walk_2hop(canon_rel_id, cre.src_domain_id, subop::kWALK_FWD, dom_cnt);
-        impulse_vm_param_binding_v11_t bind{};
-        bind.param_id = 0; bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+        impulse_vm_param_binding_t bind{};
+        bind.param_id = 0; bind.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
         bind.domain_id = cre.src_domain_id; bind.count = 1; bind.data_ptr = &seeds[0];
-        impulse_vm_params_v11_t params{}; params.bindings = &bind; params.binding_count = 1;
+        impulse_vm_params_t params{}; params.bindings = &bind; params.binding_count = 1;
         emit_ml("single_1seed_2hop", 1, run_timed_prog(prog, snap, &params, ws, warmup, iters));
     }
 
@@ -436,10 +436,10 @@ int main(int argc, char** argv) {
     for (uint32_t k : ks) {
         if (k > seeds.size()) continue;
         std::vector<uint64_t> sub_seeds(seeds.begin(), seeds.begin() + k);
-        impulse_vm_param_binding_v11_t bind{};
-        bind.param_id = 0; bind.kind = IMPULSE_VM_V11_PARAM_VEC_U64;
+        impulse_vm_param_binding_t bind{};
+        bind.param_id = 0; bind.kind = IMPULSE_VM_PARAM_VEC_U64;
         bind.domain_id = cre.src_domain_id; bind.count = k; bind.data_ptr = sub_seeds.data();
-        impulse_vm_params_v11_t params{}; params.bindings = &bind; params.binding_count = 1;
+        impulse_vm_params_t params{}; params.bindings = &bind; params.binding_count = 1;
 
         char lbl[64];
         std::snprintf(lbl, sizeof(lbl), "ml_k%u_auto_2hop", k);
@@ -460,10 +460,10 @@ int main(int argc, char** argv) {
         int64_t total_card = 0;
         double total_us = 0.0;
         for (uint32_t i = 0; i < k_ref; ++i) {
-            impulse_vm_param_binding_v11_t bind{};
-            bind.param_id = 0; bind.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+            impulse_vm_param_binding_t bind{};
+            bind.param_id = 0; bind.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
             bind.domain_id = cre.src_domain_id; bind.count = 1; bind.data_ptr = &seeds[i];
-            impulse_vm_params_v11_t params{}; params.bindings = &bind; params.binding_count = 1;
+            impulse_vm_params_t params{}; params.bindings = &bind; params.binding_count = 1;
             RunRes rr = run_timed_prog(prog, snap, &params, ws, 2, 10);
             total_card += rr.val;
             total_us += rr.us;

@@ -259,10 +259,10 @@ std::string as_str(const JsonVal* v) {
     return v->sval;
 }
 
-V11Vector* parse_vec_into_arena(V11Arena& arena, const std::string& ty, const JsonVal* vals_v) {
-    auto* vec = static_cast<V11Vector*>(arena.alloc(sizeof(V11Vector), alignof(V11Vector)));
+VmVector* parse_vec_into_arena(VmArena& arena, const std::string& ty, const JsonVal* vals_v) {
+    auto* vec = static_cast<VmVector*>(arena.alloc(sizeof(VmVector), alignof(VmVector)));
     if (!vec) return nullptr;
-    new (vec) V11Vector();
+    new (vec) VmVector();
 
     size_t n = (vals_v && vals_v->kind == JsonVal::Kind::Array) ? vals_v->arr.size() : 0;
     vec->length = static_cast<uint32_t>(n);
@@ -283,7 +283,7 @@ V11Vector* parse_vec_into_arena(V11Arena& arena, const std::string& ty, const Js
         }
     } else if (ty == "str" || ty == "str_vec") {
         vec->elem_tag = kVecTagStr;
-        vec->str_data = (n > 0) ? arena.alloc_array<V11StrSlice>(n, 8) : nullptr;
+        vec->str_data = (n > 0) ? arena.alloc_array<VmStrSlice>(n, 8) : nullptr;
         for (size_t i = 0; i < n; ++i) {
             const JsonVal& elem = vals_v->arr[i];
             if (elem.kind == JsonVal::Kind::Null) {
@@ -349,26 +349,26 @@ V11Vector* parse_vec_into_arena(V11Arena& arena, const std::string& ty, const Js
     return vec;
 }
 
-const char* status_name(impulse_vm_status_v11_t st) {
+const char* status_name(impulse_vm_status_t st) {
     switch (st) {
-        case IMPULSE_VM_V11_OK:                    return "IMPULSE_VM_OK";
-        case IMPULSE_VM_V11_ERR_INVALID_OPCODE:    return "IMPULSE_VM_ERR_INVALID_OPCODE";
-        case IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS:     return "IMPULSE_VM_ERR_OUT_OF_BOUNDS";
-        case IMPULSE_VM_V11_ERR_NULL_SNAPSHOT:     return "IMPULSE_VM_ERR_NULL_SNAPSHOT";
-        case IMPULSE_VM_V11_ERR_STACK_OVERFLOW:    return "IMPULSE_VM_ERR_STACK_OVERFLOW";
-        case IMPULSE_VM_V11_ERR_STACK_UNDERFLOW:   return "IMPULSE_VM_ERR_STACK_UNDERFLOW";
-        case IMPULSE_VM_V11_ERR_INVALID_OPERAND:   return "IMPULSE_VM_ERR_INVALID_OPERAND";
-        case IMPULSE_VM_V11_ERR_USER_THROW:        return "IMPULSE_VM_ERR_USER_THROW";
-        case IMPULSE_VM_V11_ERR_ASSERTION_FAILED:  return "IMPULSE_VM_ERR_ASSERTION_FAILED";
-        case IMPULSE_VM_V11_ERR_TRAP:              return "IMPULSE_VM_ERR_TRAP";
-        case IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH:   return "IMPULSE_VM_ERR_DOMAIN_MISMATCH";
-        case IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW:   return "IMPULSE_VM_ERR_BUFFER_OVERFLOW";
-        case IMPULSE_VM_V11_ERR_FLOATING_POINT:    return "IMPULSE_VM_ERR_FLOATING_POINT";
-        case IMPULSE_VM_V11_ERR_GAS_EXHAUSTED:     return "IMPULSE_VM_ERR_GAS_EXHAUSTED";
-        case IMPULSE_VM_V11_ERR_TYPE_MISMATCH:     return "IMPULSE_VM_ERR_TYPE_MISMATCH";
-        case IMPULSE_VM_V11_ERR_VALIDATION_FAILED: return "IMPULSE_VM_ERR_VALIDATION_FAILED";
-        case IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW: return "IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW";
-        case IMPULSE_VM_V11_ERR_DIV_BY_ZERO:       return "IMPULSE_VM_ERR_DIV_BY_ZERO";
+        case IMPULSE_VM_OK:                    return "IMPULSE_VM_OK";
+        case IMPULSE_VM_ERR_INVALID_OPCODE:    return "IMPULSE_VM_ERR_INVALID_OPCODE";
+        case IMPULSE_VM_ERR_OUT_OF_BOUNDS:     return "IMPULSE_VM_ERR_OUT_OF_BOUNDS";
+        case IMPULSE_VM_ERR_NULL_SNAPSHOT:     return "IMPULSE_VM_ERR_NULL_SNAPSHOT";
+        case IMPULSE_VM_ERR_STACK_OVERFLOW:    return "IMPULSE_VM_ERR_STACK_OVERFLOW";
+        case IMPULSE_VM_ERR_STACK_UNDERFLOW:   return "IMPULSE_VM_ERR_STACK_UNDERFLOW";
+        case IMPULSE_VM_ERR_INVALID_OPERAND:   return "IMPULSE_VM_ERR_INVALID_OPERAND";
+        case IMPULSE_VM_ERR_USER_THROW:        return "IMPULSE_VM_ERR_USER_THROW";
+        case IMPULSE_VM_ERR_ASSERTION_FAILED:  return "IMPULSE_VM_ERR_ASSERTION_FAILED";
+        case IMPULSE_VM_ERR_TRAP:              return "IMPULSE_VM_ERR_TRAP";
+        case IMPULSE_VM_ERR_DOMAIN_MISMATCH:   return "IMPULSE_VM_ERR_DOMAIN_MISMATCH";
+        case IMPULSE_VM_ERR_BUFFER_OVERFLOW:   return "IMPULSE_VM_ERR_BUFFER_OVERFLOW";
+        case IMPULSE_VM_ERR_FLOATING_POINT:    return "IMPULSE_VM_ERR_FLOATING_POINT";
+        case IMPULSE_VM_ERR_GAS_EXHAUSTED:     return "IMPULSE_VM_ERR_GAS_EXHAUSTED";
+        case IMPULSE_VM_ERR_TYPE_MISMATCH:     return "IMPULSE_VM_ERR_TYPE_MISMATCH";
+        case IMPULSE_VM_ERR_VALIDATION_FAILED: return "IMPULSE_VM_ERR_VALIDATION_FAILED";
+        case IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW: return "IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW";
+        case IMPULSE_VM_ERR_DIV_BY_ZERO:       return "IMPULSE_VM_ERR_DIV_BY_ZERO";
         default:                                   return "IMPULSE_VM_ERR_UNKNOWN";
     }
 }
@@ -403,7 +403,7 @@ std::string hex64(uint64_t v) {
     return std::string(buf);
 }
 
-impulse_vm_geometry_v11_t geometry_of_profile(const std::string& prof) {
+impulse_vm_geometry_t geometry_of_profile(const std::string& prof) {
     if (prof == "P1") return kGeomP1;
     if (prof == "P2") return kGeomP2;
     if (prof == "P3") return kGeomP3;
@@ -444,7 +444,7 @@ std::string run_fixture_json(const std::string& profile,
     uint64_t planned_scratch = 0ULL;
     if (preloaded_snap != nullptr && !words.empty()) {
         std::vector<uint8_t> impb(32u + words.size() * 8u, 0u);
-        impulse_impb_header_v11_t hdr{};
+        impulse_impb_header_t hdr{};
         hdr.magic = 0x494D5042u; // 'IMPB'
         hdr.isa_version = 11u;
         hdr.max_call_depth = 16u;
@@ -453,14 +453,14 @@ std::string run_fixture_json(const std::string& profile,
         std::memcpy(impb.data(), &hdr, sizeof(hdr));
         std::memcpy(impb.data() + 32u, words.data(), words.size() * 8u);
         impulse_vm_memory_plan_t plan{};
-        if (impulse_vm_plan_memory(impb.data(), impb.size(), preloaded_snap, 1u, &plan) == IMPULSE_VM_V11_OK) {
+        if (impulse_vm_plan_memory(impb.data(), impb.size(), preloaded_snap, 1u, &plan) == IMPULSE_VM_OK) {
             planned_scratch = plan.guaranteed_scratch_bytes;
         }
     }
 
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    impulse_vm_status_v11_t init_st = impulse_workspace_init(scratch_buf, eff_scratch, &ws);
-    if (init_st != IMPULSE_VM_V11_OK || !ws) {
+    impulse_vm_workspace_t* ws = nullptr;
+    impulse_vm_status_t init_st = impulse_workspace_init(scratch_buf, eff_scratch, &ws);
+    if (init_st != IMPULSE_VM_OK || !ws) {
         std::ostringstream oss;
         oss << "{\"status\":\"" << status_name(init_st) << "\",\"status_code\":" << init_st
             << ",\"planned_scratch_bytes\":" << planned_scratch
@@ -482,10 +482,10 @@ std::string run_fixture_json(const std::string& profile,
     };
     std::map<uint16_t, CooFixtureData> rel_coo;
     std::map<uint16_t, std::vector<std::vector<int>>> rel_dense;
-    std::vector<V11DomAttrEntry> node_attrs;
-    std::map<uint16_t, std::vector<std::pair<uint32_t, V11Vector*>>> edge_attrs;
-    std::vector<V11KeyCatalog> key_catalogs;
-    std::vector<V11IndexEntry> indexes;
+    std::vector<VmDomAttrEntry> node_attrs;
+    std::map<uint16_t, std::vector<std::pair<uint32_t, VmVector*>>> edge_attrs;
+    std::vector<VmKeyCatalog> key_catalogs;
+    std::vector<VmIndexEntry> indexes;
 
     if (const JsonVal* ddirs = root.get("data_directives"); ddirs && ddirs->kind == JsonVal::Kind::Array) {
         for (const auto& d : ddirs->arr) {
@@ -566,12 +566,12 @@ std::string run_fixture_json(const std::string& profile,
                 rel_flags[rid][3] = true;
             } else if (kind == ".key_catalog" && kv) {
                 uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
-                V11KeyCatalog kc{};
+                VmKeyCatalog kc{};
                 kc.dom_id = dom;
                 if (const JsonVal* kl = kv->get("keys"); kl && kl->kind == JsonVal::Kind::Array) {
                     kc.count = static_cast<uint32_t>(kl->arr.size());
                     if (kc.count > 0u) {
-                        auto* arr = ws->arena.alloc_array<V11StrSlice>(kc.count, 8);
+                        auto* arr = ws->arena.alloc_array<VmStrSlice>(kc.count, 8);
                         for (uint32_t i = 0; i < kc.count; ++i) {
                             std::string s = as_str(&kl->arr[i]);
                             char* copy = nullptr;
@@ -599,13 +599,13 @@ std::string run_fixture_json(const std::string& profile,
                 uint16_t dom = static_cast<uint16_t>(as_i64(kv->get("dom"), 0));
                 uint16_t aid = static_cast<uint16_t>(as_i64(kv->get("attr"), 0));
                 std::string ty = kv->get("type") ? as_str(kv->get("type")) : "f64";
-                V11Vector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
+                VmVector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
                 node_attrs.push_back({dom, aid, v});
             } else if (kind == ".edge_attr" && kv) {
                 uint16_t rid = static_cast<uint16_t>(as_i64(kv->get("rel"), 0));
                 uint32_t aid = static_cast<uint32_t>(as_i64(kv->get("attr"), 0));
                 std::string ty = kv->get("type") ? as_str(kv->get("type")) : "f64";
-                V11Vector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
+                VmVector* v = parse_vec_into_arena(ws->arena, ty, kv->get("values"));
                 edge_attrs[rid].push_back({aid, v});
             } else if (kind == ".tier_thresholds" && kv) {
                 if (kv->get("tier0_max"))  ws->geometry.tier0_max  = static_cast<uint32_t>(as_i64(kv->get("tier0_max")));
@@ -614,7 +614,7 @@ std::string run_fixture_json(const std::string& profile,
             } else if (kind == ".param" && kv && ws->param_count < kMaxParams) {
                 uint32_t pid = (args && !args->arr.empty()) ? static_cast<uint32_t>(as_i64(&args->arr[0])) : 0u;
                 std::string ty = kv->get("type") ? as_str(kv->get("type")) : "i64";
-                V11ParamEntry pe{};
+                VmParamEntry pe{};
                 pe.id = pid;
                 if (ty == "frontier") {
                     pe.kind = ParamKind::Frontier;
@@ -733,7 +733,7 @@ std::string run_fixture_json(const std::string& profile,
             const JsonVal* kv = p.get("kv");
             uint32_t pid = (args && !args->arr.empty()) ? static_cast<uint32_t>(as_i64(&args->arr[0])) : 0u;
             std::string ty = (kv && kv->get("type")) ? as_str(kv->get("type")) : "i64_vec";
-            V11ConstPoolEntry ce{};
+            VmConstPoolEntry ce{};
             ce.id = pid;
             if (ty == "str") {
                 ce.kind = ConstPoolKind::Str;
@@ -769,19 +769,19 @@ std::string run_fixture_json(const std::string& profile,
         }
     }
 
-    // Build V11SnapshotView if any domains/relations were declared
-    V11SnapshotView snap_view{};
-    const V11SnapshotView* snap_ptr = nullptr;
+    // Build VmSnapshotView if any domains/relations were declared
+    VmSnapshotView snap_view{};
+    const VmSnapshotView* snap_ptr = nullptr;
     std::vector<uint64_t> dom_cards;
-    std::vector<V11RelView> rel_views;
+    std::vector<VmRelView> rel_views;
     std::vector<std::vector<uint32_t>> owned_row_offs;
     std::vector<std::vector<uint64_t>> owned_col_tgts;
     std::vector<std::vector<uint32_t>> owned_csc_offs;
     std::vector<std::vector<uint32_t>> owned_csc_srcs;
     std::vector<std::vector<uint32_t>> owned_ea_ids;
-    std::vector<std::vector<V11Vector*>> owned_ea_vecs;
+    std::vector<std::vector<VmVector*>> owned_ea_vecs;
     if (preloaded_snap != nullptr) {
-        snap_ptr = v11_get_cached_snapshot_view(preloaded_snap);
+        snap_ptr = vm_get_cached_snapshot_view(preloaded_snap);
     } else if (!dom_tbl.empty() || !rel_meta.empty()) {
         int max_dom = -1;
         for (const auto& kv : dom_tbl) if (kv.first > max_dom) max_dom = kv.first;
@@ -850,7 +850,7 @@ std::string run_fixture_json(const std::string& profile,
                 }
             }
 
-            V11RelView rv{};
+            VmRelView rv{};
             rv.rel_id = r16;
             rv.src_dom = sd;
             rv.tgt_dom = td;
@@ -931,7 +931,7 @@ std::string run_fixture_json(const std::string& profile,
     g_track_exec_allocs.store(false, std::memory_order_relaxed);
     size_t exec1_allocs = g_exec_allocs.load(std::memory_order_relaxed);
     size_t arena_peak = ws->arena.pos;
-    impulse_vm_ictx_v2_t digest = impulse_vm_v11_compute_ictx_v2(ws);
+    impulse_vm_ictx_v2_t digest = impulse_vm_compute_ictx_v2(ws);
 
     bool repeat_hash_match = true;
     size_t exec2_allocs = 0;
@@ -943,7 +943,7 @@ std::string run_fixture_json(const std::string& profile,
         execute_words_internal(words.data(), words.size(), snap_ptr, *ws, max_steps);
         g_track_exec_allocs.store(false, std::memory_order_relaxed);
         exec2_allocs = g_exec_allocs.load(std::memory_order_relaxed);
-        impulse_vm_ictx_v2_t digest2 = impulse_vm_v11_compute_ictx_v2(ws);
+        impulse_vm_ictx_v2_t digest2 = impulse_vm_compute_ictx_v2(ws);
         repeat_hash_match = (digest.logical_hash == digest2.logical_hash &&
                              digest.physical_hash == digest2.physical_hash);
     }
@@ -979,7 +979,7 @@ std::string run_fixture_json(const std::string& profile,
         if (!ws->is_r_valid(i)) {
             oss << "null";
         } else if (ws->read_r_type(i) == static_cast<uint8_t>(ScalarType::SCALAR_STR_HANDLE)) {
-            V11StrSlice s = ws->resolve_scalar_str(ws->read_r_raw(i));
+            VmStrSlice s = ws->resolve_scalar_str(ws->read_r_raw(i));
             append_json_string(oss, s.valid ? s.ptr : "", s.valid ? s.len : 0u);
         } else {
             oss << static_cast<int64_t>(ws->read_r_raw(i));
@@ -998,7 +998,7 @@ std::string run_fixture_json(const std::string& profile,
         if (!ws->is_f_init(i)) {
             oss << "null";
         } else {
-            const V11Frontier& f = ws->f_regs[i];
+            const VmFrontier& f = ws->f_regs[i];
             oss << "{\"domain_id\":" << f.domain_id
                 << ",\"tier\":" << static_cast<unsigned>(f.tier)
                 << ",\"nodes\":[";
@@ -1035,10 +1035,10 @@ std::string run_fixture_json(const std::string& profile,
     });
     for (size_t idx = 0; idx < out_order.size(); ++idx) {
         if (idx > 0) oss << ',';
-        const V11OutputSlot& os = ws->outputs[out_order[idx]];
+        const VmOutputSlot& os = ws->outputs[out_order[idx]];
         oss << '"' << os.slot << "\":[";
         if (os.vec) {
-            const V11Vector& v = *os.vec;
+            const VmVector& v = *os.vec;
             for (uint32_t i = 0; i < v.length; ++i) {
                 if (i > 0) oss << ',';
                 switch (v.elem_tag) {
@@ -1105,7 +1105,7 @@ int main(int argc, char** argv) {
             std::cerr << "Failed to open snapshot: " << snapshot_path << " (status=" << st << ")\n";
             return 2;
         }
-        (void)impulse_vm_v11_prepare_snapshot(opened_snap);
+        (void)impulse_vm_prepare_snapshot(opened_snap);
     }
 
     constexpr size_t kScratchSize = 128u * 1024u * 1024u; // 128 MB 128B-aligned caller buffer

@@ -1094,7 +1094,7 @@ public sealed class Snapshot : IDisposable
     /// <summary>
     /// Executes a .impb v0.11 bytecode container using a caller-owned VmContext workspace.
     /// </summary>
-    public unsafe ImpulseVmStatus ExecuteImpbV11(
+    public unsafe ImpulseVmStatus ExecuteImpb(
         ReadOnlySpan<byte> impbBytes,
         VmContext context,
         ulong? seedNode = null,
@@ -1115,15 +1115,15 @@ public sealed class Snapshot : IDisposable
             try
             {
                 ulong seed = seedNode ?? 0UL;
-                ImpulseVmParamBindingV11 binding = new()
+                ImpulseVmParamBinding binding = new()
                 {
                     ParamId = 0,
-                    Kind = 6, // IMPULSE_VM_V11_PARAM_FRONTIER_IDS
+                    Kind = 6, // IMPULSE_VM_PARAM_FRONTIER_IDS
                     DomainId = domainId,
                     Count = seedNode.HasValue ? 1u : 0u,
                     DataPtr = seedNode.HasValue ? &seed : null,
                 };
-                ImpulseVmParamsV11 execParams = new()
+                ImpulseVmParams execParams = new()
                 {
                     GasLimit = gasLimit,
                     GeometryOverride = null,
@@ -1135,7 +1135,7 @@ public sealed class Snapshot : IDisposable
                 nuint outBytes;
                 fixed (byte* ptr = impbBytes)
                 {
-                    rc = NativeMethods.impulse_vm_execute_v11(
+                    rc = NativeMethods.impulse_vm_execute(
                         ptr, (nuint)impbBytes.Length, h, &execParams, wsHandle, null, 0, out outBytes);
                 }
                 return (ImpulseVmStatus)rc;
@@ -1155,7 +1155,7 @@ public sealed class Snapshot : IDisposable
 
     private unsafe ExecutionResult ExecuteQueryCore(Query query, VmContext context, ulong inputParam, VmContext? ownedContext)
     {
-        throw new NotSupportedException("Legacy v0.10 instruction execution has been retired; use ExecuteImpbV11 with .impb v0.11 containers.");
+        throw new NotSupportedException("Legacy v0.10 instruction execution has been retired; use ExecuteImpb with .impb v0.11 containers.");
     }
 
     ~Snapshot() => Dispose(disposing: false);

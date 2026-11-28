@@ -3,11 +3,11 @@
  * @brief Internal C++20 runtime data structures for ImpulseVM v0.11.0.
  *
  * All execution-time allocations are carved strictly from the caller-owned
- * 128B-aligned scratch_buf via V11Arena (zero malloc/new in hot path).
+ * 128B-aligned scratch_buf via VmArena (zero malloc/new in hot path).
  */
 #pragma once
 
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "vm/impulse_vm_isa.hpp"
 #include "vm/impulse_opcode_macros.h"
 
@@ -18,7 +18,7 @@
 #include <cstring>
 #include <limits>
 #include <string_view>
-#ifdef IMPULSE_V11_OPCODE_PROFILE
+#ifdef IMPULSE_VM_OPCODE_PROFILE
   #include <time.h>
 #endif
 
@@ -41,7 +41,7 @@ inline constexpr uint8_t kTier1Paged      = 2u;
 inline constexpr uint8_t kTier2Dense      = 3u;
 inline constexpr uint8_t kTierAllSpan     = 4u;
 
-// Vector element tags (matching V11_types.vec_elem_tag & V11Vector.java)
+// Vector element tags (matching V11_types.vec_elem_tag & VmVector.java)
 inline constexpr uint8_t kVecTagI64       = 0u;
 inline constexpr uint8_t kVecTagU64       = 1u;
 inline constexpr uint8_t kVecTagF64       = 4u;
@@ -56,13 +56,13 @@ inline constexpr uint8_t kSpillR     = 1u;
 inline constexpr uint8_t kSpillF     = 2u;
 inline constexpr uint8_t kSpillV     = 3u;
 
-inline constexpr impulse_vm_geometry_v11_t kGeomP0 = {64u, 12u, 64u, 2048u, 1u};
-inline constexpr impulse_vm_geometry_v11_t kGeomP1 = {2u,  2u,  2u,  2048u, 1u};
-inline constexpr impulse_vm_geometry_v11_t kGeomP2 = {0u,  6u,  0u,  2048u, 1u};
-inline constexpr impulse_vm_geometry_v11_t kGeomP3 = {64u, 12u, 64u, 3u,    1u};
-inline constexpr impulse_vm_geometry_v11_t kGeomP4 = {2u,  2u,  4u,  4u,    4u};
+inline constexpr impulse_vm_geometry_t kGeomP0 = {64u, 12u, 64u, 2048u, 1u};
+inline constexpr impulse_vm_geometry_t kGeomP1 = {2u,  2u,  2u,  2048u, 1u};
+inline constexpr impulse_vm_geometry_t kGeomP2 = {0u,  6u,  0u,  2048u, 1u};
+inline constexpr impulse_vm_geometry_t kGeomP3 = {64u, 12u, 64u, 3u,    1u};
+inline constexpr impulse_vm_geometry_t kGeomP4 = {2u,  2u,  4u,  4u,    4u};
 
-inline uint8_t compute_tier(const impulse_vm_geometry_v11_t& g,
+inline uint8_t compute_tier(const impulse_vm_geometry_t& g,
                             uint64_t domain_card,
                             uint64_t card,
                             bool is_all_span) noexcept {
@@ -86,7 +86,7 @@ inline uint8_t compute_tier(const impulse_vm_geometry_v11_t& g,
 }
 
 /** Strict zero-malloc bump arena carved from caller scratch_buf. */
-struct V11Arena {
+struct VmArena {
     uint8_t* base = nullptr;
     size_t   cap  = 0;
     size_t   pos  = 0;
@@ -120,14 +120,14 @@ struct V11Arena {
 };
 
 /** 16-byte string slice pointing into snapshot pool, const pool, or workspace arena. */
-struct V11StrSlice {
+struct VmStrSlice {
     const char* ptr  = nullptr;
     uint32_t    len  = 0;
     uint8_t     valid = 0;
 };
 
 /** Typed nullable vector (V0..V15, const pool, params, outputs). */
-struct V11Vector {
+struct VmVector {
     uint8_t  elem_tag = kVecTagI64;
     uint32_t length   = 0;
 
@@ -135,7 +135,7 @@ struct V11Vector {
     double*      f64_data       = nullptr; // TAG_F64
     uint64_t*    valid_bits     = nullptr; // nullptr => all valid
     uint64_t*    bool_data_bits = nullptr; // TAG_BOOL_3VL (data & ~valid == 0)
-    V11StrSlice* str_data       = nullptr; // TAG_STR
+    VmStrSlice* str_data       = nullptr; // TAG_STR
 
     uint32_t     emb_dim        = 0;
     double**     emb_rows       = nullptr; // TAG_EMB (nullptr row => NULL)
@@ -180,7 +180,7 @@ struct V11Vector {
 };
 
 /** Unified 3-Tier Adaptive Frontier (F0..F15, F8..F15 = MF0..MF7). */
-struct V11Frontier {
+struct VmFrontier {
     uint16_t domain_id         = 0;
     uint64_t domain_card       = 0;
     uint8_t  tier              = kTierEmpty;
@@ -256,7 +256,7 @@ struct V11Frontier {
         return std::binary_search(nodes, nodes + node_count, u);
     }
 
-    bool materialize_1bit(V11Arena& arena, const uint32_t** out_ptr, uint32_t* out_len) const noexcept {
+    bool materialize_1bit(VmArena& arena, const uint32_t** out_ptr, uint32_t* out_len) const noexcept {
         if (tier == kTierEmpty) {
             *out_ptr = nullptr;
             *out_len = 0u;
@@ -277,12 +277,12 @@ struct V11Frontier {
         return true;
     }
 
-    bool init_from_sorted_ids(V11Arena& arena,
+    bool init_from_sorted_ids(VmArena& arena,
                               uint16_t dom_id,
                               uint64_t dom_card,
                               const uint32_t* sorted_ids,
                               uint32_t count,
-                              const impulse_vm_geometry_v11_t& geom,
+                              const impulse_vm_geometry_t& geom,
                               bool know_card) noexcept {
         uint32_t* dst = nullptr;
         if (count > 0u) {
@@ -303,7 +303,7 @@ struct V11Frontier {
         return true;
     }
 
-    bool init_multi_lane(V11Arena& arena,
+    bool init_multi_lane(VmArena& arena,
                          uint16_t dom_id,
                          uint64_t dom_card,
                          uint8_t width,
@@ -311,7 +311,7 @@ struct V11Frontier {
                          const uint64_t* sorted_nodes,
                          const uint64_t* sorted_masks,
                          uint32_t count,
-                         const impulse_vm_geometry_v11_t& geom) noexcept {
+                         const impulse_vm_geometry_t& geom) noexcept {
         uint64_t* dn = nullptr;
         uint64_t* dm = nullptr;
         if (count > 0u) {
@@ -333,7 +333,7 @@ struct V11Frontier {
         return true;
     }
 
-    bool copy_from(V11Arena& arena, const V11Frontier& src) noexcept {
+    bool copy_from(VmArena& arena, const VmFrontier& src) noexcept {
         domain_id = src.domain_id;
         domain_card = src.domain_card;
         tier = src.tier;
@@ -380,24 +380,24 @@ struct V11Frontier {
 /** Const pool & param bindings stored in caller workspace. */
 enum class ConstPoolKind : uint8_t { Empty = 0, Vec = 1, Frontier = 2, Str = 3 };
 
-struct V11ConstPoolEntry {
+struct VmConstPoolEntry {
     ConstPoolKind kind = ConstPoolKind::Empty;
     uint32_t      id   = 0;
-    V11Vector*    vec  = nullptr;
+    VmVector*    vec  = nullptr;
     uint64_t*     f_ids = nullptr;
     uint32_t      f_len = 0;
-    V11StrSlice   str{};
+    VmStrSlice   str{};
 };
 
 enum class ParamKind : uint8_t { Empty = 0, Scalar = 1, Str = 2, Frontier = 3, MultiLane = 4, Vec = 5 };
 
-struct V11ParamEntry {
+struct VmParamEntry {
     ParamKind   kind         = ParamKind::Empty;
     uint32_t    id           = 0;
     uint8_t     scalar_type  = 0;
     bool        scalar_valid = false;
     uint64_t    scalar_bits  = 0;
-    V11StrSlice str{};
+    VmStrSlice str{};
     uint16_t    dom_id       = 0;
     uint64_t*   f_ids        = nullptr;
     uint32_t    f_len        = 0;
@@ -406,11 +406,11 @@ struct V11ParamEntry {
     uint64_t*   ml_nodes     = nullptr;
     uint64_t*   ml_masks     = nullptr;
     uint32_t    ml_len       = 0;
-    V11Vector*  vec          = nullptr;
+    VmVector*  vec          = nullptr;
 };
 
 /** Unified Snapshot View (adapts both .imps impulse_snapshot_t* and compliance fixtures). */
-struct V11RelView {
+struct VmRelView {
     uint16_t   rel_id       = 0;
     uint16_t   src_dom      = 0;
     uint16_t   tgt_dom      = 0;
@@ -445,7 +445,7 @@ struct V11RelView {
     bool       has_dense    = false;
     // Edge attributes (indexed by attr_id)
     const uint32_t*  edge_attr_ids  = nullptr;
-    V11Vector* const* edge_attrs    = nullptr;
+    VmVector* const* edge_attrs    = nullptr;
     uint32_t   edge_attr_count = 0;
 
     inline uint32_t csr_row_off(uint32_t u) const noexcept {
@@ -547,34 +547,34 @@ struct V11RelView {
     }
 };
 
-struct V11DomAttrEntry {
+struct VmDomAttrEntry {
     uint16_t   dom_id  = 0;
     uint16_t   attr_id = 0;
-    V11Vector* vec     = nullptr;
+    VmVector* vec     = nullptr;
 };
 
-struct V11KeyCatalog {
+struct VmKeyCatalog {
     uint16_t           dom_id = 0;
-    const V11StrSlice* keys   = nullptr;
+    const VmStrSlice* keys   = nullptr;
     uint32_t           count  = 0;
 };
 
-struct V11IndexEntry {
+struct VmIndexEntry {
     uint16_t    dom_id  = 0;
     uint16_t    attr_id = 0;
-    V11StrSlice kind{};
+    VmStrSlice kind{};
 };
 
-struct V11SnapshotView {
+struct VmSnapshotView {
     const uint64_t*        domain_cards      = nullptr;
     uint32_t               domain_count      = 0;
-    const V11RelView*      relations         = nullptr;
+    const VmRelView*      relations         = nullptr;
     uint32_t               relation_count    = 0;
-    const V11DomAttrEntry* node_attrs        = nullptr;
+    const VmDomAttrEntry* node_attrs        = nullptr;
     uint32_t               node_attr_count   = 0;
-    const V11KeyCatalog*   key_catalogs      = nullptr;
+    const VmKeyCatalog*   key_catalogs      = nullptr;
     uint32_t               key_catalog_count = 0;
-    const V11IndexEntry*   indexes           = nullptr;
+    const VmIndexEntry*   indexes           = nullptr;
     uint32_t               index_count       = 0;
     const impulse_snapshot_t* raw_snapshot   = nullptr;
 
@@ -585,16 +585,16 @@ struct V11SnapshotView {
     }
 };
 
-struct V11SpillSlot {
+struct VmSpillSlot {
     uint8_t     kind    = kSpillEmpty;
     uint64_t    r_val   = 0;
     bool        r_valid = false;
     uint8_t     r_type  = 0;
-    V11Frontier f_val{};
-    V11Vector*  v_val   = nullptr;
+    VmFrontier f_val{};
+    VmVector*  v_val   = nullptr;
 };
 
-struct V11CallFrame {
+struct VmCallFrame {
     uint32_t    return_pc      = 0;
     uint8_t     r_stride       = 0;
     uint8_t     f_stride       = 0;
@@ -603,65 +603,65 @@ struct V11CallFrame {
     uint16_t    saved_r_valid  = 0;
     uint64_t    saved_r_type   = 0;
     uint16_t    saved_f_valid  = 0;
-    V11Frontier saved_f[16]{};
-    V11Vector*  saved_v[16]{};
+    VmFrontier saved_f[16]{};
+    VmVector*  saved_v[16]{};
 };
 
-struct V11OutputSlot {
+struct VmOutputSlot {
     uint16_t   slot = 0;
-    V11Vector* vec  = nullptr;
+    VmVector* vec  = nullptr;
 };
 
-bool v11_exec_morsel_p4_op(
-    impulse_vm_workspace_v11_t& ws,
-    const V11SnapshotView* snap,
+bool vm_exec_morsel_p4_op(
+    impulse_vm_workspace_t& ws,
+    const VmSnapshotView* snap,
     uint64_t w) noexcept;
 
-const V11SnapshotView* v11_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
+const VmSnapshotView* vm_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
 
 } // namespace impulse::vm
 
 /** Concrete definition of caller-owned workspace header (placement-initialized in scratch_buf). */
-struct impulse_vm_workspace_v11 {
-    impulse_vm_state_v11_t state; // Exact 256B, 64B-aligned at offset 0
+struct impulse_vm_workspace {
+    impulse_vm_state_t state; // Exact 256B, 64B-aligned at offset 0
 
     uint64_t              magic;
     size_t                total_capacity;
     std::atomic<uint32_t> in_use;
     uint64_t              frontier_epoch;
 
-    impulse_vm_status_v11_t   status;
+    impulse_vm_status_t   status;
     uint32_t                  user_throw_code;
     bool                      has_user_throw_payload;
     uint64_t                  user_throw_payload;
     uint16_t                  host_max_threads;
     uint8_t                   max_call_depth;
     uint64_t                  gas_remaining;
-    impulse_vm_geometry_v11_t geometry;
+    impulse_vm_geometry_t geometry;
 
     // Frontier & Vector register backing tables
-    impulse::vm::V11Frontier f_regs[16];
+    impulse::vm::VmFrontier f_regs[16];
     uint16_t                      f_valid_mask;
-    impulse::vm::V11Vector*  v_regs[16];
+    impulse::vm::VmVector*  v_regs[16];
 
     // 16-deep sliding register window call stack & 256 spill slots
-    impulse::vm::V11CallFrame call_frames[impulse::vm::kMaxCallDepth];
-    impulse::vm::V11SpillSlot spill_slots[impulse::vm::kTotalSpillSlots];
+    impulse::vm::VmCallFrame call_frames[impulse::vm::kMaxCallDepth];
+    impulse::vm::VmSpillSlot spill_slots[impulse::vm::kTotalSpillSlots];
 
     // Bindings (const pool, params, interned scalar strings, terminal outputs)
-    impulse::vm::V11ConstPoolEntry const_pool[impulse::vm::kMaxConstPool];
+    impulse::vm::VmConstPoolEntry const_pool[impulse::vm::kMaxConstPool];
     uint32_t                            const_pool_count;
-    impulse::vm::V11ParamEntry     params[impulse::vm::kMaxParams];
+    impulse::vm::VmParamEntry     params[impulse::vm::kMaxParams];
     uint32_t                            param_count;
-    impulse::vm::V11StrSlice       str_table[impulse::vm::kMaxScalarStrings];
-    impulse::vm::V11StrSlice*      str_table_ptr;
+    impulse::vm::VmStrSlice       str_table[impulse::vm::kMaxScalarStrings];
+    impulse::vm::VmStrSlice*      str_table_ptr;
     uint32_t                            str_count;
     uint32_t                            str_cap;
-    impulse::vm::V11OutputSlot     outputs[impulse::vm::kMaxOutputs];
+    impulse::vm::VmOutputSlot     outputs[impulse::vm::kMaxOutputs];
     uint32_t                            output_count;
 
     // Caller-owned bump arena (starts right after this struct, 128B aligned)
-    impulse::vm::V11Arena arena;
+    impulse::vm::VmArena arena;
 
     // UB-free accessors for R0..R15 across the 3 cache-line sub-arrays
     inline uint64_t read_r_raw(uint8_t reg) const noexcept {
@@ -746,9 +746,9 @@ struct impulse_vm_workspace_v11 {
         if (str_count >= str_cap) {
             uint32_t next_cap = str_cap * 2u;
             if (next_cap <= str_cap) return 0ULL;
-            auto* grown = arena.alloc_array<impulse::vm::V11StrSlice>(next_cap, 8);
+            auto* grown = arena.alloc_array<impulse::vm::VmStrSlice>(next_cap, 8);
             if (!grown) return 0ULL;
-            std::memcpy(grown, str_table_ptr, static_cast<size_t>(str_count) * sizeof(impulse::vm::V11StrSlice));
+            std::memcpy(grown, str_table_ptr, static_cast<size_t>(str_count) * sizeof(impulse::vm::VmStrSlice));
             str_table_ptr = grown;
             str_cap = next_cap;
         }
@@ -763,21 +763,21 @@ struct impulse_vm_workspace_v11 {
         return static_cast<uint64_t>(idx + 1u);
     }
 
-    inline impulse::vm::V11StrSlice resolve_scalar_str(uint64_t handle) const noexcept {
+    inline impulse::vm::VmStrSlice resolve_scalar_str(uint64_t handle) const noexcept {
         if (handle == 0ULL || handle > str_count || !str_table_ptr) {
             return {nullptr, 0u, 0u};
         }
         return str_table_ptr[handle - 1u];
     }
 
-    inline const impulse::vm::V11ConstPoolEntry* find_const_pool(uint32_t id) const noexcept {
+    inline const impulse::vm::VmConstPoolEntry* find_const_pool(uint32_t id) const noexcept {
         for (uint32_t i = 0; i < const_pool_count; ++i) {
             if (const_pool[i].id == id) return &const_pool[i];
         }
         return nullptr;
     }
 
-    inline const impulse::vm::V11ParamEntry* find_param(uint32_t id) const noexcept {
+    inline const impulse::vm::VmParamEntry* find_param(uint32_t id) const noexcept {
         for (uint32_t i = 0; i < param_count; ++i) {
             if (params[i].id == id) return &params[i];
         }
@@ -797,7 +797,7 @@ struct impulse_vm_workspace_v11 {
         std::memset(state.f_handles, 0, sizeof(state.f_handles));
         std::memset(state.f_handles_8_15, 0, sizeof(state.f_handles_8_15));
         std::memset(state.v_handles, 0, sizeof(state.v_handles));
-        status = IMPULSE_VM_V11_OK;
+        status = IMPULSE_VM_OK;
         user_throw_code = 0u;
         has_user_throw_payload = false;
         user_throw_payload = 0ULL;
@@ -817,8 +817,8 @@ struct impulse_vm_workspace_v11 {
         arena.reset_to_mark();
     }
 
-#ifdef IMPULSE_V11_OPCODE_PROFILE
-    impulse_vm_v11_opcode_stat_t op_stats[128]{};
+#ifdef IMPULSE_VM_OPCODE_PROFILE
+    impulse_vm_opcode_stat_t op_stats[128]{};
 
     inline void reset_opcode_stats() noexcept {
         for (int i = 0; i < 128; ++i) {
@@ -833,8 +833,8 @@ struct impulse_vm_workspace_v11 {
 
 namespace impulse::vm {
 
-#ifdef IMPULSE_V11_OPCODE_PROFILE
-inline uint64_t v11_profile_now_ns() noexcept {
+#ifdef IMPULSE_VM_OPCODE_PROFILE
+inline uint64_t vm_profile_now_ns() noexcept {
     struct timespec ts{};
 #if defined(__APPLE__) && defined(CLOCK_UPTIME_RAW)
     clock_gettime(CLOCK_UPTIME_RAW, &ts);
@@ -844,7 +844,7 @@ inline uint64_t v11_profile_now_ns() noexcept {
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
 }
 
-inline void v11_profile_record(impulse_vm_workspace_v11_t& ws, uint8_t op, uint64_t dt_ns) noexcept {
+inline void vm_profile_record(impulse_vm_workspace_t& ws, uint8_t op, uint64_t dt_ns) noexcept {
     if (op >= 128u) return;
     auto& s = ws.op_stats[op];
     s.calls += 1ULL;
@@ -854,30 +854,30 @@ inline void v11_profile_record(impulse_vm_workspace_v11_t& ws, uint8_t op, uint6
 }
 #endif
 
-impulse_vm_validation_v11_t validate_words_in_arena(
+impulse_vm_validation_t validate_words_in_arena(
     const uint64_t* words,
     size_t word_count,
-    V11Arena* arena) noexcept;
+    VmArena* arena) noexcept;
 
-impulse_vm_validation_v11_t validate_impb_in_arena(
+impulse_vm_validation_t validate_impb_in_arena(
     const void* impb_bytes,
     size_t impb_len,
-    V11Arena* arena) noexcept;
+    VmArena* arena) noexcept;
 
-impulse_vm_status_v11_t execute_words_internal(
+impulse_vm_status_t execute_words_internal(
     const uint64_t* words,
     size_t word_count,
-    const V11SnapshotView* snap,
-    impulse_vm_workspace_v11_t& ws,
+    const VmSnapshotView* snap,
+    impulse_vm_workspace_t& ws,
     uint64_t max_steps,
     uint32_t entry_pc = 0u,
     bool already_validated = false) noexcept;
 
-bool v11_exec_morsel_p4_op(
-    impulse_vm_workspace_v11_t& ws,
-    const V11SnapshotView* snap,
+bool vm_exec_morsel_p4_op(
+    impulse_vm_workspace_t& ws,
+    const VmSnapshotView* snap,
     uint64_t w) noexcept;
 
-const V11SnapshotView* v11_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
+const VmSnapshotView* vm_get_cached_snapshot_view(const impulse_snapshot_t* snapshot) noexcept;
 
 } // namespace impulse::vm

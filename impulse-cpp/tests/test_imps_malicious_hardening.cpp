@@ -9,7 +9,7 @@
  */
 
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "impulse_index.h"
 #include "impulse_vm.h"
 #include "impulse_assert.h"
@@ -701,7 +701,7 @@ void test_secondary_index_and_vamana_attacks() {
         HARDEN_CHECK(snap != nullptr && st == IMPULSE_OK, "Snapshot opens with raw Vamana bytes");
 
         // v0.11 prepare must not crash or overflow on malicious Vamana header
-        (void)impulse_vm_v11_prepare_snapshot(snap);
+        (void)impulse_vm_prepare_snapshot(snap);
         impulse_snapshot_close(snap);
     }
 }
@@ -745,7 +745,7 @@ void test_astronomical_vm_context_guard() {
     impulse_status_t st = IMPULSE_OK;
     impulse_snapshot_t* snap = impulse_snapshot_open(tf.path.c_str(), &st);
     HARDEN_CHECK(snap != nullptr && st == IMPULSE_OK, "Empty-attr domain opens");
-    (void)impulse_vm_v11_prepare_snapshot(snap);
+    (void)impulse_vm_prepare_snapshot(snap);
     impulse_snapshot_close(snap);
 }
 
@@ -818,7 +818,7 @@ void test_deterministic_500_mutation_fuzz() {
         const void* kbytes = nullptr;
         size_t klen = 0;
         (void)impulse_snapshot_resolve_dense_id(snap, 0, 0, &kbytes, &klen);
-        (void)impulse_vm_v11_prepare_snapshot(snap);
+        (void)impulse_vm_prepare_snapshot(snap);
         impulse_snapshot_close(snap);
     }
 

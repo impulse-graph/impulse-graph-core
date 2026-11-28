@@ -1,552 +1,326 @@
 /**
  * @file impulse_vm.h
- * @brief Impulse Graph Bytecode Virtual Machine Engine & Instruction Set Specification.
- *
- * Defines raw 64-bit opcode instructions (`impulse_instruction_t`), hardware registers (`R0`..`R63`),
- * VM execution frame layout (`impulse_vm_state_t`), off-heap context handle pools, and native execution APIs.
+ * @brief Public C-ABI for ImpulseVM (64-bit nibble ISA, 256B hot frame,
+ *        caller-owned zero-allocation workspace, static verifier, memory planner,
+ *        dual ICTX v2 canonical digest, and SQLite-style prepared statement API).
  */
-
 #ifndef IMPULSE_VM_H
 #define IMPULSE_VM_H
 
-#include "impulse_graph.h"
-#include "impulse_math_ops.h"
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
-#ifndef __cplusplus
-  #include <stdalign.h>
-#endif
 
-
+#include "impulse_graph.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** Little-Endian VM Magic: 'I' 'M' 'P' 'B' (0x494D5042) */
-#define IMPULSE_VM_MAGIC 0x494D5042
-
-// Status Flags Bitmasks (FLAGS Register)
-#define IMPULSE_VM_FLAG_ZF (1ULL << 0) /**< Zero Flag: set if candidate set or arithmetic result is empty / 0 */
-#define IMPULSE_VM_FLAG_LT (1ULL << 1) /**< Less Than Flag: set if src1 < src2 */
-#define IMPULSE_VM_FLAG_GT (1ULL << 2) /**< Greater Than Flag: set if src1 > src2 */
-#define IMPULSE_VM_FLAG_EQ (1ULL << 3) /**< Equal Flag: set if src1 == src2 */
-#define IMPULSE_VM_FLAG_ST (1ULL << 4) /**< Stable Flag: set by repeat checks when set generation converged */
-
-// Opcode Modifier Flags (FLAGS field in instruction)
-#define IMPULSE_VM_OP_FLAG_HALT_ON_EMPTY  0x01 /**< Early exit: jump to halt if output bitset is empty */
-#define IMPULSE_VM_OP_FLAG_INPUT_SEED     0x02 /**< Seed inlined: source is query input seed node */
-#define IMPULSE_VM_OP_FLAG_ACCUMULATE     0x04 /**< Accumulate destination bitset */
-#define IMPULSE_VM_OP_FLAG_INVERT         0x08 /**< Invert filter condition */
-#define IMPULSE_VM_OP_FLAG_OFFHEAP        0x10 /**< Off-heap mode */
-
-/// Opcodes Definitions
-#define OP_HALT                     0x00
-#define OP_NOP                      0x01
-#define OP_INIT_INPUT_NODE          0x02
-#define OP_INIT_INPUT_SET           0x03
-#define OP_LOAD_CONST_INT           0x04
-#define OP_MAP_KEYS_TO_DENSE        0x05
-#define OP_LOAD_CONST_FLOAT         0x06
-#define OP_LOAD_CONST_STR_PREFIX    0x07
-#define OP_LOAD_INLINE_ARRAY        0x08
-#define OP_INIT_MOCK_GRAPH          0x09
-
-#define OP_LOAD_INLINE_SET          0x0A
-#define OP_INIT_MOCK_NODE_ATTR      0x0B
-#define OP_INIT_MOCK_EDGE_ATTR      0x0C
-#define OP_RESERVED_0D              0x0D
-#define OP_CSR_WALK_2HOP            0x0E
-#define OP_CSR_WALK_STATE           0x0F
-
-#define OP_CSR_WALK                 0x10
-#define OP_CSR_WALK_FILTERED        0x11
-#define OP_CSR_DEGREE               0x12
-#define OP_CSR_WALK_PREDICATE       0x13
-#define OP_NODE_FILTER              0x14
-#define OP_NODE_FILTER_STR_PREFIX   0x15
-#define OP_CSR_WALK_REDUCE_SUM      0x16
-#define OP_CSR_WALK_REDUCE          0x17
-#define OP_CSC_WALK                 0x18
-#define OP_HAS_CSR                  0x19
-#define OP_HAS_CSC                  0x1A
-#define OP_HAS_COO                  0x1B
-#define OP_HAS_KEY_CATALOG          0x1C
-#define OP_ADAPTIVE_WALK            0x1D
-#define OP_CREATE_SCRATCH_INDEX     0x1E
-#define OP_DROP_SCRATCH_INDEX       0x1F
-
-// Vector Predicate and SIMD Mask Opcodes (0x20 - 0x27)
-#define OP_VEC_CMP_EQ               0x20
-#define OP_VEC_CMP_GT               0x21
-#define OP_VEC_CMP_LT               0x22
-#define OP_VEC_CMP_BETWEEN          0x23
-#define OP_MASK_AND                 0x24
-#define OP_MASK_OR                  0x25
-#define OP_MASK_NOT                 0x26
-#define OP_VEC_BLEND                0x27
-#define OP_RESERVED_28              0x28
-#define OP_RESERVED_29              0x29
-#define OP_ASSERT_FINITE            0x2A
-#define OP_RESERVED_2B              0x2B
-#define OP_RESERVED_2C              0x2C
-#define OP_VEC_MATH_UNARY           0x2D
-#define OP_VEC_MATH_BINARY          0x2E
-#define OP_VEC_MATH_TERNARY         0x2F
-
-#define OP_SET_UNION                0x30
-#define OP_SET_INTERSECT            0x31
-#define OP_SET_DIFFERENCE           0x32
-#define OP_SET_CARDINALITY          0x33
-#define OP_VECTOR_MUL_ATTR          0x34
-#define OP_VECTOR_REDUCE_SUM        0x35
-#define OP_VECTOR_DIV               0x36
-#define OP_VECTOR_STR_CONCAT        0x37
-#define OP_FLOAT_VECTOR_SCALE       0x38
-#define OP_L1_NORM_DIFF             0x39
-
-#define OP_PROJECT_STATE            0x3A
-#define OP_COALESCE                 0x3B
-#define OP_EXTRACT_VALIDITY         0x3C
-#define OP_VECTOR_TIME_VALID_AT     0x3D
-#define OP_RESERVED_3E              0x3E
-#define OP_RESERVED_3F              0x3F
-
-#define OP_CC_AFFOREST              0x40
-#define OP_MXV                      0x41
-#define OP_VXM                      0x42
-#define OP_EWISE_ADD                0x43
-#define OP_EWISE_MULT               0x44
-#define OP_REDUCE                   0x45
-#define OP_CC_HOOK_COMPRESS         0x46
-#define OP_TC_SWEEP_BATCH           0x47
-#define OP_BRANDES_FORWARD          0x48
-#define OP_BRANDES_BACKWARD         0x49
-#define OP_DELTA_STEP_RELAX         0x4A
-#define OP_READ_EDGE_WEIGHT         0x4B
-
-#define OP_RESERVED_4C              0x4C
-#define OP_RESERVED_4D              0x4D
-#define OP_RESERVED_4E              0x4E
-#define OP_RESERVED_4F              0x4F
-
-#define OP_JMP                      0x50
-#define OP_JZ                       0x51
-#define OP_JNZ                      0x52
-#define OP_LOOP_DECR                0x53
-#define OP_STABLE_CHECK             0x54
-#define OP_CALL                     0x55
-#define OP_RET                      0x56
-
-#define OP_ENTER_FRAME              0x57
-#define OP_LEAVE_FRAME              0x58
-#define OP_RESERVED_59              0x59
-
-#define OP_THROW                    0x5A
-#define OP_ASSERT                   0x5B
-#define OP_TRAP                     0x5C
-
-#define OP_RESERVED_5D              0x5D
-#define OP_RESERVED_5E              0x5E
-#define OP_RESERVED_5F              0x5F
-
-// Extended Domain Opcodes (0x60 - 0x6C)
-#define OP_SAMPLE_NEIGHBORS         0x60
-#define OP_RANDOM_WALK              0x61
-#define OP_SCATTER_GATHER           0x62
-#define OP_REBAC_CHECK              0x63
-#define OP_ROARING_BITMAP_AND       0x64
-#define OP_ISLAND_DETECT            0x65
-#define OP_SPARSE_MATVEC            0x66
-#define OP_LOUVAIN_MODULARITY       0x67
-#define OP_KCORE_DECOMPOSITION      0x68
-#define OP_MOTIF_MATCH_3            0x69
-#define OP_GRAPH_ISOMORPHISM        0x6A
-#define OP_ROARING_BITMAP_OR        0x6B
-#define OP_ROARING_BITMAP_AND_NOT   0x6C
-
-#define OP_RESERVED_6D              0x6D
-#define OP_RESERVED_6E              0x6E
-#define OP_RESERVED_6F              0x6F
-
-#define OP_MOV                      0x70
-#define OP_CLEAR_REG                0x71
-#define OP_LOAD_INDIRECT            0x72
-#define OP_ALLOC_SCRATCH            0x73
-#define OP_ASSERT_SCRATCH_BYTES     0x74
-#define OP_SET_MAX_DOP              0x75
-
-#define OP_RESERVED_76              0x76
-#define OP_RESERVED_77              0x77
-#define OP_RESERVED_78              0x78
-#define OP_RESERVED_79              0x79
-#define OP_RESERVED_7A              0x7A
-#define OP_RESERVED_7B              0x7B
-#define OP_RESERVED_7C              0x7C
-#define OP_RESERVED_7D              0x7D
-#define OP_RESERVED_7E              0x7E
-#define OP_RESERVED_7F              0x7F
-
-// Functional Optics & Columnar Gathers (0x80 - 0x83)
-#define OP_LOAD_COLUMN_VECTOR       0x80
-#define OP_GATHER_NODE_ATTR         0x81
-#define OP_GATHER_EDGE_ATTR         0x82
-#define OP_BRIN_ZONE_SKIP           0x83
-
-// Multiplicity Fast Paths & Multi-Layout Sweep (0x84 - 0x8F, 0x94 - 0x95)
-#define OP_CSR_WALK_DIRECT_STORE    0x84
-#define OP_CSR_WALK_DENSE_STREAM    0x85
-#define OP_COO_WALK                 0x86
-#define OP_CSC_WALK_DIRECT_STORE    0x87
-#define OP_FIXPOINT_KLEENE_STAR     0x88
-#define OP_SWAP_REG                 0x89
-#define OP_FRONTIER_DIFF            0x8A
-#define OP_COO_WALK_FILTERED        0x8B
-#define OP_COO_WALK_REDUCE          0x8C
-#define OP_COO_WALK_DIRECT_STORE    0x8D
-#define OP_DENSE_WALK               0x8E
-#define OP_DENSE_WALK_BITMATRIX     0x8F
-
-#define OP_COLLECT_BITSET           0x90
-#define OP_COLLECT_ARRAY            0x91
-#define OP_MAP_DENSE_TO_KEYS        0x92
-#define OP_COLLECT_VALUE_MAP        0x93
-#define OP_DENSE_WALK_REDUCE        0x94
-#define OP_DENSE_WALK_DIRECT_STORE  0x95
-
-// Edge Stream Shader Opcodes (0xA0 - 0xBF)
-#define OP_COO_WALK_STREAM        0xA0
-#define OP_STREAM_FUNC_BEGIN      0xA1
-#define OP_STREAM_FUNC_END        0xA2
-#define OP_STREAM_LOAD_SRC        0xA3
-#define OP_STREAM_LOAD_EDGE       0xA4
-#define OP_STREAM_MATH_ADD        0xA5
-#define OP_STREAM_MATH_DIV        0xA6
-#define OP_STREAM_FILTER          0xA7
-#define OP_STREAM_REDUCE          0xA8
-#define OP_CSR_WALK_STREAM        0xA9
-#define OP_CSC_WALK_STREAM        0xAA
-#define OP_STREAM_LOAD_TGT        0xAB
-#define OP_STREAM_MATH_SUB        0xAC
-#define OP_STREAM_MATH_MUL        0xAD
-#define OP_STREAM_MATH_MOD        0xAE
-#define OP_STREAM_MATH_UNARY      0xAF
-#define OP_STREAM_CMP_EQ          0xB0
-#define OP_STREAM_CMP_NEQ         0xB1
-#define OP_STREAM_CMP_GT          0xB2
-#define OP_STREAM_CMP_LT          0xB3
-#define OP_STREAM_LOGIC_AND       0xB4
-#define OP_STREAM_LOGIC_OR        0xB5
-#define OP_STREAM_LOGIC_NOT       0xB6
-#define OP_STREAM_SELECT          0xB7
-#define OP_STREAM_REDUCE_ARGMIN   0xB8
-#define OP_STREAM_REDUCE_ARGMAX   0xB9
-#define OP_STREAM_LOAD_SRC_ID     0xBA
-#define OP_STREAM_LOAD_TGT_ID     0xBB
-#define OP_STREAM_LOAD_EDGE_ID    0xBC
-#define OP_STREAM_LOAD_CONST      0xBD
-#define OP_STREAM_YIELD           0xBE
-#define OP_STREAM_SCATTER_REDUCE  0xBF
-
-// Multi-Lane Bit-Sliced Execution & Vector ANN Opcodes (0xC0 - 0xCB)
-#define OP_LANE_INIT_SEEDS        0xC0
-#define OP_LANE_INIT_GROUPS       0xC1
-#define OP_LANE_SET_EDGE_MASK     0xC2
-#define OP_LANE_CSR_WALK          0xC3
-#define OP_LANE_CSC_WALK          0xC4
-#define OP_LANE_PRUNE_MASK        0xC5
-#define OP_LANE_FILTER_QUORUM     0xC6
-#define OP_LANE_REDUCE_AND        0xC7
-#define OP_LANE_REDUCE_ATTR       0xC8
-#define OP_LANE_SET_COVER         0xC9
-#define OP_VECTOR_ANN_SEARCH      0xCA
-#define OP_VECTOR_RERANK_DOT      0xCB
-
-// GraphBLAS Semiring IDs
-#define SEMIRING_PLUS_TIMES         0
-#define SEMIRING_MIN_PLUS           1
-#define SEMIRING_MAX_MIN            2
-#define SEMIRING_BOOL               3
-
-// GraphBLAS Binary / Monoid Operator IDs
-#define BINARY_OP_ADD               0
-#define BINARY_OP_MUL               1
-#define BINARY_OP_MIN               2
-#define BINARY_OP_MAX               3
-#define BINARY_OP_AND               4
-#define BINARY_OP_OR                5
-#define BINARY_OP_ARGMIN            6
-#define BINARY_OP_ARGMAX            7
-
-/** @brief Register Type Tags */
-typedef enum {
-    TYPE_NULL = 0x00,
-    TYPE_INT64 = 0x01,
-    TYPE_NODE_ID = 0x02,
-    TYPE_RELATION_ID = 0x03,
-    TYPE_BITSET_HANDLE = 0x04,
-    TYPE_NODE_VECTOR = 0x05,
-    TYPE_CSR_SPAN = 0x06,
-    TYPE_BOOLEAN = 0x07,
-    TYPE_FLOAT = 0x08,
-    TYPE_DOUBLE = 0x09,
-    TYPE_VALUE_MAP = 0x0A,
-    TYPE_STRING_VECTOR = 0x0B,
-    TYPE_FLOAT_VECTOR = 0x0C,
-    TYPE_DOUBLE_VECTOR = 0x0D,
-    TYPE_UINT64_VECTOR = 0x0E,
-    TYPE_FRONTIER_STATE = 0x0F,
-    TYPE_LANE_FRONTIER = 0x10
-} impulse_register_type_t;
-
-#define TYPE_FLOAT64 TYPE_DOUBLE
-
-/** @brief Hardware Bit-Sliced Lane Width Tiers */
-typedef enum {
-    IMPULSE_LANE_WIDTH_8  = 8,
-    IMPULSE_LANE_WIDTH_16 = 16,
-    IMPULSE_LANE_WIDTH_32 = 32,
-    IMPULSE_LANE_WIDTH_64 = 64
-} impulse_lane_width_t;
-
-/** @brief UB-free 64-bit active lane mask constructor for K in [0..64+] */
-static inline uint64_t impulse_make_active_mask_u64(uint32_t k) {
-    return (k >= 64u) ? ~0ULL : ((k == 0u) ? 0ULL : ((1ULL << k) - 1ULL));
-}
-
-/** @brief VM Execution Status Codes */
-typedef enum {
-    IMPULSE_VM_OK = 0,
-    IMPULSE_VM_ERR_INVALID_OPCODE = 1,
-    IMPULSE_VM_ERR_OUT_OF_BOUNDS = 2,
-    IMPULSE_VM_ERR_NULL_SNAPSHOT = 3,
-    IMPULSE_VM_ERR_STACK_OVERFLOW = 4,
-    IMPULSE_VM_ERR_STACK_UNDERFLOW = 5,
-    IMPULSE_VM_ERR_INVALID_REGISTER = 6,
-    IMPULSE_VM_ERR_USER_THROW = 7,
-    IMPULSE_VM_ERR_ASSERTION_FAILED = 8,
-    IMPULSE_VM_ERR_TRAP = 9,
-    IMPULSE_VM_ERR_RESERVED_OPCODE = 10,
-    IMPULSE_VM_ERR_BUFFER_OVERFLOW = 11,
-    IMPULSE_VM_ERR_FLOATING_POINT = 12,
-    IMPULSE_VM_ERR_GAS_EXHAUSTED = 13
-} impulse_vm_status_t;
-
-#ifndef IMPULSE_ALIGN
-  #if defined(__cplusplus)
-    #define IMPULSE_ALIGN(x) alignas(x)
-  #elif defined(_MSC_VER)
-    #define IMPULSE_ALIGN(x) __declspec(align(x))
-  #else
-    #define IMPULSE_ALIGN(x) __attribute__((aligned(x)))
-  #endif
+#if defined(_MSC_VER)
+  #define IMPULSE_VM_ALIGN(n) __declspec(align(n))
+#else
+  #define IMPULSE_VM_ALIGN(n) __attribute__((aligned(n)))
 #endif
 
+/** Little-Endian VM Bytecode Magic: 'I' 'M' 'P' 'B' (0x494D5042) */
+#define IMPULSE_VM_MAGIC 0x494D5042u
+
+/** Forward-declared caller-owned workspace header (placement-initialized in scratch_buf). */
+typedef struct impulse_vm_workspace impulse_vm_workspace_t;
+
+/** Normative status codes (matching impulse::vm::Status in impulse_vm_isa.hpp). */
+typedef uint32_t impulse_vm_status_t;
+
+enum {
+    IMPULSE_VM_OK                      = 0u,
+    IMPULSE_VM_ERR_INVALID_OPCODE      = 1u,
+    IMPULSE_VM_ERR_OUT_OF_BOUNDS       = 2u,
+    IMPULSE_VM_ERR_NULL_SNAPSHOT       = 3u,
+    IMPULSE_VM_ERR_STACK_OVERFLOW      = 4u,
+    IMPULSE_VM_ERR_STACK_UNDERFLOW     = 5u,
+    IMPULSE_VM_ERR_INVALID_OPERAND     = 6u,
+    IMPULSE_VM_ERR_USER_THROW          = 7u,
+    IMPULSE_VM_ERR_ASSERTION_FAILED    = 8u,
+    IMPULSE_VM_ERR_TRAP                = 9u,
+    IMPULSE_VM_ERR_DOMAIN_MISMATCH     = 10u,
+    IMPULSE_VM_ERR_BUFFER_OVERFLOW     = 11u,
+    IMPULSE_VM_ERR_FLOATING_POINT      = 12u,
+    IMPULSE_VM_ERR_GAS_EXHAUSTED       = 13u,
+    IMPULSE_VM_ERR_TYPE_MISMATCH       = 14u,
+    IMPULSE_VM_ERR_VALIDATION_FAILED   = 15u,
+    IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW = 16u,
+    IMPULSE_VM_ERR_DIV_BY_ZERO         = 17u
+};
+
 /**
- * @brief Fixed 64-bit Instruction Structure Layout.
+ * Hot Execution State Frame.
+ * Exact 256 bytes, 64-byte aligned (4 cache lines).
  */
-typedef struct IMPULSE_ALIGN(8) {
-    uint8_t  opcode;    /**< Opcode byte (0x00..0xFF) */
-    uint8_t  flags;     /**< Instruction modifier flags */
-    uint16_t dst_reg;   /**< Destination register index (R0..R63) */
-    uint32_t payload;   /**< Payload data (source register, relation ID, jump offset, or scalar constant) */
-} impulse_instruction_t;
+typedef struct IMPULSE_VM_ALIGN(64) impulse_vm_state {
+    /* Cache Line 0 (Bytes 0..63): Control, Flags, Type Word & R0..R3 */
+    uint32_t pc;                        /* [0..3]   Current instruction word index */
+    uint16_t vm_flags;                  /* [4..5]   Bit 0: ZF, Bit 1: ST, Bit 2: NF */
+    uint16_t r_valid_mask;              /* [6..7]   16-bit Kleene validity mask for R0..R15 */
+    uint64_t r_type_word;               /* [8..15]  16 x 4-bit scalar type tags for R0..R15 */
+    uint16_t call_depth;                /* [16..17] Active call stack depth (0..16) */
+    uint16_t max_dop;                   /* [18..19] Active worker parallelism (1..host_max) */
+    uint32_t win_bases_packed;          /* [20..23] r_base:8 | f_base:8 | v_base:8 | spill_base:8 */
+    impulse_vm_workspace_t* ws;         /* [24..31] Pointer to caller-owned workspace header */
+    uint64_t r_regs[4];                 /* [32..63] R0..R3 */
 
-typedef struct impulse_snapshot impulse_snapshot_t;
-typedef struct impulse_vm_context impulse_vm_context_t;
+    /* Cache Line 1 (Bytes 64..127): Scalar Bank R4..R11 */
+    uint64_t r_regs_4_11[8];            /* [64..127] */
 
-typedef struct {
-    const char** keys;
-    size_t count;
-} impulse_vm_input_keys;
+    /* Cache Line 2 (Bytes 128..191): R12..R15 + Frontier Handle Table F0..F7 */
+    uint64_t r_regs_12_15[4];           /* [128..159] */
+    uint32_t f_handles[8];              /* [160..191] */
 
-/**
- * @brief VM Execution State Frame (640 bytes, 64-byte aligned).
- *
- * Matches the layout of the Java 25 FFM MemorySegment representation.
- */
-typedef struct IMPULSE_ALIGN(64) {
-    uint32_t pc;                                  /**< Program Counter offset (0) */
-    uint32_t reserved;                            /**< Alignment padding (4) */
-    uint64_t flags;                               /**< Status flags register (ZF, LT, GT, EQ, ST) (8) */
-    uint64_t registers[64];                       /**< 64-bit registers R0..R63 (16..527) */
-    uint8_t  register_types[64];                  /**< Type tags for registers R0..R63 (528..591) */
-    impulse_vm_context_t* query_context;          /**< Pointer to off-heap execution context (592..599) */
-    uint32_t call_stack[8];                       /**< Subroutine return stack (600..631) */
-    uint32_t call_stack_depth;                    /**< Subroutine stack depth (632..635) */
-    uint32_t reserved_padding2;                   /**< Padding to exactly 640 bytes (636..639) */
+    /* Cache Line 3 (Bytes 192..255): Frontier F8..F15 + Vector Handle Table V0..V15 */
+    uint32_t f_handles_8_15[8];         /* [192..223] */
+    uint16_t v_handles[16];             /* [224..255] */
 } impulse_vm_state_t;
 
-// Public Context lifecycle APIs
-IMPULSE_API impulse_vm_context_t* impulse_vm_context_create(const impulse_snapshot_t* snapshot);
-IMPULSE_API void impulse_vm_context_destroy(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_reset(impulse_vm_context_t* ctx);
-IMPULSE_API size_t impulse_vm_context_get_vector_size(const impulse_vm_context_t* ctx);
-IMPULSE_API const uint64_t* impulse_vm_context_get_collected_nodes(const impulse_vm_context_t* ctx, size_t* out_count);
-IMPULSE_API const float* impulse_vm_context_get_float_vector(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API size_t impulse_vm_context_float_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API const double* impulse_vm_context_get_double_vector(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API size_t impulse_vm_context_double_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API int impulse_vm_context_acquire_bitset(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_bitset(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API void impulse_vm_context_bitset_add(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
-IMPULSE_API void impulse_vm_context_bitset_remove(impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
-IMPULSE_API bool impulse_vm_context_bitset_test(const impulse_vm_context_t* ctx, size_t handle, uint64_t node_id);
-IMPULSE_API void impulse_vm_context_bitset_fill(impulse_vm_context_t* ctx, size_t handle, uint64_t count);
-IMPULSE_API uint64_t impulse_vm_context_bitset_get_word(const impulse_vm_context_t* ctx, size_t handle, size_t word_idx);
-IMPULSE_API size_t impulse_vm_context_get_bitset_word_count(const impulse_vm_context_t* ctx);
-IMPULSE_API const uint64_t* impulse_vm_context_get_bitset_words(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API int impulse_vm_context_acquire_float_vector(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_float_vector(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API void impulse_vm_context_float_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, float val);
-IMPULSE_API int impulse_vm_context_acquire_double_vector(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_double_vector(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API void impulse_vm_context_double_vector_set(impulse_vm_context_t* ctx, size_t handle, size_t index, double val);
-IMPULSE_API void impulse_vm_context_bind_inline_data(impulse_vm_context_t* ctx, const void* data_ptr, size_t bytes);
-IMPULSE_API int impulse_vm_context_acquire_node_vector(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_node_vector(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API const uint64_t* impulse_vm_context_get_node_vector(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API int impulse_vm_context_acquire_string_vector(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_string_vector(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API void impulse_vm_context_string_vector_add(impulse_vm_context_t* ctx, size_t handle, const char* str);
-IMPULSE_API size_t impulse_vm_context_string_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API const char* impulse_vm_context_string_vector_get(const impulse_vm_context_t* ctx, size_t handle, size_t index);
-IMPULSE_API void impulse_vm_context_set_fuel(impulse_vm_context_t* ctx, uint64_t fuel);
-IMPULSE_API int impulse_vm_context_acquire_value_map(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_value_map(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API size_t impulse_vm_context_value_map_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API const char* impulse_vm_context_value_map_get_key(const impulse_vm_context_t* ctx, size_t handle, size_t index);
-IMPULSE_API float impulse_vm_context_value_map_get_value(const impulse_vm_context_t* ctx, size_t handle, size_t index);
+#ifdef __cplusplus
+static_assert(sizeof(impulse_vm_state_t) == 256, "impulse_vm_state_t must be exactly 256 bytes");
+static_assert(alignof(impulse_vm_state_t) == 64, "impulse_vm_state_t must be 64-byte aligned");
+#endif
 
-// Multi-Lane Frontier & Vector C-ABI Accessors
-IMPULSE_API void impulse_vm_context_node_vector_set(impulse_vm_context_t* ctx, size_t handle, const uint64_t* values, size_t count);
-IMPULSE_API size_t impulse_vm_context_node_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API size_t impulse_vm_context_float_vector_size(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API int impulse_vm_context_acquire_lane_frontier(impulse_vm_context_t* ctx);
-IMPULSE_API void impulse_vm_context_release_lane_frontier(impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API uint32_t impulse_vm_context_lane_frontier_num_lanes(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API uint32_t impulse_vm_context_lane_frontier_width(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API uint64_t impulse_vm_context_lane_frontier_active_mask(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API size_t impulse_vm_context_lane_frontier_node_count(const impulse_vm_context_t* ctx, size_t handle);
-IMPULSE_API const uint64_t* impulse_vm_context_lane_frontier_data(const impulse_vm_context_t* ctx, size_t handle);
+/** .impb Bytecode Container Header (32 bytes, little-endian). */
+typedef struct impulse_impb_header {
+    uint32_t magic;             /* 0x494D5042 ('IMPB') */
+    uint16_t isa_version;       /* 0x000B (11) */
+    uint8_t  header_flags;      /* Bit 0: HAS_CONST_POOL; Bits 1..7 MBZ */
+    uint8_t  max_call_depth;    /* 0..16 */
+    uint32_t code_word_count;
+    uint32_t const_pool_bytes;
+    uint32_t entry_pc;
+    uint16_t required_domains;
+    uint16_t reserved;          /* MBZ */
+    uint64_t program_xxh3_64;
+} impulse_impb_header_t;
 
-IMPULSE_API void impulse_vm_context_mock_csr(
-    impulse_vm_context_t* ctx,
-    uint16_t relation_index,
-    const uint32_t* csr_offsets,
-    const uint32_t* csr_targets,
-    uint64_t node_count,
-    uint64_t edge_count
-);
+#ifdef __cplusplus
+static_assert(sizeof(impulse_impb_header_t) == 32, "impulse_impb_header_t must be 32 bytes");
+#endif
 
-IMPULSE_API void impulse_vm_context_mock_csr_typed(
-    impulse_vm_context_t* ctx,
-    uint16_t relation_index,
-    const void* csr_offsets,
-    const void* csr_targets,
-    uint64_t node_count,
-    uint64_t edge_count,
-    uint8_t node_id_width,
-    uint8_t edge_index_width
-);
+/** Configurable metamorphic frontier & morsel geometry (P0..P4). */
+typedef struct impulse_vm_geometry {
+    uint32_t tier0_max;         /* P0: 64, P1: 2, P2: 0 */
+    uint32_t page_shift;        /* P0: 12, P1: 2, P2: 6 */
+    uint32_t tier2_denom;       /* P0: 64, P1: 2, P2: 0 */
+    uint32_t morsel_max;        /* P0: 2048, P3: 3, P4: 4 */
+    uint32_t max_dop;           /* P0..P3: 1, P4: 4 */
+} impulse_vm_geometry_t;
 
-IMPULSE_API void impulse_vm_context_mock_csc(
-    impulse_vm_context_t* ctx,
-    uint16_t relation_index,
-    const uint32_t* csc_offsets,
-    const uint32_t* csc_targets
-);
+/** Static AOT memory planner output. */
+typedef struct impulse_vm_memory_plan {
+    size_t min_scratch_bytes;
+    size_t guaranteed_scratch_bytes;
+    size_t max_result_bytes;
+} impulse_vm_memory_plan_t;
 
-IMPULSE_API void impulse_vm_context_mock_csc_typed(
-    impulse_vm_context_t* ctx,
-    uint16_t relation_index,
-    const void* csc_offsets,
-    const void* csc_targets,
-    uint8_t node_id_width,
-    uint8_t edge_index_width
+/** Dual ICTX v2 canonical digest. */
+typedef struct impulse_vm_ictx_v2 {
+    uint64_t logical_hash;
+    uint64_t physical_hash;
+} impulse_vm_ictx_v2_t;
+
+/** Validation result detail. */
+typedef struct impulse_vm_validation {
+    impulse_vm_status_t status;
+    uint32_t bad_pc;
+} impulse_vm_validation_t;
+
+/** Public C-ABI query parameter kind (mirrors internal ParamKind / ScalarType). */
+#define IMPULSE_VM_PARAM_SCALAR_NULL  0u
+#define IMPULSE_VM_PARAM_SCALAR_I64   1u
+#define IMPULSE_VM_PARAM_SCALAR_U64   2u
+#define IMPULSE_VM_PARAM_SCALAR_F64   3u
+#define IMPULSE_VM_PARAM_SCALAR_BOOL  4u
+#define IMPULSE_VM_PARAM_SCALAR_STR   5u
+#define IMPULSE_VM_PARAM_FRONTIER_IDS 6u
+#define IMPULSE_VM_PARAM_VEC_I64      7u
+#define IMPULSE_VM_PARAM_VEC_U64      8u
+#define IMPULSE_VM_PARAM_VEC_F64      9u
+
+/** Host-bound query parameter entry passed via impulse_vm_params_t. */
+typedef struct impulse_vm_param_binding {
+    uint32_t    param_id;       /* Matches imm16_lo in OP_LOAD_PARAM */
+    uint32_t    kind;           /* IMPULSE_VM_PARAM_* */
+    uint16_t    domain_id;      /* Target domain for FRONTIER_IDS */
+    uint16_t    reserved;       /* MBZ */
+    uint32_t    count;          /* Element count (FRONTIER_IDS/VEC_*) or byte len (STR) */
+    uint64_t    scalar_bits;    /* Raw 64-bit scalar value (i64/u64/f64 bits/bool 0|1) */
+    const void* data_ptr;       /* Pointer to uint64_t[] / int64_t[] / double[] / char* */
+    const uint64_t* valid_bits; /* Optional validity bitmap for VEC_* (NULL => all valid) */
+} impulse_vm_param_binding_t;
+
+/** Optional query execution parameters & fuel override. */
+typedef struct impulse_vm_params {
+    uint64_t gas_limit;         /* 0 => default (100000 for fixtures, UINT64_MAX for C-ABI) */
+    const impulse_vm_geometry_t* geometry_override; /* NULL => P0_DEFAULT */
+    const impulse_vm_param_binding_t* bindings;     /* NULL => no host-bound params */
+    uint32_t binding_count;
+} impulse_vm_params_t;
+
+/** Read-only view over a terminal OP_COLLECT output slot in workspace memory. */
+typedef struct impulse_vm_output_view {
+    uint16_t        slot;
+    uint8_t         elem_tag;       /* 0=I64, 1=U64, 4=F64, 6=BOOL_3VL, 7=STR, 8=EMB, 9=LANE_STATE */
+    uint8_t         reserved;
+    uint32_t        length;
+    const int64_t*  i64_data;       /* Valid for I64 / U64 */
+    const double*   f64_data;       /* Valid for F64 */
+    const uint64_t* valid_bits;     /* NULL => all valid */
+    const uint64_t* bool_data_bits; /* Valid for BOOL_3VL */
+} impulse_vm_output_view_t;
+
+/**
+ * 1. Placement-initialize a caller-owned 128-byte-aligned scratch buffer once per worker thread.
+ *    Zero heap allocations; no destructor required.
+ */
+IMPULSE_API impulse_vm_status_t impulse_workspace_init(
+    void* scratch_buf,
+    size_t scratch_bytes,
+    impulse_vm_workspace_t** out_ws
 );
 
 /**
- * @brief Execute a sequence of VM bytecode instructions against a VM state frame.
- * @param bytecode Pointer to array of impulse_instruction_t instructions.
- * @param instruction_count Number of instructions in array.
- * @param vm_state Pointer to aligned VM state frame.
- * @param input_param Input seed node ID or parameter value.
- * @return IMPULSE_VM_OK on successful execution, or VM error code.
+ * 2. Static load-time bytecode verifier over raw 64-bit instruction words.
  */
-/**
- * @brief Ahead-of-Time Bytecode Type & Register Validator.
- * Performs single-pass abstract type propagation across registers R0..R63.
- * Guarantees zero runtime type tag branch mispredictions in SIMD execution loops.
- *
- * @param bytecode Pointer to array of impulse_instruction_t instructions.
- * @param instruction_count Number of instructions in array.
- * @return IMPULSE_VM_OK if statically valid, or VM status error code on type mismatch.
- */
-IMPULSE_API impulse_vm_status_t impulse_vm_validate(
-    const impulse_instruction_t* bytecode,
-    size_t instruction_count
-);
-
-IMPULSE_API impulse_vm_status_t impulse_vm_execute(
-    const impulse_instruction_t* bytecode,
-    size_t instruction_count,
-    impulse_vm_state_t* vm_state,
-    uint64_t input_param
+IMPULSE_API impulse_vm_validation_t impulse_vm_validate_words(
+    const uint64_t* words,
+    size_t word_count
 );
 
 /**
- * @brief Computes deterministic SHA-256 state hash of VM state and execution context.
- *
- * Hashes PC, flags, status, call stack, registers R0..R63, and recursively hashes the semantic
- * contents of all referenced off-heap bitsets, vectors, lane frontiers, and value maps.
- *
- * @param state Pointer to VM state frame.
- * @param status VM execution status code.
- * @param hash_out 32-byte buffer receiving SHA-256 digest.
- * @return 0 on success, negative on error.
+ * 3. Static load-time bytecode verifier over a .impb container.
  */
-IMPULSE_API int impulse_vm_state_hash(
-    const impulse_vm_state_t* state,
-    int32_t status,
-    uint8_t hash_out[32]
+IMPULSE_API impulse_vm_validation_t impulse_vm_validate(
+    const void* impb_bytes,
+    size_t impb_len
 );
 
 /**
- * @brief Computes deterministic SHA-256 state hash as a 64-character lowercase hexadecimal string.
- *
- * @param state Pointer to VM state frame.
- * @param status VM execution status code.
- * @param hex_out Buffer of at least 65 bytes receiving null-terminated hex string.
- * @return 0 on success, negative on error.
+ * 4. Static AOT memory planner (O(|code|) worst-case scratch & result bound).
  */
-IMPULSE_API int impulse_vm_state_hash_hex(
-    const impulse_vm_state_t* state,
-    int32_t status,
-    char hex_out[65]
-);
-
-IMPULSE_API size_t impulse_vm_get_required_buffer_size(
+IMPULSE_API impulse_vm_status_t impulse_vm_plan_memory(
+    const void* impb_bytes,
+    size_t impb_len,
     const impulse_snapshot_t* snapshot,
-    uint16_t domain_id
+    uint16_t max_dop,
+    impulse_vm_memory_plan_t* out_plan
 );
 
-IMPULSE_API impulse_vm_status_t impulse_vm_execute_to_buffer(
-    const impulse_instruction_t* bytecode,
-    size_t instruction_count,
-    impulse_vm_state_t* vm_state,
-    uint64_t input_param,
-    uint16_t target_domain_id,
-    uint16_t result_reg,
-    uint64_t* out_words,
-    size_t out_words_capacity,
-    size_t* out_words_written
+/**
+ * 4b. Pre-build a reusable snapshot view on an open .imps snapshot once
+ *     before hot query loops (eliminates per-query CSR/attribute view building).
+ */
+IMPULSE_API impulse_vm_status_t impulse_vm_prepare_snapshot(
+    const impulse_snapshot_t* snapshot
 );
 
-// ---------------------------------------------------------------------------
-// Unified In-Kernel Compiler C-ABI Interface
-// ---------------------------------------------------------------------------
+/**
+ * 5. Zero-allocation hot-path execution over a .impb container.
+ */
+IMPULSE_API impulse_vm_status_t impulse_vm_execute(
+    const void* impb_bytes,
+    size_t impb_len,
+    const impulse_snapshot_t* snapshot,
+    const impulse_vm_params_t* params,
+    impulse_vm_workspace_t* scratch_ws,
+    void* result_buf,
+    size_t result_cap,
+    size_t* out_result_bytes
+);
+
+/**
+ * 6. Compute canonical Dual ICTX v2 digest from workspace state after execution.
+ */
+IMPULSE_API impulse_vm_ictx_v2_t impulse_vm_compute_ictx_v2(
+    const impulse_vm_workspace_t* ws
+);
+
+/**
+ * 7. Access the 256-byte hot execution state frame inside a workspace.
+ */
+IMPULSE_API const impulse_vm_state_t* impulse_vm_get_state(
+    const impulse_vm_workspace_t* ws
+);
+
+/**
+ * 7b. Inspect terminal OP_COLLECT outputs stored in the workspace after execution.
+ */
+IMPULSE_API uint32_t impulse_vm_get_output_count(
+    const impulse_vm_workspace_t* ws
+);
+
+IMPULSE_API int impulse_vm_get_output(
+    const impulse_vm_workspace_t* ws,
+    uint32_t index,
+    impulse_vm_output_view_t* out
+);
+
+IMPULSE_API int impulse_vm_get_output_str(
+    const impulse_vm_workspace_t* ws,
+    uint32_t index,
+    uint32_t elem_idx,
+    const char** out_ptr,
+    uint32_t* out_len,
+    int* out_valid
+);
+
+/**
+ * 8. Optional per-opcode profiling statistics (active only when compiled with
+ *    -DIMPULSE_VM_OPCODE_PROFILE=1; zero overhead & zero workspace size when off).
+ *    - calls:    exact invocation count for all opcodes 0x00..0x7F.
+ *    - total_ns / min_ns / max_ns: populated for bulk opcodes (op >= 0x20, Pillars 2-5,
+ *      including morsel-body ops); 0 for Pillar 1 scalar ops (op < 0x20) to avoid
+ *      timer-read distortion on sub-10ns instructions.
+ */
+typedef struct {
+    uint64_t calls;
+    uint64_t total_ns;
+    uint64_t min_ns;
+    uint64_t max_ns;
+} impulse_vm_opcode_stat_t;
+
+IMPULSE_API void impulse_vm_reset_opcode_stats(
+    impulse_vm_workspace_t* ws
+);
+
+/**
+ * Copies 128 opcode stat entries into out_128.
+ * Returns 1 if IMPULSE_VM_OPCODE_PROFILE is enabled, 0 otherwise.
+ */
+IMPULSE_API int impulse_vm_get_opcode_stats(
+    const impulse_vm_workspace_t* ws,
+    impulse_vm_opcode_stat_t* out_128
+);
+
+/**
+ * 9. Compile an ImpScheme SSA (.impscm) source string against a bound snapshot
+ *    into a validated .impb container.
+ *    opt_level: 0 = opt-OFF, 1 = opt-ON.
+ *    Returns 0 on success, non-zero on static validation/parse error (message written to err_buf).
+ *    Caller frees *out_impb via impulse_vm_free_bytes().
+ */
+IMPULSE_API int impulse_compile_impscm(
+    const char* impscm_src,
+    const impulse_snapshot_t* snapshot,
+    int opt_level,
+    uint8_t** out_impb,
+    size_t* out_len,
+    char* err_buf,
+    size_t err_cap
+);
+
+IMPULSE_API void impulse_vm_free_bytes(uint8_t* ptr);
+
+/* ---------------------------------------------------------------------------
+ * Unified In-Kernel Compiler Language Enum
+ * --------------------------------------------------------------------------- */
 
 /**
  * @enum impulse_language_t
@@ -561,33 +335,7 @@ typedef enum {
 } impulse_language_t;
 
 /**
- * @brief Compiles a DSL query string into physical 8-byte VM instructions using snapshot catalog statistics.
- * @param snapshot Snapshot handle (can be NULL for snapshot-less compilation).
- * @param script Source query text.
- * @param lang Language dialect (ImpLog, ImpK, ImpScheme, Cypher, CEL).
- * @param out_instructions Output buffer for compiled impulse_instruction_t bytecode.
- * @param out_capacity Capacity of out_instructions buffer.
- * @param out_count Pointer to store actual count of generated instructions.
- * @return IMPULSE_OK on success, or non-zero error code.
- */
-IMPULSE_API impulse_status_t impulse_compile_query(
-    const impulse_snapshot_t* snapshot,
-    const char* script,
-    impulse_language_t lang,
-    impulse_instruction_t* out_instructions,
-    size_t out_capacity,
-    size_t* out_count
-);
-
-/**
  * @brief Compiles a DSL query string into human-readable ImpAsm (.impas) assembly text.
- * @param snapshot Snapshot handle (can be NULL).
- * @param script Source query text.
- * @param lang Language dialect.
- * @param out_impas_buffer Output buffer to write assembly text string.
- * @param out_capacity Capacity of out_impas_buffer.
- * @param out_bytes_written Pointer to store written byte count (including null terminator).
- * @return IMPULSE_OK on success.
  */
 IMPULSE_API impulse_status_t impulse_compile_to_impas(
     const impulse_snapshot_t* snapshot,
@@ -598,26 +346,9 @@ IMPULSE_API impulse_status_t impulse_compile_to_impas(
     size_t* out_bytes_written
 );
 
-/**
- * @brief Compiles and directly executes a DSL query string against a snapshot.
- * @param snapshot Snapshot handle.
- * @param script Source query text.
- * @param lang Language dialect.
- * @param state VM execution state frame.
- * @param input_seed Initial seed node ID (placed in R0).
- * @return IMPULSE_VM_OK on success.
- */
-IMPULSE_API impulse_vm_status_t impulse_compile_and_execute(
-    const impulse_snapshot_t* snapshot,
-    const char* script,
-    impulse_language_t lang,
-    impulse_vm_state_t* state,
-    uint64_t input_seed
-);
-
-// ---------------------------------------------------------------------------
-// Canonical SQLite-Style Statement C-ABI & Projections
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Canonical SQLite-Style Statement C-ABI & Projections
+ * --------------------------------------------------------------------------- */
 
 /**
  * @struct impulse_column_desc_t
@@ -652,7 +383,7 @@ typedef struct impulse_execution_result {
 /** Opaque Statement Handle */
 typedef struct impulse_stmt impulse_stmt_t;
 
-// Lifecycle & Sizing
+/* Lifecycle & Sizing */
 IMPULSE_API impulse_status_t impulse_stmt_prepare(
     const impulse_snapshot_t* snapshot,
     const char* query_text,
@@ -662,7 +393,7 @@ IMPULSE_API impulse_status_t impulse_stmt_prepare(
 IMPULSE_API size_t impulse_stmt_buffer_size(const impulse_stmt_t* stmt);
 IMPULSE_API void impulse_stmt_finalize(impulse_stmt_t* stmt);
 
-// Parameter Bindings
+/* Parameter Bindings */
 IMPULSE_API impulse_status_t impulse_stmt_bind_node(impulse_stmt_t* stmt, const char* param, uint64_t node_id);
 IMPULSE_API impulse_status_t impulse_stmt_bind_nodes(impulse_stmt_t* stmt, const char* param, const uint64_t* node_ids, size_t count);
 IMPULSE_API impulse_status_t impulse_stmt_bind_bitset(impulse_stmt_t* stmt, const char* param, const uint64_t* words, size_t word_count);
@@ -674,10 +405,10 @@ IMPULSE_API impulse_status_t impulse_stmt_bind_str(impulse_stmt_t* stmt, const c
 IMPULSE_API impulse_status_t impulse_stmt_bind_uuid(impulse_stmt_t* stmt, const char* param, const uint8_t uuid_bytes[16]);
 IMPULSE_API impulse_status_t impulse_stmt_bind_vector(impulse_stmt_t* stmt, const char* param, const float* data, size_t dim);
 
-// Execution
+/* Execution */
 IMPULSE_API impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t buffer_size);
 
-// Column Result Accessors (Zero-Copy Arrow-Style)
+/* Column Result Accessors (Zero-Copy Arrow-Style) */
 IMPULSE_API size_t impulse_stmt_row_count(const impulse_stmt_t* stmt);
 IMPULSE_API uint32_t impulse_stmt_column_count(const impulse_stmt_t* stmt);
 IMPULSE_API const char* impulse_stmt_column_name(const impulse_stmt_t* stmt, uint32_t col_idx);
@@ -707,5 +438,4 @@ IMPULSE_API impulse_status_t impulse_exec(
 }
 #endif
 
-#endif // IMPULSE_VM_H
-
+#endif /* IMPULSE_VM_H */

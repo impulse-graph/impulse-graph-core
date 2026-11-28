@@ -7,7 +7,7 @@ package impulse
 #cgo linux LDFLAGS: -lstdc++ -lm
 #include <stdalign.h>
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include <stdlib.h>
 */
 import "C"

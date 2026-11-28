@@ -4,7 +4,7 @@
  *        backed 100% by ImpulseVM v0.11.0 2-buffer execution.
  */
 
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 #include "vm/impulse_bytecode_emitter.hpp"
 #include "impulse_graph_internal.hpp"
 #include "impulse_cel.h"
@@ -76,7 +76,7 @@ struct impulse_stmt {
     const impulse_snapshot_t* snapshot{nullptr};
     std::string query_text;
     impulse_language_t lang{IMPULSE_LANG_CYPHER};
-    impulse::compiler::v11::ImpulseCompiledProgram v11_program;
+    impulse::compiler::ImpulseCompiledProgram v11_program;
     impulse_vm_memory_plan_t v11_plan{};
 
     size_t words_per_bitset{0};
@@ -118,8 +118,8 @@ impulse_status_t impulse_compile_to_impas(
     }
     try {
         auto ast = parse_script_to_ast(script, lang);
-        auto compiled = impulse::compiler::v11::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
-        std::string impas = impulse::compiler::v11::ImpulseBytecodeEmitter::disassemble(compiled.code_words);
+        auto compiled = impulse::compiler::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
+        std::string impas = impulse::compiler::ImpulseBytecodeEmitter::disassemble(compiled.code_words);
         if (impas.size() + 1 > out_capacity) {
             return IMPULSE_ERR_BUFFER_OVERFLOW;
         }
@@ -152,7 +152,7 @@ impulse_status_t impulse_stmt_prepare(
         stmt->lang = detect_language(stmt->query_text);
 
         auto ast = parse_script_to_ast(query_text, stmt->lang);
-        stmt->v11_program = impulse::compiler::v11::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
+        stmt->v11_program = impulse::compiler::ImpulseBytecodeEmitter::emit(ast, snapshot, 0);
         if (stmt->v11_program.impb_bytes.empty()) {
             return IMPULSE_ERR_INVALID_ARGUMENT;
         }
@@ -166,13 +166,13 @@ impulse_status_t impulse_stmt_prepare(
         );
 
         if (snapshot != nullptr) {
-            (void)impulse_vm_v11_prepare_snapshot(snapshot);
+            (void)impulse_vm_prepare_snapshot(snapshot);
             if (impulse_vm_plan_memory(
                     stmt->v11_program.impb_bytes.data(),
                     stmt->v11_program.impb_bytes.size(),
                     snapshot,
                     1,
-                    &stmt->v11_plan) != IMPULSE_VM_V11_OK) {
+                    &stmt->v11_plan) != IMPULSE_VM_OK) {
                 return IMPULSE_ERR_INVALID_ARGUMENT;
             }
             size_t planned_scratch = std::max<size_t>(stmt->v11_plan.guaranteed_scratch_bytes, 4096);
@@ -297,17 +297,17 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
     uintptr_t buf_end = raw_addr + buffer_size;
     size_t avail_return_bytes = (buf_end > ret_aligned) ? static_cast<size_t>(buf_end - ret_aligned) : 0;
 
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    if (impulse_workspace_init(reinterpret_cast<void*>(aligned_addr), scratch_size - pad, &ws) != IMPULSE_VM_V11_OK) {
+    impulse_vm_workspace_t* ws = nullptr;
+    if (impulse_workspace_init(reinterpret_cast<void*>(aligned_addr), scratch_size - pad, &ws) != IMPULSE_VM_OK) {
         return IMPULSE_ERR_BUFFER_OVERFLOW;
     }
 
-    std::vector<impulse_vm_param_binding_v11_t> bindings;
+    std::vector<impulse_vm_param_binding_t> bindings;
     uint64_t single_seed = stmt->has_seed_node ? stmt->bound_seed_node : 0ULL;
     {
-        impulse_vm_param_binding_v11_t seed_b{};
+        impulse_vm_param_binding_t seed_b{};
         seed_b.param_id = 0;
-        seed_b.kind = IMPULSE_VM_V11_PARAM_FRONTIER_IDS;
+        seed_b.kind = IMPULSE_VM_PARAM_FRONTIER_IDS;
         seed_b.domain_id = stmt->v11_program.start_domain_id;
         if (!stmt->nodes_params.empty()) {
             const auto& vec = stmt->nodes_params.begin()->second;
@@ -324,44 +324,44 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
     }
     uint32_t next_pid = 1;
     for (const auto& kv : stmt->int_params) {
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = next_pid++;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_I64;
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_I64;
         pb.scalar_bits = static_cast<uint64_t>(kv.second);
         bindings.push_back(pb);
     }
     for (const auto& kv : stmt->uint_params) {
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = next_pid++;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_U64;
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_U64;
         pb.scalar_bits = kv.second;
         bindings.push_back(pb);
     }
     for (const auto& kv : stmt->float_params) {
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = next_pid++;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_F64;
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_F64;
         uint64_t fbits = 0;
         std::memcpy(&fbits, &kv.second, sizeof(double));
         pb.scalar_bits = fbits;
         bindings.push_back(pb);
     }
     for (const auto& kv : stmt->str_params) {
-        impulse_vm_param_binding_v11_t pb{};
+        impulse_vm_param_binding_t pb{};
         pb.param_id = next_pid++;
-        pb.kind = IMPULSE_VM_V11_PARAM_SCALAR_STR;
+        pb.kind = IMPULSE_VM_PARAM_SCALAR_STR;
         pb.data_ptr = kv.second.c_str();
         pb.count = static_cast<uint32_t>(kv.second.size());
         bindings.push_back(pb);
     }
 
-    impulse_vm_params_v11_t v11_params{};
+    impulse_vm_params_t v11_params{};
     v11_params.gas_limit = UINT64_MAX;
     v11_params.bindings = bindings.data();
     v11_params.binding_count = static_cast<uint32_t>(bindings.size());
 
     size_t out_res_bytes = 0;
-    impulse_vm_status_v11_t v11_rc = impulse_vm_execute_v11(
+    impulse_vm_status_t v11_rc = impulse_vm_execute(
         stmt->v11_program.impb_bytes.data(),
         stmt->v11_program.impb_bytes.size(),
         stmt->snapshot,
@@ -371,15 +371,15 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
         avail_return_bytes,
         &out_res_bytes
     );
-    if (v11_rc != IMPULSE_VM_V11_OK) {
+    if (v11_rc != IMPULSE_VM_OK) {
         switch (v11_rc) {
-            case IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW: return IMPULSE_ERR_BUFFER_OVERFLOW;
-            case IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS:
-            case IMPULSE_VM_V11_ERR_INVALID_OPERAND:
-            case IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH:
-            case IMPULSE_VM_V11_ERR_TYPE_MISMATCH:
-            case IMPULSE_VM_V11_ERR_VALIDATION_FAILED:
-            case IMPULSE_VM_V11_ERR_NULL_SNAPSHOT: return IMPULSE_ERR_INVALID_ARGUMENT;
+            case IMPULSE_VM_ERR_BUFFER_OVERFLOW: return IMPULSE_ERR_BUFFER_OVERFLOW;
+            case IMPULSE_VM_ERR_OUT_OF_BOUNDS:
+            case IMPULSE_VM_ERR_INVALID_OPERAND:
+            case IMPULSE_VM_ERR_DOMAIN_MISMATCH:
+            case IMPULSE_VM_ERR_TYPE_MISMATCH:
+            case IMPULSE_VM_ERR_VALIDATION_FAILED:
+            case IMPULSE_VM_ERR_NULL_SNAPSHOT: return IMPULSE_ERR_INVALID_ARGUMENT;
             default: return IMPULSE_ERR_IO_FAILURE;
         }
     }
@@ -391,8 +391,8 @@ impulse_status_t impulse_stmt_execute(impulse_stmt_t* stmt, void* buffer, size_t
     col.byte_offset_in_buf = scratch_size;
     col.null_bitmap = nullptr;
 
-    impulse_vm_output_view_v11_t ov{};
-    if (impulse_vm_v11_get_output_count(ws) > 0 && impulse_vm_v11_get_output(ws, 0, &ov) == 1) {
+    impulse_vm_output_view_t ov{};
+    if (impulse_vm_get_output_count(ws) > 0 && impulse_vm_get_output(ws, 0, &ov) == 1) {
         if (ov.elem_tag == 6 /* BOOL_3VL */) {
             size_t n_words = (ov.length + 63u) / 64u;
             if (n_words == 0) n_words = 1;

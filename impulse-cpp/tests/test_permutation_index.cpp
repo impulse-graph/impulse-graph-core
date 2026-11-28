@@ -5,7 +5,7 @@
 
 #include "impulse_index.h"
 #include "impulse_graph.h"
-#include "impulse_vm_v11.h"
+#include "impulse_vm.h"
 
 #include <iostream>
 #include <vector>
@@ -397,7 +397,7 @@ void test_issue_143_zone_map_types_and_i64_precision() {
     std::cout << "    #143 Zone Map type validation & int64 outward rounding PASSED!" << std::endl;
 }
 
-static uint64_t enc_v11(uint8_t op, uint8_t flags, uint8_t subop,
+static uint64_t enc_vm(uint8_t op, uint8_t flags, uint8_t subop,
                         uint8_t dst, uint8_t s1, uint8_t s2, uint8_t s3, uint32_t imm32) {
     uint64_t b0 = op;
     uint64_t b1 = static_cast<uint64_t>(((flags & 0xFu) << 4) | (subop & 0xFu));
@@ -406,8 +406,8 @@ static uint64_t enc_v11(uint8_t op, uint8_t flags, uint8_t subop,
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (static_cast<uint64_t>(imm32) << 32);
 }
 
-static std::vector<uint8_t> build_v11_impb(const std::vector<uint64_t>& words) {
-    impulse_impb_header_v11_t hdr{};
+static std::vector<uint8_t> build_vm_impb(const std::vector<uint64_t>& words) {
+    impulse_impb_header_t hdr{};
     hdr.magic = 0x494D5042u; // kImpbMagic ("IMPB")
     hdr.isa_version = 11u;
     hdr.header_flags = 0u;
@@ -423,7 +423,7 @@ static std::vector<uint8_t> build_v11_impb(const std::vector<uint64_t>& words) {
     return buf;
 }
 
-static std::vector<int64_t> run_index_scan_v11(
+static std::vector<int64_t> run_index_scan_vm(
     const impulse_snapshot_t* snap,
     uint8_t subop,
     uint16_t dom_id,
@@ -433,13 +433,13 @@ static std::vector<int64_t> run_index_scan_v11(
 ) {
     const uint32_t imm_dom_attr = static_cast<uint32_t>(dom_id) | (static_cast<uint32_t>(attr_id) << 16);
     std::vector<uint64_t> words = {
-        enc_v11(0x07u, 0u, 0u, 0u, 0u, 0u, 0u, 0u | (1u << 16)), // LOAD_PARAM.scalar R0, #0 (SCALAR_I64=1)
-        enc_v11(0x07u, 0u, 0u, 1u, 0u, 0u, 0u, 1u | (1u << 16)), // LOAD_PARAM.scalar R1, #1 (SCALAR_I64=1)
-        enc_v11(0x54u, 0u, subop, 0u, 0u, 0u, 1u, imm_dom_attr), // OP_INDEX_SCAN F0, R0, R1
-        enc_v11(0x57u, 0u, 1u, 0u, 0u, 0u, 0u, 0u),              // OP_COLLECT.FRONTIER_IDS slot=0, F0
-        enc_v11(0x00u, 0u, 0u, 0u, 0u, 0u, 0u, 0u),              // OP_HALT
+        enc_vm(0x07u, 0u, 0u, 0u, 0u, 0u, 0u, 0u | (1u << 16)), // LOAD_PARAM.scalar R0, #0 (SCALAR_I64=1)
+        enc_vm(0x07u, 0u, 0u, 1u, 0u, 0u, 0u, 1u | (1u << 16)), // LOAD_PARAM.scalar R1, #1 (SCALAR_I64=1)
+        enc_vm(0x54u, 0u, subop, 0u, 0u, 0u, 1u, imm_dom_attr), // OP_INDEX_SCAN F0, R0, R1
+        enc_vm(0x57u, 0u, 1u, 0u, 0u, 0u, 0u, 0u),              // OP_COLLECT.FRONTIER_IDS slot=0, F0
+        enc_vm(0x00u, 0u, 0u, 0u, 0u, 0u, 0u, 0u),              // OP_HALT
     };
-    auto impb = build_v11_impb(words);
+    auto impb = build_vm_impb(words);
 
     const size_t ws_bytes = 1024u * 1024u;
     void* buf = nullptr;
@@ -451,29 +451,29 @@ static std::vector<int64_t> run_index_scan_v11(
     TEST_CHECK(buf != nullptr);
     std::memset(buf, 0, ws_bytes);
 
-    impulse_vm_workspace_v11_t* ws = nullptr;
-    TEST_CHECK(impulse_workspace_init(buf, ws_bytes, &ws) == IMPULSE_VM_V11_OK && ws != nullptr);
+    impulse_vm_workspace_t* ws = nullptr;
+    TEST_CHECK(impulse_workspace_init(buf, ws_bytes, &ws) == IMPULSE_VM_OK && ws != nullptr);
 
-    impulse_vm_param_binding_v11_t bindings[2]{};
+    impulse_vm_param_binding_t bindings[2]{};
     bindings[0].param_id = 0u;
-    bindings[0].kind = IMPULSE_VM_V11_PARAM_SCALAR_I64;
+    bindings[0].kind = IMPULSE_VM_PARAM_SCALAR_I64;
     bindings[0].scalar_bits = static_cast<uint64_t>(lo_val);
     bindings[1].param_id = 1u;
-    bindings[1].kind = IMPULSE_VM_V11_PARAM_SCALAR_I64;
+    bindings[1].kind = IMPULSE_VM_PARAM_SCALAR_I64;
     bindings[1].scalar_bits = static_cast<uint64_t>(hi_val);
 
-    impulse_vm_params_v11_t params{};
+    impulse_vm_params_t params{};
     params.gas_limit = UINT64_MAX;
     params.bindings = bindings;
     params.binding_count = 2u;
 
     size_t out_bytes = 0u;
-    impulse_vm_status_v11_t rc = impulse_vm_execute_v11(
+    impulse_vm_status_t rc = impulse_vm_execute(
         impb.data(), impb.size(), snap, &params, ws, nullptr, 0u, &out_bytes);
-    TEST_CHECK(rc == IMPULSE_VM_V11_OK);
+    TEST_CHECK(rc == IMPULSE_VM_OK);
 
-    impulse_vm_output_view_v11_t view{};
-    TEST_CHECK(impulse_vm_v11_get_output(ws, 0u, &view) != 0);
+    impulse_vm_output_view_t view{};
+    TEST_CHECK(impulse_vm_get_output(ws, 0u, &view) != 0);
     std::vector<int64_t> result;
     if (view.length > 0u) {
         TEST_CHECK(view.i64_data != nullptr);
@@ -574,27 +574,27 @@ void test_decimal64_zone_map_permutation_and_op_index_scan() {
     TEST_CHECK(snap != nullptr && st == IMPULSE_OK);
 
     // subop 0 (=): balance == 20.50 (2050) -> nodes {2, 5}
-    auto eq_ids = run_index_scan_v11(snap, 0u, 0u, 0u, 2050LL, 0LL);
+    auto eq_ids = run_index_scan_vm(snap, 0u, 0u, 0u, 2050LL, 0LL);
     TEST_CHECK(eq_ids == (std::vector<int64_t>{2, 5}));
 
     // subop 1 (BETWEEN [lo, hi]): 10.00 <= balance <= 100.00 -> nodes {0, 2, 4, 5}
-    auto bw_ids = run_index_scan_v11(snap, 1u, 0u, 0u, 1000LL, 10000LL);
+    auto bw_ids = run_index_scan_vm(snap, 1u, 0u, 0u, 1000LL, 10000LL);
     TEST_CHECK(bw_ids == (std::vector<int64_t>{0, 2, 4, 5}));
 
     // subop 3 (<): balance < 10.00 (1000) -> node {1} (-50.00)
-    auto lt_ids = run_index_scan_v11(snap, 3u, 0u, 0u, 1000LL, 0LL);
+    auto lt_ids = run_index_scan_vm(snap, 3u, 0u, 0u, 1000LL, 0LL);
     TEST_CHECK(lt_ids == (std::vector<int64_t>{1}));
 
     // subop 4 (<=): balance <= 10.00 (1000) -> nodes {1, 4}
-    auto le_ids = run_index_scan_v11(snap, 4u, 0u, 0u, 1000LL, 0LL);
+    auto le_ids = run_index_scan_vm(snap, 4u, 0u, 0u, 1000LL, 0LL);
     TEST_CHECK(le_ids == (std::vector<int64_t>{1, 4}));
 
     // subop 5 (>): balance > 100.00 (10000) -> node {3} (500.75)
-    auto gt_ids = run_index_scan_v11(snap, 5u, 0u, 0u, 10000LL, 0LL);
+    auto gt_ids = run_index_scan_vm(snap, 5u, 0u, 0u, 10000LL, 0LL);
     TEST_CHECK(gt_ids == (std::vector<int64_t>{3}));
 
     // subop 6 (>=): balance >= 100.00 (10000) -> nodes {0, 3}
-    auto ge_ids = run_index_scan_v11(snap, 6u, 0u, 0u, 10000LL, 0LL);
+    auto ge_ids = run_index_scan_vm(snap, 6u, 0u, 0u, 10000LL, 0LL);
     TEST_CHECK(ge_ids == (std::vector<int64_t>{0, 3}));
 
     impulse_snapshot_close(snap);

@@ -1,11 +1,11 @@
 // Opcode 0x0C: OP_SCALAR_INT_ALU
-V11_OP_CASE(SCALAR_INT_ALU) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
-    const int32_t imm32_s = IMP_V11_IMM32_S(w);
+VM_OP_CASE(SCALAR_INT_ALU) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
+    const int32_t imm32_s = IMP_IMM32_S(w);
 
     bool a_valid = ws.is_r_valid(s1);
     uint64_t a_u = ws.read_r_raw(s1);
@@ -21,7 +21,7 @@ V11_OP_CASE(SCALAR_INT_ALU) {
             p1_set_scalar_flags(ws, true, r);
         }
         ws.state.pc += 1u;
-        V11_DISPATCH();
+        VM_DISPATCH();
     }
 
     bool b_valid = (s3 == 1u) || ws.is_r_valid(s2);
@@ -32,7 +32,7 @@ V11_OP_CASE(SCALAR_INT_ALU) {
         ws.write_r_null(dst);
         p1_set_scalar_flags(ws, false, 0ULL);
         ws.state.pc += 1u;
-        V11_DISPATCH();
+        VM_DISPATCH();
     }
 
     uint8_t out_ty = (subop == 4u || subop == 6u || subop == 12u)
@@ -83,5 +83,5 @@ V11_OP_CASE(SCALAR_INT_ALU) {
         p1_set_scalar_flags(ws, true, r_u);
     }
     ws.state.pc += 1u;
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

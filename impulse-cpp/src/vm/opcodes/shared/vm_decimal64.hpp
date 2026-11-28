@@ -1,5 +1,5 @@
 /**
- * @file v11_decimal64.hpp
+ * @file vm_decimal64.hpp
  * @brief Normative 128-bit exact fixed-point DECIMAL64 arithmetic for ImpulseVM v0.11.0.
  *
  * Mirrors impulse-ocaml/lib/vm/decimal64.ml bit-for-bit:
@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "v11_p1_helpers.hpp"
+#include "p1_helpers.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -66,23 +66,23 @@ inline uint64_t dec_abs_u64(int64_t x) noexcept {
     return (x < 0) ? (0ULL - static_cast<uint64_t>(x)) : static_cast<uint64_t>(x);
 }
 
-inline impulse_vm_status_v11_t dec_signed_i64_of_u64(bool neg_res, uint64_t q, int64_t* out) noexcept {
+inline impulse_vm_status_t dec_signed_i64_of_u64(bool neg_res, uint64_t q, int64_t* out) noexcept {
     if (neg_res) {
-        if (q > 0x8000000000000000ULL) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        if (q > 0x8000000000000000ULL) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
         *out = static_cast<int64_t>(0ULL - q);
-        return IMPULSE_VM_V11_OK;
+        return IMPULSE_VM_OK;
     }
-    if (q > 0x7FFFFFFFFFFFFFFFULL) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+    if (q > 0x7FFFFFFFFFFFFFFFULL) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     *out = static_cast<int64_t>(q);
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_round_half_up_to_i64(
+inline impulse_vm_status_t dec_round_half_up_to_i64(
     bool neg_res, uint64_t q, uint64_t r, uint64_t ud, int64_t* out
 ) noexcept {
     const bool round_up = (r >= (ud - r));
     if (round_up) {
-        if (q == UINT64_MAX) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        if (q == UINT64_MAX) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
         q += 1ULL;
     }
     return dec_signed_i64_of_u64(neg_res, q, out);
@@ -139,77 +139,77 @@ inline bool dec_div_rem_u128_by_u64(uint64_t hi, uint64_t lo, uint64_t ud,
 #endif
 }
 
-inline impulse_vm_status_v11_t dec_add_chk(int64_t a, int64_t b, int64_t* out) noexcept {
+inline impulse_vm_status_t dec_add_chk(int64_t a, int64_t b, int64_t* out) noexcept {
 #if defined(__has_builtin)
 #  if __has_builtin(__builtin_add_overflow)
-    if (__builtin_add_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_add_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #  endif
 #elif defined(__GNUC__) && (__GNUC__ >= 5)
-    if (__builtin_add_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_add_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #endif
     if ((b > 0 && a > (std::numeric_limits<int64_t>::max)() - b) ||
         (b < 0 && a < (std::numeric_limits<int64_t>::min)() - b)) {
-        return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     }
     *out = static_cast<int64_t>(static_cast<uint64_t>(a) + static_cast<uint64_t>(b));
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_sub_chk(int64_t a, int64_t b, int64_t* out) noexcept {
+inline impulse_vm_status_t dec_sub_chk(int64_t a, int64_t b, int64_t* out) noexcept {
 #if defined(__has_builtin)
 #  if __has_builtin(__builtin_sub_overflow)
-    if (__builtin_sub_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_sub_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #  endif
 #elif defined(__GNUC__) && (__GNUC__ >= 5)
-    if (__builtin_sub_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_sub_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #endif
     if ((b < 0 && a > (std::numeric_limits<int64_t>::max)() + b) ||
         (b > 0 && a < (std::numeric_limits<int64_t>::min)() + b)) {
-        return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     }
     *out = static_cast<int64_t>(static_cast<uint64_t>(a) - static_cast<uint64_t>(b));
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_mul_chk(int64_t a, int64_t b, int64_t* out) noexcept {
+inline impulse_vm_status_t dec_mul_chk(int64_t a, int64_t b, int64_t* out) noexcept {
 #if defined(__has_builtin)
 #  if __has_builtin(__builtin_mul_overflow)
-    if (__builtin_mul_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_mul_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #  endif
 #elif defined(__GNUC__) && (__GNUC__ >= 5)
-    if (__builtin_mul_overflow(a, b, out)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
-    return IMPULSE_VM_V11_OK;
+    if (__builtin_mul_overflow(a, b, out)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
+    return IMPULSE_VM_OK;
 #endif
-    if (a == 0 || b == 0) { *out = 0; return IMPULSE_VM_V11_OK; }
+    if (a == 0 || b == 0) { *out = 0; return IMPULSE_VM_OK; }
     const bool neg_res = (a < 0) != (b < 0);
     uint64_t hi = 0ULL, lo = 0ULL;
     dec_mul_u64_to_u128(dec_abs_u64(a), dec_abs_u64(b), &hi, &lo);
-    if (hi != 0ULL) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+    if (hi != 0ULL) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     return dec_signed_i64_of_u64(neg_res, lo, out);
 }
 
-inline impulse_vm_status_v11_t dec_mul_div_round(int64_t a, int64_t b, int64_t d, int64_t* out) noexcept {
-    if (d == 0) return IMPULSE_VM_V11_ERR_DIV_BY_ZERO;
-    if (a == 0 || b == 0) { *out = 0; return IMPULSE_VM_V11_OK; }
+inline impulse_vm_status_t dec_mul_div_round(int64_t a, int64_t b, int64_t d, int64_t* out) noexcept {
+    if (d == 0) return IMPULSE_VM_ERR_DIV_BY_ZERO;
+    if (a == 0 || b == 0) { *out = 0; return IMPULSE_VM_OK; }
     const bool neg_res = ((a < 0) != (b < 0)) != (d < 0);
     uint64_t hi = 0ULL, lo = 0ULL;
     dec_mul_u64_to_u128(dec_abs_u64(a), dec_abs_u64(b), &hi, &lo);
     const uint64_t ud = dec_abs_u64(d);
     uint64_t q = 0ULL, r = 0ULL;
     if (!dec_div_rem_u128_by_u64(hi, lo, ud, &q, &r)) {
-        return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     }
     return dec_round_half_up_to_i64(neg_res, q, r, ud, out);
 }
 
-inline impulse_vm_status_v11_t dec_div_round(int64_t a, int64_t d, int64_t* out) noexcept {
-    if (d == 0) return IMPULSE_VM_V11_ERR_DIV_BY_ZERO;
-    if (a == 0) { *out = 0; return IMPULSE_VM_V11_OK; }
+inline impulse_vm_status_t dec_div_round(int64_t a, int64_t d, int64_t* out) noexcept {
+    if (d == 0) return IMPULSE_VM_ERR_DIV_BY_ZERO;
+    if (a == 0) { *out = 0; return IMPULSE_VM_OK; }
     const bool neg_res = (a < 0) != (d < 0);
     const uint64_t ua = dec_abs_u64(a);
     const uint64_t ud = dec_abs_u64(d);
@@ -218,103 +218,103 @@ inline impulse_vm_status_v11_t dec_div_round(int64_t a, int64_t d, int64_t* out)
     return dec_round_half_up_to_i64(neg_res, q, r, ud, out);
 }
 
-inline impulse_vm_status_v11_t dec_div_safe(int64_t a, int64_t d, int64_t* out, bool* out_valid) noexcept {
+inline impulse_vm_status_t dec_div_safe(int64_t a, int64_t d, int64_t* out, bool* out_valid) noexcept {
     if (d == 0) {
         *out = 0;
         *out_valid = false;
-        return IMPULSE_VM_V11_OK;
+        return IMPULSE_VM_OK;
     }
-    impulse_vm_status_v11_t st = dec_div_round(a, d, out);
-    *out_valid = (st == IMPULSE_VM_V11_OK);
+    impulse_vm_status_t st = dec_div_round(a, d, out);
+    *out_valid = (st == IMPULSE_VM_OK);
     return st;
 }
 
-inline impulse_vm_status_v11_t dec_rescale(int64_t a, uint16_t delta_s, uint16_t dir, int64_t* out) noexcept {
-    if (delta_s > 18u || (dir != 0u && dir != 1u)) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_rescale(int64_t a, uint16_t delta_s, uint16_t dir, int64_t* out) noexcept {
+    if (delta_s > 18u || (dir != 0u && dir != 1u)) return IMPULSE_VM_ERR_INVALID_OPERAND;
     if (dir == 0u) return dec_mul_chk(a, kDecPow10[delta_s], out);
     return dec_div_round(a, kDecPow10[delta_s], out);
 }
 
-inline impulse_vm_status_v11_t dec_bound_chk(int64_t a, uint16_t prec, int64_t* out) noexcept {
-    if (prec < 1u || prec > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_bound_chk(int64_t a, uint16_t prec, int64_t* out) noexcept {
+    if (prec < 1u || prec > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     const uint64_t limit = static_cast<uint64_t>(kDecPow10[prec] - 1LL);
-    if (dec_abs_u64(a) > limit) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+    if (dec_abs_u64(a) > limit) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     *out = a;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_abs_chk(int64_t a, int64_t* out) noexcept {
-    if (a == (std::numeric_limits<int64_t>::min)()) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+inline impulse_vm_status_t dec_abs_chk(int64_t a, int64_t* out) noexcept {
+    if (a == (std::numeric_limits<int64_t>::min)()) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     *out = (a < 0) ? -a : a;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_neg_chk(int64_t a, int64_t* out) noexcept {
-    if (a == (std::numeric_limits<int64_t>::min)()) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+inline impulse_vm_status_t dec_neg_chk(int64_t a, int64_t* out) noexcept {
+    if (a == (std::numeric_limits<int64_t>::min)()) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     *out = -a;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_f64_to_dec(
+inline impulse_vm_status_t dec_f64_to_dec(
     double x, uint16_t scale, uint16_t prec, int64_t* out, bool* out_valid
 ) noexcept {
-    if (scale > 18u || prec < 1u || prec > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    if (scale > 18u || prec < 1u || prec > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     if (std::isnan(x)) {
         *out = 0;
         *out_valid = false;
-        return IMPULSE_VM_V11_OK;
+        return IMPULSE_VM_OK;
     }
-    if (std::isinf(x)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+    if (std::isinf(x)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     const double scaled = x * kDecPow10F64[scale];
-    if (std::isnan(scaled) || std::isinf(scaled)) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+    if (std::isnan(scaled) || std::isinf(scaled)) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     const double r = p1_round_half_away(scaled);
     if (r >= 9223372036854775808.0 || r <= -9223372036854775808.0) {
-        return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
     }
     const int64_t v = static_cast<int64_t>(r);
-    impulse_vm_status_v11_t st = dec_bound_chk(v, prec, out);
-    if (st != IMPULSE_VM_V11_OK) return st;
+    impulse_vm_status_t st = dec_bound_chk(v, prec, out);
+    if (st != IMPULSE_VM_OK) return st;
     *out_valid = true;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_to_f64(int64_t a, uint16_t scale, double* out) noexcept {
-    if (scale > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_to_f64(int64_t a, uint16_t scale, double* out) noexcept {
+    if (scale > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     *out = static_cast<double>(a) / kDecPow10F64[scale];
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_round_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
-    if (delta_s > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_round_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
+    if (delta_s > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     return dec_div_round(a, kDecPow10[delta_s], out);
 }
 
-inline impulse_vm_status_v11_t dec_trunc_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
-    if (delta_s > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_trunc_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
+    if (delta_s > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     *out = a / kDecPow10[delta_s];
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_floor_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
-    if (delta_s > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_floor_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
+    if (delta_s > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     const int64_t d = kDecPow10[delta_s];
     const int64_t q = a / d;
     const int64_t r = a % d;
     *out = (r < 0) ? (q - 1LL) : q;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
-inline impulse_vm_status_v11_t dec_ceil_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
-    if (delta_s > 18u) return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+inline impulse_vm_status_t dec_ceil_scale(int64_t a, uint16_t delta_s, int64_t* out) noexcept {
+    if (delta_s > 18u) return IMPULSE_VM_ERR_INVALID_OPERAND;
     const int64_t d = kDecPow10[delta_s];
     const int64_t q = a / d;
     const int64_t r = a % d;
     *out = (r > 0) ? (q + 1LL) : q;
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
 /** Exact signed 128-bit accumulator for VEC_REDUCE.sum_i64_chk (deterministic across max_dop). */
-struct V11Sum128 {
+struct VmSum128 {
 #if defined(__SIZEOF_INT128__)
     __int128 sum = 0;
 #else
@@ -337,27 +337,27 @@ struct V11Sum128 {
         ++cnt;
     }
 
-    inline impulse_vm_status_v11_t finalize(int64_t* out, bool* out_valid) const noexcept {
+    inline impulse_vm_status_t finalize(int64_t* out, bool* out_valid) const noexcept {
         if (cnt == 0ULL) {
             *out = 0;
             *out_valid = false;
-            return IMPULSE_VM_V11_OK;
+            return IMPULSE_VM_OK;
         }
 #if defined(__SIZEOF_INT128__)
         if (sum < static_cast<__int128>((std::numeric_limits<int64_t>::min)()) ||
             sum > static_cast<__int128>((std::numeric_limits<int64_t>::max)())) {
-            return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+            return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
         }
         *out = static_cast<int64_t>(sum);
         *out_valid = true;
-        return IMPULSE_VM_V11_OK;
+        return IMPULSE_VM_OK;
 #else
         const int64_t slo = static_cast<int64_t>(lo);
         const bool fits = (slo >= 0 && hi == 0) || (slo < 0 && hi == -1LL);
-        if (!fits) return IMPULSE_VM_V11_ERR_ARITHMETIC_OVERFLOW;
+        if (!fits) return IMPULSE_VM_ERR_ARITHMETIC_OVERFLOW;
         *out = slo;
         *out_valid = true;
-        return IMPULSE_VM_V11_OK;
+        return IMPULSE_VM_OK;
 #endif
     }
 };

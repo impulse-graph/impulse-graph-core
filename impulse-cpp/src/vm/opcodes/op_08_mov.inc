@@ -1,9 +1,9 @@
 // Opcode 0x08: OP_MOV
-V11_OP_CASE(MOV) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint16_t imm_lo = IMP_V11_IMM16_LO(w);
+VM_OP_CASE(MOV) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint16_t imm_lo = IMP_IMM16_LO(w);
     switch (subop) {
         case 0: { // .r
             if (!ws.is_r_valid(s1)) {
@@ -24,11 +24,11 @@ V11_OP_CASE(MOV) {
         }
         case 1: { // .f
             if (!ws.is_f_init(s1)) {
-                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+                ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             } else {
                 if (dst != s1) {
                     if (!ws.f_regs[dst].copy_from(ws.arena, ws.f_regs[s1])) {
-                        ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW;
+                        ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW;
                         break;
                     }
                     ws.set_f_init(dst, true);
@@ -40,7 +40,7 @@ V11_OP_CASE(MOV) {
         }
         case 2: { // .v
             if (ws.v_regs[s1] == nullptr) {
-                ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH;
+                ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH;
             } else {
                 if (dst != s1) ws.v_regs[dst] = ws.v_regs[s1];
                 ws.state.pc += 1u;
@@ -55,8 +55,8 @@ V11_OP_CASE(MOV) {
         }
         case 4: { // .clear_f
             uint64_t dom_card = 0;
-            impulse_vm_status_v11_t st = v11_lookup_domain_card(snap, imm_lo, &dom_card);
-            if (st != IMPULSE_VM_V11_OK) {
+            impulse_vm_status_t st = vm_lookup_domain_card(snap, imm_lo, &dom_card);
+            if (st != IMPULSE_VM_OK) {
                 ws.status = st;
             } else {
                 ws.f_regs[dst].reset_empty(imm_lo, dom_card);
@@ -72,8 +72,8 @@ V11_OP_CASE(MOV) {
             break;
         }
         default:
-            ws.status = IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+            ws.status = IMPULSE_VM_ERR_INVALID_OPCODE;
             break;
     }
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

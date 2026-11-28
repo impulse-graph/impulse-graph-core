@@ -1,51 +1,51 @@
 // Opcode 0x35: OP_WALK_MORSEL
-V11_OP_CASE(WALK_MORSEL) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t flags = IMP_V11_FLAGS(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s3 = IMP_V11_S3(w);
-    const uint16_t rel_id = IMP_V11_IMM16_LO(w);
-    const uint16_t end_off = IMP_V11_IMM16_HI(w);
+VM_OP_CASE(WALK_MORSEL) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t flags = IMP_FLAGS(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s3 = IMP_S3(w);
+    const uint16_t rel_id = IMP_IMM16_LO(w);
+    const uint16_t end_off = IMP_IMM16_HI(w);
     const uint32_t hdr_pc = ws.state.pc;
     const uint32_t end_pc = hdr_pc + end_off;
 
-    const V11RelView* rel = p3_get_rel(snap, ws, rel_id);
-    if (!rel) V11_DISPATCH();
-    if (!ws.is_f_init(s1)) { ws.status = IMPULSE_VM_V11_ERR_TYPE_MISMATCH; V11_DISPATCH(); }
-    const V11Frontier* f_src = &ws.f_regs[s1];
+    const VmRelView* rel = p3_get_rel(snap, ws, rel_id);
+    if (!rel) VM_DISPATCH();
+    if (!ws.is_f_init(s1)) { ws.status = IMPULSE_VM_ERR_TYPE_MISMATCH; VM_DISPATCH(); }
+    const VmFrontier* f_src = &ws.f_regs[s1];
 
     bool is_coo = (subop == 2u || subop == 3u);
     bool is_rev = (subop == 1u || subop == 3u);
     uint16_t in_dom  = is_rev ? rel->tgt_dom : rel->src_dom;
     uint16_t out_dom = is_rev ? rel->src_dom : rel->tgt_dom;
-    if (is_coo && !rel->has_coo) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-    if (!is_coo && !is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-    if (!is_coo && is_rev && rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_V11_ERR_INVALID_OPERAND; V11_DISPATCH(); }
-    if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
+    if (is_coo && !rel->has_coo) { ws.status = IMPULSE_VM_ERR_INVALID_OPERAND; VM_DISPATCH(); }
+    if (!is_coo && !is_rev && !rel->has_csr && (rel->has_csc || rel->has_coo)) { ws.status = IMPULSE_VM_ERR_INVALID_OPERAND; VM_DISPATCH(); }
+    if (!is_coo && is_rev && rel->csc_row_off_raw == nullptr) { ws.status = IMPULSE_VM_ERR_INVALID_OPERAND; VM_DISPATCH(); }
+    if (f_src->domain_id != in_dom) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
 
     const uint32_t* s_excl = nullptr; uint32_t s_excl_len = 0u;
     if ((flags & FLAG_MASKED_S3) != 0u) {
-        const V11Frontier* fe = p3_get_f1bit(ws, s3);
-        if (!fe) V11_DISPATCH();
-        if (fe->domain_id != out_dom) { ws.status = IMPULSE_VM_V11_ERR_DOMAIN_MISMATCH; V11_DISPATCH(); }
-        if (!fe->materialize_1bit(ws.arena, &s_excl, &s_excl_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+        const VmFrontier* fe = p3_get_f1bit(ws, s3);
+        if (!fe) VM_DISPATCH();
+        if (fe->domain_id != out_dom) { ws.status = IMPULSE_VM_ERR_DOMAIN_MISMATCH; VM_DISPATCH(); }
+        if (!fe->materialize_1bit(ws.arena, &s_excl, &s_excl_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
     }
 
     if (!is_coo && !is_rev && !f_src->multi_lane) {
         const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-        if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
-        V11MorselFwdCsr fwd_csr{rel, src_ids, src_len, s_excl, s_excl_len};
+        if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
+        VmMorselFwdCsr fwd_csr{rel, src_ids, src_len, s_excl, s_excl_len};
         p3_run_morsel_block(ws, *snap, words, word_count, hdr_pc, end_pc, out_dom, false, nullptr, 0u, steps, max_steps, &fwd_csr);
-        V11_DISPATCH();
+        VM_DISPATCH();
     }
 
-    V11MorselItem* items = nullptr;
+    VmMorselItem* items = nullptr;
     uint32_t item_cnt = 0u;
     if (is_coo) {
         uint64_t in_card = (in_dom < snap->domain_count) ? snap->domain_cards[in_dom] : 0ULL;
         const uint32_t n_in = static_cast<uint32_t>(in_card);
         uint64_t* src_lanes = (n_in > 0u) ? ws.arena.alloc_array<uint64_t>(n_in, 8) : nullptr;
-        if (n_in > 0u && !src_lanes) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+        if (n_in > 0u && !src_lanes) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
         if (src_lanes) std::memset(src_lanes, 0, static_cast<size_t>(n_in) * sizeof(uint64_t));
         if (f_src->multi_lane) {
             for (uint32_t k = 0; k < f_src->ml_count; ++k) {
@@ -54,7 +54,7 @@ V11_OP_CASE(WALK_MORSEL) {
             }
         } else {
             const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             for (uint32_t i = 0; i < src_len; ++i) {
                 if (src_ids[i] < n_in) src_lanes[src_ids[i]] = 1ULL;
             }
@@ -66,8 +66,8 @@ V11_OP_CASE(WALK_MORSEL) {
             if (key < n_in && src_lanes[key] != 0ULL) ++cap;
         }
         if (cap > 0u) {
-            items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-            if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            items = ws.arena.alloc_array<VmMorselItem>(cap, 8);
+            if (!items) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             for (uint32_t i = 0; i < m; ++i) {
                 uint64_t u = rel->coo_src(i);
                 uint64_t v = rel->coo_tgt(i);
@@ -94,8 +94,8 @@ V11_OP_CASE(WALK_MORSEL) {
             if (u + 1u < rel->row_off_len) cap += (rel->csr_row_off(u + 1u) - rel->csr_row_off(u));
         }
         if (cap > 0u) {
-            items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-            if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            items = ws.arena.alloc_array<VmMorselItem>(cap, 8);
+            if (!items) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             for (uint32_t k = 0; k < f_src->ml_count; ++k) {
                 uint64_t lm = f_src->ml_masks[k];
                 if (lm == 0ULL) continue;
@@ -120,8 +120,8 @@ V11_OP_CASE(WALK_MORSEL) {
                 if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
             }
             if (cap > 0u) {
-                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                items = ws.arena.alloc_array<VmMorselItem>(cap, 8);
+                if (!items) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
                 for (uint32_t k = 0; k < f_src->ml_count; ++k) {
                     uint64_t lm = f_src->ml_masks[k];
                     if (lm == 0ULL) continue;
@@ -139,15 +139,15 @@ V11_OP_CASE(WALK_MORSEL) {
             }
         } else {
             const uint32_t* src_ids = nullptr; uint32_t src_len = 0u;
-            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+            if (!f_src->materialize_1bit(ws.arena, &src_ids, &src_len)) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
             size_t cap = 0u;
             for (uint32_t i = 0; i < src_len; ++i) {
                 uint32_t v = src_ids[i];
                 if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) cap += (rel->csc_row_off(v + 1u) - rel->csc_row_off(v));
             }
             if (cap > 0u) {
-                items = ws.arena.alloc_array<V11MorselItem>(cap, 8);
-                if (!items) { ws.status = IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW; V11_DISPATCH(); }
+                items = ws.arena.alloc_array<VmMorselItem>(cap, 8);
+                if (!items) { ws.status = IMPULSE_VM_ERR_BUFFER_OVERFLOW; VM_DISPATCH(); }
                 for (uint32_t i = 0; i < src_len; ++i) {
                     uint32_t v = src_ids[i];
                     if (rel->csc_row_off_len > 0u && v < rel->csc_row_off_len - 1u) {
@@ -165,5 +165,5 @@ V11_OP_CASE(WALK_MORSEL) {
     }
 
     p3_run_morsel_block(ws, *snap, words, word_count, hdr_pc, end_pc, out_dom, false, items, item_cnt, steps, max_steps);
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

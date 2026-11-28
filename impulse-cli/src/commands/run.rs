@@ -3,13 +3,13 @@
 use impulse_graph::ffi::{
     impulse_snapshot_close, impulse_snapshot_open, impulse_snapshot_t, impulse_test_control,
     impulse_test_set_never_corrupt, impulse_test_set_opt_disable_mask,
-    impulse_vm_branch_coverage_reset, impulse_vm_branch_coverage_set_enabled,
-    impulse_vm_execute_v11, impulse_vm_memory_plan_t, impulse_vm_output_view_v11_t,
-    impulse_vm_param_binding_v11_t, impulse_vm_params_v11_t, impulse_vm_plan_memory,
-    impulse_vm_v11_get_output, impulse_vm_v11_get_output_count, impulse_vm_v11_prepare_snapshot,
-    impulse_vm_validate_v11, impulse_vm_workspace_v11_t, impulse_workspace_init,
-    IMPULSE_TESTCTRL_FAULT_CONFIG, IMPULSE_TESTCTRL_FAULT_INSTALL, IMPULSE_TESTCTRL_NEVER_CORRUPT,
-    IMPULSE_TESTCTRL_OPTIMIZATIONS, IMPULSE_VM_V11_PARAM_FRONTIER_IDS,
+    impulse_vm_branch_coverage_reset, impulse_vm_branch_coverage_set_enabled, impulse_vm_execute,
+    impulse_vm_get_output, impulse_vm_get_output_count, impulse_vm_memory_plan_t,
+    impulse_vm_output_view_t, impulse_vm_param_binding_t, impulse_vm_params_t,
+    impulse_vm_plan_memory, impulse_vm_prepare_snapshot, impulse_vm_validate,
+    impulse_vm_workspace_t, impulse_workspace_init, IMPULSE_TESTCTRL_FAULT_CONFIG,
+    IMPULSE_TESTCTRL_FAULT_INSTALL, IMPULSE_TESTCTRL_NEVER_CORRUPT, IMPULSE_TESTCTRL_OPTIMIZATIONS,
+    IMPULSE_VM_PARAM_FRONTIER_IDS,
 };
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::CString;
@@ -92,7 +92,7 @@ pub fn run_with_options(
 
     unsafe {
         if opts.verify {
-            let vr = impulse_vm_validate_v11(prog_bytes.as_ptr().cast(), prog_bytes.len());
+            let vr = impulse_vm_validate(prog_bytes.as_ptr().cast(), prog_bytes.len());
             if vr.status != 0 {
                 return Err(format!(
                     "Validation failed: status={} at pc={}",
@@ -102,7 +102,7 @@ pub fn run_with_options(
             }
         }
 
-        let _ = impulse_vm_v11_prepare_snapshot(snap);
+        let _ = impulse_vm_prepare_snapshot(snap);
 
         let mut plan = impulse_vm_memory_plan_t::default();
         let prc = impulse_vm_plan_memory(
@@ -123,7 +123,7 @@ pub fn run_with_options(
             return Err("Failed to allocate aligned workspace buffer".into());
         }
 
-        let mut ws: *mut impulse_vm_workspace_v11_t = ptr::null_mut();
+        let mut ws: *mut impulse_vm_workspace_t = ptr::null_mut();
         let wrc = impulse_workspace_init(raw_buf.cast(), scratch_len, &mut ws);
         if wrc != 0 || ws.is_null() {
             dealloc(raw_buf, layout);
@@ -150,9 +150,9 @@ pub fn run_with_options(
         }
 
         let seed = input_val;
-        let binding = impulse_vm_param_binding_v11_t {
+        let binding = impulse_vm_param_binding_t {
             param_id: 0,
-            kind: IMPULSE_VM_V11_PARAM_FRONTIER_IDS,
+            kind: IMPULSE_VM_PARAM_FRONTIER_IDS,
             domain_id: seed_domain,
             reserved: 0,
             count: 1,
@@ -160,7 +160,7 @@ pub fn run_with_options(
             data_ptr: (&seed as *const u64).cast(),
             valid_bits: ptr::null(),
         };
-        let params = impulse_vm_params_v11_t {
+        let params = impulse_vm_params_t {
             gas_limit: u64::MAX,
             geometry_override: ptr::null(),
             bindings: &binding,
@@ -168,7 +168,7 @@ pub fn run_with_options(
         };
 
         let mut out_bytes = 0usize;
-        let rc = impulse_vm_execute_v11(
+        let rc = impulse_vm_execute(
             prog_bytes.as_ptr().cast(),
             prog_bytes.len(),
             snap,
@@ -180,11 +180,11 @@ pub fn run_with_options(
         );
 
         if rc == 0 {
-            let out_cnt = impulse_vm_v11_get_output_count(ws);
+            let out_cnt = impulse_vm_get_output_count(ws);
             println!("Execution succeeded (IMPULSE_VM_OK, outputs={})", out_cnt);
             if out_cnt > 0 {
-                let mut ov = std::mem::zeroed::<impulse_vm_output_view_v11_t>();
-                if impulse_vm_v11_get_output(ws, 0u32, &mut ov) == 1 {
+                let mut ov = std::mem::zeroed::<impulse_vm_output_view_t>();
+                if impulse_vm_get_output(ws, 0u32, &mut ov) == 1 {
                     println!("  slot[0]: elem_tag={}, length={}", ov.elem_tag, ov.length);
                 }
             }

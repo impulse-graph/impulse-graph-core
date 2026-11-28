@@ -143,7 +143,7 @@ public unsafe struct ImpulseRelationEntry
 }
 
 /// <summary>
-/// Static AOT memory planner output (impulse_vm_memory_plan_t in impulse_vm_v11.h).
+/// Static AOT memory planner output (impulse_vm_memory_plan_t in impulse_vm.h).
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct ImpulseVmMemoryPlan
@@ -154,10 +154,10 @@ public struct ImpulseVmMemoryPlan
 }
 
 /// <summary>
-/// v0.11 ImpulseVM parameter binding (impulse_vm_param_binding_v11_t).
+/// v0.11 ImpulseVM parameter binding (impulse_vm_param_binding_t).
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct ImpulseVmParamBindingV11
+public unsafe struct ImpulseVmParamBinding
 {
     public uint ParamId;
     public uint Kind;
@@ -170,13 +170,13 @@ public unsafe struct ImpulseVmParamBindingV11
 }
 
 /// <summary>
-/// v0.11 ImpulseVM execution parameters (impulse_vm_params_v11_t).
+/// v0.11 ImpulseVM execution parameters (impulse_vm_params_t).
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct ImpulseVmParamsV11
+public unsafe struct ImpulseVmParams
 {
     public ulong GasLimit;
     public void* GeometryOverride;
-    public ImpulseVmParamBindingV11* Bindings;
+    public ImpulseVmParamBinding* Bindings;
     public uint BindingCount;
 }

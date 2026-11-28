@@ -1,10 +1,10 @@
 // Opcode 0x0D: OP_SCALAR_FP_ALU
-V11_OP_CASE(SCALAR_FP_ALU) {
-    const uint8_t subop = IMP_V11_SUBOP(w);
-    const uint8_t dst = IMP_V11_DST(w);
-    const uint8_t s1 = IMP_V11_S1(w);
-    const uint8_t s2 = IMP_V11_S2(w);
-    const uint8_t s3 = IMP_V11_S3(w);
+VM_OP_CASE(SCALAR_FP_ALU) {
+    const uint8_t subop = IMP_SUBOP(w);
+    const uint8_t dst = IMP_DST(w);
+    const uint8_t s1 = IMP_S1(w);
+    const uint8_t s2 = IMP_S2(w);
+    const uint8_t s3 = IMP_S3(w);
 
     bool a_raw_valid = ws.is_r_valid(s1);
     double a = a_raw_valid ? p1_bits_to_f64(ws.read_r_raw(s1)) : std::numeric_limits<double>::quiet_NaN();
@@ -67,5 +67,5 @@ V11_OP_CASE(SCALAR_FP_ALU) {
             break;
     }
     ws.state.pc += 1u;
-    V11_DISPATCH();
+    VM_DISPATCH();
 }

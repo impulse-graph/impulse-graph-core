@@ -2,7 +2,7 @@
  * @file vm_xxh3.hpp
  * @brief Zero-dependency canonical XXH3-64 (v0.8.2) for ImpulseVM v0.11.0 ICTX v2.
  *
- * Bit-identical to V11_xxh3 (impulse-ocaml), V11Xxh3.java (impulse-graph-java),
+ * Bit-identical to V11_xxh3 (impulse-ocaml), VmXxh3.java (impulse-graph-java),
  * and xxhash.h v0.8.2 across all length regimes (0, 1..3, 4..8, 9..16, 17..128,
  * 129..240, > 240 bytes). Zero heap allocations.
  */
@@ -14,7 +14,7 @@
 
 namespace impulse::vm {
 
-class V11Xxh3 {
+class VmXxh3 {
 public:
     static inline uint64_t hash64(const uint8_t* input, size_t len) noexcept {
         return hash64_with_seed(input, len, 0ULL);

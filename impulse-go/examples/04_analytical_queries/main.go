@@ -38,12 +38,12 @@ func main() {
 	defer snap.Close()
 
 	words := []uint64{
-		impulse.EncodeV11Word(0x07, 1, 0, 0, 0, 0, 0, 0),
-		impulse.EncodeV11Word(0x30, 0, 0, 1, 0, 0, 0, 0),
-		impulse.EncodeV11Word(0x57, 1, 0, 0, 1, 0, 0, 0),
-		impulse.EncodeV11Word(0x00, 0, 0, 0, 0, 0, 0, 0),
+		impulse.EncodeWord(0x07, 1, 0, 0, 0, 0, 0, 0),
+		impulse.EncodeWord(0x30, 0, 0, 1, 0, 0, 0, 0),
+		impulse.EncodeWord(0x57, 1, 0, 0, 1, 0, 0, 0),
+		impulse.EncodeWord(0x00, 0, 0, 0, 0, 0, 0, 0),
 	}
-	impb := impulse.BuildImpbV11(words, 1)
+	impb := impulse.BuildImpb(words, 1)
 	if st, badPC := impulse.ValidateBytecode(impb); st != impulse.VmOk {
 		log.Fatalf("validation failed: status=%d badPC=%d", st, badPC)
 	}

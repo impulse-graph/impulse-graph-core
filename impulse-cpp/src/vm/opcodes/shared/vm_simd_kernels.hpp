@@ -5,13 +5,13 @@
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
-static inline uint32_t imp_v11_ctz64(uint64_t x) noexcept {
+static inline uint32_t imp_vm_ctz64(uint64_t x) noexcept {
     unsigned long idx = 0;
     _BitScanForward64(&idx, x);
     return static_cast<uint32_t>(idx);
 }
 #else
-static inline uint32_t imp_v11_ctz64(uint64_t x) noexcept {
+static inline uint32_t imp_vm_ctz64(uint64_t x) noexcept {
     return static_cast<uint32_t>(__builtin_ctzll(x));
 }
 #endif
@@ -50,7 +50,7 @@ static inline uint32_t b2f_extract_words(const uint64_t* valid,
         uint32_t rem = n - base;
         if (rem < 64u) m &= ((1ULL << rem) - 1ULL);
         while (m != 0ULL) {
-            uint32_t tz = imp_v11_ctz64(m);
+            uint32_t tz = imp_vm_ctz64(m);
             out_ids[cnt++] = base + tz;
             m &= (m - 1ULL);
         }

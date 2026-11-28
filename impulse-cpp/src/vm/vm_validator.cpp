@@ -1,9 +1,9 @@
 /**
  * @file v11_validator.cpp
- * @brief Static Load-Time Bytecode Verifier (impulse_vm_validate_v11) for ImpulseVM v0.11.0.
+ * @brief Static Load-Time Bytecode Verifier (impulse_vm_validate) for ImpulseVM v0.11.0.
  *
  * Mirrors V11_isa.decode_word / V11_validate.validate_program (impulse-ocaml) and
- * V11Validator.java (impulse-graph-java).
+ * VmValidator.java (impulse-graph-java).
  */
 #include "vm_internal.hpp"
 #include "vm_xxh3.hpp"
@@ -47,27 +47,27 @@ bool is_mask_s3_only(uint8_t code) noexcept {
     }
 }
 
-impulse_vm_status_v11_t validate_word(uint64_t w) noexcept {
-    uint8_t code = IMP_V11_OPCODE(w);
+impulse_vm_status_t validate_word(uint64_t w) noexcept {
+    uint8_t code = IMP_OPCODE(w);
     const OpcodeMeta& meta = kOpcodeMeta[code];
     if (!meta.defined) {
-        return IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
     }
-    uint8_t subop   = IMP_V11_SUBOP(w);
-    uint8_t flags   = IMP_V11_FLAGS(w);
-    uint8_t s1      = IMP_V11_S1(w);
-    uint8_t dst     = IMP_V11_DST(w);
-    uint8_t s3      = IMP_V11_S3(w);
-    uint8_t s2      = IMP_V11_S2(w);
-    uint32_t imm32  = IMP_V11_IMM32(w);
-    uint16_t imm_lo = IMP_V11_IMM16_LO(w);
-    uint16_t imm_hi = IMP_V11_IMM16_HI(w);
+    uint8_t subop   = IMP_SUBOP(w);
+    uint8_t flags   = IMP_FLAGS(w);
+    uint8_t s1      = IMP_S1(w);
+    uint8_t dst     = IMP_DST(w);
+    uint8_t s3      = IMP_S3(w);
+    uint8_t s2      = IMP_S2(w);
+    uint32_t imm32  = IMP_IMM32(w);
+    uint16_t imm_lo = IMP_IMM16_LO(w);
+    uint16_t imm_hi = IMP_IMM16_HI(w);
 
     if ((meta.valid_subop_mask & (static_cast<uint16_t>(1u) << subop)) == 0u) {
-        return IMPULSE_VM_V11_ERR_INVALID_OPCODE;
+        return IMPULSE_VM_ERR_INVALID_OPCODE;
     }
     if ((flags & static_cast<uint8_t>(~meta.allowed_flags & 0x0Fu)) != 0u) {
-        return IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+        return IMPULSE_VM_ERR_INVALID_OPERAND;
     }
 
     bool ext    = (flags & FLAG_EXTENDED) != 0u;
@@ -142,21 +142,21 @@ impulse_vm_status_v11_t validate_word(uint64_t w) noexcept {
             break;
     }
 
-    return mbz_ok ? IMPULSE_VM_V11_OK : IMPULSE_VM_V11_ERR_INVALID_OPERAND;
+    return mbz_ok ? IMPULSE_VM_OK : IMPULSE_VM_ERR_INVALID_OPERAND;
 }
 
-impulse_vm_status_v11_t check_jump_target(const uint64_t* words, size_t n, size_t pc, int32_t offset) noexcept {
+impulse_vm_status_t check_jump_target(const uint64_t* words, size_t n, size_t pc, int32_t offset) noexcept {
     if (offset == 0) {
-        return IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
     int64_t tgt = static_cast<int64_t>(pc) + static_cast<int64_t>(offset);
     if (tgt < 0 || static_cast<size_t>(tgt) >= n) {
-        return IMPULSE_VM_V11_ERR_OUT_OF_BOUNDS;
+        return IMPULSE_VM_ERR_OUT_OF_BOUNDS;
     }
-    if (IMP_V11_OPCODE(words[static_cast<size_t>(tgt)]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
-        return IMPULSE_VM_V11_ERR_VALIDATION_FAILED;
+    if (IMP_OPCODE(words[static_cast<size_t>(tgt)]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
+        return IMPULSE_VM_ERR_VALIDATION_FAILED;
     }
-    return IMPULSE_VM_V11_OK;
+    return IMPULSE_VM_OK;
 }
 
 enum WriteBank : uint8_t { kWriteNone = 0, kWriteR = 1, kWriteF = 2, kWriteV = 3 };
@@ -274,7 +274,7 @@ bool has_uninitialized_morsel_v_read(uint8_t op, uint8_t subop, bool scalar,
     }
 }
 
-bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, V11Arena* arena, bool* out_oom) {
+bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, VmArena* arena, bool* out_oom) {
     uint8_t stack_vis[2048];
     size_t stack_dfs[2048];
     std::vector<uint8_t> heap_vis;
@@ -309,7 +309,7 @@ bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, V11Arena
         return r;
     };
 
-    bool ext0 = (IMP_V11_FLAGS(words[target_pc]) & FLAG_EXTENDED) != 0u;
+    bool ext0 = (IMP_FLAGS(words[target_pc]) & FLAG_EXTENDED) != 0u;
     size_t start = target_pc + (ext0 ? 2u : 1u);
     if (start < n) {
         if (start == target_pc) return finish(true);
@@ -320,10 +320,10 @@ bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, V11Arena
     while (sp > 0u) {
         size_t cur = stack_buf[--sp];
         uint64_t w = words[cur];
-        uint8_t op = IMP_V11_OPCODE(w);
-        bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+        uint8_t op = IMP_OPCODE(w);
+        bool ext = (IMP_FLAGS(w) & FLAG_EXTENDED) != 0u;
         size_t next_pc = cur + (ext ? 2u : 1u);
-        int32_t imm32 = IMP_V11_IMM32_S(w);
+        int32_t imm32 = IMP_IMM32_S(w);
 
         switch (static_cast<Opcode>(op)) {
             case Opcode::OP_HALT:
@@ -370,21 +370,21 @@ bool is_in_cfg_cycle(const uint64_t* words, size_t n, size_t target_pc, V11Arena
 
 } // namespace
 
-impulse_vm_validation_v11_t validate_words_in_arena(
+impulse_vm_validation_t validate_words_in_arena(
     const uint64_t* words,
     size_t word_count,
-    V11Arena* arena
+    VmArena* arena
 ) noexcept {
     if (!words || word_count == 0) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u};
+        return {IMPULSE_VM_ERR_VALIDATION_FAILED, 0u};
     }
     const size_t saved_arena_pos = arena ? arena->pos : 0u;
     struct ArenaRewind {
-        V11Arena* a;
+        VmArena* a;
         size_t pos;
         ~ArenaRewind() noexcept { if (a) a->pos = pos; }
     } rewind_guard{arena, saved_arena_pos};
-    auto ret = [&](impulse_vm_validation_v11_t v) noexcept {
+    auto ret = [&](impulse_vm_validation_t v) noexcept {
         return v;
     };
 
@@ -392,26 +392,26 @@ impulse_vm_validation_v11_t validate_words_in_arena(
     size_t pc = 0;
     while (pc < word_count) {
         uint64_t w = words[pc];
-        impulse_vm_status_v11_t st = validate_word(w);
-        if (st != IMPULSE_VM_V11_OK) {
+        impulse_vm_status_t st = validate_word(w);
+        if (st != IMPULSE_VM_OK) {
             return {st, static_cast<uint32_t>(pc)};
         }
-        uint8_t op = IMP_V11_OPCODE(w);
-        bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+        uint8_t op = IMP_OPCODE(w);
+        bool ext = (IMP_FLAGS(w) & FLAG_EXTENDED) != 0u;
         if (op == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
-            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
         }
         if (ext) {
             if (pc + 1 >= word_count) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
             }
             uint64_t w2 = words[pc + 1];
-            impulse_vm_status_v11_t st2 = validate_word(w2);
-            if (st2 != IMPULSE_VM_V11_OK) {
+            impulse_vm_status_t st2 = validate_word(w2);
+            if (st2 != IMPULSE_VM_OK) {
                 return {st2, static_cast<uint32_t>(pc + 1)};
             }
-            if (IMP_V11_OPCODE(w2) != static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc + 1)};
+            if (IMP_OPCODE(w2) != static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
+                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc + 1)};
             }
             pc += 2;
         } else {
@@ -439,7 +439,7 @@ impulse_vm_validation_v11_t validate_words_in_arena(
         std::memset(stack_mi, 0, word_count);
     } else if (arena != nullptr) {
         in_morsel_interior = arena->alloc_array<uint8_t>(word_count, 8);
-        if (!in_morsel_interior) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
+        if (!in_morsel_interior) return ret({IMPULSE_VM_ERR_BUFFER_OVERFLOW, 0u});
         std::memset(in_morsel_interior, 0, word_count);
     } else {
         heap_mi.assign(word_count, 0);
@@ -449,15 +449,15 @@ impulse_vm_validation_v11_t validate_words_in_arena(
     pc = 0;
     while (pc < word_count) {
         uint64_t w = words[pc];
-        uint8_t op    = IMP_V11_OPCODE(w);
-        uint8_t subop = IMP_V11_SUBOP(w);
-        uint8_t flags = IMP_V11_FLAGS(w);
-        uint8_t s1    = IMP_V11_S1(w);
-        uint8_t dst   = IMP_V11_DST(w);
-        uint8_t s3    = IMP_V11_S3(w);
-        uint8_t s2    = IMP_V11_S2(w);
-        int32_t imm32 = IMP_V11_IMM32_S(w);
-        uint16_t imm_hi = IMP_V11_IMM16_HI(w);
+        uint8_t op    = IMP_OPCODE(w);
+        uint8_t subop = IMP_SUBOP(w);
+        uint8_t flags = IMP_FLAGS(w);
+        uint8_t s1    = IMP_S1(w);
+        uint8_t dst   = IMP_DST(w);
+        uint8_t s3    = IMP_S3(w);
+        uint8_t s2    = IMP_S2(w);
+        int32_t imm32 = IMP_IMM32_S(w);
+        uint16_t imm_hi = IMP_IMM16_HI(w);
         bool ext    = (flags & FLAG_EXTENDED) != 0u;
         bool mask   = (flags & FLAG_MASKED_S3) != 0u;
         bool scalar = (flags & FLAG_SCALAR_RHS) != 0u;
@@ -466,18 +466,18 @@ impulse_vm_validation_v11_t validate_words_in_arena(
         if (m_hdr_pc < 0) {
             if (op == static_cast<uint8_t>(Opcode::OP_MORSEL_COMMIT) ||
                 op == static_cast<uint8_t>(Opcode::OP_MORSEL_END)) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
             } else if (op == static_cast<uint8_t>(Opcode::OP_WALK_MORSEL) ||
                        op == static_cast<uint8_t>(Opcode::OP_FILTER_MORSEL)) {
                 uint32_t end_off = imm_hi;
                 size_t end_pc = pc + end_off;
                 if (end_off < 1u || end_pc >= word_count || s1 >= 8u || (mask && s3 >= 8u)) {
-                    return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                    return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                 }
                 uint64_t end_w = words[end_pc];
-                if (IMP_V11_OPCODE(end_w) != static_cast<uint8_t>(Opcode::OP_MORSEL_END) ||
-                    IMP_V11_IMM16_HI(end_w) != end_off) {
-                    return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                if (IMP_OPCODE(end_w) != static_cast<uint8_t>(Opcode::OP_MORSEL_END) ||
+                    IMP_IMM16_HI(end_w) != end_off) {
+                    return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                 }
                 for (size_t mp = pc + 1; mp <= end_pc; ++mp) {
                     in_morsel_interior[mp] = 1;
@@ -496,7 +496,7 @@ impulse_vm_validation_v11_t validate_words_in_arena(
                 } else if (arena != nullptr) {
                     m_has_join = arena->alloc_array<uint8_t>(m_span, 8);
                     m_join_written = arena->alloc_array<uint8_t>(m_span, 8);
-                    if (!m_has_join || !m_join_written) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
+                    if (!m_has_join || !m_join_written) return ret({IMPULSE_VM_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
                     std::memset(m_has_join, 0, m_span);
                     std::memset(m_join_written, 0, m_span);
                 } else {
@@ -516,8 +516,8 @@ impulse_vm_validation_v11_t validate_words_in_arena(
                        op == static_cast<uint8_t>(Opcode::OP_JCC) ||
                        op == static_cast<uint8_t>(Opcode::OP_LOOP_DECR) ||
                        op == static_cast<uint8_t>(Opcode::OP_CALL)) {
-                impulse_vm_status_v11_t st = check_jump_target(words, word_count, pc, imm32);
-                if (st != IMPULSE_VM_V11_OK) {
+                impulse_vm_status_t st = check_jump_target(words, word_count, pc, imm32);
+                if (st != IMPULSE_VM_OK) {
                     return {st, static_cast<uint32_t>(pc)};
                 }
             }
@@ -534,24 +534,24 @@ impulse_vm_validation_v11_t validate_words_in_arena(
                     }
                 }
                 if (has_uninitialized_morsel_v_read(op, subop, scalar, dst, s1, s2, s3, m_written_v)) {
-                    return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                    return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                 }
                 MorselRole role = kOpcodeMeta[op].morsel_role;
                 switch (role) {
                     case MorselRole::Forbidden:
                     case MorselRole::Header:
                     case MorselRole::EndOnly:
-                        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                        return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                     case MorselRole::FwdJumpOnly: {
                         bool jcc_ok = (op == static_cast<uint8_t>(Opcode::OP_JMP))
                             || (op == static_cast<uint8_t>(Opcode::OP_JCC) && subop >= 6 && subop <= 9 && (subop < 8 || s1 >= 8));
                         if (!jcc_ok || imm32 <= 0) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
-                        impulse_vm_status_v11_t st = check_jump_target(words, word_count, pc, imm32);
+                        impulse_vm_status_t st = check_jump_target(words, word_count, pc, imm32);
                         int64_t tgt = static_cast<int64_t>(pc) + imm32;
-                        if (st != IMPULSE_VM_V11_OK || tgt > static_cast<int64_t>(m_end_pc)) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                        if (st != IMPULSE_VM_OK || tgt > static_cast<int64_t>(m_end_pc)) {
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         size_t rel = static_cast<size_t>(tgt) - static_cast<size_t>(m_hdr_pc);
                         uint8_t cur_mask = 0u;
@@ -571,25 +571,25 @@ impulse_vm_validation_v11_t validate_words_in_arena(
                         bool aliases_outer_f = (subop == 0 || subop == 1)
                             && (dst == m_outer_src_f || static_cast<int>(dst) == m_outer_mask_f);
                         if (dst >= 8 || !s1_ok || !s2_ok || !s3_ok || aliases_outer_f) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         break;
                     }
                     case MorselRole::BodyVOnly: {
                         if (subop != 2) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         if (op == static_cast<uint8_t>(Opcode::OP_SPILL)) {
                             if (s1 < 8) {
-                                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                             }
                         } else if (op == static_cast<uint8_t>(Opcode::OP_RELOAD)) {
                             if (dst < 8) {
-                                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                             }
                             m_written_v[dst - 8] = true;
                         } else {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         break;
                     }
@@ -597,24 +597,24 @@ impulse_vm_validation_v11_t validate_words_in_arena(
                     case MorselRole::BodyCastOnly:
                     case MorselRole::BodyOk: {
                         if (role == MorselRole::BodyPairOnly && subop < 4) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         if (role == MorselRole::BodyCastOnly && subop != 2) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         if (mask && s3 < 8) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         }
                         WriteBank wb = writes_bank_inside_morsel(op, subop);
                         if (wb == kWriteR) {
-                            return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                            return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                         } else if (wb == kWriteF) {
                             if (dst < 8 || (op == static_cast<uint8_t>(Opcode::OP_SWAP) && s1 < 8)) {
-                                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                             }
                         } else if (wb == kWriteV) {
                             if (dst < 8 || (op == static_cast<uint8_t>(Opcode::OP_SWAP) && s1 < 8)) {
-                                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
                             }
                             m_written_v[dst - 8] = true;
                         }
@@ -626,23 +626,23 @@ impulse_vm_validation_v11_t validate_words_in_arena(
         pc = next_pc;
     }
     if (m_hdr_pc >= 0) {
-        return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(m_hdr_pc)};
+        return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(m_hdr_pc)};
     }
 
     // Pass 2b: Forbid outer branches/calls from jumping into the interior of any morsel block
     pc = 0;
     while (pc < word_count) {
         uint64_t w = words[pc];
-        uint8_t op = IMP_V11_OPCODE(w);
-        bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+        uint8_t op = IMP_OPCODE(w);
+        bool ext = (IMP_FLAGS(w) & FLAG_EXTENDED) != 0u;
         if (!in_morsel_interior[pc] &&
             (op == static_cast<uint8_t>(Opcode::OP_JMP) ||
              op == static_cast<uint8_t>(Opcode::OP_JCC) ||
              op == static_cast<uint8_t>(Opcode::OP_LOOP_DECR) ||
              op == static_cast<uint8_t>(Opcode::OP_CALL))) {
-            int64_t tgt = static_cast<int64_t>(pc) + IMP_V11_IMM32_S(w);
+            int64_t tgt = static_cast<int64_t>(pc) + IMP_IMM32_S(w);
             if (tgt >= 0 && static_cast<size_t>(tgt) < word_count && in_morsel_interior[static_cast<size_t>(tgt)]) {
-                return {IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
+                return {IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)};
             }
         }
         pc += ext ? 2u : 1u;
@@ -652,62 +652,62 @@ impulse_vm_validation_v11_t validate_words_in_arena(
     pc = 0;
     while (pc < word_count) {
         uint64_t w = words[pc];
-        uint8_t op = IMP_V11_OPCODE(w);
-        uint8_t subop = IMP_V11_SUBOP(w);
-        bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+        uint8_t op = IMP_OPCODE(w);
+        uint8_t subop = IMP_SUBOP(w);
+        bool ext = (IMP_FLAGS(w) & FLAG_EXTENDED) != 0u;
         if (op == static_cast<uint8_t>(Opcode::OP_SAMPLE_NEIGHBORS) && subop == 1u) {
             bool oom = false;
             if (is_in_cfg_cycle(words, word_count, pc, arena, &oom)) {
-                return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)});
+                return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, static_cast<uint32_t>(pc)});
             }
             if (oom) {
-                return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
+                return ret({IMPULSE_VM_ERR_BUFFER_OVERFLOW, static_cast<uint32_t>(pc)});
             }
         }
         pc += ext ? 2u : 1u;
     }
 
-    return ret({IMPULSE_VM_V11_OK, 0u});
+    return ret({IMPULSE_VM_OK, 0u});
 }
 
-impulse_vm_validation_v11_t validate_impb_in_arena(
+impulse_vm_validation_t validate_impb_in_arena(
     const void* impb_bytes,
     size_t impb_len,
-    V11Arena* arena
+    VmArena* arena
 ) noexcept {
     const size_t saved_arena_pos = arena ? arena->pos : 0u;
     struct ArenaRewind {
-        V11Arena* a;
+        VmArena* a;
         size_t pos;
         ~ArenaRewind() noexcept { if (a) a->pos = pos; }
     } rewind_guard{arena, saved_arena_pos};
-    auto ret = [&](impulse_vm_validation_v11_t v) noexcept {
+    auto ret = [&](impulse_vm_validation_t v) noexcept {
         return v;
     };
     try {
-        if (!impb_bytes || impb_len < sizeof(impulse_impb_header_v11_t)) {
-            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
+        if (!impb_bytes || impb_len < sizeof(impulse_impb_header_t)) {
+            return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, 0u});
         }
-        impulse_impb_header_v11_t hdr{};
+        impulse_impb_header_t hdr{};
         std::memcpy(&hdr, impb_bytes, sizeof(hdr));
         if (hdr.magic != kImpbMagic || hdr.isa_version != kImpbVersion ||
             (hdr.header_flags & 0xFEu) != 0u || hdr.max_call_depth > kMaxCallDepth ||
             hdr.reserved != 0u || hdr.code_word_count == 0u) {
-            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
+            return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, 0u});
         }
         size_t code_bytes = static_cast<size_t>(hdr.code_word_count) * sizeof(uint64_t);
         size_t payload_bytes = code_bytes + static_cast<size_t>(hdr.const_pool_bytes);
         if (payload_bytes < code_bytes || sizeof(hdr) + payload_bytes > impb_len) {
-            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
+            return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, 0u});
         }
         if (hdr.entry_pc >= hdr.code_word_count) {
-            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
+            return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, hdr.entry_pc});
         }
         const auto* payload_ptr = static_cast<const uint8_t*>(impb_bytes) + sizeof(hdr);
         if (hdr.program_xxh3_64 != 0ULL) {
-            uint64_t actual = V11Xxh3::hash64(payload_ptr, payload_bytes);
+            uint64_t actual = VmXxh3::hash64(payload_ptr, payload_bytes);
             if (actual != hdr.program_xxh3_64) {
-                return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, 0u});
+                return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, 0u});
             }
         }
         uint64_t stack_words[2048];
@@ -716,52 +716,52 @@ impulse_vm_validation_v11_t validate_impb_in_arena(
         if (hdr.code_word_count > 2048u) {
             if (arena != nullptr) {
                 words_ptr = arena->alloc_array<uint64_t>(hdr.code_word_count, 8);
-                if (!words_ptr) return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
+                if (!words_ptr) return ret({IMPULSE_VM_ERR_BUFFER_OVERFLOW, 0u});
             } else {
                 heap_words.resize(hdr.code_word_count);
                 words_ptr = heap_words.data();
             }
         }
         std::memcpy(words_ptr, payload_ptr, code_bytes);
-        impulse_vm_validation_v11_t vr = validate_words_in_arena(words_ptr, hdr.code_word_count, arena);
-        if (vr.status != IMPULSE_VM_V11_OK) {
+        impulse_vm_validation_t vr = validate_words_in_arena(words_ptr, hdr.code_word_count, arena);
+        if (vr.status != IMPULSE_VM_OK) {
             return ret(vr);
         }
         // Reject entry_pc landing on 0xFF OP_EXTENSION_PAYLOAD or inside a morsel interior
-        if (IMP_V11_OPCODE(words_ptr[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
-            return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
+        if (IMP_OPCODE(words_ptr[hdr.entry_pc]) == static_cast<uint8_t>(Opcode::OP_EXTENSION_PAYLOAD)) {
+            return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, hdr.entry_pc});
         }
         for (size_t pc = 0; pc < hdr.code_word_count; ) {
             uint64_t w = words_ptr[pc];
-            uint8_t op = IMP_V11_OPCODE(w);
-            bool ext = (IMP_V11_FLAGS(w) & FLAG_EXTENDED) != 0u;
+            uint8_t op = IMP_OPCODE(w);
+            bool ext = (IMP_FLAGS(w) & FLAG_EXTENDED) != 0u;
             if (op == static_cast<uint8_t>(Opcode::OP_WALK_MORSEL) ||
                 op == static_cast<uint8_t>(Opcode::OP_FILTER_MORSEL)) {
-                size_t end_pc = pc + IMP_V11_IMM16_HI(w);
+                size_t end_pc = pc + IMP_IMM16_HI(w);
                 if (hdr.entry_pc > pc && hdr.entry_pc <= end_pc) {
-                    return ret({IMPULSE_VM_V11_ERR_VALIDATION_FAILED, hdr.entry_pc});
+                    return ret({IMPULSE_VM_ERR_VALIDATION_FAILED, hdr.entry_pc});
                 }
                 pc = end_pc + 1u;
             } else {
                 pc += ext ? 2u : 1u;
             }
         }
-        return ret({IMPULSE_VM_V11_OK, 0u});
+        return ret({IMPULSE_VM_OK, 0u});
     } catch (...) {
-        return ret({IMPULSE_VM_V11_ERR_BUFFER_OVERFLOW, 0u});
+        return ret({IMPULSE_VM_ERR_BUFFER_OVERFLOW, 0u});
     }
 }
 
 } // namespace impulse::vm
 
-extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_words_v11(
+extern "C" IMPULSE_API impulse_vm_validation_t impulse_vm_validate_words(
     const uint64_t* words,
     size_t word_count
 ) {
     return impulse::vm::validate_words_in_arena(words, word_count, nullptr);
 }
 
-extern "C" IMPULSE_API impulse_vm_validation_v11_t impulse_vm_validate_v11(
+extern "C" IMPULSE_API impulse_vm_validation_t impulse_vm_validate(
     const void* impb_bytes,
     size_t impb_len
 ) {

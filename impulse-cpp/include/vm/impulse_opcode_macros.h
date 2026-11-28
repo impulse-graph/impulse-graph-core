@@ -7,8 +7,8 @@
  * `IMPULSE_ALWAYS`, `IMPULSE_NEVER`, `IMP_VM_COV_TWO_WAY`, per-opcode `CONTRACT_DEFINED` guards)
  * for the v0.11 64-bit nibble ISA (`impulse_vm_v11_isa.hpp`).
  */
-#ifndef IMPULSE_V11_OPCODE_MACROS_H
-#define IMPULSE_V11_OPCODE_MACROS_H
+#ifndef IMPULSE_VM_OPCODE_MACROS_H
+#define IMPULSE_VM_OPCODE_MACROS_H
 
 #include "impulse_assert.h"
 #include "vm/impulse_vm_isa.hpp"
@@ -16,17 +16,17 @@
 #include <cstddef>
 
 #if defined(_MSC_VER)
-  #define IMPULSE_V11_NOINLINE __declspec(noinline)
-  #define IMPULSE_V11_LIKELY(x)   (x)
-  #define IMPULSE_V11_UNLIKELY(x) (x)
+  #define IMPULSE_VM_NOINLINE __declspec(noinline)
+  #define IMPULSE_VM_LIKELY(x)   (x)
+  #define IMPULSE_VM_UNLIKELY(x) (x)
 #else
-  #define IMPULSE_V11_NOINLINE __attribute__((noinline))
-  #define IMPULSE_V11_LIKELY(x)   __builtin_expect(!!(x), 1)
-  #define IMPULSE_V11_UNLIKELY(x) __builtin_expect(!!(x), 0)
+  #define IMPULSE_VM_NOINLINE __attribute__((noinline))
+  #define IMPULSE_VM_LIKELY(x)   __builtin_expect(!!(x), 1)
+  #define IMPULSE_VM_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
 
 /** Compile-time check that an opcode .inc file's declared flags & subop mask match isa_v0_11.yaml. */
-#define V11_OP_CONTRACT_ASSERT(OPCODE_ENUM, EXPECTED_FLAGS, EXPECTED_SUBOP_MASK) \
+#define VM_OP_CONTRACT_ASSERT(OPCODE_ENUM, EXPECTED_FLAGS, EXPECTED_SUBOP_MASK) \
     static_assert(::impulse::vm::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::Opcode::OPCODE_ENUM)].defined, \
                   #OPCODE_ENUM " must be defined in kOpcodeMeta"); \
     static_assert(::impulse::vm::kOpcodeMeta[static_cast<uint8_t>(::impulse::vm::Opcode::OPCODE_ENUM)].allowed_flags == (EXPECTED_FLAGS), \
@@ -35,7 +35,7 @@
                   #OPCODE_ENUM " valid_subop_mask drift vs isa_v0_11.yaml")
 
 /** Portable 64-bit unsigned overflow-checked addition & multiplication. */
-static inline bool v11_u64_add_overflow(uint64_t a, uint64_t b, uint64_t* out) noexcept {
+static inline bool vm_u64_add_overflow(uint64_t a, uint64_t b, uint64_t* out) noexcept {
 #if defined(__has_builtin)
 #  if __has_builtin(__builtin_add_overflow)
     return __builtin_add_overflow(a, b, out);
@@ -48,7 +48,7 @@ static inline bool v11_u64_add_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     return sum < a;
 }
 
-static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) noexcept {
+static inline bool vm_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) noexcept {
 #if defined(__has_builtin)
 #  if __has_builtin(__builtin_mul_overflow)
     return __builtin_mul_overflow(a, b, out);
@@ -65,7 +65,7 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
 }
 
 /** X-macro list of implemented v0.11 opcodes for automatic dispatch table registration. */
-#define V11_IMPLEMENTED_PILLAR1_OPS(X) \
+#define VM_IMPLEMENTED_PILLAR1_OPS(X) \
     X(0x00, HALT)            \
     X(0x01, NOP)             \
     X(0x02, TRAP)            \
@@ -89,7 +89,7 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x14, SET_MAX_DOP)     \
     X(0x15, SCALAR_DECIMAL_ALU)
 
-#define V11_IMPLEMENTED_PILLAR2_OPS(X) \
+#define VM_IMPLEMENTED_PILLAR2_OPS(X) \
     X(0x20, FSEED)            \
     X(0x21, INIT_DOMAIN_SPAN) \
     X(0x22, SET_OP)           \
@@ -99,7 +99,7 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x26, SET_CONVERT)      \
     X(0x27, STABLE_CHECK)
 
-#define V11_IMPLEMENTED_PILLAR3_OPS(X) \
+#define VM_IMPLEMENTED_PILLAR3_OPS(X) \
     X(0x30, WALK)             \
     X(0x31, WALK_FILTERED)    \
     X(0x33, DEGREE)           \
@@ -112,7 +112,7 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x3A, HAS_TOPOLOGY)     \
     X(0x3B, GRAPH_KERNEL)
 
-#define V11_IMPLEMENTED_PILLAR4_OPS(X) \
+#define VM_IMPLEMENTED_PILLAR4_OPS(X) \
     X(0x40, LOAD_COLUMN)       \
     X(0x41, GATHER_NODE_ATTR)  \
     X(0x42, GATHER_EDGE_ATTR)  \
@@ -139,7 +139,7 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x57, COLLECT)           \
     X(0x58, VEC_DECIMAL_ALU)
 
-#define V11_IMPLEMENTED_PILLAR5_OPS(X) \
+#define VM_IMPLEMENTED_PILLAR5_OPS(X) \
     X(0x60, LANE_INIT_SEEDS)    \
     X(0x61, LANE_INIT_GROUPS)   \
     X(0x63, LANE_WALK)          \
@@ -155,11 +155,11 @@ static inline bool v11_u64_mul_overflow(uint64_t a, uint64_t b, uint64_t* out) n
     X(0x6E, LANE_STATE_REDUCE)  \
     X(0x6F, VECTOR_POOL)
 
-#define V11_IMPLEMENTED_OPS(X) \
-    V11_IMPLEMENTED_PILLAR1_OPS(X) \
-    V11_IMPLEMENTED_PILLAR2_OPS(X) \
-    V11_IMPLEMENTED_PILLAR3_OPS(X) \
-    V11_IMPLEMENTED_PILLAR4_OPS(X) \
-    V11_IMPLEMENTED_PILLAR5_OPS(X)
+#define VM_IMPLEMENTED_OPS(X) \
+    VM_IMPLEMENTED_PILLAR1_OPS(X) \
+    VM_IMPLEMENTED_PILLAR2_OPS(X) \
+    VM_IMPLEMENTED_PILLAR3_OPS(X) \
+    VM_IMPLEMENTED_PILLAR4_OPS(X) \
+    VM_IMPLEMENTED_PILLAR5_OPS(X)
 
-#endif /* IMPULSE_V11_OPCODE_MACROS_H */
+#endif /* IMPULSE_VM_OPCODE_MACROS_H */

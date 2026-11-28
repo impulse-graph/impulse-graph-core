@@ -2323,7 +2323,7 @@ mod metadata_introspection_tests {
         writer.add_relation(0, 0, 3, 2, vec![0, 1, 2, 2], vec![1, 2]);
         writer.set_relation_name(0, "transfer");
         writer.set_relation_include_csc(0, true);
-        writer.set_relation_coo_v11(0, 1);
+        writer.set_relation_coo(0, 1);
         let mut meta = std::collections::HashMap::new();
         meta.insert("owner".to_string(), "rust-suite".to_string());
         meta.insert("env".to_string(), "test".to_string());

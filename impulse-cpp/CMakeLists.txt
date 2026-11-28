@@ -143,7 +143,6 @@ install(FILES
     include/impulse_math_ops.h
     include/impulse_index.h
     include/impulse_vm.h
-    include/impulse_vm_v11.h
     include/impulse_cel.h
     include/impulse_scm_ast.hpp
     include/impulse_compiler.hpp

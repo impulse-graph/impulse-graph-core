@@ -3,8 +3,8 @@
  * @brief ImpScheme v0.11.0 SSA IR Parser, Static Domain/Type Validator, DECIMAL(P, S)
  *        Boundary Folder, and .impb Compiler.
  */
-#ifndef IMPULSE_V11_IMPSCM_HPP
-#define IMPULSE_V11_IMPSCM_HPP
+#ifndef IMPULSE_VM_IMPSCM_HPP
+#define IMPULSE_VM_IMPSCM_HPP
 
 #include <array>
 #include <cstdint>
@@ -16,7 +16,7 @@
 #include "impulse_graph.h"
 #include "vm/impulse_bytecode_emitter.hpp"
 
-namespace impulse::compiler::v11 {
+namespace impulse::compiler {
 
 inline constexpr std::array<int64_t, 19> kDecimalPow10 = {
     1LL,
@@ -107,7 +107,7 @@ struct ParamMeta {
     uint16_t domain_id = 0xFFFFu;
 };
 
-struct ImpScmV11CompileResult {
+struct ImpScmCompileResult {
     std::vector<uint8_t> impb_bytes;
     std::vector<uint64_t> code_words;
     std::unordered_map<std::string, uint32_t> param_name_to_id;
@@ -116,7 +116,7 @@ struct ImpScmV11CompileResult {
     std::vector<OutputColumnMeta> output_schema;
 };
 
-class ImpScmV11Compiler {
+class ImpScmCompiler {
 public:
     /**
      * Parses, statically validates (IMPSCM_SPECIFICATION_v0_11.md §7.1), and lowers
@@ -124,13 +124,13 @@ public:
      * Throws std::runtime_error prefixed with error category (DOMAIN_MISMATCH, TYPE_MISMATCH,
      * UNKNOWN_SCHEMA_ENTITY, UNBOUND_SYMBOL, PARSE_ERROR) on failure.
      */
-    static ImpScmV11CompileResult compile(
+    static ImpScmCompileResult compile(
         const std::string& source,
         const impulse_snapshot_t* snapshot,
         bool enable_optimizations = true
     );
 };
 
-} // namespace impulse::compiler::v11
+} // namespace impulse::compiler
 
-#endif /* IMPULSE_V11_IMPSCM_HPP */
+#endif /* IMPULSE_VM_IMPSCM_HPP */

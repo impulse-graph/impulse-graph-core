@@ -333,7 +333,7 @@ IMPULSE_API impulse_status_t impulse_writer_add_relation(
     const void* row_offsets_data, uint64_t row_offsets_bytes,
     const void* col_indices_data, uint64_t col_indices_bytes
 );
-IMPULSE_API impulse_status_t impulse_writer_add_relation_v11(
+IMPULSE_API impulse_status_t impulse_writer_add_relation_ex(
     impulse_writer_t* writer,
     uint16_t src_domain_id,
     uint16_t tgt_domain_id,

@@ -192,7 +192,7 @@ internal static unsafe partial class NativeMethods
     );
 
     [LibraryImport(LibName)]
-    public static partial uint impulse_vm_v11_prepare_snapshot(nint snapshot);
+    public static partial uint impulse_vm_prepare_snapshot(nint snapshot);
 
     [LibraryImport(LibName)]
     public static partial uint impulse_vm_plan_memory(
@@ -204,7 +204,7 @@ internal static unsafe partial class NativeMethods
     );
 
     [LibraryImport(LibName)]
-    public static partial uint impulse_vm_execute_v11(
+    public static partial uint impulse_vm_execute(
         void* impbBytes,
         nuint impbLen,
         nint snapshot,
@@ -216,5 +216,5 @@ internal static unsafe partial class NativeMethods
     );
 
     [LibraryImport(LibName)]
-    public static partial uint impulse_vm_v11_get_output_count(nint ws);
+    public static partial uint impulse_vm_get_output_count(nint ws);
 }
